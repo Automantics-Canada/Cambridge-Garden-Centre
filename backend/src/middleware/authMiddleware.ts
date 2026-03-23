@@ -1,7 +1,10 @@
 import type { NextFunction, Request, Response } from 'express';
 import jwt from 'jsonwebtoken';
 import { env } from '../config/env';
-import { UserRole } from '@prisma/client';
+
+// Matches the UserRole enum in prisma/schema.prisma
+// Once Prisma Client is generated, replace with: import { UserRole } from '@prisma/client';
+export type UserRole = 'AP_USER' | 'OWNER' | 'ADMIN';
 
 export interface AuthRequest extends Request {
   user?: {
@@ -24,7 +27,7 @@ export function authMiddleware(
   const token = authHeader.split(' ')[1];
 
   try {
-    const decoded = jwt.verify(token, env.jwtSecret) as {
+    const decoded = jwt.verify(token, env.jwtSecret) as unknown as {
       id: string;
       email: string;
       role: UserRole;
