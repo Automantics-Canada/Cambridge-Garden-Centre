@@ -1,0 +1,7 @@
+(node:59856) ExperimentalWarning: CommonJS module C:\Users\VICTUS\AppData\Roaming\nvm\v23.1.0\node_modules\npm\node_modules\debug\src\node.js is loading ES Module C:\Users\VICTUS\AppData\Roaming\nvm\v23.1.0\node_modules\npm\node_modules\supports-color\index.js using require().
+Support for loading ES Module in require() is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+src/middleware/authMiddleware.ts(30,32): error TS2769: No overload matches this call.
+  The last overload gave the following error.
+    Argument of type 'string | undefined' is not assignable to parameter of type 'string'.
+      Type 'undefined' is not assignable to type 'string'.
