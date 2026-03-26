@@ -1,0 +1,3 @@
+OrderNumber,CustomerName,BuyerType,Product,Quantity,Unit,PONumber,OrderDate,DeliveryDate,InvoiceNumber,HasInvoice
+ORD-001,John Doe,RETAIL,Cement,100,bags,PO-001,2023-10-01,2023-10-05,,false
+ORD-002,ACME Corp,CONTRACTOR,Sand,50,tons,PO-002,2023-10-02,2023-10-06,INV-002,true
