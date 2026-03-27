@@ -30,6 +30,11 @@ enum TicketStatus {
   REVIEWED
 }
 
+enum LinkMethod {
+  AUTO
+  MANUAL
+}
+
 enum SenderType {
   SUPPLIER
   TRUCKING_COMPANY
@@ -63,7 +68,7 @@ enum UserRole {
   ADMIN
 }
 
-enum OcrTargetType {
+enum OcrJobType {
   TICKET
   INVOICE
 }
@@ -73,7 +78,7 @@ enum OcrProvider {
   AWS_TEXTRACT
 }
 
-enum OcrStatus {
+enum OcrJobStatus {
   PENDING
   PROCESSING
   COMPLETED
@@ -207,7 +212,7 @@ model Invoice {
   verifiedAt     DateTime?
   disputeNote    String?
   receivedAt     DateTime      @default(now())
-  ocrStatus      OcrStatus     @default(PENDING)
+  OcrJobStatus      OcrJobStatus     @default(PENDING)
   ocrRawText     String?
 
   lineItems  InvoiceLineItem[]
@@ -341,9 +346,9 @@ model SpruceImportRowError {
 
 model OcrJob {
   id          String        @id @default(uuid()) @db.Uuid
-  targetType  OcrTargetType
+  type        OcrJobType
   provider    OcrProvider
-  status      OcrStatus     @default(PENDING)
+  status      OcrJobStatus     @default(PENDING)
   startedAt   DateTime?
   finishedAt  DateTime?
   errorMessage String?
