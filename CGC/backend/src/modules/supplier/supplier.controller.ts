@@ -38,12 +38,12 @@ export const updateSupplier = async (req: AuthRequest, res: Response) => {
   const { id } = req.params;
   const data = req.body;
 
-  const supplier = await SupplierService.update(id, data);
+  const supplier = await SupplierService.update(id as string, data);
   res.json(supplier);
 };
 
 export const deleteSupplier = async (req: AuthRequest, res: Response) => {
   const { id } = req.params;
-  const supplier = await SupplierService.remove(id);
+  const supplier = await SupplierService.remove(id as string);
   res.json(supplier);
 };

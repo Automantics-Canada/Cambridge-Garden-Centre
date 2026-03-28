@@ -1,82 +1,177 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Outlet, Link, useLocation } from 'react-router-dom';
-import { LayoutDashboard, Receipt, Ticket, LogOut } from 'lucide-react';
-
-const navigation = [
-  { name: 'Orders', href: '/dashboard/orders', icon: LayoutDashboard },
-  { name: 'Invoices', href: '/dashboard/invoices', icon: Receipt },
-  { name: 'Tickets', href: '/dashboard/tickets', icon: Ticket },
-];
-
-function classNames(...classes) {
-  return classes.filter(Boolean).join(' ');
-}
+import { useDispatch, useSelector } from 'react-redux';
+import { 
+  LayoutDashboard, ShoppingCart, Truck, Users, 
+  MapPin, UserSquare, Briefcase, Calculator, 
+  BarChart, Settings, Menu, Search, Eye, Bell, LogOut, ChevronLeft, ChevronRight
+} from 'lucide-react';
+import { logout } from '../store/authSlice';
+import clsx from 'clsx';
 
 export default function DashboardLayout() {
+  const [sidebarOpen, setSidebarOpen] = useState(true);
   const location = useLocation();
+  const dispatch = useDispatch();
+  const user = useSelector(state => state.auth.user);
+
+  const navGroups = [
+    {
+      title: 'MAIN',
+      items: [
+        { name: 'Dashboard', path: '/dashboard', icon: <LayoutDashboard size={20} /> },
+        { name: 'Orders', path: '/dashboard/orders', icon: <ShoppingCart size={20} /> },
+        { name: 'Dispatch', path: '/dashboard/dispatch', icon: <Truck size={20} /> },
+      ]
+    },
+    {
+      title: 'DELIVERY',
+      items: [
+        { name: 'Drivers', path: '/dashboard/drivers', icon: <Users size={20} /> },
+        { name: 'Deliveries', path: '/dashboard/deliveries', icon: <MapPin size={20} /> },
+      ]
+    },
+    {
+      title: 'CUSTOMERS',
+      items: [
+        { name: 'Customers', path: '/dashboard/customers', icon: <UserSquare size={20} /> },
+        { name: 'Contractors', path: '/dashboard/contractors', icon: <Briefcase size={20} /> },
+      ]
+    },
+    {
+      title: 'FINANCE',
+      items: [
+        { name: 'Accounting', path: '/dashboard/accounting', icon: <Calculator size={20} /> },
+        { name: 'Reports', path: '/dashboard/reports', icon: <BarChart size={20} /> },
+      ]
+    },
+    {
+      title: 'SETTINGS',
+      items: [
+        { name: 'Settings', path: '/dashboard/settings', icon: <Settings size={20} /> },
+      ]
+    }
+  ];
 
   return (
-    <div className="min-h-screen bg-gray-50 flex">
+    <div className="flex h-screen bg-gray-50 overflow-hidden font-sans">
       {/* Sidebar */}
-      <div className="w-64 bg-green-900 border-r border-green-800 hidden md:flex md:flex-col md:fixed md:inset-y-0 text-white">
-        <div className="flex-1 flex flex-col min-h-0">
-          <div className="flex items-center h-16 flex-shrink-0 px-4 bg-green-950">
-            <Link to="/" className="flex items-center gap-2">
-              <div className="w-8 h-8 bg-green-600 rounded-lg flex items-center justify-center">
-                <span className="text-white font-bold text-xl">C</span>
+      <aside className={clsx(
+        "bg-[#1B4332] text-white flex flex-col transition-all duration-300 relative",
+        sidebarOpen ? "w-64" : "w-16"
+      )}>
+        {/* Toggle Button */}
+        <button 
+          onClick={() => setSidebarOpen(!sidebarOpen)}
+          className="absolute -right-3 top-6 bg-white text-[#1B4332] rounded-full p-1 shadow-md border border-gray-200 z-10"
+        >
+          {sidebarOpen ? <ChevronLeft size={16} /> : <ChevronRight size={16} />}
+        </button>
+
+        <div className="p-4 mb-4 mt-2">
+          {sidebarOpen ? (
+            <div>
+              <h1 className="text-2xl font-bold tracking-tight">CGC</h1>
+              <p className="text-xs text-green-300">Operations</p>
+            </div>
+          ) : (
+            <h1 className="text-2xl font-bold text-center">C</h1>
+          )}
+        </div>
+
+        <nav className="flex-1 overflow-y-auto px-3 space-y-6">
+          {navGroups.map((group, idx) => (
+            <div key={idx}>
+              {sidebarOpen && <div className="text-xs font-semibold text-green-500 mb-2 uppercase tracking-wider pl-3">{group.title}</div>}
+              <ul className="space-y-1">
+                {group.items.map((item) => {
+                  const isActive = location.pathname === item.path;
+                  return (
+                    <li key={item.name}>
+                      <Link
+                        to={item.path}
+                        className={clsx(
+                          "flex items-center rounded-lg px-3 py-2.5 transition-colors",
+                          isActive ? "bg-[#2D6A4F] text-white" : "text-green-100 hover:bg-[#2D6A4F]/50",
+                          !sidebarOpen && "justify-center"
+                        )}
+                        title={!sidebarOpen ? item.name : undefined}
+                      >
+                        {item.icon}
+                        {sidebarOpen && <span className="ml-3 font-medium">{item.name}</span>}
+                      </Link>
+                    </li>
+                  )
+                })}
+              </ul>
+            </div>
+          ))}
+        </nav>
+
+        {/* User Profile Area */}
+        <div className="p-4 border-t border-[#2D6A4F] mt-auto">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-full bg-[#2D6A4F] flex items-center justify-center font-bold text-sm flex-shrink-0">
+              {user?.name?.substring(0,2).toUpperCase() || "SK"}
+            </div>
+            {sidebarOpen && (
+              <div className="flex-1 overflow-hidden">
+                <div className="text-sm font-semibold truncate">{user?.name || "Sarah K."}</div>
+                <div className="text-xs text-green-300 truncate">{user?.role || "Admin"}</div>
               </div>
-              <span className="text-lg font-bold truncate">Admin Panel</span>
-            </Link>
-          </div>
-          <div className="flex-1 flex flex-col overflow-y-auto">
-            <nav className="flex-1 px-2 py-4 space-y-1">
-              {navigation.map((item) => {
-                const isActive = location.pathname.startsWith(item.href);
-                return (
-                  <Link
-                    key={item.name}
-                    to={item.href}
-                    className={classNames(
-                      isActive ? 'bg-green-800 text-white' : 'text-green-100 hover:bg-green-800 hover:text-white',
-                      'group flex items-center px-2 py-2 text-sm font-medium rounded-md transition-colors'
-                    )}
-                  >
-                    <item.icon
-                      className={classNames(
-                        isActive ? 'text-white' : 'text-green-300 group-hover:text-white',
-                        'mr-3 flex-shrink-0 h-5 w-5'
-                      )}
-                      aria-hidden="true"
-                    />
-                    {item.name}
-                  </Link>
-                );
-              })}
-            </nav>
-          </div>
-          <div className="flex-shrink-0 flex border-t border-green-800 p-4">
-            <Link to="/" className="flex items-center text-sm font-medium text-green-100 hover:text-white">
-              <LogOut className="mr-3 h-5 w-5 text-green-300" />
-              Back to Website
-            </Link>
+            )}
           </div>
         </div>
-      </div>
+      </aside>
 
       {/* Main Content */}
-      <div className="md:pl-64 flex flex-col flex-1 w-full">
-        {/* Mobile header */}
-        <div className="sticky top-0 z-10 md:hidden pl-1 pt-1 sm:pl-3 sm:pt-3 bg-green-900">
-          <div className="flex items-center justify-between p-3 text-white">
-            <span className="text-lg font-bold">Admin Panel</span>
-            <Link to="/" className="text-sm font-medium hover:text-green-200">Exit</Link>
+      <div className="flex-1 flex flex-col h-screen overflow-hidden">
+        {/* Top Navbar */}
+        <header className="bg-white border-b border-gray-200 h-16 flex items-center justify-between px-6 flex-shrink-0 z-10 transition-all">
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2 text-xl font-semibold text-gray-800">
+              <Menu size={20} className="text-gray-500 md:hidden" />
+              Dashboard
+            </div>
           </div>
-        </div>
+          
+          <div className="flex-1 max-w-xl mx-8 hidden md:block">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
+              <input 
+                type="text" 
+                placeholder="Search orders, customers..." 
+                className="w-full bg-gray-50 border border-gray-200 rounded-md pl-10 pr-4 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-[#1D5333]"
+              />
+            </div>
+          </div>
 
-        <main className="flex-1 p-6">
-          <div className="max-w-7xl mx-auto">
-            <Outlet />
+          <div className="flex items-center gap-4 text-sm">
+            <button className="hidden sm:flex items-center gap-2 text-gray-600 border border-gray-300 rounded-md px-3 py-1.5 hover:bg-gray-50 transition-colors">
+              <Eye size={16} /> Driver View
+            </button>
+            <div className="relative">
+              <Bell className="text-gray-500 hover:text-gray-700 cursor-pointer" size={20} />
+              <div className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-red-500 text-white flex items-center justify-center text-[10px] font-bold">3</div>
+            </div>
+             <div className="flex items-center gap-2 border-l pl-4 ml-2">
+                <div className="w-8 h-8 rounded-full bg-[#1B4332] text-white flex items-center justify-center font-bold text-sm">
+                  {user?.name?.substring(0,2).toUpperCase() || "SK"}
+                </div>
+                <div className="hidden sm:block text-right leading-tight">
+                  <div className="font-medium text-gray-800 text-sm">{user?.name || "Sarah K."}</div>
+                  <div className="text-xs text-gray-500">{user?.role || "Admin"}</div>
+                </div>
+                <button onClick={() => dispatch(logout())} className="ml-2 text-gray-400 hover:text-red-500 transition-colors" title="Logout">
+                  <LogOut size={18} />
+                </button>
+             </div>
           </div>
+        </header>
+
+        {/* Page Content */}
+        <main className="flex-1 overflow-auto bg-[#F9FBF9] p-6 lg:p-8">
+          <Outlet />
         </main>
       </div>
     </div>
