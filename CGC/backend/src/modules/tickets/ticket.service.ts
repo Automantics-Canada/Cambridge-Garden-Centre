@@ -9,7 +9,6 @@ import {
   OcrProvider,
 } from '@prisma/client';
 
-// ----------------- helpers -----------------
 
 async function findDriverIdByPhone(phone: string | undefined | null) {
   if (!phone) return null;
@@ -40,7 +39,6 @@ async function findSupplierIdByEmail(fromEmail: string | undefined | null) {
   return supplier?.id ?? null;
 }
 
-// ----------------- service -----------------
 
 export const TicketService = {
   /**
@@ -117,9 +115,6 @@ export const TicketService = {
     return { ticket, ocrJob };
   },
 
-  /**
-   * Run Google Cloud Vision OCR on a specific ticket
-   */
   async processTicketOcr(ticketId: string) {
     const ticket = await prisma.ticket.findUnique({
       where: { id: ticketId },
