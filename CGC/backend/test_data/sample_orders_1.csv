@@ -1,0 +1,4 @@
+OrderNumber,CustomerName,BuyerType,Product,Quantity,Unit,PONumber,OrderDate,DeliveryDate,InvoiceNumber,HasInvoice
+ORD-1001,Toronto Landscaping,CONTRACTOR,Premium Mulch,50,Yards,PO-1002,2026-03-24,2026-03-25,INV-1001,yes
+ORD-1002,Sarah Smith,RETAIL,Topsoil,5,Yards,,2026-03-24,,,no
+ORD-1003,Green Earth,CONTRACTOR,River Rock,20,Tons,PO-1003,2026-03-25,2026-03-26,INV-1002,yes

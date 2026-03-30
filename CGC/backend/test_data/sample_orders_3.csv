@@ -1,0 +1,4 @@
+OrderNumber,CustomerName,BuyerType,Product,Quantity,Unit,PONumber,OrderDate,DeliveryDate,InvoiceNumber,HasInvoice
+ORD-3001,Outdoor Living,CONTRACTOR,Pea Gravel,15,Tons,PO-3001,2026-04-10,2026-04-11,INV-3001,yes
+ORD-3002,Lisa White,RETAIL,Limestone,4,Yards,,2026-04-11,,,no
+ORD-3003,City Parks Dept,CONTRACTOR,Compost,200,Yards,PO-3005,2026-04-12,2026-04-15,,no

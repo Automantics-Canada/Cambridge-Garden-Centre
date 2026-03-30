@@ -1,0 +1,4 @@
+OrderNumber,CustomerName,BuyerType,Product,Quantity,Unit,PONumber,OrderDate,DeliveryDate,InvoiceNumber,HasInvoice
+ORD-4001,Elite Gardens,CONTRACTOR,Pine Mulch,40,Yards,PO-4001,2026-05-01,,INV-4001,yes
+ORD-4002,Mark Davis,RETAIL,Decorative Stone,1,Tons,,2026-05-02,,,no
+ORD-4003,Valley Construction,CONTRACTOR,Road Base,500,Tons,PO-4002,2026-05-03,2026-05-10,,no

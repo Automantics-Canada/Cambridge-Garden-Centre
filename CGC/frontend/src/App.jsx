@@ -8,6 +8,7 @@ import OrdersPage from './pages/dashboard/OrdersPage';
 import InvoicesPage from './pages/dashboard/InvoicesPage';
 import TicketsPage from './pages/dashboard/TicketsPage';
 import Login from './pages/Login';
+import Register from './pages/Register';
 import './App.css';
 
 const ProtectedRoute = ({ children }) => {
@@ -22,6 +23,7 @@ function App() {
       <Routes>
         <Route path="/" element={<LandingPage />} />
         <Route path="/login" element={<Login />} />
+        <Route path="/register" element={<Register />} />
         
         <Route path="/dashboard" element={
           <ProtectedRoute>

@@ -1,6 +1,6 @@
 import type { Response } from 'express';
 import type { AuthRequest } from '../../middleware/authMiddleware.js';
-import { OrderImportService } from './order.service.js';
+import { OrderImportService, OrderService } from './order.service.js';
 
 export const importOrdersFromCsv = async (req: AuthRequest, res: Response) => {
   const file = req.file;
@@ -21,5 +21,17 @@ export const importOrdersFromCsv = async (req: AuthRequest, res: Response) => {
     return res
       .status(500)
       .json({ error: err?.message || 'Unexpected error during import' });
+  }
+};
+
+export const getOrders = async (req: AuthRequest, res: Response) => {
+  try {
+    const orders = await OrderService.getOrders(req.query);
+    return res.status(200).json(orders);
+  } catch (err: any) {
+    console.error('Error fetching orders', err);
+    return res
+      .status(500)
+      .json({ error: err?.message || 'Unexpected error fetching orders' });
   }
 };

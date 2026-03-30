@@ -20,35 +20,10 @@ export default function DashboardLayout() {
       title: 'MAIN',
       items: [
         { name: 'Dashboard', path: '/dashboard', icon: <LayoutDashboard size={20} /> },
+        { name: 'Tickets', path: '/dashboard/tickets', icon: <Briefcase size={20} /> },
         { name: 'Orders', path: '/dashboard/orders', icon: <ShoppingCart size={20} /> },
-        { name: 'Dispatch', path: '/dashboard/dispatch', icon: <Truck size={20} /> },
-      ]
-    },
-    {
-      title: 'DELIVERY',
-      items: [
-        { name: 'Drivers', path: '/dashboard/drivers', icon: <Users size={20} /> },
-        { name: 'Deliveries', path: '/dashboard/deliveries', icon: <MapPin size={20} /> },
-      ]
-    },
-    {
-      title: 'CUSTOMERS',
-      items: [
-        { name: 'Customers', path: '/dashboard/customers', icon: <UserSquare size={20} /> },
-        { name: 'Contractors', path: '/dashboard/contractors', icon: <Briefcase size={20} /> },
-      ]
-    },
-    {
-      title: 'FINANCE',
-      items: [
-        { name: 'Accounting', path: '/dashboard/accounting', icon: <Calculator size={20} /> },
-        { name: 'Reports', path: '/dashboard/reports', icon: <BarChart size={20} /> },
-      ]
-    },
-    {
-      title: 'SETTINGS',
-      items: [
-        { name: 'Settings', path: '/dashboard/settings', icon: <Settings size={20} /> },
+        { name: 'Suppliers', path: '/dashboard/suppliers', icon: <Truck size={20} /> },
+        { name: 'Invoices', path: '/dashboard/invoices', icon: <Calculator size={20} /> },
       ]
     }
   ];

@@ -10,6 +10,61 @@ export interface ImportSummary {
   errors: Array<{ rowNumber: number; error: string }>;
 }
 
+export const OrderService = {
+  async getOrders(filters: any) {
+    const { startDate, endDate, buyerType, supplierId, hasInvoice, hasLinkedTickets, search } = filters;
+    
+    let where: any = {};
+
+    if (startDate || endDate) {
+      where.orderDate = {};
+      if (startDate) where.orderDate.gte = new Date(startDate);
+      if (endDate) where.orderDate.lte = new Date(endDate);
+    }
+
+    if (buyerType) {
+      where.buyerType = buyerType;
+    }
+
+    if (supplierId) {
+      where.supplierId = supplierId; // uuid
+    }
+
+    if (hasInvoice !== undefined) {
+      where.hasInvoice = hasInvoice === 'true' || hasInvoice === true;
+    }
+
+    if (hasLinkedTickets !== undefined) {
+      const bHasLinkedTickets = hasLinkedTickets === 'true' || hasLinkedTickets === true;
+      if (bHasLinkedTickets) {
+        where.tickets = { some: {} };
+      } else {
+        where.tickets = { none: {} };
+      }
+    }
+
+    if (search) {
+      where.OR = [
+        { spruceOrderId: { contains: search, mode: 'insensitive' } },
+        { poNumber: { contains: search, mode: 'insensitive' } },
+        { customerName: { contains: search, mode: 'insensitive' } },
+        { product: { contains: search, mode: 'insensitive' } }
+      ];
+    }
+
+    const orders = await prisma.order.findMany({
+      where,
+      orderBy: { orderDate: 'desc' },
+      include: {
+        supplier: true,
+        tickets: true
+      }
+    });
+    
+    return orders;
+  }
+};
+
 export const OrderImportService = {
   async importFromCsv(buffer: Buffer): Promise<ImportSummary> {
     const csvText = buffer.toString('utf-8');

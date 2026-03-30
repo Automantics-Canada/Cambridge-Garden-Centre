@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import multer from 'multer';
-import { importOrdersFromCsv } from './order.controller.js';
+import { importOrdersFromCsv, getOrders } from './order.controller.js';
 import { authMiddleware, requireRole } from '../../middleware/authMiddleware.js';
 import { UserRole } from '@prisma/client';
 
@@ -12,6 +12,8 @@ const upload = multer({
 });
 
 router.use(authMiddleware);
+
+router.get('/', getOrders);
 
 router.post(
   '/import',
