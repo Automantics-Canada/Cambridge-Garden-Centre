@@ -5,12 +5,6 @@ import type {
   EmailTicketPayload,
 } from './ticket.types.js';
 
-/**
- * Simulated WhatsApp webhook:
- * multipart/form-data:
- *  - file: ticket image
- *  - fromPhone: WhatsApp sender phone (e.g. "+15551234567")
- */
 export const ingestWhatsappTicket = async (req: Request, res: Response) => {
   const file = (req as any).file as Express.Multer.File | undefined;
   const { fromPhone } = req.body as WhatsappTicketPayload;

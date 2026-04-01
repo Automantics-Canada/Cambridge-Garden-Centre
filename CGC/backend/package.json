@@ -28,7 +28,7 @@
     "typescript": "^6.0.2"
   },
   "dependencies": {
-    "@google-cloud/vision": "^5.3.5",
+    "@aws-sdk/client-textract": "^3.1020.0",
     "@prisma/client": "^6.19.2",
     "axios": "^1.13.6",
     "bcryptjs": "^3.0.3",

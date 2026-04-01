@@ -52,7 +52,7 @@ export const TicketService = {
         const ocrJob = await prisma.ocrJob.create({
             data: {
                 type: OcrJobType.TICKET,
-                provider: OcrProvider.GOOGLE_VISION, // or whatever default you use
+                provider: OcrProvider.AWS_TEXTRACT, // or whatever default you use
                 status: OcrJobStatus.PENDING,
                 ticketId: ticket.id,
             },
@@ -79,7 +79,7 @@ export const TicketService = {
         const ocrJob = await prisma.ocrJob.create({
             data: {
                 type: OcrJobType.TICKET,
-                provider: OcrProvider.GOOGLE_VISION,
+                provider: OcrProvider.AWS_TEXTRACT,
                 status: OcrJobStatus.PENDING,
                 ticketId: ticket.id,
             },
