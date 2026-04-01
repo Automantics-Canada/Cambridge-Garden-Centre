@@ -4,6 +4,7 @@ import { errorHandler } from './middleware/errorHandler.js';
 import authRoutes from './modules/auth/auth.routes.js';
 import orderRoutes from './modules/orders/order.routes.js';
 import ticketRoutes from './modules/tickets/ticket.routes.js';
+import SupplierRoutes from './modules/supplier/supplier.routes.js';
 
 const app = express();
 
@@ -19,6 +20,7 @@ app.get('/api/health', (req, res) => {
 app.use('/api/auth', authRoutes);
 app.use('/api/order', orderRoutes);
 app.use('/api/ticket', ticketRoutes);
+app.use('/api/supplier', SupplierRoutes);
 
 // Global Error Handler
 app.use(errorHandler);

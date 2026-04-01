@@ -14,7 +14,7 @@ router.use(authMiddleware);
 
 router.get('/', listSuppliers);
 
-router.post('/', requireRole([UserRole.ADMIN, UserRole.OWNER]), createSupplier);
+router.post('/', requireRole([UserRole.ADMIN, UserRole.OWNER, UserRole.AP_USER]), createSupplier);
 router.put('/:id', requireRole([UserRole.ADMIN, UserRole.OWNER]), updateSupplier);
 router.delete(
   '/:id',
