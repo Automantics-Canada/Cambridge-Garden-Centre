@@ -86,7 +86,6 @@ export const processTicketOcr = async (req: Request, res: Response) => {
 
 export const getTickets = async (req: Request, res: Response) => {
   try {
-    // Basic filter example
     const { status, supplierId } = req.query;
     const filters: any = {};
     if (status) filters.status = status as any;
