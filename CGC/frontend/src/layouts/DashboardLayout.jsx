@@ -22,7 +22,7 @@ export default function DashboardLayout() {
         { name: 'Dashboard', path: '/dashboard', icon: <LayoutDashboard size={20} /> },
         { name: 'Tickets', path: '/dashboard/tickets', icon: <Briefcase size={20} /> },
         { name: 'Orders', path: '/dashboard/orders', icon: <ShoppingCart size={20} /> },
-        { name: 'Suppliers', path: '/dashboard/suppliers', icon: <Truck size={20} /> },
+        { name: 'Suppliers', path: '/dashboard/supplier', icon: <Truck size={20} /> },
         { name: 'Invoices', path: '/dashboard/invoices', icon: <Calculator size={20} /> },
       ]
     }
