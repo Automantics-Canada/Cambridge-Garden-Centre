@@ -16,14 +16,14 @@ export const createSupplier = async (req: AuthRequest, res: Response) => {
     return res.status(400).json({ error: 'name and type are required' });
   }
 
-  const supplierType =
-    type === 'TRUCKING_COMPANY'
-      ? SupplierType.TRUCKING_COMPANY
-      : SupplierType.SUPPLIER;
+  // Validate that type is a valid SupplierType
+  if (!Object.values(SupplierType).includes(type)) {
+    return res.status(400).json({ error: `Invalid supplier type: ${type}` });
+  }
 
   const supplier = await SupplierService.create({
     name,
-    type: supplierType,
+    type,
     emailDomains: emailDomains ?? [],
     contactName,
     contactEmail,
