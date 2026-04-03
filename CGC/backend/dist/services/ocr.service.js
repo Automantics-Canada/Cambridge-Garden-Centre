@@ -21,7 +21,6 @@ export async function extractTextFromLocalImage(imageUrl) {
     if (!blocks || blocks.length === 0) {
         throw new Error('No text detected in the image');
     }
-    // Combine LINE blocks to approximate previous Vision API behavior
     const textLines = blocks
         .filter((block) => block.BlockType === 'LINE' && block.Text)
         .map((block) => block.Text);

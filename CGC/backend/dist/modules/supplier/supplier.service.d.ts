@@ -1,6 +1,19 @@
 import { SupplierType } from '@prisma/client';
 export declare const SupplierService: {
-    list(): Promise<{
+    list(): Promise<({
+        negotiatedRates: {
+            id: string;
+            unit: string;
+            supplierId: string;
+            createdAt: Date;
+            productName: string;
+            rate: import("@prisma/client/runtime/library").Decimal;
+            effectiveFrom: Date;
+            effectiveTo: Date | null;
+            notes: string | null;
+            createdById: string;
+        }[];
+    } & {
         name: string;
         id: string;
         type: import("@prisma/client").$Enums.SupplierType;
@@ -10,7 +23,7 @@ export declare const SupplierService: {
         phone: string | null;
         address: string | null;
         active: boolean;
-    }[]>;
+    })[]>;
     create(data: {
         name: string;
         type: SupplierType;
@@ -60,6 +73,38 @@ export declare const SupplierService: {
         phone: string | null;
         address: string | null;
         active: boolean;
+    }>;
+    addNegotiatedRate(supplierId: string, data: {
+        productName: string;
+        rate: number;
+        unit: string;
+        effectiveFrom: Date;
+        effectiveTo?: Date;
+        notes?: string;
+        createdById: string;
+    }): Promise<{
+        id: string;
+        unit: string;
+        supplierId: string;
+        createdAt: Date;
+        productName: string;
+        rate: import("@prisma/client/runtime/library").Decimal;
+        effectiveFrom: Date;
+        effectiveTo: Date | null;
+        notes: string | null;
+        createdById: string;
+    }>;
+    removeNegotiatedRate(rateId: string): Promise<{
+        id: string;
+        unit: string;
+        supplierId: string;
+        createdAt: Date;
+        productName: string;
+        rate: import("@prisma/client/runtime/library").Decimal;
+        effectiveFrom: Date;
+        effectiveTo: Date | null;
+        notes: string | null;
+        createdById: string;
     }>;
 };
 //# sourceMappingURL=supplier.service.d.ts.map

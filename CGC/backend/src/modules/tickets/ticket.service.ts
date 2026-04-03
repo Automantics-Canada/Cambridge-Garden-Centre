@@ -133,6 +133,29 @@ export const TicketService = {
     try {
       const extracted = await extractTextFromLocalImage(ticket.imageUrl);
       
+      const finalPoNumber = extracted.poNumber || ticket.poNumber;
+      
+      let linkedOrderId = null;
+      let ticketStatus: TicketStatus = TicketStatus.UNLINKED;
+      let linkMethod = null;
+
+      if (finalPoNumber) {
+        // Attempt to find Order by PO number
+        const matchingOrders = await prisma.order.findMany({
+          where: { poNumber: finalPoNumber },
+        });
+
+        // Link automatically if exactly one match is found
+        if (matchingOrders.length === 1) {
+          const matchingOrder = matchingOrders[0];
+          if (matchingOrder) {
+            linkedOrderId = matchingOrder.id;
+            ticketStatus = TicketStatus.LINKED;
+            linkMethod = 'AUTO';
+          }
+        }
+      }
+
       const updatedTicket = await prisma.ticket.update({
         where: { id: ticketId },
         data: {
@@ -140,9 +163,12 @@ export const TicketService = {
           ocrConfidence: 0.9,
           material: extracted.material || ticket.material,
           quantity: extracted.quantity || ticket.quantity,
-          poNumber: extracted.poNumber || ticket.poNumber,
+          poNumber: finalPoNumber,
           ticketNumber: extracted.ticketNumber || ticket.ticketNumber,
           ticketDate: extracted.ticketDate || ticket.ticketDate,
+          linkedOrderId,
+          status: ticketStatus,
+          linkMethod,
         },
       });
 

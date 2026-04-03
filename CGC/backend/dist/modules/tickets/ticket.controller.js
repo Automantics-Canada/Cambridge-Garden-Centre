@@ -1,10 +1,4 @@
 import { TicketService } from './ticket.service.js';
-/**
- * Simulated WhatsApp webhook:
- * multipart/form-data:
- *  - file: ticket image
- *  - fromPhone: WhatsApp sender phone (e.g. "+15551234567")
- */
 export const ingestWhatsappTicket = async (req, res) => {
     const file = req.file;
     const { fromPhone } = req.body;
@@ -80,7 +74,6 @@ export const processTicketOcr = async (req, res) => {
 };
 export const getTickets = async (req, res) => {
     try {
-        // Basic filter example
         const { status, supplierId } = req.query;
         const filters = {};
         if (status)

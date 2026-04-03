@@ -9,7 +9,7 @@ export const fetchSuppliers = createAsyncThunk(
       const response = await api.get('/supplier');
       return response.data;
     } catch (error) {
-      return rejectWithValue(error.response?.data?.message || 'Failed to fetch suppliers');
+      return rejectWithValue(error.response?.data?.error || error.response?.data?.message || 'Failed to fetch suppliers');
     }
   }
 );
@@ -21,7 +21,7 @@ export const createSupplier = createAsyncThunk(
       const response = await api.post('/supplier', supplierData);
       return response.data;
     } catch (error) {
-      return rejectWithValue(error.response?.data?.message || 'Failed to create supplier');
+      return rejectWithValue(error.response?.data?.error || error.response?.data?.message || 'Failed to create supplier');
     }
   }
 );
@@ -33,7 +33,7 @@ export const updateSupplier = createAsyncThunk(
       const response = await api.put(`/supplier/${id}`, data);
       return response.data;
     } catch (error) {
-      return rejectWithValue(error.response?.data?.message || 'Failed to update supplier');
+      return rejectWithValue(error.response?.data?.error || error.response?.data?.message || 'Failed to update supplier');
     }
   }
 );
@@ -45,7 +45,31 @@ export const deleteSupplier = createAsyncThunk(
       const response = await api.delete(`/supplier/${id}`);
       return id;
     } catch (error) {
-      return rejectWithValue(error.response?.data?.message || 'Failed to delete supplier');
+      return rejectWithValue(error.response?.data?.error || error.response?.data?.message || 'Failed to delete supplier');
+    }
+  }
+);
+
+export const addSupplierRate = createAsyncThunk(
+  'suppliers/addSupplierRate',
+  async ({ supplierId, data }, { rejectWithValue }) => {
+    try {
+      const response = await api.post(`/supplier/${supplierId}/rates`, data);
+      return { supplierId, rate: response.data };
+    } catch (error) {
+      return rejectWithValue(error.response?.data?.error || 'Failed to add rate');
+    }
+  }
+);
+
+export const deleteSupplierRate = createAsyncThunk(
+  'suppliers/deleteSupplierRate',
+  async ({ supplierId, rateId }, { rejectWithValue }) => {
+    try {
+      await api.delete(`/supplier/${supplierId}/rates/${rateId}`);
+      return { supplierId, rateId };
+    } catch (error) {
+      return rejectWithValue(error.response?.data?.error || 'Failed to delete rate');
     }
   }
 );
@@ -140,6 +164,41 @@ const supplierSlice = createSlice({
         state.error = null;
       })
       .addCase(deleteSupplier.rejected, (state, action) => {
+        state.loading = false;
+        state.error = action.payload;
+      });
+
+    // Add Rate
+    builder
+      .addCase(addSupplierRate.pending, (state) => {
+        state.loading = true;
+      })
+      .addCase(addSupplierRate.fulfilled, (state, action) => {
+        state.loading = false;
+        const supplier = state.suppliers.find(s => s.id === action.payload.supplierId);
+        if (supplier) {
+          if (!supplier.negotiatedRates) supplier.negotiatedRates = [];
+          supplier.negotiatedRates.push(action.payload.rate);
+        }
+      })
+      .addCase(addSupplierRate.rejected, (state, action) => {
+        state.loading = false;
+        state.error = action.payload;
+      });
+
+    // Delete Rate
+    builder
+      .addCase(deleteSupplierRate.pending, (state) => {
+        state.loading = true;
+      })
+      .addCase(deleteSupplierRate.fulfilled, (state, action) => {
+        state.loading = false;
+        const supplier = state.suppliers.find(s => s.id === action.payload.supplierId);
+        if (supplier && supplier.negotiatedRates) {
+          supplier.negotiatedRates = supplier.negotiatedRates.filter(r => r.id !== action.payload.rateId);
+        }
+      })
+      .addCase(deleteSupplierRate.rejected, (state, action) => {
         state.loading = false;
         state.error = action.payload;
       });

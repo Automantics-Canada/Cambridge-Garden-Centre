@@ -4,7 +4,11 @@ import { SupplierType } from '@prisma/client';
 export const SupplierService = {
   async list() {
     return prisma.supplier.findMany({
+      where: { active: true },
       orderBy: { name: 'asc' },
+      include: {
+        negotiatedRates: true
+      }
     });
   },
 
@@ -42,4 +46,27 @@ export const SupplierService = {
       data: { active: false },
     });
   },
+
+  async addNegotiatedRate(supplierId: string, data: {
+    productName: string;
+    rate: number;
+    unit: string;
+    effectiveFrom: Date;
+    effectiveTo?: Date;
+    notes?: string;
+    createdById: string;
+  }) {
+    return prisma.negotiatedRate.create({
+      data: {
+        ...data,
+        supplierId,
+      }
+    });
+  },
+
+  async removeNegotiatedRate(rateId: string) {
+    return prisma.negotiatedRate.delete({
+      where: { id: rateId }
+    });
+  }
 };

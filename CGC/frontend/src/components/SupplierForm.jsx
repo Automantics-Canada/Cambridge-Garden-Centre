@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { motion } from 'framer-motion';
 import toast from 'react-hot-toast';
-import { createSupplier, updateSupplier, clearError } from '../store/supplierSlice';
+import { createSupplier, updateSupplier, clearError, addSupplierRate, deleteSupplierRate } from '../store/supplierSlice';
 
 const SUPPLIER_TYPES = ['SUPPLIER', 'TRUCKING_COMPANY'];
 
@@ -12,12 +12,20 @@ export default function SupplierForm({ supplier = null, onClose }) {
   
   const [formData, setFormData] = useState({
     name: supplier?.name || '',
-    type: supplier?.type || 'VENDOR',
+    type: SUPPLIER_TYPES.includes(supplier?.type) ? supplier.type : 'SUPPLIER',
     emailDomains: supplier?.emailDomains?.join(', ') || '',
     contactName: supplier?.contactName || '',
     contactEmail: supplier?.contactEmail || '',
     phone: supplier?.phone || '',
     address: supplier?.address || '',
+  });
+
+  const [rateForm, setRateForm] = useState({
+    productName: '',
+    rate: '',
+    unit: 'ton',
+    effectiveFrom: new Date().toISOString().split('T')[0],
+    notes: '',
   });
 
   const [validationErrors, setValidationErrors] = useState({});
@@ -39,13 +47,11 @@ export default function SupplierForm({ supplier = null, onClose }) {
       errors.type = 'Supplier type is required';
     }
 
-    if (!formData.emailDomains.trim()) {
-      errors.emailDomains = 'At least one email domain is required';
-    } else {
-      const domains = formData.emailDomains.split(',').map(d => d.trim());
+    if (formData.emailDomains.trim()) {
+      const domains = formData.emailDomains.split(',').map(d => d.trim()).filter(Boolean);
       const invalidDomains = domains.filter(d => !isValidDomain(d));
       if (invalidDomains.length > 0) {
-        errors.emailDomains = 'One or more email domains are invalid';
+        errors.emailDomains = 'Invalid domain format. Use domains (e.g., gmail.com), not emails.';
       }
     }
 
@@ -58,7 +64,7 @@ export default function SupplierForm({ supplier = null, onClose }) {
     }
 
     setValidationErrors(errors);
-    return Object.keys(errors).length === 0;
+    return errors;
   };
 
   const isValidEmail = (email) => {
@@ -90,14 +96,16 @@ export default function SupplierForm({ supplier = null, onClose }) {
   const handleSubmit = async (e) => {
     e.preventDefault();
     
-    if (!validateForm()) {
-      toast.error('Please fix the validation errors');
+    const errors = validateForm();
+    const errorKeys = Object.keys(errors);
+    if (errorKeys.length > 0) {
+      toast.error(errors[errorKeys[0]]);
       return;
     }
 
     const submitData = {
       ...formData,
-      emailDomains: formData.emailDomains.split(',').map(d => d.trim()),
+      emailDomains: formData.emailDomains.trim() ? formData.emailDomains.split(',').map(d => d.trim()).filter(Boolean) : [],
     };
 
     try {
@@ -110,7 +118,35 @@ export default function SupplierForm({ supplier = null, onClose }) {
       }
       onClose();
     } catch (err) {
-      toast.error(error || 'Failed to save supplier');
+      toast.error(error || err || 'Failed to save supplier');
+    }
+  };
+
+  const handleAddRate = async (e) => {
+    e.preventDefault();
+    if (!supplier) return;
+    
+    // Quick validation
+    if (!rateForm.productName || !rateForm.rate || !rateForm.effectiveFrom) {
+      toast.error('Product name, rate, and effective from date are required');
+      return;
+    }
+
+    try {
+      await dispatch(addSupplierRate({ supplierId: supplier.id, data: rateForm })).unwrap();
+      toast.success('Rate added successfully');
+      setRateForm({ productName: '', rate: '', unit: 'ton', effectiveFrom: new Date().toISOString().split('T')[0], notes: '' });
+    } catch (err) {
+      toast.error(err || 'Failed to add rate');
+    }
+  };
+
+  const handleDeleteRate = async (rateId) => {
+    try {
+      await dispatch(deleteSupplierRate({ supplierId: supplier.id, rateId })).unwrap();
+      toast.success('Rate deleted');
+    } catch (err) {
+      toast.error(err || 'Failed to delete rate');
     }
   };
 
@@ -182,7 +218,7 @@ export default function SupplierForm({ supplier = null, onClose }) {
       {/* Email Domains */}
       <motion.div variants={itemVariants}>
         <label className="block text-sm font-medium text-gray-700 mb-2">
-          Email Domains * <span className="text-xs text-gray-500">(comma separated)</span>
+          Email Domains <span className="text-xs text-gray-500">(comma separated)</span>
         </label>
         <input
           type="text"
@@ -279,16 +315,70 @@ export default function SupplierForm({ supplier = null, onClose }) {
           {loading && (
             <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
           )}
-          {supplier ? 'Update Supplier' : 'Create Supplier'}
+          {supplier ? 'Update Supplier Details' : 'Create Supplier'}
         </button>
         <button
           type="button"
           onClick={onClose}
           className="flex-1 bg-gray-200 text-gray-700 py-2 rounded-lg font-medium hover:bg-gray-300 transition-colors"
         >
-          Cancel
+          Close
         </button>
       </motion.div>
+
+      {/* Negotiated Rates Section (Only visible when editing an existing supplier) */}
+      {supplier && (
+        <motion.div variants={itemVariants} className="pt-6 border-t mt-6">
+          <h3 className="text-lg font-semibold text-gray-900 mb-4">Negotiated Rates</h3>
+          
+          <div className="bg-gray-50 p-4 rounded-lg border mb-4">
+            <h4 className="text-sm font-medium text-gray-700 mb-3">Add New Rate</h4>
+            <div className="grid grid-cols-2 gap-3 mb-3">
+              <input type="text" placeholder="Product (e.g. Gravel)" value={rateForm.productName} onChange={e => setRateForm({...rateForm, productName: e.target.value})} className="px-3 py-2 border rounded-md text-sm" />
+              <div className="flex gap-2">
+                <input type="number" placeholder="Rate (e.g. 15.00)" step="0.01" value={rateForm.rate} onChange={e => setRateForm({...rateForm, rate: e.target.value})} className="px-3 py-2 border rounded-md text-sm flex-1" />
+                <select value={rateForm.unit} onChange={e => setRateForm({...rateForm, unit: e.target.value})} className="px-3 py-2 border rounded-md text-sm bg-white">
+                  <option value="ton">Ton</option>
+                  <option value="ea">EA</option>
+                  <option value="load">Load</option>
+                </select>
+              </div>
+              <input type="date" value={rateForm.effectiveFrom} onChange={e => setRateForm({...rateForm, effectiveFrom: e.target.value})} className="px-3 py-2 border rounded-md text-sm" />
+              <input type="text" placeholder="Notes (optional)" value={rateForm.notes} onChange={e => setRateForm({...rateForm, notes: e.target.value})} className="px-3 py-2 border rounded-md text-sm" />
+            </div>
+            <button type="button" onClick={handleAddRate} className="bg-green-600 text-white px-4 py-2 rounded-md text-sm font-medium hover:bg-green-700">Add Rate</button>
+          </div>
+
+          <div className="border rounded-lg overflow-hidden">
+            <table className="w-full text-sm text-left">
+              <thead className="bg-gray-100">
+                <tr>
+                  <th className="px-4 py-2 font-medium">Product</th>
+                  <th className="px-4 py-2 font-medium">Rate</th>
+                  <th className="px-4 py-2 font-medium">Effective</th>
+                  <th className="px-4 py-2"></th>
+                </tr>
+              </thead>
+              <tbody className="divide-y bg-white">
+                {supplier.negotiatedRates && supplier.negotiatedRates.length > 0 ? (
+                  supplier.negotiatedRates.map(rate => (
+                    <tr key={rate.id}>
+                      <td className="px-4 py-2">{rate.productName}</td>
+                      <td className="px-4 py-2">${Number(rate.rate).toFixed(2)} / {rate.unit}</td>
+                      <td className="px-4 py-2 text-gray-500">{new Date(rate.effectiveFrom).toLocaleDateString()}</td>
+                      <td className="px-4 py-2 text-right">
+                        <button type="button" onClick={() => handleDeleteRate(rate.id)} className="text-red-500 hover:underline">Remove</button>
+                      </td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr><td colSpan="4" className="px-4 py-4 text-center text-gray-500">No rates negotiated yet.</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </motion.div>
+      )}
     </motion.form>
   );
 }

@@ -5,6 +5,7 @@ import authRoutes from './modules/auth/auth.routes.js';
 import orderRoutes from './modules/orders/order.routes.js';
 import ticketRoutes from './modules/tickets/ticket.routes.js';
 import SupplierRoutes from './modules/supplier/supplier.routes.js';
+import invoiceRoutes from './modules/invoices/invoice.routes.js';
 
 const app = express();
 
@@ -19,6 +20,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/order', orderRoutes);
 app.use('/api/ticket', ticketRoutes);
 app.use('/api/supplier', SupplierRoutes);
+app.use('/api/invoice', invoiceRoutes);
 
 app.use(errorHandler);
 

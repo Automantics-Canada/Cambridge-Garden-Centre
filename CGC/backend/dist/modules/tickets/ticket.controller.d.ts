@@ -1,10 +1,4 @@
 import type { Request, Response } from 'express';
-/**
- * Simulated WhatsApp webhook:
- * multipart/form-data:
- *  - file: ticket image
- *  - fromPhone: WhatsApp sender phone (e.g. "+15551234567")
- */
 export declare const ingestWhatsappTicket: (req: Request, res: Response) => Promise<Response<any, Record<string, any>>>;
 /**
  * Simulated email webhook:
