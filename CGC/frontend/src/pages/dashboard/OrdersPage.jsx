@@ -1,10 +1,14 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import api from '../../api/axios';
-import { Search } from 'lucide-react';
+import { Search, Upload } from 'lucide-react';
+import toast from 'react-hot-toast';
+import Loader from '../../components/Loader';
 
 export default function OrdersPage() {
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
+  const fileInputRef = useRef(null);
   
   // Filter states
   const [search, setSearch] = useState('');
@@ -36,6 +40,36 @@ export default function OrdersPage() {
     }
   }, [search, startDate, endDate, buyerType, supplierId, hasInvoice, hasLinkedTickets]);
 
+  const handleFileUpload = async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    if (!file.name.endsWith('.csv')) {
+      toast.error('Please upload a valid CSV file');
+      return;
+    }
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    setIsUploading(true);
+    try {
+      const res = await api.post('/order/import', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      toast.success(`Import complete! ${res.data.createdCount} created, ${res.data.updatedCount} updated.`);
+      fetchOrders();
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed to import CSV');
+      console.error('Import error:', err);
+    } finally {
+      setIsUploading(false);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+    }
+  };
+
   useEffect(() => {
     // Debounce search slightly
     const timer = setTimeout(() => {
@@ -50,8 +84,28 @@ export default function OrdersPage() {
         <div className="sm:flex-auto">
           <h1 className="text-2xl font-semibold text-gray-900">Orders</h1>
           <p className="mt-2 text-sm text-gray-700">
-            Read-only view of all imported Spruce orders.
+            View and import Spruce orders via CSV.
           </p>
+        </div>
+        <div className="mt-4 sm:ml-16 sm:mt-0 sm:flex-none">
+          <input 
+            type="file" 
+            accept=".csv" 
+            ref={fileInputRef} 
+            onChange={handleFileUpload} 
+            className="hidden" 
+          />
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={isUploading}
+            className="flex items-center gap-2 bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg font-medium text-sm transition-colors disabled:opacity-50"
+          >
+            {isUploading ? (
+              <>Processing...</>
+            ) : (
+              <><Upload className="w-4 h-4" /> Import CSV</>
+            )}
+          </button>
         </div>
       </div>
       
@@ -134,7 +188,11 @@ export default function OrdersPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-200 bg-white">
-              {loading ? (
+              {isUploading ? (
+                <tr>
+                  <td colSpan="8"><Loader message="Importing CSV... Please wait." /></td>
+                </tr>
+              ) : loading ? (
                 <tr>
                    <td colSpan="8" className="py-12 text-center text-sm text-gray-500">Loading orders...</td>
                 </tr>

@@ -1,12 +1,48 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import api from '../../api/axios';
-import { Search, Eye, AlertCircle, CheckCircle } from 'lucide-react';
+import { Search, Eye, AlertCircle, CheckCircle, Upload } from 'lucide-react';
+import toast from 'react-hot-toast';
+import Loader from '../../components/Loader';
 
 export default function InvoicesPage() {
   const [invoices, setInvoices] = useState([]);
   const [loading, setLoading] = useState(false);
   const [selectedInvoice, setSelectedInvoice] = useState(null);
   const [disputeNote, setDisputeNote] = useState('');
+  const [isUploading, setIsUploading] = useState(false);
+  const fileInputRef = useRef(null);
+
+  const handleFileUpload = async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    if (!file.name.match(/\.(jpg|jpeg|png)$/i)) {
+      toast.error('Please upload a valid JPG or PNG file');
+      return;
+    }
+
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('fromEmail', 'mock_frontend@example.com');
+    formData.append('subject', 'Uploaded via Frontend Admin');
+
+    setIsUploading(true);
+    try {
+      await api.post('/invoice/mock-email', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      toast.success('Mock invoice uploaded and queued for processing!');
+      fetchInvoices();
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed to upload mock invoice');
+      console.error('Upload error:', err);
+    } finally {
+      setIsUploading(false);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+    }
+  };
 
   const fetchInvoices = useCallback(async () => {
     setLoading(true);
@@ -69,6 +105,26 @@ export default function InvoicesPage() {
             Review, verify, or dispute supplier invoices.
           </p>
         </div>
+        <div className="mt-4 sm:ml-16 sm:mt-0 sm:flex-none">
+          <input 
+            type="file" 
+            accept=".jpg,.jpeg,.png" 
+            ref={fileInputRef} 
+            onChange={handleFileUpload} 
+            className="hidden" 
+          />
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={isUploading}
+            className="flex items-center gap-2 bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg font-medium text-sm transition-colors disabled:opacity-50"
+          >
+            {isUploading ? (
+              <>Processing...</>
+            ) : (
+              <><Upload className="w-4 h-4" /> Upload Mock Invoice</>
+            )}
+          </button>
+        </div>
       </div>
 
       <div className="flex-1 bg-white rounded-xl border border-gray-200 shadow-sm flex flex-col overflow-hidden">
@@ -85,7 +141,9 @@ export default function InvoicesPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-200 bg-white">
-              {loading ? (
+              {isUploading ? (
+                <tr><td colSpan="6"><Loader message="Uploading Invoice... Please wait." /></td></tr>
+              ) : loading ? (
                 <tr><td colSpan="6" className="py-12 text-center text-gray-500">Loading invoices...</td></tr>
               ) : invoices.length === 0 ? (
                 <tr><td colSpan="6" className="py-12 text-center text-gray-500">No invoices found.</td></tr>
@@ -151,14 +209,22 @@ export default function InvoicesPage() {
               </div>
 
               <div className="flex flex-1 gap-6 overflow-hidden">
-                {/* PDF Viewer Side */}
-                <div className="flex-1 bg-gray-100 rounded-lg overflow-hidden border">
+                {/* Image/PDF Viewer Side */}
+                <div className="flex-1 bg-gray-100 rounded-lg overflow-hidden border relative flex items-center justify-center">
                   {selectedInvoice.fileUrl ? (
-                    <iframe 
-                      src={selectedInvoice.fileUrl} 
-                      className="w-full h-full"
-                      title="Invoice PDF"
-                    ></iframe>
+                    selectedInvoice.fileUrl.match(/\.(jpeg|jpg|gif|png|webp)$/i) ? (
+                      <img 
+                        src={selectedInvoice.fileUrl} 
+                        alt="Invoice Document"
+                        className="max-w-full max-h-full object-contain"
+                      />
+                    ) : (
+                      <iframe 
+                        src={selectedInvoice.fileUrl} 
+                        className="w-full h-full"
+                        title="Invoice PDF"
+                      ></iframe>
+                    )
                   ) : (
                     <div className="flex items-center justify-center h-full text-gray-500">No Document File Available</div>
                   )}
