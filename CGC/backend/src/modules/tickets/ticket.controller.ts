@@ -86,13 +86,26 @@ export const processTicketOcr = async (req: Request, res: Response) => {
 
 export const getTickets = async (req: Request, res: Response) => {
   try {
-    const { status, supplierId } = req.query;
+    const { status, supplierId, source, startDate, endDate, search } = req.query;
     const filters: any = {};
     if (status) filters.status = status as any;
     if (supplierId) filters.supplierId = supplierId as string;
+    if (source) filters.source = source as any;
+    if (startDate) filters.startDate = startDate as string;
+    if (endDate) filters.endDate = endDate as string;
+    if (search) filters.search = search as string;
 
     const tickets = await TicketService.getTickets(filters);
     return res.status(200).json(tickets);
+  } catch (error: any) {
+    return res.status(500).json({ error: error.message || 'Unexpected error' });
+  }
+};
+
+export const getTicketStats = async (req: Request, res: Response) => {
+  try {
+    const stats = await TicketService.getTicketStats();
+    return res.status(200).json(stats);
   } catch (error: any) {
     return res.status(500).json({ error: error.message || 'Unexpected error' });
   }
@@ -102,6 +115,20 @@ export const getTicketById = async (req: Request, res: Response) => {
   try {
     const ticket = await TicketService.getTicketById(req.params.id as string);
     if (!ticket) return res.status(404).json({ error: 'Ticket not found' });
+    return res.status(200).json(ticket);
+  } catch (error: any) {
+    return res.status(500).json({ error: error.message || 'Unexpected error' });
+  }
+};
+
+export const linkTicketToOrder = async (req: Request, res: Response) => {
+  try {
+    const { orderId } = req.body;
+    if (!orderId) {
+      return res.status(400).json({ error: 'orderId is required' });
+    }
+    const userId = (req as any).user?.id; // Assuming auth middleware attaches user
+    const ticket = await TicketService.linkTicketToOrder(req.params.id as string, orderId, userId);
     return res.status(200).json(ticket);
   } catch (error: any) {
     return res.status(500).json({ error: error.message || 'Unexpected error' });

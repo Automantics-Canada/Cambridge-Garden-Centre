@@ -160,7 +160,7 @@ export const TicketService = {
         where: { id: ticketId },
         data: {
           ocrRawText: extracted.rawText,
-          ocrConfidence: 0.9,
+          ocrConfidence: extracted.ocrConfidence,
           material: extracted.material || ticket.material,
           quantity: extracted.quantity || ticket.quantity,
           poNumber: finalPoNumber,
@@ -202,12 +202,46 @@ export const TicketService = {
   /**
    * Get all tickets with optional filtering
    */
-  async getTickets(filters?: { status?: TicketStatus; supplierId?: string }) {
+  async getTickets(filters?: { 
+    status?: TicketStatus; 
+    supplierId?: string;
+    source?: TicketSource;
+    startDate?: string;
+    endDate?: string;
+    search?: string;
+  }) {
+    const where: any = {};
+
+    if (filters?.status) where.status = filters.status;
+    if (filters?.supplierId) where.supplierId = filters.supplierId;
+    if (filters?.source) where.source = filters.source;
+
+    if (filters?.startDate || filters?.endDate) {
+      where.receivedAt = {};
+      if (filters.startDate) where.receivedAt.gte = new Date(filters.startDate);
+      if (filters.endDate) where.receivedAt.lte = new Date(filters.endDate);
+    }
+
+    if (filters?.search) {
+      where.OR = [
+        { ticketNumber: { contains: filters.search, mode: 'insensitive' } },
+        { poNumber: { contains: filters.search, mode: 'insensitive' } },
+        { material: { contains: filters.search, mode: 'insensitive' } },
+      ];
+    }
+
     return prisma.ticket.findMany({
-      where: filters || {},
+      where,
       orderBy: { receivedAt: 'desc' },
-      include: { supplier: true, driver: true },
+      include: { supplier: true, driver: true, linkedOrder: true },
     });
+  },
+
+  async getTicketStats() {
+    const unlinkedCount = await prisma.ticket.count({
+      where: { status: TicketStatus.UNLINKED },
+    });
+    return { unlinkedCount };
   },
 
   /**
@@ -216,7 +250,7 @@ export const TicketService = {
   async getTicketById(id: string) {
     return prisma.ticket.findUnique({
       where: { id },
-      include: { supplier: true, driver: true, ocrJobs: true },
+      include: { supplier: true, driver: true, ocrJobs: true, linkedOrder: true },
     });
   },
 
@@ -224,9 +258,30 @@ export const TicketService = {
    * Update a ticket
    */
   async updateTicket(id: string, data: any) {
+    // If we're updating linkedOrderId manually, set linkMethod and status
+    if (data.linkedOrderId && data.linkedOrderId !== undefined) {
+      data.status = TicketStatus.LINKED;
+      data.linkMethod = 'MANUAL';
+    } else if (data.linkedOrderId === null) {
+      data.status = TicketStatus.UNLINKED;
+      data.linkMethod = null;
+    }
+
     return prisma.ticket.update({
       where: { id },
       data,
+    });
+  },
+
+  async linkTicketToOrder(ticketId: string, orderId: string, userId?: string) {
+    return prisma.ticket.update({
+      where: { id: ticketId },
+      data: {
+        linkedOrderId: orderId,
+        status: TicketStatus.LINKED,
+        linkMethod: 'MANUAL',
+        linkedById: userId || null,
+      },
     });
   },
 
@@ -238,4 +293,4 @@ export const TicketService = {
       where: { id },
     });
   },
-};
+};

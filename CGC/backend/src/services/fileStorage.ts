@@ -14,10 +14,6 @@ async function ensureInvoiceDir() {
   await fs.mkdir(INVOICE_DIR, { recursive: true });
 }
 
-/**
- * Save a ticket image buffer to /uploads/tickets and return its public path.
- * Later you can swap this out for R2/S3 with the same function signature.
- */
 export async function saveTicketImage(
   buffer: Buffer,
   originalName: string
@@ -30,8 +26,7 @@ export async function saveTicketImage(
 
   await fs.writeFile(fullPath, buffer);
 
-  // Served by Express as /uploads/...
-  return `/uploads/tickets/${fileName}`;
+   return `/uploads/tickets/${fileName}`;
 }
 
 export async function saveInvoiceImage(

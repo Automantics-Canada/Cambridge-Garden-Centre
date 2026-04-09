@@ -15,6 +15,7 @@ export interface OcrExtractionResult {
   quantity: number | null;
   poNumber: string | null;
   ticketNumber: string | null;
+  ocrConfidence: number;
 }
 
 export async function extractTextFromLocalImage(imageUrl: string): Promise<OcrExtractionResult> {
@@ -42,18 +43,24 @@ export async function extractTextFromLocalImage(imageUrl: string): Promise<OcrEx
     throw new Error('No text detected in the image');
   }
 
-  const textLines = blocks
-    .filter((block: any) => block.BlockType === 'LINE' && block.Text)
-    .map((block: any) => block.Text as string);
-
+  const lineBlocks = blocks.filter((block: any) => block.BlockType === 'LINE' && block.Text);
+  const textLines = lineBlocks.map((block: any) => block.Text as string);
   const rawText = textLines.join('\n');
 
-  return parseTicketData(rawText);
+  // Calculate average confidence
+  const totalConfidence = lineBlocks.reduce((acc: number, block: any) => acc + (block.Confidence || 0), 0);
+  const averageConfidence = lineBlocks.length > 0 ? totalConfidence / lineBlocks.length : 0;
+
+  const extraction = parseTicketData(rawText);
+  return {
+    ...extraction,
+    ocrConfidence: averageConfidence,
+  };
 }
 
-function parseTicketData(text: string): OcrExtractionResult {
+function parseTicketData(text: string): Omit<OcrExtractionResult, 'ocrConfidence'> {
   
-  const result: OcrExtractionResult = {
+  const result: Omit<OcrExtractionResult, 'ocrConfidence'> = {
     rawText: text,
     supplierName: null,
     ticketDate: null,

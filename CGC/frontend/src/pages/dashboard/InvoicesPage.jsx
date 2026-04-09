@@ -214,13 +214,13 @@ export default function InvoicesPage() {
                   {selectedInvoice.fileUrl ? (
                     selectedInvoice.fileUrl.match(/\.(jpeg|jpg|gif|png|webp)$/i) ? (
                       <img 
-                        src={selectedInvoice.fileUrl} 
+                        src={selectedInvoice.fileUrl.startsWith('http') ? selectedInvoice.fileUrl : `http://localhost:4000${selectedInvoice.fileUrl}`} 
                         alt="Invoice Document"
                         className="max-w-full max-h-full object-contain"
                       />
                     ) : (
                       <iframe 
-                        src={selectedInvoice.fileUrl} 
+                        src={selectedInvoice.fileUrl.startsWith('http') ? selectedInvoice.fileUrl : `http://localhost:4000${selectedInvoice.fileUrl}`} 
                         className="w-full h-full"
                         title="Invoice PDF"
                       ></iframe>

@@ -5,8 +5,10 @@ import {
   ingestEmailTicket,
   processTicketOcr,
   getTickets,
+  getTicketStats,
   getTicketById,
   updateTicket,
+  linkTicketToOrder,
   deleteTicket,
 } from './ticket.controller.js';
 
@@ -23,8 +25,10 @@ router.post('/email', upload.single('file'), ingestEmailTicket);
 
 router.post('/:id/process-ocr', processTicketOcr);
 
+router.get('/stats', getTicketStats);
 router.get('/', getTickets);
 router.get('/:id', getTicketById);
+router.post('/:id/link', linkTicketToOrder);
 router.put('/:id', updateTicket);
 router.delete('/:id', deleteTicket);
 
