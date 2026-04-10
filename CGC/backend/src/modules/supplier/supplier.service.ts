@@ -16,6 +16,7 @@ export const SupplierService = {
     name: string;
     type: SupplierType;
     emailDomains: string[];
+    keywords: string[];
     contactName?: string;
     contactEmail?: string;
     phone?: string;
@@ -28,6 +29,7 @@ export const SupplierService = {
     name: string;
     type: SupplierType;
     emailDomains: string[];
+    keywords: string[];
     contactName?: string;
     contactEmail?: string;
     phone?: string;
@@ -67,6 +69,24 @@ export const SupplierService = {
   async removeNegotiatedRate(rateId: string) {
     return prisma.negotiatedRate.delete({
       where: { id: rateId }
+    });
+  },
+
+  async updateNegotiatedRate(rateId: string, data: Partial<{
+    productName: string;
+    rate: number;
+    unit: string;
+    effectiveFrom: Date;
+    effectiveTo?: Date;
+    notes?: string;
+  }>) {
+    return prisma.negotiatedRate.update({
+      where: { id: rateId },
+      data: {
+        ...data,
+        effectiveFrom: data.effectiveFrom ? new Date(data.effectiveFrom) : undefined,
+        effectiveTo: data.effectiveTo ? new Date(data.effectiveTo) : undefined,
+      }
     });
   }
 };

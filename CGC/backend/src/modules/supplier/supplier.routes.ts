@@ -5,7 +5,8 @@ import {
   updateSupplier,
   deleteSupplier,
   addRate,
-  removeRate
+  removeRate,
+  updateRate
 } from './supplier.controller.js';
 import { authMiddleware, requireRole } from '../../middleware/authMiddleware.js';
 import { UserRole } from '@prisma/client';
@@ -25,6 +26,7 @@ router.delete(
 );
 
 router.post('/:id/rates', requireRole([UserRole.ADMIN, UserRole.OWNER, UserRole.AP_USER]), addRate);
+router.patch('/:id/rates/:rateId', requireRole([UserRole.ADMIN, UserRole.OWNER, UserRole.AP_USER]), updateRate);
 router.delete('/:id/rates/:rateId', requireRole([UserRole.ADMIN, UserRole.OWNER, UserRole.AP_USER]), removeRate);
 
 export default router;

@@ -201,47 +201,60 @@ export default function OrdersPage() {
                    <td colSpan="8" className="py-12 text-center text-sm text-gray-500">No orders found matching criteria.</td>
                 </tr>
               ) : (
-                orders.map((order) => (
-                  <tr key={order.id} className="hover:bg-gray-50">
-                    <td className="whitespace-nowrap py-4 pl-4 pr-3 text-sm sm:pl-6">
-                      <div className="font-medium text-gray-900">{order.spruceOrderId}</div>
-                      <div className="text-gray-500 text-xs">PO: {order.poNumber || '-'}</div>
-                    </td>
-                    <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-900">
-                      {order.customerName}
-                    </td>
-                    <td className="whitespace-nowrap px-3 py-4 text-sm">
-                      <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${
-                        order.buyerType === 'CONTRACTOR' ? 'bg-blue-100 text-blue-800' : 'bg-green-100 text-green-800'
-                      }`}>
-                        {order.buyerType}
-                      </span>
-                    </td>
-                    <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-900">
-                      {order.product}
-                    </td>
-                    <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-500">
-                      {order.quantity} {order.unit}
-                    </td>
-                    <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-500">
-                      {order.supplier?.name || '-'}
-                    </td>
-                    <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-500">
-                      {new Date(order.orderDate).toLocaleDateString()}
-                    </td>
-                    <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-500">
-                      {order.hasInvoice ? (
-                        <span className="inline-flex items-center rounded-full bg-green-100 px-2.5 py-0.5 text-xs font-medium text-green-800">
-                          Yes
+                orders.map((order) => {
+                  const hasGaps = !order.poNumber && (!order.tickets || order.tickets.length === 0);
+                  return (
+                    <tr key={order.id} className={`${hasGaps ? 'bg-amber-50 hover:bg-amber-100' : 'hover:bg-gray-50'}`}>
+                      <td className="whitespace-nowrap py-4 pl-4 pr-3 text-sm sm:pl-6">
+                        <div className="font-medium text-gray-900 flex items-center gap-2">
+                          {order.spruceOrderId}
+                          {hasGaps && (
+                            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-200 text-amber-800 uppercase tracking-tighter">
+                              Needs Attention
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-gray-500 text-xs">PO: {order.poNumber || <span className="text-red-400 italic font-medium">None</span>}</div>
+                      </td>
+                      <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-900 font-medium">
+                        {order.customerName}
+                      </td>
+                      <td className="whitespace-nowrap px-3 py-4 text-sm">
+                        <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider ${
+                          order.buyerType === 'CONTRACTOR' ? 'bg-indigo-100 text-indigo-800 border border-indigo-200' : 'bg-green-100 text-green-800 border border-green-200'
+                        }`}>
+                          {order.buyerType}
                         </span>
-                      ) : (
-                        <span className="inline-flex items-center rounded-full bg-gray-100 px-2.5 py-0.5 text-xs font-medium text-gray-800">
-                          No
-                        </span>
-                      )}
-                    </td>
-                  </tr>
-                ))
+                      </td>
+                      <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-900">
+                        {order.product}
+                      </td>
+                      <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-500 font-medium italic">
+                        {order.quantity} {order.unit}
+                      </td>
+                      <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-500">
+                        {order.supplier?.name || '-'}
+                      </td>
+                      <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-500">
+                        {new Date(order.orderDate).toLocaleDateString()}
+                      </td>
+                      <td className="whitespace-nowrap px-3 py-4 text-sm">
+                        {order.hasInvoice ? (
+                          <div className="flex flex-col">
+                            <span className="inline-flex items-center rounded-full bg-green-100 px-2.5 py-0.5 text-[10px] font-bold uppercase text-green-800 w-fit">
+                              Invoiced
+                            </span>
+                            <span className="text-[10px] text-gray-400 mt-1">{order.invoiceNumber}</span>
+                          </div>
+                        ) : (
+                          <span className="inline-flex items-center rounded-full bg-gray-100 px-2.5 py-0.5 text-[10px] font-bold uppercase text-gray-500">
+                            Waiting
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>

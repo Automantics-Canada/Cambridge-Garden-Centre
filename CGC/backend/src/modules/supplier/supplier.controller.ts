@@ -9,7 +9,7 @@ export const listSuppliers = async (_req: AuthRequest, res: Response) => {
 };
 
 export const createSupplier = async (req: AuthRequest, res: Response) => {
-  const { name, type, emailDomains, contactName, contactEmail, phone, address } =
+  const { name, type, emailDomains, keywords, contactName, contactEmail, phone, address } =
     req.body;
 
   if (!name || !type) {
@@ -25,6 +25,7 @@ export const createSupplier = async (req: AuthRequest, res: Response) => {
     name,
     type,
     emailDomains: emailDomains ?? [],
+    keywords: keywords ?? [],
     contactName,
     contactEmail,
     phone,
@@ -79,4 +80,11 @@ export const removeRate = async (req: AuthRequest, res: Response) => {
   const { rateId } = req.params;
   await SupplierService.removeNegotiatedRate(rateId as string);
   res.json({ success: true });
+};
+
+export const updateRate = async (req: AuthRequest, res: Response) => {
+  const { rateId } = req.params;
+  const data = req.body;
+  const updated = await SupplierService.updateNegotiatedRate(rateId as string, data);
+  res.json(updated);
 };

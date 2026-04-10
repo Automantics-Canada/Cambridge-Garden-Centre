@@ -14,6 +14,7 @@ export default function SupplierForm({ supplier = null, onClose }) {
     name: supplier?.name || '',
     type: SUPPLIER_TYPES.includes(supplier?.type) ? supplier.type : 'SUPPLIER',
     emailDomains: supplier?.emailDomains?.join(', ') || '',
+    keywords: supplier?.keywords?.join(', ') || '',
     contactName: supplier?.contactName || '',
     contactEmail: supplier?.contactEmail || '',
     phone: supplier?.phone || '',
@@ -106,6 +107,7 @@ export default function SupplierForm({ supplier = null, onClose }) {
     const submitData = {
       ...formData,
       emailDomains: formData.emailDomains.trim() ? formData.emailDomains.split(',').map(d => d.trim()).filter(Boolean) : [],
+      keywords: formData.keywords.trim() ? formData.keywords.split(',').map(k => k.trim()).filter(Boolean) : [],
     };
 
     try {
@@ -233,6 +235,21 @@ export default function SupplierForm({ supplier = null, onClose }) {
         {validationErrors.emailDomains && (
           <p className="text-red-500 text-sm mt-1">{validationErrors.emailDomains}</p>
         )}
+      </motion.div>
+
+      {/* Keywords */}
+      <motion.div variants={itemVariants}>
+        <label className="block text-sm font-medium text-gray-700 mb-2">
+          Identification Keywords <span className="text-xs text-gray-500">(comma separated, for WhatsApp/OCR)</span>
+        </label>
+        <input
+          type="text"
+          name="keywords"
+          value={formData.keywords}
+          onChange={handleChange}
+          placeholder="e.g. DUFFERIN, CGC, Miller Paving"
+          className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition"
+        />
       </motion.div>
 
       {/* Contact Name */}

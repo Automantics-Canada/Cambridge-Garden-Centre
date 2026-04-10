@@ -6,11 +6,13 @@ import DashboardLayout from './layouts/DashboardLayout';
 import Dashboard from './pages/dashboard/Dashboard';
 import OrdersPage from './pages/dashboard/OrdersPage';
 import InvoicesPage from './pages/dashboard/InvoicesPage';
+import InvoiceDetailPage from './pages/dashboard/InvoiceDetailPage';
 import TicketsPage from './pages/dashboard/TicketsPage';
 import Login from './pages/Login';
 import Register from './pages/Register';
 import './App.css';
 import SupplierPage from './pages/dashboard/SupplierPage';
+import RatesPage from './pages/dashboard/RatesPage';
 
 const ProtectedRoute = ({ children }) => {
   const isAuthenticated = useSelector((state) => state.auth.isAuthenticated);
@@ -34,8 +36,10 @@ function App() {
           <Route index element={<Dashboard />} />
           <Route path="orders" element={<OrdersPage />} />
           <Route path="invoices" element={<InvoicesPage />} />
+          <Route path="invoices/:id" element={<InvoiceDetailPage />} />
           <Route path="tickets" element={<TicketsPage />} />
           <Route path="supplier" element={<SupplierPage />} />
+          <Route path="rates" element={<RatesPage />} />
         </Route>
       </Routes>
     </BrowserRouter>

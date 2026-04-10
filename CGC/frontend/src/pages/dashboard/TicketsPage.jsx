@@ -32,11 +32,21 @@ export default function TicketsPage() {
   const [source, setSource] = useState('');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
+  const [suppliers, setSuppliers] = useState([]);
 
   // Linking
   const [orderSearch, setOrderSearch] = useState('');
   const [orderResults, setOrderResults] = useState([]);
   const [searchingOrders, setSearchingOrders] = useState(false);
+
+  const fetchSuppliers = async () => {
+    try {
+      const res = await api.get('/supplier');
+      setSuppliers(res.data);
+    } catch (err) {
+      console.error('Error fetching suppliers:', err);
+    }
+  };
 
   const fetchStats = async () => {
     try {
@@ -71,6 +81,7 @@ export default function TicketsPage() {
   useEffect(() => {
     fetchTickets();
     fetchStats();
+    fetchSuppliers();
   }, [fetchTickets]);
 
   const handleUpdateTicket = async (id, data) => {
@@ -185,6 +196,20 @@ export default function TicketsPage() {
                 onChange={(e) => setSearch(e.target.value)}
               />
             </div>
+          </div>
+
+          <div className="w-48">
+            <label className="block text-xs font-medium text-gray-700 mb-1">Supplier</label>
+            <select 
+              className="w-full p-2 border rounded-lg text-sm bg-white"
+              value={supplierId}
+              onChange={(e) => setSupplierId(e.target.value)}
+            >
+              <option value="">All Suppliers</option>
+              {suppliers.map(s => (
+                <option key={s.id} value={s.id}>{s.name}</option>
+              ))}
+            </select>
           </div>
 
           <div className="w-40">

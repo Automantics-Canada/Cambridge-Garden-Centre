@@ -261,6 +261,7 @@ model Supplier {
   name           String
   type           SupplierType
   emailDomains   String[]
+  keywords       String[]
   contactName    String?
   contactEmail   String?
   phone          String?

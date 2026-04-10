@@ -15,5 +15,6 @@ router.get('/', InvoiceController.getInvoices);
 router.get('/:id', InvoiceController.getInvoiceById);
 router.post('/:id/verify', InvoiceController.verifyInvoice);
 router.post('/:id/dispute', InvoiceController.disputeInvoice);
+router.post('/:id/reopen', InvoiceController.reopenInvoice);
 
 export default router;
