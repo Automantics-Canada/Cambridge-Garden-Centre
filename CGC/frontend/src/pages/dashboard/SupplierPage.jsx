@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Plus, Edit, Trash2, AlertCircle } from 'lucide-react';
+import { Plus, Edit, Trash2, AlertCircle, ChevronDown, Check, FileText } from 'lucide-react';
+import clsx from 'clsx';
 import toast from 'react-hot-toast';
 import { fetchSuppliers, deleteSupplier, clearSuccess, clearError } from '../../store/supplierSlice';
 import Modal from '../../components/Modal';
@@ -16,6 +17,7 @@ export default function SupplierPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [filterType, setFilterType] = useState('');
   const [deleteConfirm, setDeleteConfirm] = useState(null);
+  const [expandedSupplierId, setExpandedSupplierId] = useState(null);
 
   useEffect(() => {
     dispatch(fetchSuppliers());
@@ -170,72 +172,125 @@ export default function SupplierPage() {
             <table className="w-full">
               <thead>
                 <tr className="bg-gray-50 border-b border-gray-200">
+                  <th className="px-6 py-4 font-semibold text-gray-900 w-10"></th>
                   <th className="text-left px-6 py-4 font-semibold text-gray-900">Name</th>
                   <th className="text-left px-6 py-4 font-semibold text-gray-900">Type</th>
                   <th className="text-left px-6 py-4 font-semibold text-gray-900">Contact</th>
                   <th className="text-left px-6 py-4 font-semibold text-gray-900">Email</th>
-                  <th className="text-left px-6 py-4 font-semibold text-gray-900">Domains</th>
+                  <th className="text-left px-6 py-4 font-semibold text-gray-900">Rates</th>
                   <th className="text-right px-6 py-4 font-semibold text-gray-900">Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {filteredSuppliers.map((supplier, index) => (
-                  <motion.tr
-                    key={supplier.id}
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: index * 0.05 }}
-                    className="border-b border-gray-200 hover:bg-gray-50 transition-colors"
-                  >
-                    <td className="px-6 py-4">
-                      <p className="font-medium text-gray-900">{supplier.name}</p>
-                    </td>
-                    <td className="px-6 py-4">
-                      <span className="inline-block px-3 py-1 bg-blue-100 text-blue-800 text-xs font-medium rounded-full">
-                        {supplier.type}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4">
-                      <p className="text-gray-700">{supplier.contactName || '-'}</p>
-                    </td>
-                    <td className="px-6 py-4">
-                      <p className="text-gray-600 text-sm">{supplier.contactEmail || '-'}</p>
-                    </td>
-                    <td className="px-6 py-4">
-                      <div className="flex flex-wrap gap-1">
-                        {supplier.emailDomains && supplier.emailDomains.slice(0, 2).map((domain, i) => (
-                          <span key={i} className="text-xs bg-gray-100 text-gray-700 px-2 py-1 rounded">
-                            {domain}
-                          </span>
-                        ))}
-                        {supplier.emailDomains && supplier.emailDomains.length > 2 && (
-                          <span className="text-xs bg-gray-100 text-gray-700 px-2 py-1 rounded">
-                            +{supplier.emailDomains.length - 2}
-                          </span>
-                        )}
-                      </div>
-                    </td>
-                    <td className="px-6 py-4">
-                      <div className="flex justify-end gap-3">
-                        <motion.button
-                          onClick={() => handleEdit(supplier)}
-                          whileHover={{ scale: 1.1 }}
-                          whileTap={{ scale: 0.9 }}
-                          className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                  <>
+                    <motion.tr
+                      key={supplier.id}
+                      initial={{ opacity: 0, y: 20 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: index * 0.05 }}
+                      className={clsx(
+                        "border-b border-gray-200 hover:bg-gray-50 transition-colors cursor-pointer",
+                        expandedSupplierId === supplier.id && "bg-green-50/30"
+                      )}
+                      onClick={() => setExpandedSupplierId(expandedSupplierId === supplier.id ? null : supplier.id)}
+                    >
+                      <td className="px-6 py-4">
+                        <ChevronDown 
+                          size={18} 
+                          className={clsx(
+                            "text-gray-400 transition-transform",
+                            expandedSupplierId === supplier.id && "rotate-180 text-green-600"
+                          )} 
+                        />
+                      </td>
+                      <td className="px-6 py-4">
+                        <p className="font-medium text-gray-900">{supplier.name}</p>
+                      </td>
+                      <td className="px-6 py-4">
+                        <span className="inline-block px-3 py-1 bg-blue-100 text-blue-800 text-xs font-medium rounded-full">
+                          {supplier.type}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4">
+                        <p className="text-gray-700">{supplier.contactName || '-'}</p>
+                      </td>
+                      <td className="px-6 py-4">
+                        <p className="text-gray-600 text-sm">{supplier.contactEmail || '-'}</p>
+                      </td>
+                      <td className="px-6 py-4">
+                        <div className="flex items-center gap-1 text-xs font-bold text-green-700">
+                          <Check size={12} /> {supplier.negotiatedRates?.length || 0} Products
+                        </div>
+                      </td>
+                      <td className="px-6 py-4">
+                        <div className="flex justify-end gap-3">
+                          <motion.button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleEdit(supplier);
+                            }}
+                            whileHover={{ scale: 1.1 }}
+                            whileTap={{ scale: 0.9 }}
+                            className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors border border-transparent hover:border-blue-100"
+                            title="Edit Basic Info"
+                          >
+                            <Edit size={18} />
+                          </motion.button>
+                          <motion.button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDelete(supplier);
+                            }}
+                            whileHover={{ scale: 1.1 }}
+                            whileTap={{ scale: 0.9 }}
+                            className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors border border-transparent hover:border-red-100"
+                            title="Delete Supplier"
+                          >
+                            <Trash2 size={18} />
+                          </motion.button>
+                        </div>
+                      </td>
+                    </motion.tr>
+                    
+                    {/* Expanded Rates Section */}
+                    <AnimatePresence>
+                      {expandedSupplierId === supplier.id && (
+                        <motion.tr
+                          initial={{ opacity: 0, height: 0 }}
+                          animate={{ opacity: 1, height: 'auto' }}
+                          exit={{ opacity: 0, height: 0 }}
+                          className="bg-gray-50/50"
                         >
-                          <Edit size={18} />
-                        </motion.button>
-                        <motion.button
-                          onClick={() => handleDelete(supplier)}
-                          whileHover={{ scale: 1.1 }}
-                          whileTap={{ scale: 0.9 }}
-                          className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                        >
-                          <Trash2 size={18} />
-                        </motion.button>
-                      </div>
-                    </td>
-                  </motion.tr>
+                          <td colSpan="7" className="px-6 py-0 overflow-hidden">
+                            <div className="py-4 border-l-4 border-green-500 ml-2 pl-4 mb-4">
+                              <h4 className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-3 flex items-center gap-2">
+                                <FileText size={14} className="text-green-600" /> Negotiated Rates & Products
+                              </h4>
+                              
+                              {supplier.negotiatedRates && supplier.negotiatedRates.length > 0 ? (
+                                <div className="space-y-2">
+                                  {supplier.negotiatedRates.map((rate) => (
+                                    <div key={rate.id} className="bg-white border rounded-lg p-3 shadow-xs flex justify-between items-center group hover:shadow-md transition-shadow">
+                                      <div>
+                                        <p className="text-sm font-bold text-gray-900">{rate.productName}</p>
+                                        <p className="text-[10px] text-gray-500 uppercase">{rate.unit} • Effective {new Date(rate.effectiveFrom).toLocaleDateString()}</p>
+                                      </div>
+                                      <div className="text-right">
+                                        <p className="text-sm font-black text-green-700 font-mono">${Number(rate.rate).toFixed(2)}</p>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : (
+                                <p className="text-sm text-gray-500 italic">No negotiated rates defined for this supplier.</p>
+                              )}
+                            </div>
+                          </td>
+                        </motion.tr>
+                      )}
+                    </AnimatePresence>
+                  </>
                 ))}
               </tbody>
             </table>

@@ -46,7 +46,7 @@ export default function InvoiceDetailPage() {
   const fetchInvoice = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await api.get(`/invoice/${id}`);
+      const res = await api.get(`/api/invoices/${id}`);
       setInvoice(res.data);
       if (res.data.disputeNote) setDisputeNote(res.data.disputeNote);
     } catch (err) {
@@ -63,7 +63,7 @@ export default function InvoiceDetailPage() {
 
   const handleVerify = async () => {
     try {
-      await api.post(`/invoice/${id}/verify`);
+      await api.post(`/api/invoices/${id}/verify`);
       toast.success('Invoice verified successfully');
       fetchInvoice();
     } catch (err) {
@@ -77,7 +77,7 @@ export default function InvoiceDetailPage() {
       return;
     }
     try {
-      await api.post(`/invoice/${id}/dispute`, { note: disputeNote });
+      await api.post(`/api/invoices/${id}/dispute`, { note: disputeNote });
       toast.success('Invoice marked as disputed');
       fetchInvoice();
     } catch (err) {
@@ -91,7 +91,7 @@ export default function InvoiceDetailPage() {
       return;
     }
     try {
-      await api.post(`/invoice/${id}/reopen`, { reason: reopenReason });
+      await api.post(`/api/invoices/${id}/reopen`, { reason: reopenReason });
       toast.success('Invoice reopened for review');
       setShowReopenDialog(false);
       setReopenReason('');

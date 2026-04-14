@@ -41,7 +41,7 @@ export default function TicketsPage() {
 
   const fetchSuppliers = async () => {
     try {
-      const res = await api.get('/supplier');
+      const res = await api.get('/api/suppliers');
       setSuppliers(res.data);
     } catch (err) {
       console.error('Error fetching suppliers:', err);
@@ -50,7 +50,7 @@ export default function TicketsPage() {
 
   const fetchStats = async () => {
     try {
-      const res = await api.get('/ticket/stats');
+      const res = await api.get('/api/tickets/stats');
       setStats(res.data);
     } catch (err) {
       console.error('Error fetching ticket stats:', err);
@@ -68,7 +68,7 @@ export default function TicketsPage() {
         startDate,
         endDate
       };
-      const res = await api.get('/ticket', { params });
+      const res = await api.get('/api/tickets', { params });
       setTickets(res.data);
     } catch (err) {
       console.error('Error fetching tickets:', err);
@@ -86,13 +86,13 @@ export default function TicketsPage() {
 
   const handleUpdateTicket = async (id, data) => {
     try {
-      await api.put(`/ticket/${id}`, data);
+      await api.put(`/api/tickets/${id}`, data);
       toast.success('Ticket updated');
       fetchTickets();
       fetchStats();
       if (selectedTicket?.id === id) {
         // Refresh details
-        const res = await api.get(`/ticket/${id}`);
+        const res = await api.get(`/api/tickets/${id}`);
         setSelectedTicket(res.data);
       }
     } catch (err) {
@@ -102,7 +102,7 @@ export default function TicketsPage() {
 
   const handleLinkToOrder = async (ticketId, orderId) => {
     try {
-      await api.post(`/ticket/${ticketId}/link`, { orderId });
+      await api.post(`/api/tickets/${ticketId}/link`, { orderId });
       toast.success('Ticket linked to order');
       setSelectedTicket(null);
       fetchTickets();
@@ -119,7 +119,7 @@ export default function TicketsPage() {
     }
     setSearchingOrders(true);
     try {
-      const res = await api.get('/order', { params: { search: query } });
+      const res = await api.get('/api/orders', { params: { search: query } });
       setOrderResults(res.data);
     } catch (err) {
       console.error('Order search error:', err);

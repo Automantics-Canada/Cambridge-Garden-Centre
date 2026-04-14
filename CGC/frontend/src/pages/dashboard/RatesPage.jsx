@@ -37,8 +37,8 @@ export default function RatesPage() {
     setLoading(true);
     try {
       const [resSuppliers, resSuppliersFull] = await Promise.all([
-        api.get('/supplier'),
-        api.get('/supplier') // Reusing as rates are usually fetched nested or from a rates endpoint. 
+        api.get('/api/suppliers'),
+        api.get('/api/suppliers') // Reusing as rates are usually fetched nested or from a rates endpoint. 
                              // Let's assume we want all rates from all suppliers.
       ]);
       setSuppliers(resSuppliers.data);
@@ -93,10 +93,10 @@ export default function RatesPage() {
 
     try {
       if (editingRate) {
-        await api.patch(`/supplier/${formData.supplierId}/rates/${editingRate.id}`, formData);
+        await api.patch(`/api/suppliers/${formData.supplierId}/rates/${editingRate.id}`, formData);
         toast.success('Rate updated successfully');
       } else {
-        await api.post(`/supplier/${formData.supplierId}/rates`, formData);
+        await api.post(`/api/suppliers/${formData.supplierId}/rates`, formData);
         toast.success('New rate added successfully');
       }
       fetchData();
@@ -109,7 +109,7 @@ export default function RatesPage() {
   const handleDelete = async (rate) => {
     if (!window.confirm(`Are you sure you want to delete the rate for "${rate.productName}"?`)) return;
     try {
-      await api.delete(`/supplier/${rate.supplierId}/rates/${rate.id}`);
+      await api.delete(`/api/suppliers/${rate.supplierId}/rates/${rate.id}`);
       toast.success('Rate deleted');
       fetchData();
     } catch (err) {

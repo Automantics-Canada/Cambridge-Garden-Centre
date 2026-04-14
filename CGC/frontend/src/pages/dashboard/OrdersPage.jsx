@@ -31,7 +31,7 @@ export default function OrdersPage() {
       if (hasInvoice) params.hasInvoice = hasInvoice === 'yes';
       if (hasLinkedTickets) params.hasLinkedTickets = hasLinkedTickets === 'yes';
 
-      const res = await api.get('/order', { params });
+      const res = await api.get('/api/orders', { params });
       setOrders(res.data);
     } catch (err) {
       console.error('Error fetching orders:', err);
@@ -54,7 +54,7 @@ export default function OrdersPage() {
 
     setIsUploading(true);
     try {
-      const res = await api.post('/order/import', formData, {
+      const res = await api.post('/api/orders/import', formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
       });
       toast.success(`Import complete! ${res.data.createdCount} created, ${res.data.updatedCount} updated.`);

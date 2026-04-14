@@ -21,10 +21,10 @@ app.get('/api/health', (req, res) => {
 });
 
 app.use('/api/auth', authRoutes);
-app.use('/api/order', orderRoutes);
-app.use('/api/ticket', ticketRoutes);
-app.use('/api/supplier', SupplierRoutes);
-app.use('/api/invoice', invoiceRoutes);
+app.use('/api/orders', orderRoutes);
+app.use('/api/tickets', ticketRoutes);
+app.use('/api/suppliers', SupplierRoutes);
+app.use('/api/invoices', invoiceRoutes);
 
 app.use(errorHandler);
 

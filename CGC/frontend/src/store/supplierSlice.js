@@ -6,7 +6,7 @@ export const fetchSuppliers = createAsyncThunk(
   'suppliers/fetchSuppliers',
   async (_, { rejectWithValue }) => {
     try {
-      const response = await api.get('/supplier');
+      const response = await api.get('/api/suppliers');
       return response.data;
     } catch (error) {
       return rejectWithValue(error.response?.data?.error || error.response?.data?.message || 'Failed to fetch suppliers');
@@ -18,7 +18,7 @@ export const createSupplier = createAsyncThunk(
   'suppliers/createSupplier',
   async (supplierData, { rejectWithValue }) => {
     try {
-      const response = await api.post('/supplier', supplierData);
+      const response = await api.post('/api/suppliers', supplierData);
       return response.data;
     } catch (error) {
       return rejectWithValue(error.response?.data?.error || error.response?.data?.message || 'Failed to create supplier');
@@ -30,7 +30,7 @@ export const updateSupplier = createAsyncThunk(
   'suppliers/updateSupplier',
   async ({ id, data }, { rejectWithValue }) => {
     try {
-      const response = await api.put(`/supplier/${id}`, data);
+      const response = await api.put(`/api/suppliers/${id}`, data);
       return response.data;
     } catch (error) {
       return rejectWithValue(error.response?.data?.error || error.response?.data?.message || 'Failed to update supplier');
@@ -42,7 +42,7 @@ export const deleteSupplier = createAsyncThunk(
   'suppliers/deleteSupplier',
   async (id, { rejectWithValue }) => {
     try {
-      const response = await api.delete(`/supplier/${id}`);
+      const response = await api.delete(`/api/suppliers/${id}`);
       return id;
     } catch (error) {
       return rejectWithValue(error.response?.data?.error || error.response?.data?.message || 'Failed to delete supplier');
@@ -54,7 +54,7 @@ export const addSupplierRate = createAsyncThunk(
   'suppliers/addSupplierRate',
   async ({ supplierId, data }, { rejectWithValue }) => {
     try {
-      const response = await api.post(`/supplier/${supplierId}/rates`, data);
+      const response = await api.post(`/api/suppliers/${supplierId}/rates`, data);
       return { supplierId, rate: response.data };
     } catch (error) {
       return rejectWithValue(error.response?.data?.error || 'Failed to add rate');
@@ -66,7 +66,7 @@ export const deleteSupplierRate = createAsyncThunk(
   'suppliers/deleteSupplierRate',
   async ({ supplierId, rateId }, { rejectWithValue }) => {
     try {
-      await api.delete(`/supplier/${supplierId}/rates/${rateId}`);
+      await api.delete(`/api/suppliers/${supplierId}/rates/${rateId}`);
       return { supplierId, rateId };
     } catch (error) {
       return rejectWithValue(error.response?.data?.error || 'Failed to delete rate');

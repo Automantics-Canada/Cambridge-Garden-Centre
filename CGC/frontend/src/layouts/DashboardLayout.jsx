@@ -92,57 +92,36 @@ export default function DashboardLayout() {
             {sidebarOpen && (
               <div className="flex-1 overflow-hidden">
                 <div className="text-sm font-semibold truncate">{user?.name || "Sarah K."}</div>
-                <div className="text-xs text-green-300 truncate">{user?.role || "Admin"}</div>
+                <div className="text-xs text-green-300 truncate">{user?.email || user?.role || "Admin"}</div>
+                {user?.email && <div className="text-xs text-green-400 truncate">{user?.role || "Admin"}</div>}
               </div>
             )}
+            <button 
+              onClick={() => dispatch(logout())} 
+              className={clsx(
+                "text-green-300 hover:text-white transition-colors",
+                !sidebarOpen && "hidden"
+              )}
+              title="Logout"
+            >
+              <LogOut size={18} />
+            </button>
           </div>
+          {!sidebarOpen && (
+            <button 
+              onClick={() => dispatch(logout())} 
+              className="mt-4 w-full flex justify-center text-green-300 hover:text-white transition-colors"
+              title="Logout"
+            >
+              <LogOut size={18} />
+            </button>
+          )}
         </div>
       </aside>
 
       {/* Main Content */}
       <div className="flex-1 flex flex-col h-screen overflow-hidden">
-        {/* Top Navbar */}
-        <header className="bg-white border-b border-gray-200 h-16 flex items-center justify-between px-6 flex-shrink-0 z-10 transition-all">
-          <div className="flex items-center gap-4">
-            <div className="flex items-center gap-2 text-xl font-semibold text-gray-800">
-              <Menu size={20} className="text-gray-500 md:hidden" />
-              Dashboard
-            </div>
-          </div>
-          
-          <div className="flex-1 max-w-xl mx-8 hidden md:block">
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
-              <input 
-                type="text" 
-                placeholder="Search orders, customers..." 
-                className="w-full bg-gray-50 border border-gray-200 rounded-md pl-10 pr-4 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-[#1D5333]"
-              />
-            </div>
-          </div>
 
-          <div className="flex items-center gap-4 text-sm">
-            <button className="hidden sm:flex items-center gap-2 text-gray-600 border border-gray-300 rounded-md px-3 py-1.5 hover:bg-gray-50 transition-colors">
-              <Eye size={16} /> Driver View
-            </button>
-            <div className="relative">
-              <Bell className="text-gray-500 hover:text-gray-700 cursor-pointer" size={20} />
-              <div className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-red-500 text-white flex items-center justify-center text-[10px] font-bold">3</div>
-            </div>
-             <div className="flex items-center gap-2 border-l pl-4 ml-2">
-                <div className="w-8 h-8 rounded-full bg-[#1B4332] text-white flex items-center justify-center font-bold text-sm">
-                  {user?.name?.substring(0,2).toUpperCase() || "SK"}
-                </div>
-                <div className="hidden sm:block text-right leading-tight">
-                  <div className="font-medium text-gray-800 text-sm">{user?.name || "Sarah K."}</div>
-                  <div className="text-xs text-gray-500">{user?.role || "Admin"}</div>
-                </div>
-                <button onClick={() => dispatch(logout())} className="ml-2 text-gray-400 hover:text-red-500 transition-colors" title="Logout">
-                  <LogOut size={18} />
-                </button>
-             </div>
-          </div>
-        </header>
 
         {/* Page Content */}
         <main className="flex-1 overflow-auto bg-[#F9FBF9] p-6 lg:p-8">

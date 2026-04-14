@@ -37,7 +37,7 @@ export default function InvoicesPage() {
       const params = {
         status: activeTab === 'ALL' ? undefined : activeTab,
       };
-      const res = await api.get('/invoice', { params });
+      const res = await api.get('/api/invoices', { params });
       setInvoices(res.data);
     } catch (err) {
       console.error('Error fetching invoices:', err);
@@ -67,7 +67,7 @@ export default function InvoicesPage() {
 
     setIsUploading(true);
     try {
-      const res = await api.post('/invoice/mock-email', formData, {
+      const res = await api.post('/api/invoices/mock-email', formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
       });
       toast.success('Invoice uploaded and processing!');
