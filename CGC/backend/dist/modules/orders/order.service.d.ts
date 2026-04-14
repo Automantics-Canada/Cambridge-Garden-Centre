@@ -14,6 +14,7 @@ export declare const OrderService: {
             id: string;
             type: import("@prisma/client").$Enums.SupplierType;
             emailDomains: string[];
+            keywords: string[];
             contactName: string | null;
             contactEmail: string | null;
             phone: string | null;

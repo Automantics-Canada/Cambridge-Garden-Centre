@@ -21,11 +21,17 @@ export async function extractTextFromLocalImage(imageUrl) {
     if (!blocks || blocks.length === 0) {
         throw new Error('No text detected in the image');
     }
-    const textLines = blocks
-        .filter((block) => block.BlockType === 'LINE' && block.Text)
-        .map((block) => block.Text);
+    const lineBlocks = blocks.filter((block) => block.BlockType === 'LINE' && block.Text);
+    const textLines = lineBlocks.map((block) => block.Text);
     const rawText = textLines.join('\n');
-    return parseTicketData(rawText);
+    // Calculate average confidence
+    const totalConfidence = lineBlocks.reduce((acc, block) => acc + (block.Confidence || 0), 0);
+    const averageConfidence = lineBlocks.length > 0 ? totalConfidence / lineBlocks.length : 0;
+    const extraction = parseTicketData(rawText);
+    return {
+        ...extraction,
+        ocrConfidence: averageConfidence,
+    };
 }
 function parseTicketData(text) {
     const result = {

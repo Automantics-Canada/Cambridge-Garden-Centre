@@ -18,6 +18,7 @@ export declare const SupplierService: {
         id: string;
         type: import("@prisma/client").$Enums.SupplierType;
         emailDomains: string[];
+        keywords: string[];
         contactName: string | null;
         contactEmail: string | null;
         phone: string | null;
@@ -28,6 +29,7 @@ export declare const SupplierService: {
         name: string;
         type: SupplierType;
         emailDomains: string[];
+        keywords: string[];
         contactName?: string;
         contactEmail?: string;
         phone?: string;
@@ -37,6 +39,7 @@ export declare const SupplierService: {
         id: string;
         type: import("@prisma/client").$Enums.SupplierType;
         emailDomains: string[];
+        keywords: string[];
         contactName: string | null;
         contactEmail: string | null;
         phone: string | null;
@@ -47,6 +50,7 @@ export declare const SupplierService: {
         name: string;
         type: SupplierType;
         emailDomains: string[];
+        keywords: string[];
         contactName?: string;
         contactEmail?: string;
         phone?: string;
@@ -57,6 +61,7 @@ export declare const SupplierService: {
         id: string;
         type: import("@prisma/client").$Enums.SupplierType;
         emailDomains: string[];
+        keywords: string[];
         contactName: string | null;
         contactEmail: string | null;
         phone: string | null;
@@ -68,6 +73,7 @@ export declare const SupplierService: {
         id: string;
         type: import("@prisma/client").$Enums.SupplierType;
         emailDomains: string[];
+        keywords: string[];
         contactName: string | null;
         contactEmail: string | null;
         phone: string | null;
@@ -95,6 +101,25 @@ export declare const SupplierService: {
         createdById: string;
     }>;
     removeNegotiatedRate(rateId: string): Promise<{
+        id: string;
+        unit: string;
+        supplierId: string;
+        createdAt: Date;
+        productName: string;
+        rate: import("@prisma/client/runtime/library").Decimal;
+        effectiveFrom: Date;
+        effectiveTo: Date | null;
+        notes: string | null;
+        createdById: string;
+    }>;
+    updateNegotiatedRate(rateId: string, data: Partial<{
+        productName: string;
+        rate: number;
+        unit: string;
+        effectiveFrom: Date;
+        effectiveTo?: Date;
+        notes?: string;
+    }>): Promise<{
         id: string;
         unit: string;
         supplierId: string;

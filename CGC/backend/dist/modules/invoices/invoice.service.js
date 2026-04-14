@@ -5,13 +5,29 @@ import { InvoiceStatus, SenderType, OcrJobType, OcrProvider, OcrJobStatus, LineI
 async function findSupplierByName(name) {
     if (!name)
         return null;
-    // very naive matching for mockup
     const supplier = await prisma.supplier.findFirst({
         where: {
             name: { contains: name, mode: 'insensitive' },
         },
     });
     return supplier;
+}
+/**
+ * Normalizes product names for fuzzy matching.
+ * e.g., "Type A Gravel" -> "a gravel"
+ */
+function normalizeString(str) {
+    return str
+        .toLowerCase()
+        .replace(/type\s+/g, '')
+        .replace(/[^a-z0-9\s]/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+function stringsMatchFuzzy(a, b) {
+    const normA = normalizeString(a);
+    const normB = normalizeString(b);
+    return normA.includes(normB) || normB.includes(normA);
 }
 export const InvoiceService = {
     async ingestMockEmailInvoice(params) {
@@ -23,9 +39,6 @@ export const InvoiceService = {
             where: domain ? { emailDomains: { hasSome: [domain] } } : {},
         });
         if (!supplier) {
-            // In a real system, you might place it in a queue or require manual mapping.
-            // For this mock, we'll assign to the first supplier just so it doesn't fail,
-            // or create a dummy unknown supplier.
             supplier = await prisma.supplier.findFirst();
         }
         if (!supplier)
@@ -36,7 +49,7 @@ export const InvoiceService = {
                 senderType: SenderType.SUPPLIER,
                 supplierId: supplier.id,
                 invoiceDate: new Date(),
-                totalAmount: 0, // to be updated by OCR
+                totalAmount: 0,
                 currency: 'CAD',
                 fileUrl,
                 emailFrom: params.fromEmail,
@@ -72,7 +85,6 @@ export const InvoiceService = {
         }
         try {
             const extracted = await extractExpenseFromLocalImage(invoice.fileUrl);
-            // Try a better supplier match if extracted
             let updatedSupplierId = invoice.supplierId;
             if (extracted.supplierName) {
                 const found = await findSupplierByName(extracted.supplierName);
@@ -90,59 +102,113 @@ export const InvoiceService = {
                     OcrJobStatus: OcrJobStatus.COMPLETED,
                 },
             });
-            // Clear existing line items if any
+            // Clear existing line items
             await prisma.invoiceLineItem.deleteMany({ where: { invoiceId } });
             for (let i = 0; i < extracted.lineItems.length; i++) {
                 const item = extracted.lineItems[i];
-                // Matching Engine Logic
-                // We'll perform generic matching here: 
-                // 1. Try to find an Order for this supplier with the product
-                // 2. Try to find a NegotiatedRate
-                // 3. Flag accordingly
+                if (!item)
+                    continue;
                 let matchedOrderId = null;
                 let matchedTicketId = null;
                 let negotiatedRateVal = null;
-                let flag = LineItemFlag.OK;
+                let flags = [];
                 let rateDiscrepancy = null;
-                // Try Order Match
-                const orderMatch = await prisma.order.findFirst({
-                    where: { supplierId: updatedSupplierId },
-                    orderBy: { orderDate: 'desc' }
-                });
-                if (orderMatch)
-                    matchedOrderId = orderMatch.id;
-                else
-                    flag = LineItemFlag.NO_ORDER;
-                if (!item)
-                    continue;
-                // Try Negotiated Rate
-                const rateMatch = await prisma.negotiatedRate.findFirst({
-                    where: { supplierId: updatedSupplierId, productName: { contains: item.description, mode: 'insensitive' } }
-                });
-                if (rateMatch) {
-                    negotiatedRateVal = Number(rateMatch.rate);
-                    if (Math.abs(item.unitPrice - negotiatedRateVal) > 0.01) {
-                        flag = flag === LineItemFlag.NO_ORDER ? LineItemFlag.MULTIPLE_FLAGS : LineItemFlag.RATE_MISMATCH;
-                        rateDiscrepancy = item.unitPrice - negotiatedRateVal;
+                let qtyDiscrepancy = null;
+                // --- MATCH 1: Invoice Line to Ticket ---
+                if (item.poNumber) {
+                    const ticketMatch = await prisma.ticket.findFirst({
+                        where: { poNumber: item.poNumber, supplierId: updatedSupplierId },
+                    });
+                    if (ticketMatch)
+                        matchedTicketId = ticketMatch.id;
+                }
+                if (!matchedTicketId) {
+                    // Secondary match: supplier + date range (+/- 3 days) + material + qty (+/- 5%)
+                    const invoiceDate = new Date(updatedInvoice.invoiceDate);
+                    const minDate = new Date(invoiceDate);
+                    minDate.setDate(minDate.getDate() - 3);
+                    const maxDate = new Date(invoiceDate);
+                    maxDate.setDate(maxDate.getDate() + 3);
+                    const secondaryTicketMatch = await prisma.ticket.findFirst({
+                        where: {
+                            supplierId: updatedSupplierId,
+                            ticketDate: { gte: minDate, lte: maxDate },
+                            // fuzzy material match or just skip material for secondary match if too strict
+                        }
+                    });
+                    if (secondaryTicketMatch) {
+                        const ticketQty = Number(secondaryTicketMatch.quantity || 0);
+                        const diff = Math.abs(item.quantity - ticketQty);
+                        const tolerance = item.quantity * 0.05;
+                        if (diff <= tolerance) {
+                            matchedTicketId = secondaryTicketMatch.id;
+                        }
+                    }
+                }
+                if (!matchedTicketId)
+                    flags.push(LineItemFlag.NO_TICKET);
+                // --- MATCH 2: Invoice Line to Order ---
+                if (item.poNumber) {
+                    const orderMatch = await prisma.order.findFirst({
+                        where: { poNumber: item.poNumber, supplierId: updatedSupplierId },
+                    });
+                    if (orderMatch) {
+                        matchedOrderId = orderMatch.id;
+                        const orderQty = Number(orderMatch.quantity);
+                        const diff = item.quantity - orderQty;
+                        const tolerance = orderQty * 0.02;
+                        if (diff > tolerance) {
+                            flags.push(LineItemFlag.QTY_MISMATCH);
+                            qtyDiscrepancy = diff;
+                        }
+                    }
+                    else {
+                        flags.push(LineItemFlag.NO_ORDER);
                     }
                 }
                 else {
-                    flag = flag === LineItemFlag.NO_ORDER ? LineItemFlag.MULTIPLE_FLAGS : LineItemFlag.RATE_UNKNOWN;
+                    flags.push(LineItemFlag.NO_ORDER);
+                }
+                // --- MATCH 3: Rate Match ---
+                const allRates = await prisma.negotiatedRate.findMany({
+                    where: { supplierId: updatedSupplierId },
+                });
+                const rateMatch = allRates.find(r => stringsMatchFuzzy(r.productName, item.description));
+                if (rateMatch) {
+                    negotiatedRateVal = Number(rateMatch.rate);
+                    const diff = item.unitPrice - negotiatedRateVal;
+                    if (diff > 0.01) {
+                        flags.push(LineItemFlag.RATE_MISMATCH);
+                        rateDiscrepancy = diff;
+                    }
+                }
+                else {
+                    flags.push(LineItemFlag.RATE_UNKNOWN);
+                }
+                // --- Final Flagging ---
+                let finalFlag = LineItemFlag.OK;
+                if (flags.length > 1) {
+                    finalFlag = LineItemFlag.MULTIPLE_FLAGS;
+                }
+                else if (flags.length === 1) {
+                    finalFlag = flags[0];
                 }
                 await prisma.invoiceLineItem.create({
                     data: {
                         invoiceId,
                         lineNumber: i + 1,
                         description: item.description,
+                        poNumber: item.poNumber || null,
                         quantity: item.quantity,
-                        unit: 'ea', // fallback or try to extract
+                        unit: 'ea',
                         unitRate: item.unitPrice,
                         lineTotal: item.totalPrice,
                         matchedOrderId,
                         matchedTicketId,
                         negotiatedRate: negotiatedRateVal,
                         rateDiscrepancy,
-                        flag,
+                        qtyDiscrepancy,
+                        flag: finalFlag,
                     }
                 });
             }
@@ -188,7 +254,7 @@ export const InvoiceService = {
                     include: { matchedOrder: true, matchedTicket: true }
                 },
                 verifiedBy: true,
-                ocrJobs: true,
+                ocrJobs: { orderBy: { startedAt: 'desc' } },
             },
         });
     },
@@ -218,7 +284,7 @@ export const InvoiceService = {
             data: {
                 status: InvoiceStatus.DISPUTED,
                 disputeNote,
-                verifiedById: userId, // we can reuse this field for whoever actioned it
+                verifiedById: userId,
                 verifiedAt: new Date(),
             },
         });
@@ -229,6 +295,26 @@ export const InvoiceService = {
                 actionType: AuditActionType.INVOICE_DISPUTED,
                 performedById: userId,
                 details: { disputeNote },
+            },
+        });
+        return updated;
+    },
+    async reopenInvoice(id, userId, reason) {
+        const updated = await prisma.invoice.update({
+            where: { id },
+            data: {
+                status: InvoiceStatus.PENDING_REVIEW,
+                verifiedById: null,
+                verifiedAt: null,
+            },
+        });
+        await prisma.auditLog.create({
+            data: {
+                entityType: AuditEntityType.INVOICE,
+                entityId: id,
+                actionType: AuditActionType.INVOICE_REOPENED,
+                performedById: userId,
+                details: { reason, previousStatus: 'LOCKED' },
             },
         });
         return updated;

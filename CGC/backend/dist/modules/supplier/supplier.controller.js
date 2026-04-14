@@ -5,7 +5,7 @@ export const listSuppliers = async (_req, res) => {
     res.json(suppliers);
 };
 export const createSupplier = async (req, res) => {
-    const { name, type, emailDomains, contactName, contactEmail, phone, address } = req.body;
+    const { name, type, emailDomains, keywords, contactName, contactEmail, phone, address } = req.body;
     if (!name || !type) {
         return res.status(400).json({ error: 'name and type are required' });
     }
@@ -17,6 +17,7 @@ export const createSupplier = async (req, res) => {
         name,
         type,
         emailDomains: emailDomains ?? [],
+        keywords: keywords ?? [],
         contactName,
         contactEmail,
         phone,
@@ -60,5 +61,11 @@ export const removeRate = async (req, res) => {
     const { rateId } = req.params;
     await SupplierService.removeNegotiatedRate(rateId);
     res.json({ success: true });
+};
+export const updateRate = async (req, res) => {
+    const { rateId } = req.params;
+    const data = req.body;
+    const updated = await SupplierService.updateNegotiatedRate(rateId, data);
+    res.json(updated);
 };
 //# sourceMappingURL=supplier.controller.js.map

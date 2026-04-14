@@ -70,6 +70,7 @@ export declare const InvoiceService: {
             id: string;
             type: import("@prisma/client").$Enums.SupplierType;
             emailDomains: string[];
+            keywords: string[];
             contactName: string | null;
             contactEmail: string | null;
             phone: string | null;
@@ -130,6 +131,7 @@ export declare const InvoiceService: {
             id: string;
             type: import("@prisma/client").$Enums.SupplierType;
             emailDomains: string[];
+            keywords: string[];
             contactName: string | null;
             contactEmail: string | null;
             phone: string | null;
@@ -256,6 +258,27 @@ export declare const InvoiceService: {
         OcrJobStatus: import("@prisma/client").$Enums.OcrJobStatus;
     }>;
     disputeInvoice(id: string, userId: string, disputeNote: string): Promise<{
+        id: string;
+        supplierId: string;
+        invoiceNumber: string;
+        ocrRawText: string | null;
+        status: import("@prisma/client").$Enums.InvoiceStatus;
+        receivedAt: Date;
+        senderType: import("@prisma/client").$Enums.SenderType;
+        invoiceDate: Date;
+        dueDate: Date | null;
+        totalAmount: import("@prisma/client/runtime/library").Decimal;
+        currency: string;
+        fileUrl: string;
+        emailFrom: string;
+        emailSubject: string;
+        gmailMessageId: string;
+        verifiedById: string | null;
+        verifiedAt: Date | null;
+        disputeNote: string | null;
+        OcrJobStatus: import("@prisma/client").$Enums.OcrJobStatus;
+    }>;
+    reopenInvoice(id: string, userId: string, reason: string): Promise<{
         id: string;
         supplierId: string;
         invoiceNumber: string;

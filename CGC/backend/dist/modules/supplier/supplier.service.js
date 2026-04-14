@@ -37,6 +37,16 @@ export const SupplierService = {
         return prisma.negotiatedRate.delete({
             where: { id: rateId }
         });
+    },
+    async updateNegotiatedRate(rateId, data) {
+        return prisma.negotiatedRate.update({
+            where: { id: rateId },
+            data: {
+                ...data,
+                effectiveFrom: data.effectiveFrom ? new Date(data.effectiveFrom) : undefined,
+                effectiveTo: data.effectiveTo ? new Date(data.effectiveTo) : undefined,
+            }
+        });
     }
 };
 //# sourceMappingURL=supplier.service.js.map

@@ -1,5 +1,6 @@
 import type { Request, Response } from 'express';
 import { TicketService } from './ticket.service.js';
+import { processPendingOcrJobs } from '../../services/ocrJobProcessor.js';
 import type {
   WhatsappTicketPayload,
   EmailTicketPayload,
@@ -149,6 +150,46 @@ export const deleteTicket = async (req: Request, res: Response) => {
     await TicketService.deleteTicket(req.params.id as string);
     return res.status(204).send();
   } catch (error: any) {
+    return res.status(500).json({ error: error.message || 'Unexpected error' });
+  }
+};
+
+/**
+ * Get OCR job status for a specific ticket
+ * Returns the most recent OCR job and its current state
+ */
+export const getOcrJobStatus = async (req: Request, res: Response) => {
+  try {
+    const { ticketId } = req.params;
+    const ticket = await TicketService.getTicketById(ticketId as string);
+    if (!ticket) {
+      return res.status(404).json({ error: 'Ticket not found' });
+    }
+    if (ticket.ocrJobs.length === 0) {
+      return res.status(404).json({ error: 'No OCR jobs found for this ticket' });
+    }
+    // Return the most recent OCR job
+    const latestJob = ticket.ocrJobs[0];
+    return res.status(200).json(latestJob);
+  } catch (error: any) {
+    return res.status(500).json({ error: error.message || 'Unexpected error' });
+  }
+};
+
+/**
+ * Manually trigger processing of all pending OCR jobs
+ * Useful for debugging, testing, or manual intervention
+ * Admin only endpoint (optional, you can add auth middleware)
+ */
+export const processPendingOcrJobsEndpoint = async (req: Request, res: Response) => {
+  try {
+    const jobsProcessed = await processPendingOcrJobs();
+    return res.status(200).json({
+      message: `Started processing ${jobsProcessed} pending OCR jobs`,
+      jobsProcessed,
+    });
+  } catch (error: any) {
+    console.error('processPendingOcrJobsEndpoint error', error);
     return res.status(500).json({ error: error.message || 'Unexpected error' });
   }
 };

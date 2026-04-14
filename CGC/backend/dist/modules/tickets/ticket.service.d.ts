@@ -1,4 +1,4 @@
-import { TicketStatus } from '@prisma/client';
+import { TicketSource, TicketStatus } from '@prisma/client';
 export declare const TicketService: {
     /**
      * Ticket arrives via WhatsApp: save file, create Ticket, queue OCR.
@@ -111,12 +111,17 @@ export declare const TicketService: {
     getTickets(filters?: {
         status?: TicketStatus;
         supplierId?: string;
+        source?: TicketSource;
+        startDate?: string;
+        endDate?: string;
+        search?: string;
     }): Promise<({
         supplier: {
             name: string;
             id: string;
             type: import("@prisma/client").$Enums.SupplierType;
             emailDomains: string[];
+            keywords: string[];
             contactName: string | null;
             contactEmail: string | null;
             phone: string | null;
@@ -129,6 +134,22 @@ export declare const TicketService: {
             createdAt: Date;
             phone: string;
             active: boolean;
+        } | null;
+        linkedOrder: {
+            id: string;
+            spruceOrderId: string;
+            poNumber: string | null;
+            customerName: string;
+            buyerType: import("@prisma/client").$Enums.BuyerType;
+            product: string;
+            quantity: import("@prisma/client/runtime/library").Decimal;
+            unit: string;
+            supplierId: string | null;
+            orderDate: Date;
+            deliveryDate: Date | null;
+            hasInvoice: boolean;
+            invoiceNumber: string | null;
+            createdAt: Date;
         } | null;
     } & {
         id: string;
@@ -151,6 +172,9 @@ export declare const TicketService: {
         receivedAt: Date;
         driverId: string | null;
     })[]>;
+    getTicketStats(): Promise<{
+        unlinkedCount: number;
+    }>;
     /**
      * Get a single ticket by ID
      */
@@ -160,6 +184,7 @@ export declare const TicketService: {
             id: string;
             type: import("@prisma/client").$Enums.SupplierType;
             emailDomains: string[];
+            keywords: string[];
             contactName: string | null;
             contactEmail: string | null;
             phone: string | null;
@@ -185,6 +210,22 @@ export declare const TicketService: {
             rawResponse: import("@prisma/client/runtime/library").JsonValue | null;
             ticketId: string | null;
         }[];
+        linkedOrder: {
+            id: string;
+            spruceOrderId: string;
+            poNumber: string | null;
+            customerName: string;
+            buyerType: import("@prisma/client").$Enums.BuyerType;
+            product: string;
+            quantity: import("@prisma/client/runtime/library").Decimal;
+            unit: string;
+            supplierId: string | null;
+            orderDate: Date;
+            deliveryDate: Date | null;
+            hasInvoice: boolean;
+            invoiceNumber: string | null;
+            createdAt: Date;
+        } | null;
     } & {
         id: string;
         poNumber: string | null;
@@ -210,6 +251,27 @@ export declare const TicketService: {
      * Update a ticket
      */
     updateTicket(id: string, data: any): Promise<{
+        id: string;
+        poNumber: string | null;
+        quantity: import("@prisma/client/runtime/library").Decimal | null;
+        unit: string | null;
+        supplierId: string | null;
+        ticketNumber: string | null;
+        source: import("@prisma/client").$Enums.TicketSource;
+        material: string | null;
+        rateOnTicket: import("@prisma/client/runtime/library").Decimal | null;
+        ticketDate: Date | null;
+        imageUrl: string;
+        ocrRawText: string;
+        ocrConfidence: number;
+        linkedOrderId: string | null;
+        linkMethod: string | null;
+        linkedById: string | null;
+        status: import("@prisma/client").$Enums.TicketStatus;
+        receivedAt: Date;
+        driverId: string | null;
+    }>;
+    linkTicketToOrder(ticketId: string, orderId: string, userId?: string): Promise<{
         id: string;
         poNumber: string | null;
         quantity: import("@prisma/client/runtime/library").Decimal | null;

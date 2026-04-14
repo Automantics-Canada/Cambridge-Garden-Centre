@@ -10,6 +10,8 @@ import {
   updateTicket,
   linkTicketToOrder,
   deleteTicket,
+  getOcrJobStatus,
+  processPendingOcrJobsEndpoint,
 } from './ticket.controller.js';
 
 const router = Router();
@@ -24,6 +26,12 @@ router.post('/whatsapp', upload.single('file'), ingestWhatsappTicket);
 router.post('/email', upload.single('file'), ingestEmailTicket);
 
 router.post('/:id/process-ocr', processTicketOcr);
+
+/**
+ * OCR Job Management Routes
+ */
+router.get('/:ticketId/ocr-status', getOcrJobStatus); // Get OCR job status for a ticket
+router.post('/jobs/process-pending', processPendingOcrJobsEndpoint); // Manually process pending OCR jobs
 
 router.get('/stats', getTicketStats);
 router.get('/', getTickets);

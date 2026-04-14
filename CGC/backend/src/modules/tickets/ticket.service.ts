@@ -1,6 +1,7 @@
 import { prisma } from '../../db/prisma.js';
 import { saveTicketImage } from '../../services/fileStorage.js';
 import { extractTextFromLocalImage } from '../../services/ocr.service.js';
+import { triggerOcrProcessing } from '../../services/ocrJobProcessor.js';
 import {
   TicketSource,
   TicketStatus,
@@ -76,6 +77,9 @@ export const TicketService = {
       },
     });
 
+    // Automatically trigger OCR processing in the background (non-blocking)
+    triggerOcrProcessing(ocrJob.id);
+
     return { ticket, ocrJob };
   },
 
@@ -111,6 +115,9 @@ export const TicketService = {
         ticketId: ticket.id,
       },
     });
+
+    // Automatically trigger OCR processing in the background (non-blocking)
+    triggerOcrProcessing(ocrJob.id);
 
     return { ticket, ocrJob };
   },
@@ -293,4 +300,4 @@ export const TicketService = {
       where: { id },
     });
   },
-};
+};

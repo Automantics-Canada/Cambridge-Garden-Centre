@@ -80,6 +80,20 @@ export const InvoiceController = {
         catch (error) {
             next(error);
         }
+    },
+    async reopenInvoice(req, res, next) {
+        try {
+            const userId = req.user?.userId;
+            if (!userId)
+                return res.status(401).json({ error: 'Unauthorized' });
+            const { reason } = req.body;
+            const id = req.params.id;
+            const updated = await InvoiceService.reopenInvoice(id, userId, reason || 'Reopened for review');
+            res.json(updated);
+        }
+        catch (error) {
+            next(error);
+        }
     }
 };
 //# sourceMappingURL=invoice.controller.js.map
