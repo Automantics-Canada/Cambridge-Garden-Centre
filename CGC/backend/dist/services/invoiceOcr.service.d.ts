@@ -11,5 +11,8 @@ export interface InvoiceOcrExtractionResult {
     }>;
     rawResponse: any;
 }
+/**
+ * Extract expense/invoice data using AWS Textract AnalyzeExpense
+ */
 export declare function extractExpenseFromLocalImage(imageUrl: string): Promise<InvoiceOcrExtractionResult>;
 //# sourceMappingURL=invoiceOcr.service.d.ts.map

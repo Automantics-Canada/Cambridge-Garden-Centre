@@ -4,8 +4,9 @@ import {
 } from '@aws-sdk/client-textract';
 import path from 'node:path';
 import fs from 'node:fs';
+import { downloadFileToTemp, cleanupTempFile, isSupabaseUrl, getFilenameFromUrl } from './urlHandler.js';
 
-const client = new TextractClient(); // Relies on standard AWS credential provider chain
+const textractClient = new TextractClient(); // Relies on standard AWS credential provider chain
 
 export interface OcrExtractionResult {
   rawText: string;
@@ -18,16 +19,43 @@ export interface OcrExtractionResult {
   ocrConfidence: number;
 }
 
+/**
+ * Extract text from local image using AWS Textract
+ */
 export async function extractTextFromLocalImage(imageUrl: string): Promise<OcrExtractionResult> {
   let localPath = imageUrl;
-  if (imageUrl.startsWith('/uploads/')) {
-    localPath = path.join(process.cwd(), imageUrl);
-  }
+  let tempFile: string | null = null;
 
-  if (!fs.existsSync(localPath)) {
-    throw new Error(`Local file not found for OCR: ${localPath}`);
-  }
+  try {
+    // Handle Supabase URLs
+    if (isSupabaseUrl(imageUrl)) {
+      console.log(`[OCR] Downloading from Supabase: ${imageUrl.substring(0, 50)}...`);
+      const filename = getFilenameFromUrl(imageUrl);
+      tempFile = await downloadFileToTemp(imageUrl, filename);
+      localPath = tempFile;
+    } else if (imageUrl.startsWith('/uploads/')) {
+      // Handle legacy local paths
+      localPath = path.join(process.cwd(), imageUrl);
+    }
 
+    if (!fs.existsSync(localPath)) {
+      throw new Error(`Local file not found for OCR: ${localPath}`);
+    }
+
+    // Extract text using AWS Textract
+    return await extractWithTextract(localPath);
+  } finally {
+    // Clean up temporary file if it was downloaded
+    if (tempFile) {
+      await cleanupTempFile(tempFile);
+    }
+  }
+}
+
+/**
+ * Extract text using AWS Textract
+ */
+async function extractWithTextract(localPath: string): Promise<OcrExtractionResult> {
   const imageBytes = fs.readFileSync(localPath);
 
   const command = new DetectDocumentTextCommand({
@@ -36,7 +64,7 @@ export async function extractTextFromLocalImage(imageUrl: string): Promise<OcrEx
     },
   });
 
-  const result = await client.send(command);
+  const result = await textractClient.send(command);
   const blocks = result.Blocks;
 
   if (!blocks || blocks.length === 0) {
@@ -58,8 +86,10 @@ export async function extractTextFromLocalImage(imageUrl: string): Promise<OcrEx
   };
 }
 
+/**
+ * Legacy Textract-only parsing function (kept for backward compatibility)
+ */
 function parseTicketData(text: string): Omit<OcrExtractionResult, 'ocrConfidence'> {
-  
   const result: Omit<OcrExtractionResult, 'ocrConfidence'> = {
     rawText: text,
     supplierName: null,
@@ -73,7 +103,7 @@ function parseTicketData(text: string): Omit<OcrExtractionResult, 'ocrConfidence
   const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
 
   if (lines.length > 0) {
-    result.supplierName = lines[0] || null; 
+    result.supplierName = lines[0] || null;
   }
 
   const dateRegex = /\b(\d{1,4}[-/]\d{1,2}[-/]\d{1,4})\b/;

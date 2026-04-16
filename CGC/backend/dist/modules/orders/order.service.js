@@ -1,6 +1,7 @@
 import { prisma } from '../../db/prisma.js';
 import { parse } from 'csv-parse/sync';
 import { mapCsvRowToOrder } from './orderCsvMapper.js';
+import { saveCsvFile } from '../../services/fileStorage.js';
 export const OrderService = {
     async getOrders(filters) {
         const { startDate, endDate, buyerType, supplierId, hasInvoice, hasLinkedTickets, search } = filters;
@@ -50,7 +51,16 @@ export const OrderService = {
     }
 };
 export const OrderImportService = {
-    async importFromCsv(buffer) {
+    async importFromCsv(buffer, originalName) {
+        // Save file to Supabase Storage first
+        let fileUrl = '';
+        try {
+            fileUrl = await saveCsvFile(buffer, originalName || 'orders-import.csv');
+            console.log(`[OrderImport] CSV saved to Supabase: ${fileUrl}`);
+        }
+        catch (error) {
+            console.error('[OrderImport] Failed to save CSV to storage, continuing with processing...', error);
+        }
         const csvText = buffer.toString('utf-8');
         const records = parse(csvText, {
             columns: true,

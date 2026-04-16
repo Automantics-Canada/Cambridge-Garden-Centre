@@ -5,8 +5,9 @@ import {
 import path from 'node:path';
 import fs from 'node:fs';
 import { prisma } from '../db/prisma.js';
+import { downloadFileToTemp, cleanupTempFile, isSupabaseUrl, getFilenameFromUrl } from './urlHandler.js';
 
-const client = new TextractClient();
+const textractClient = new TextractClient();
 
 export interface InvoiceOcrExtractionResult {
   supplierName: string | null;
@@ -22,16 +23,43 @@ export interface InvoiceOcrExtractionResult {
   rawResponse: any;
 }
 
+/**
+ * Extract expense/invoice data using AWS Textract AnalyzeExpense
+ */
 export async function extractExpenseFromLocalImage(imageUrl: string): Promise<InvoiceOcrExtractionResult> {
   let localPath = imageUrl;
-  if (imageUrl.startsWith('/uploads/')) {
-    localPath = path.join(process.cwd(), imageUrl);
-  }
+  let tempFile: string | null = null;
 
-  if (!fs.existsSync(localPath)) {
-    throw new Error(`Local file not found for OCR: ${localPath}`);
-  }
+  try {
+    // Handle Supabase URLs
+    if (isSupabaseUrl(imageUrl)) {
+      console.log(`[Invoice OCR] Downloading from Supabase: ${imageUrl.substring(0, 50)}...`);
+      const filename = getFilenameFromUrl(imageUrl);
+      tempFile = await downloadFileToTemp(imageUrl, filename);
+      localPath = tempFile;
+    } else if (imageUrl.startsWith('/uploads/')) {
+      // Handle legacy local paths
+      localPath = path.join(process.cwd(), imageUrl);
+    }
 
+    if (!fs.existsSync(localPath)) {
+      throw new Error(`Local file not found for OCR: ${localPath}`);
+    }
+
+    // Extract with AWS Textract
+    return await extractInvoiceWithTextract(localPath);
+  } finally {
+    // Clean up temporary file if it was downloaded
+    if (tempFile) {
+      await cleanupTempFile(tempFile);
+    }
+  }
+}
+
+/**
+ * Extract invoice data using AWS Textract AnalyzeExpense
+ */
+async function extractInvoiceWithTextract(localPath: string): Promise<InvoiceOcrExtractionResult> {
   const imageBytes = fs.readFileSync(localPath);
 
   const command = new AnalyzeExpenseCommand({
@@ -40,7 +68,7 @@ export async function extractExpenseFromLocalImage(imageUrl: string): Promise<In
     },
   });
 
-  const response = await client.send(command);
+  const response = await textractClient.send(command);
 
   const result: InvoiceOcrExtractionResult = {
     supplierName: null,
@@ -58,6 +86,7 @@ export async function extractExpenseFromLocalImage(imageUrl: string): Promise<In
 
   const doc = expenseDocs[0];
   if (!doc) return result;
+
   // Parse SummaryFields (Vendor, Date, Invoice Number, Total)
   const summaryFields = doc.SummaryFields || [];
   for (const field of summaryFields) {
@@ -68,12 +97,12 @@ export async function extractExpenseFromLocalImage(imageUrl: string): Promise<In
 
     if (typeName === 'VENDOR_NAME') {
       result.supplierName = valueStr;
-    } else if (typeName === 'INVOICE_RECEIPT_DATE') {
+    } else if (typeName === 'INVOICE_RECEIPT_DATE' || typeName === 'DATE') {
       const parsedDate = new Date(valueStr);
       if (!isNaN(parsedDate.getTime())) {
         result.invoiceDate = parsedDate;
       }
-    } else if (typeName === 'INVOICE_RECEIPT_ID') {
+    } else if (typeName === 'INVOICE_RECEIPT_ID' || typeName === 'INVOICE_ID') {
       result.invoiceNumber = valueStr;
     } else if (typeName === 'TOTAL') {
       const numericVal = parseFloat(valueStr.replace(/[^0-9.]/g, ''));
@@ -87,7 +116,7 @@ export async function extractExpenseFromLocalImage(imageUrl: string): Promise<In
     const items = group.LineItems || [];
     for (const item of items) {
       const fields = item.LineItemExpenseFields || [];
-      
+
       let description = '';
       let quantity = 0;
       let unitPrice = 0;
@@ -101,13 +130,13 @@ export async function extractExpenseFromLocalImage(imageUrl: string): Promise<In
 
         if (typeName === 'EXPENSE_ROW') {
           // generic row details, we skip or use if specific details are absent
-        } else if (typeName === 'ITEM') {
+        } else if (typeName === 'ITEM' || typeName === 'DESCRIPTION') {
           description = valueStr;
         } else if (typeName === 'QUANTITY') {
           quantity = parseFloat(valueStr.replace(/[^0-9.]/g, '')) || 0;
         } else if (typeName === 'UNIT_PRICE') {
           unitPrice = parseFloat(valueStr.replace(/[^0-9.]/g, '')) || 0;
-        } else if (typeName === 'PRICE') {
+        } else if (typeName === 'PRICE' || typeName === 'TOTAL') {
           totalPrice = parseFloat(valueStr.replace(/[^0-9.]/g, '')) || 0;
         }
       }

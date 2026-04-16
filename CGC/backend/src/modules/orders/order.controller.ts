@@ -10,7 +10,7 @@ export const importOrdersFromCsv = async (req: AuthRequest, res: Response) => {
   }
 
   try {
-    const summary = await OrderImportService.importFromCsv(file.buffer);
+    const summary = await OrderImportService.importFromCsv(file.buffer, file.originalname);
 
     return res.status(200).json({
       message: 'Import completed',

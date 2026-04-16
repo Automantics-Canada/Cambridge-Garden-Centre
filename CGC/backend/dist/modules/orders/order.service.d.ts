@@ -60,6 +60,6 @@ export declare const OrderService: {
     })[]>;
 };
 export declare const OrderImportService: {
-    importFromCsv(buffer: Buffer): Promise<ImportSummary>;
+    importFromCsv(buffer: Buffer, originalName?: string): Promise<ImportSummary>;
 };
 //# sourceMappingURL=order.service.d.ts.map

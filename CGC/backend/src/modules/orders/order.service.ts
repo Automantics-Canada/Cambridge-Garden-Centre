@@ -2,6 +2,7 @@ import { prisma } from '../../db/prisma.js';
 import { parse } from 'csv-parse/sync';
 import type { RawOrderCsvRow } from './orderCsvMapper.js';
 import { mapCsvRowToOrder } from './orderCsvMapper.js';
+import { saveCsvFile } from '../../services/fileStorage.js';
 
 export interface ImportSummary {
   created: number;
@@ -66,7 +67,16 @@ export const OrderService = {
 };
 
 export const OrderImportService = {
-  async importFromCsv(buffer: Buffer): Promise<ImportSummary> {
+  async importFromCsv(buffer: Buffer, originalName?: string): Promise<ImportSummary> {
+    // Save file to Supabase Storage first
+    let fileUrl = '';
+    try {
+      fileUrl = await saveCsvFile(buffer, originalName || 'orders-import.csv');
+      console.log(`[OrderImport] CSV saved to Supabase: ${fileUrl}`);
+    } catch (error) {
+      console.error('[OrderImport] Failed to save CSV to storage, continuing with processing...', error);
+    }
+
     const csvText = buffer.toString('utf-8');
 
     const records = parse(csvText, {

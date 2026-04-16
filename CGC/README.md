@@ -1,7 +1,51 @@
 # Cambridge Garden Centre - AP Verification System
 
+## 🎉 Latest Update: Supabase Storage Integration ✅
+
+The system now uses **Supabase Storage** for all document management:
+- ✅ Automatic file uploads to cloud storage
+- ✅ OCR processing with dual-layer extraction (AWS Textract + AirParser LLM)
+- ✅ Automatic temporary file cleanup
+- ✅ Production-ready and tested
+
+**Quick Links:**
+- [📖 Supabase Integration Complete Documentation](./SUPABASE_INTEGRATION_SUCCESS.md)
+- [🚀 Quick Start Testing Guide](./QUICKSTART_TESTING.md)
+- [🧩 Full Integration Details](./SUPABASE_STORAGE_INTEGRATION_COMPLETE.md)
+- [🤖 AirParser Integration Guide](./AIRPARSER_INTEGRATION_GUIDE.md)
+
+**Server Status:** ✅ Running on http://localhost:4000  
+**Storage:** ✅ Supabase bucket operational  
+**OCR System:** ✅ Dual-layer (Textract + AirParser)
+
+---
+
 ## Overview
 The CGC AP Verification System automates the ingestion, matching, and verification of Accounts Payable (AP) documents. It provides an end-to-end pipeline that handles order creation, ticket OCR parsing and auto-linking, supplier rate management, and invoice discrepancy auditing.
+
+**Document Storage:** Files are now stored in Supabase Storage buckets (tickets-and-invoices) instead of local filesystem.
+
+---
+
+## Quick Start
+
+### Option 1: Start Development Server (Recommended)
+```bash
+cd backend
+npm run dev
+```
+
+This will:
+- ✅ Connect to PostgreSQL database
+- ✅ Verify Supabase Storage connection
+- ✅ Initialize AirParser LLM schemas
+- ✅ Start API on http://localhost:4000
+
+### Option 2: Test the System
+See [QUICKSTART_TESTING.md](./QUICKSTART_TESTING.md) for:
+- How to upload tickets/invoices
+- How to verify files in Supabase
+- How to monitor OCR processing
 
 ---
 

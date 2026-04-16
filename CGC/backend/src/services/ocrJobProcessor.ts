@@ -41,8 +41,12 @@ export async function processOcrJob(jobId: string): Promise<void> {
 
     console.log(`[OCR] Processing job ${jobId} for ticket ${ocrJob.ticket.id}`);
 
-    // Extract text from image
+    // Extract text from image using AWS Textract
     const extracted = await extractTextFromLocalImage(ocrJob.ticket.imageUrl);
+
+    console.log(
+      `[Textract Only] OCR extraction completed for ticket ${ocrJob.ticket.id}`
+    );
 
     // Determine final PO number (prefer OCR extraction over manual input)
     const finalPoNumber = extracted.poNumber || ocrJob.ticket.poNumber;

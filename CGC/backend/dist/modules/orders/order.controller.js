@@ -5,7 +5,7 @@ export const importOrdersFromCsv = async (req, res) => {
         return res.status(400).json({ error: 'CSV file is required (field name: file)' });
     }
     try {
-        const summary = await OrderImportService.importFromCsv(file.buffer);
+        const summary = await OrderImportService.importFromCsv(file.buffer, file.originalname);
         return res.status(200).json({
             message: 'Import completed',
             ...summary,

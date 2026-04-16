@@ -1,22 +1,50 @@
 import { TextractClient, DetectDocumentTextCommand, } from '@aws-sdk/client-textract';
 import path from 'node:path';
 import fs from 'node:fs';
-const client = new TextractClient(); // Relies on standard AWS credential provider chain
+import { downloadFileToTemp, cleanupTempFile, isSupabaseUrl, getFilenameFromUrl } from './urlHandler.js';
+const textractClient = new TextractClient(); // Relies on standard AWS credential provider chain
+/**
+ * Extract text from local image using AWS Textract
+ */
 export async function extractTextFromLocalImage(imageUrl) {
     let localPath = imageUrl;
-    if (imageUrl.startsWith('/uploads/')) {
-        localPath = path.join(process.cwd(), imageUrl);
+    let tempFile = null;
+    try {
+        // Handle Supabase URLs
+        if (isSupabaseUrl(imageUrl)) {
+            console.log(`[OCR] Downloading from Supabase: ${imageUrl.substring(0, 50)}...`);
+            const filename = getFilenameFromUrl(imageUrl);
+            tempFile = await downloadFileToTemp(imageUrl, filename);
+            localPath = tempFile;
+        }
+        else if (imageUrl.startsWith('/uploads/')) {
+            // Handle legacy local paths
+            localPath = path.join(process.cwd(), imageUrl);
+        }
+        if (!fs.existsSync(localPath)) {
+            throw new Error(`Local file not found for OCR: ${localPath}`);
+        }
+        // Extract text using AWS Textract
+        return await extractWithTextract(localPath);
     }
-    if (!fs.existsSync(localPath)) {
-        throw new Error(`Local file not found for OCR: ${localPath}`);
+    finally {
+        // Clean up temporary file if it was downloaded
+        if (tempFile) {
+            await cleanupTempFile(tempFile);
+        }
     }
+}
+/**
+ * Extract text using AWS Textract
+ */
+async function extractWithTextract(localPath) {
     const imageBytes = fs.readFileSync(localPath);
     const command = new DetectDocumentTextCommand({
         Document: {
             Bytes: imageBytes,
         },
     });
-    const result = await client.send(command);
+    const result = await textractClient.send(command);
     const blocks = result.Blocks;
     if (!blocks || blocks.length === 0) {
         throw new Error('No text detected in the image');
@@ -33,6 +61,9 @@ export async function extractTextFromLocalImage(imageUrl) {
         ocrConfidence: averageConfidence,
     };
 }
+/**
+ * Legacy Textract-only parsing function (kept for backward compatibility)
+ */
 function parseTicketData(text) {
     const result = {
         rawText: text,

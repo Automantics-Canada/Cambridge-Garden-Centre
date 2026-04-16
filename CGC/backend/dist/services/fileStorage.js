@@ -1,29 +1,63 @@
-import { promises as fs } from 'node:fs';
-import path from 'node:path';
-import crypto from 'node:crypto';
-const UPLOAD_ROOT = path.join(process.cwd(), 'uploads');
-const TICKET_DIR = path.join(UPLOAD_ROOT, 'tickets');
-const INVOICE_DIR = path.join(UPLOAD_ROOT, 'invoices');
-async function ensureTicketDir() {
-    await fs.mkdir(TICKET_DIR, { recursive: true });
-}
-async function ensureInvoiceDir() {
-    await fs.mkdir(INVOICE_DIR, { recursive: true });
-}
+/**
+ * File Storage Service
+ * Now uses Supabase Storage instead of local file system
+ */
+import { v4 as uuidv4 } from 'uuid';
+import { uploadTicketImage, uploadInvoiceImage, uploadCsvFile } from './supabaseStorage.js';
+/**
+ * Save ticket image to Supabase Storage
+ * Returns the public URL of the uploaded file
+ */
 export async function saveTicketImage(buffer, originalName) {
-    await ensureTicketDir();
-    const ext = path.extname(originalName) || '.jpg';
-    const fileName = `${crypto.randomUUID()}${ext}`;
-    const fullPath = path.join(TICKET_DIR, fileName);
-    await fs.writeFile(fullPath, buffer);
-    return `/uploads/tickets/${fileName}`;
+    try {
+        const ticketId = uuidv4();
+        const result = await uploadTicketImage(buffer, ticketId, originalName);
+        console.log(`[FileStorage] Ticket image uploaded: ${result.publicUrl}`);
+        return result.publicUrl;
+    }
+    catch (error) {
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        console.error('[FileStorage] Failed to save ticket image:', errorMsg);
+        throw error;
+    }
 }
+/**
+ * Save invoice image to Supabase Storage
+ * Returns the public URL of the uploaded file
+ */
 export async function saveInvoiceImage(buffer, originalName) {
-    await ensureInvoiceDir();
-    const ext = path.extname(originalName) || '.pdf';
-    const fileName = `${crypto.randomUUID()}${ext}`;
-    const fullPath = path.join(INVOICE_DIR, fileName);
-    await fs.writeFile(fullPath, buffer);
-    return `/uploads/invoices/${fileName}`;
+    try {
+        const invoiceId = uuidv4();
+        const result = await uploadInvoiceImage(buffer, invoiceId, originalName);
+        console.log(`[FileStorage] Invoice image uploaded: ${result.publicUrl}`);
+        return result.publicUrl;
+    }
+    catch (error) {
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        console.error('[FileStorage] Failed to save invoice image:', errorMsg);
+        throw error;
+    }
 }
+/**
+ * Save CSV file to Supabase Storage
+ * Returns the public URL of the uploaded file
+ */
+export async function saveCsvFile(buffer, originalName) {
+    try {
+        const uploadId = uuidv4();
+        const result = await uploadCsvFile(buffer, originalName, uploadId);
+        console.log(`[FileStorage] CSV file uploaded: ${result.publicUrl}`);
+        return result.publicUrl;
+    }
+    catch (error) {
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        console.error('[FileStorage] Failed to save CSV file:', errorMsg);
+        throw error;
+    }
+}
+export default {
+    saveTicketImage,
+    saveInvoiceImage,
+    saveCsvFile,
+};
 //# sourceMappingURL=fileStorage.js.map
