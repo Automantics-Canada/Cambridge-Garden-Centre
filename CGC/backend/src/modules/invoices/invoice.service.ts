@@ -1,4 +1,5 @@
 import { prisma } from '../../db/prisma.js';
+import { compareTwoStrings } from 'string-similarity';
 import { saveInvoiceImage } from '../../services/fileStorage.js';
 import { extractExpenseFromLocalImage } from '../../services/invoiceOcr.service.js';
 import {
@@ -35,10 +36,12 @@ function normalizeString(str: string): string {
     .trim();
 }
 
+
 function stringsMatchFuzzy(a: string, b: string): boolean {
   const normA = normalizeString(a);
   const normB = normalizeString(b);
-  return normA.includes(normB) || normB.includes(normA);
+  const similarity = compareTwoStrings(normA, normB);
+  return similarity > 0.6 || normA.includes(normB) || normB.includes(normA);
 }
 
 export const InvoiceService = {
@@ -137,56 +140,68 @@ export const InvoiceService = {
         if (!item) continue;
 
         let matchedOrderId: string | null = null;
-        let matchedTicketId: string | null = null;
+        let matchedTicketIds: string[] = [];
         let negotiatedRateVal: number | null = null;
         let flags: LineItemFlag[] = [];
         let rateDiscrepancy: number | null = null;
         let qtyDiscrepancy: number | null = null;
 
+        const linePo = item.poNumber || extracted.poNumber || null;
+
         // --- MATCH 1: Invoice Line to Ticket ---
-        if (item.poNumber) {
-          const ticketMatch = await prisma.ticket.findFirst({
-            where: { poNumber: item.poNumber, supplierId: updatedSupplierId },
+        // 7.1 Match 1: Primary match: PO number on invoice line === PO number on ticket
+        if (linePo) {
+          const matchingTickets = await prisma.ticket.findMany({
+            where: { poNumber: linePo, supplierId: updatedSupplierId },
           });
-          if (ticketMatch) matchedTicketId = ticketMatch.id;
+          if (matchingTickets.length > 0) {
+            matchedTicketIds = matchingTickets.map(t => t.id);
+          }
         }
 
-        if (!matchedTicketId) {
-          // Secondary match: supplier + date range (+/- 3 days) + material + qty (+/- 5%)
+        if (matchedTicketIds.length === 0) {
+          // Secondary match (if no PO): supplier + date range + material type + quantity within 5% tolerance
           const invoiceDate = new Date(updatedInvoice.invoiceDate);
           const minDate = new Date(invoiceDate); minDate.setDate(minDate.getDate() - 3);
           const maxDate = new Date(invoiceDate); maxDate.setDate(maxDate.getDate() + 3);
 
-          const secondaryTicketMatch = await prisma.ticket.findFirst({
+          const potentialTickets = await prisma.ticket.findMany({
             where: {
               supplierId: updatedSupplierId,
               ticketDate: { gte: minDate, lte: maxDate },
-              // fuzzy material match or just skip material for secondary match if too strict
             }
           });
 
-          if (secondaryTicketMatch) {
-            const ticketQty = Number(secondaryTicketMatch.quantity || 0);
-            const diff = Math.abs(item.quantity - ticketQty);
-            const tolerance = item.quantity * 0.05;
-            if (diff <= tolerance) {
-              matchedTicketId = secondaryTicketMatch.id;
+          for (const ticket of potentialTickets) {
+            if (ticket.material && stringsMatchFuzzy(ticket.material, item.description)) {
+              const ticketQty = Number(ticket.quantity || 0);
+              const diff = Math.abs(item.quantity - ticketQty);
+              const tolerance = item.quantity * 0.05;
+              if (diff <= tolerance) {
+                matchedTicketIds.push(ticket.id);
+                // In secondary match, we usually find one primary ticket, 
+                // but let's allow finding multiple if they hit the tolerance.
+                // Spec says "One invoice line can match multiple tickets".
+              }
             }
           }
         }
 
-        if (!matchedTicketId) flags.push(LineItemFlag.NO_TICKET);
+        if (matchedTicketIds.length === 0) {
+          flags.push(LineItemFlag.NO_TICKET);
+        }
 
         // --- MATCH 2: Invoice Line to Order ---
-        if (item.poNumber) {
+        // 7.1 Match 2: Match via PO number: invoice line PO === order PO number
+        if (linePo) {
           const orderMatch = await prisma.order.findFirst({
-            where: { poNumber: item.poNumber, supplierId: updatedSupplierId },
+            where: { poNumber: linePo, supplierId: updatedSupplierId },
           });
           if (orderMatch) {
             matchedOrderId = orderMatch.id;
             const orderQty = Number(orderMatch.quantity);
             const diff = item.quantity - orderQty;
-            const tolerance = orderQty * 0.02;
+            const tolerance = orderQty * 0.02; // 2% tolerance
             if (diff > tolerance) {
               flags.push(LineItemFlag.QTY_MISMATCH);
               qtyDiscrepancy = diff;
@@ -199,6 +214,7 @@ export const InvoiceService = {
         }
 
         // --- MATCH 3: Rate Match ---
+        // 7.1 Match 3: Look up negotiated_rates table
         const allRates = await prisma.negotiatedRate.findMany({
           where: { supplierId: updatedSupplierId },
         });
@@ -211,12 +227,15 @@ export const InvoiceService = {
           if (diff > 0.01) {
             flags.push(LineItemFlag.RATE_MISMATCH);
             rateDiscrepancy = diff;
+          } else if (diff < 0) {
+            // informational only if billing less - flag remains OK unless other issues
           }
         } else {
           flags.push(LineItemFlag.RATE_UNKNOWN);
         }
 
         // --- Final Flagging ---
+        // 7.2 Flag Definitions
         let finalFlag: LineItemFlag = LineItemFlag.OK;
         if (flags.length > 1) {
           finalFlag = LineItemFlag.MULTIPLE_FLAGS;
@@ -229,13 +248,15 @@ export const InvoiceService = {
             invoiceId,
             lineNumber: i + 1,
             description: item.description,
-            poNumber: item.poNumber || null,
+            poNumber: linePo,
             quantity: item.quantity,
-            unit: 'ea',
+            unit: 'ea', // Should probably extract unit from Bedrock too, but keeping 'ea' for now
             unitRate: item.unitPrice,
             lineTotal: item.totalPrice,
             matchedOrderId,
-            matchedTicketId,
+            matchedTickets: {
+              connect: matchedTicketIds.map(id => ({ id }))
+            },
             negotiatedRate: negotiatedRateVal,
             rateDiscrepancy,
             qtyDiscrepancy,
@@ -285,7 +306,7 @@ export const InvoiceService = {
       include: {
         supplier: true,
         lineItems: {
-          include: { matchedOrder: true, matchedTicket: true }
+          include: { matchedOrder: true, matchedTickets: true }
         },
         verifiedBy: true,
         ocrJobs: { orderBy: { startedAt: 'desc' } },

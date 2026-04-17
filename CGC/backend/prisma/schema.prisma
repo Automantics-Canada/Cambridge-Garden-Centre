@@ -188,7 +188,7 @@ model Ticket {
   driverId      String?       @db.Uuid
   driver        Driver?       @relation(fields: [driverId], references: [id])
 
-  lineItems InvoiceLineItem[]
+  matchedInvoiceLineItems InvoiceLineItem[]
   ocrJobs   OcrJob[]      @relation("TicketOcrJobs")
 }
 
@@ -231,8 +231,7 @@ model InvoiceLineItem {
   unit            String
   unitRate        Decimal     @db.Decimal
   lineTotal       Decimal     @db.Decimal
-  matchedTicketId String?     @db.Uuid
-  matchedTicket   Ticket?     @relation(fields: [matchedTicketId], references: [id])
+  matchedTickets  Ticket[]
   matchedOrderId  String?     @db.Uuid
   matchedOrder    Order?      @relation(fields: [matchedOrderId], references: [id])
   negotiatedRate  Decimal?    @db.Decimal

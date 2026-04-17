@@ -22,6 +22,7 @@
     "@types/jsonwebtoken": "^9.0.10",
     "@types/multer": "^2.1.0",
     "@types/node": "^25.5.0",
+    "@types/string-similarity": "^4.0.2",
     "@types/uuid": "^10.0.0",
     "prisma": "^6.19.2",
     "ts-node": "^10.9.2",
@@ -29,6 +30,7 @@
     "typescript": "^6.0.2"
   },
   "dependencies": {
+    "@aws-sdk/client-bedrock-runtime": "^3.1030.0",
     "@aws-sdk/client-textract": "^3.1020.0",
     "@prisma/client": "^6.19.2",
     "@supabase/supabase-js": "^2.38.0",
@@ -42,6 +44,7 @@
     "jsonwebtoken": "^9.0.3",
     "multer": "^2.1.1",
     "nodemon": "^3.1.14",
+    "string-similarity": "^4.0.4",
     "uuid": "^9.0.1"
   }
 }

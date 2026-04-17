@@ -244,14 +244,47 @@ export default function InvoiceDetailPage() {
                       {item.flag !== 'OK' && (
                         <div className="mt-2 pt-2 border-t border-gray-100 space-y-1">
                            {item.flag === 'RATE_MISMATCH' && (
-                             <p className="text-[10px] text-red-600 font-medium">Overbilled by ${Number(item.rateDiscrepancy).toFixed(4)} per unit</p>
+                             <p className="text-[10px] text-red-600 font-medium flex items-center gap-1">
+                               <AlertCircle className="w-3 h-3" /> Billed rate exceeds negotiated rate by ${Number(item.rateDiscrepancy).toFixed(2)}
+                             </p>
+                           )}
+                           {item.flag === 'QTY_MISMATCH' && (
+                             <p className="text-[10px] text-orange-600 font-medium flex items-center gap-1">
+                               <AlertCircle className="w-3 h-3" /> Billed quantity exceeds order/ticket quantity by {Number(item.qtyDiscrepancy).toFixed(2)} {item.unit}
+                             </p>
                            )}
                            {item.flag === 'NO_TICKET' && (
-                             <p className="text-[10px] text-purple-600 font-medium">Could not locate matching delivery ticket in system</p>
+                             <p className="text-[10px] text-purple-600 font-medium flex items-center gap-1">
+                               <Flag className="w-3 h-3" /> No matching delivery tickets found for this line item.
+                             </p>
                            )}
                            {item.flag === 'NO_ORDER' && (
-                             <p className="text-[10px] text-blue-600 font-medium">No order found in Spruce for PO {item.poNumber}</p>
+                             <p className="text-[10px] text-blue-600 font-medium flex items-center gap-1">
+                               <Info className="w-3 h-3" /> No matching Spruce order found for PO {item.poNumber || 'N/A'}.
+                             </p>
                            )}
+                           {item.flag === 'RATE_UNKNOWN' && (
+                             <p className="text-[10px] text-gray-600 font-medium flex items-center gap-1">
+                               <Info className="w-3 h-3" /> No negotiated rate on file for this product.
+                             </p>
+                           )}
+                           {item.flag === 'MULTIPLE_FLAGS' && (
+                             <p className="text-[10px] text-red-700 font-bold flex items-center gap-1 uppercase">
+                               <AlertCircle className="w-3 h-3" /> Multiple discrepancies detected. Review carefully.
+                             </p>
+                           )}
+                        </div>
+                      )}
+
+                      {/* Linked Tickets */}
+                      {item.matchedTickets?.length > 0 && (
+                        <div className="mt-2 flex flex-wrap gap-1.5 items-center">
+                          <span className="text-[9px] font-bold text-gray-400 uppercase mr-1">Tickets:</span>
+                          {item.matchedTickets.map(ticket => (
+                            <span key={ticket.id} className="text-[10px] bg-purple-50 text-purple-700 px-2 py-0.5 rounded border border-purple-100 flex items-center gap-1">
+                              <FileText className="w-2.5 h-2.5" /> {ticket.ticketNumber || 'Ticket'}
+                            </span>
+                          ))}
                         </div>
                       )}
                     </div>

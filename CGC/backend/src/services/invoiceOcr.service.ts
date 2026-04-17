@@ -6,6 +6,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { prisma } from '../db/prisma.js';
 import { downloadFileToTemp, cleanupTempFile, isSupabaseUrl, getFilenameFromUrl } from './urlHandler.js';
+import { extractStructuredData } from './bedrock.service.js';
 
 const textractClient = new TextractClient();
 
@@ -14,11 +15,13 @@ export interface InvoiceOcrExtractionResult {
   invoiceDate: Date | null;
   totalAmount: number | null;
   invoiceNumber: string | null;
+  poNumber: string | null;
   lineItems: Array<{
     description: string;
     quantity: number;
     unitPrice: number;
     totalPrice: number;
+    poNumber: string | null;
   }>;
   rawResponse: any;
 }
@@ -69,88 +72,43 @@ async function extractInvoiceWithTextract(localPath: string): Promise<InvoiceOcr
   });
 
   const response = await textractClient.send(command);
+  const rawText = getRawTextFromExpenseResponse(response);
 
-  const result: InvoiceOcrExtractionResult = {
-    supplierName: null,
-    invoiceDate: null,
-    totalAmount: null,
-    invoiceNumber: null,
-    lineItems: [],
-    rawResponse: response,
+  const extraction = await extractStructuredData(rawText, 'INVOICE');
+
+  return {
+    supplierName: extraction.supplierName,
+    invoiceDate: extraction.date,
+    totalAmount: extraction.totalAmount || null,
+    invoiceNumber: extraction.invoiceNumber || null,
+    poNumber: extraction.poNumber || null,
+    lineItems: (extraction.lineItems || []).map(item => ({
+      description: item.description,
+      quantity: item.quantity,
+      unitPrice: item.unitPrice,
+      totalPrice: item.totalPrice,
+      poNumber: item.poNumber,
+    })),
+    rawResponse: {
+      textract: response,
+      bedrock: extraction,
+    },
   };
+}
 
-  const expenseDocs = response.ExpenseDocuments || [];
-  if (expenseDocs.length === 0) {
-    return result; // No data detected
-  }
-
-  const doc = expenseDocs[0];
-  if (!doc) return result;
-
-  // Parse SummaryFields (Vendor, Date, Invoice Number, Total)
-  const summaryFields = doc.SummaryFields || [];
-  for (const field of summaryFields) {
-    const typeName = field.Type?.Text;
-    const valueStr = field.ValueDetection?.Text;
-
-    if (!typeName || !valueStr) continue;
-
-    if (typeName === 'VENDOR_NAME') {
-      result.supplierName = valueStr;
-    } else if (typeName === 'INVOICE_RECEIPT_DATE' || typeName === 'DATE') {
-      const parsedDate = new Date(valueStr);
-      if (!isNaN(parsedDate.getTime())) {
-        result.invoiceDate = parsedDate;
-      }
-    } else if (typeName === 'INVOICE_RECEIPT_ID' || typeName === 'INVOICE_ID') {
-      result.invoiceNumber = valueStr;
-    } else if (typeName === 'TOTAL') {
-      const numericVal = parseFloat(valueStr.replace(/[^0-9.]/g, ''));
-      if (!isNaN(numericVal)) result.totalAmount = numericVal;
-    }
-  }
-
-  // Parse LineItems
-  const lineItemGroups = doc.LineItemGroups || [];
-  for (const group of lineItemGroups) {
-    const items = group.LineItems || [];
-    for (const item of items) {
-      const fields = item.LineItemExpenseFields || [];
-
-      let description = '';
-      let quantity = 0;
-      let unitPrice = 0;
-      let totalPrice = 0;
-
-      for (const field of fields) {
-        const typeName = field.Type?.Text;
-        const valueStr = field.ValueDetection?.Text;
-
-        if (!typeName || !valueStr) continue;
-
-        if (typeName === 'EXPENSE_ROW') {
-          // generic row details, we skip or use if specific details are absent
-        } else if (typeName === 'ITEM' || typeName === 'DESCRIPTION') {
-          description = valueStr;
-        } else if (typeName === 'QUANTITY') {
-          quantity = parseFloat(valueStr.replace(/[^0-9.]/g, '')) || 0;
-        } else if (typeName === 'UNIT_PRICE') {
-          unitPrice = parseFloat(valueStr.replace(/[^0-9.]/g, '')) || 0;
-        } else if (typeName === 'PRICE' || typeName === 'TOTAL') {
-          totalPrice = parseFloat(valueStr.replace(/[^0-9.]/g, '')) || 0;
-        }
-      }
-
-      if (description) {
-        result.lineItems.push({
-          description,
-          quantity,
-          unitPrice,
-          totalPrice,
-        });
+/**
+ * Helper to get raw text from AnalyzeExpense response
+ */
+function getRawTextFromExpenseResponse(response: any): string {
+  const lines: string[] = [];
+  const docs = response.ExpenseDocuments || [];
+  for (const doc of docs) {
+    const blocks = doc.Blocks || [];
+    for (const block of blocks) {
+      if (block.BlockType === 'LINE' && block.Text) {
+        lines.push(block.Text);
       }
     }
   }
-
-  return result;
+  return lines.join('\n');
 }
