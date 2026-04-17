@@ -1,19 +1,22 @@
-import { useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
-import { motion, AnimatePresence } from 'framer-motion';
-import { Plus, Edit, Trash2, AlertCircle, ChevronDown, Check, FileText } from 'lucide-react';
+import { motion as Motion, AnimatePresence } from 'framer-motion';
+import { Plus, Edit, Trash2, AlertCircle, ChevronDown, Check, FileText, PlusCircle } from 'lucide-react';
 import clsx from 'clsx';
 import toast from 'react-hot-toast';
 import { fetchSuppliers, deleteSupplier, clearSuccess, clearError } from '../../store/supplierSlice';
 import Modal from '../../components/Modal';
 import SupplierForm from '../../components/SupplierForm';
+import RateForm from '../../components/RateForm';
 import Loader from '../../components/Loader';
 
 export default function SupplierPage() {
   const dispatch = useDispatch();
   const { suppliers, loading, error, success, successMessage } = useSelector((state) => state.suppliers);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isRateModalOpen, setIsRateModalOpen] = useState(false);
   const [selectedSupplier, setSelectedSupplier] = useState(null);
+  const [rateModalSupplierId, setRateModalSupplierId] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [filterType, setFilterType] = useState('');
   const [deleteConfirm, setDeleteConfirm] = useState(null);
@@ -67,6 +70,16 @@ export default function SupplierPage() {
     setSelectedSupplier(null);
   };
 
+  const handleOpenRateModal = (supplierId) => {
+    setRateModalSupplierId(supplierId);
+    setIsRateModalOpen(true);
+  };
+
+  const handleCloseRateModal = () => {
+    setIsRateModalOpen(false);
+    setRateModalSupplierId(null);
+  };
+
   const filteredSuppliers = suppliers.filter(supplier => {
     const matchesSearch = supplier.name.toLowerCase().includes(searchQuery.toLowerCase());
     const matchesType = !filterType || supplier.type === filterType;
@@ -91,20 +104,20 @@ export default function SupplierPage() {
   const supplierTypes = ['SUPPLIER', 'TRUCKING_COMPANY'];
 
   return (
-    <motion.div
+    <Motion.div
       className="max-w-7xl mx-auto space-y-6"
       variants={containerVariants}
       initial="hidden"
       animate="visible"
     >
       {/* Header */}
-      <motion.div variants={itemVariants}>
+      <Motion.div variants={itemVariants}>
         <h1 className="text-4xl font-bold text-gray-900 mb-2">Suppliers</h1>
         <p className="text-gray-600">Manage your supplier database</p>
-      </motion.div>
+      </Motion.div>
 
       {/* Action Bar */}
-      <motion.div
+      <Motion.div
         variants={itemVariants}
         className="bg-white rounded-xl border border-gray-200 shadow-sm p-4 flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between"
       >
@@ -132,7 +145,7 @@ export default function SupplierPage() {
         </div>
 
         {/* Add New Button */}
-        <motion.button
+        <Motion.button
           onClick={handleCreateNew}
           whileHover={{ scale: 1.05 }}
           whileTap={{ scale: 0.95 }}
@@ -140,11 +153,11 @@ export default function SupplierPage() {
         >
           <Plus size={20} />
           Add Supplier
-        </motion.button>
-      </motion.div>
+        </Motion.button>
+      </Motion.div>
 
       {/* Suppliers Table or Empty State */}
-      <motion.div
+      <Motion.div
         variants={itemVariants}
         className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden"
       >
@@ -183,8 +196,8 @@ export default function SupplierPage() {
               </thead>
               <tbody>
                 {filteredSuppliers.map((supplier, index) => (
-                  <>
-                    <motion.tr
+                  <React.Fragment key={supplier.id}>
+                    <Motion.tr
                       key={supplier.id}
                       initial={{ opacity: 0, y: 20 }}
                       animate={{ opacity: 1, y: 0 }}
@@ -225,7 +238,7 @@ export default function SupplierPage() {
                       </td>
                       <td className="px-6 py-4">
                         <div className="flex justify-end gap-3">
-                          <motion.button
+                          <Motion.button
                             onClick={(e) => {
                               e.stopPropagation();
                               handleEdit(supplier);
@@ -236,8 +249,8 @@ export default function SupplierPage() {
                             title="Edit Basic Info"
                           >
                             <Edit size={18} />
-                          </motion.button>
-                          <motion.button
+                          </Motion.button>
+                          <Motion.button
                             onClick={(e) => {
                               e.stopPropagation();
                               handleDelete(supplier);
@@ -248,15 +261,15 @@ export default function SupplierPage() {
                             title="Delete Supplier"
                           >
                             <Trash2 size={18} />
-                          </motion.button>
+                          </Motion.button>
                         </div>
                       </td>
-                    </motion.tr>
-                    
+                    </Motion.tr>
+
                     {/* Expanded Rates Section */}
                     <AnimatePresence>
                       {expandedSupplierId === supplier.id && (
-                        <motion.tr
+                        <Motion.tr
                           initial={{ opacity: 0, height: 0 }}
                           animate={{ opacity: 1, height: 'auto' }}
                           exit={{ opacity: 0, height: 0 }}
@@ -264,9 +277,20 @@ export default function SupplierPage() {
                         >
                           <td colSpan="7" className="px-6 py-0 overflow-hidden">
                             <div className="py-4 border-l-4 border-green-500 ml-2 pl-4 mb-4">
-                              <h4 className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-3 flex items-center gap-2">
-                                <FileText size={14} className="text-green-600" /> Negotiated Rates & Products
-                              </h4>
+                              <div className="flex items-center justify-between mb-3">
+                                <h4 className="text-xs font-bold text-gray-500 uppercase tracking-widest flex items-center gap-2">
+                                  <FileText size={14} className="text-green-600" /> Negotiated Rates & Products
+                                </h4>
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleOpenRateModal(supplier.id);
+                                  }}
+                                  className="flex items-center gap-1.5 text-[10px] font-bold text-green-600 hover:text-green-700 bg-green-50 hover:bg-green-100 px-2 py-1 rounded-md transition-all border border-green-100"
+                                >
+                                  <PlusCircle size={14} /> Add Rate
+                                </button>
+                              </div>
                               
                               {supplier.negotiatedRates && supplier.negotiatedRates.length > 0 ? (
                                 <div className="space-y-2">
@@ -287,16 +311,16 @@ export default function SupplierPage() {
                               )}
                             </div>
                           </td>
-                        </motion.tr>
+                        </Motion.tr>
                       )}
                     </AnimatePresence>
-                  </>
+                  </React.Fragment>
                 ))}
               </tbody>
             </table>
           </div>
         )}
-      </motion.div>
+      </Motion.div>
 
       {/* Supplier Form Modal */}
       <Modal
@@ -307,11 +331,20 @@ export default function SupplierPage() {
         <SupplierForm supplier={selectedSupplier} onClose={handleCloseModal} />
       </Modal>
 
+      {/* Rate Form Modal */}
+      <Modal
+        isOpen={isRateModalOpen}
+        onClose={handleCloseRateModal}
+        title="Add Negotiated Rate"
+      >
+        <RateForm supplierId={rateModalSupplierId} onClose={handleCloseRateModal} />
+      </Modal>
+
       {/* Delete Confirmation Modal */}
       <AnimatePresence>
         {deleteConfirm && (
           <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center">
-            <motion.div
+            <Motion.div
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.95 }}
@@ -346,10 +379,10 @@ export default function SupplierPage() {
                   Delete
                 </button>
               </div>
-            </motion.div>
+            </Motion.div>
           </div>
         )}
       </AnimatePresence>
-    </motion.div>
+    </Motion.div>
   );
 }

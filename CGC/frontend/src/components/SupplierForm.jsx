@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
-import { motion } from 'framer-motion';
+import { motion as Motion } from 'framer-motion';
 import toast from 'react-hot-toast';
-import { createSupplier, updateSupplier, clearError, addSupplierRate, deleteSupplierRate } from '../store/supplierSlice';
+import { createSupplier, updateSupplier, clearError } from '../store/supplierSlice';
 
 const SUPPLIER_TYPES = ['SUPPLIER', 'TRUCKING_COMPANY'];
 
@@ -21,13 +21,7 @@ export default function SupplierForm({ supplier = null, onClose }) {
     address: supplier?.address || '',
   });
 
-  const [rateForm, setRateForm] = useState({
-    productName: '',
-    rate: '',
-    unit: 'ton',
-    effectiveFrom: new Date().toISOString().split('T')[0],
-    notes: '',
-  });
+
 
   const [validationErrors, setValidationErrors] = useState({});
 
@@ -73,7 +67,7 @@ export default function SupplierForm({ supplier = null, onClose }) {
   };
 
   const isValidPhone = (phone) => {
-    return /^[\d\s\-\+\(\)]+$/.test(phone) && phone.replace(/\D/g, '').length >= 10;
+    return /^[\d\s\-+()]+$/.test(phone) && phone.replace(/\D/g, '').length >= 10;
   };
 
   const isValidDomain = (domain) => {
@@ -121,6 +115,9 @@ export default function SupplierForm({ supplier = null, onClose }) {
       onClose();
     } catch (err) {
       toast.error(error || err || 'Failed to save supplier');
+    }
+  };
+
   const containerVariants = {
     hidden: { opacity: 0 },
     visible: {
@@ -137,7 +134,7 @@ export default function SupplierForm({ supplier = null, onClose }) {
   };
 
   return (
-    <motion.form
+    <Motion.form
       onSubmit={handleSubmit}
       className="space-y-4"
       variants={containerVariants}
@@ -145,7 +142,7 @@ export default function SupplierForm({ supplier = null, onClose }) {
       animate="visible"
     >
       {/* Name */}
-      <motion.div variants={itemVariants}>
+      <Motion.div variants={itemVariants}>
         <label className="block text-sm font-medium text-gray-700 mb-2">
           Supplier Name *
         </label>
@@ -162,10 +159,10 @@ export default function SupplierForm({ supplier = null, onClose }) {
         {validationErrors.name && (
           <p className="text-red-500 text-sm mt-1">{validationErrors.name}</p>
         )}
-      </motion.div>
+      </Motion.div>
 
       {/* Type */}
-      <motion.div variants={itemVariants}>
+      <Motion.div variants={itemVariants}>
         <label className="block text-sm font-medium text-gray-700 mb-2">
           Supplier Type *
         </label>
@@ -184,10 +181,10 @@ export default function SupplierForm({ supplier = null, onClose }) {
         {validationErrors.type && (
           <p className="text-red-500 text-sm mt-1">{validationErrors.type}</p>
         )}
-      </motion.div>
+      </Motion.div>
 
       {/* Email Domains */}
-      <motion.div variants={itemVariants}>
+      <Motion.div variants={itemVariants}>
         <label className="block text-sm font-medium text-gray-700 mb-2">
           Email Domains <span className="text-xs text-gray-500">(comma separated)</span>
         </label>
@@ -204,10 +201,10 @@ export default function SupplierForm({ supplier = null, onClose }) {
         {validationErrors.emailDomains && (
           <p className="text-red-500 text-sm mt-1">{validationErrors.emailDomains}</p>
         )}
-      </motion.div>
+      </Motion.div>
 
       {/* Keywords */}
-      <motion.div variants={itemVariants}>
+      <Motion.div variants={itemVariants}>
         <label className="block text-sm font-medium text-gray-700 mb-2">
           Identification Keywords <span className="text-xs text-gray-500">(comma separated, for WhatsApp/OCR)</span>
         </label>
@@ -219,10 +216,10 @@ export default function SupplierForm({ supplier = null, onClose }) {
           placeholder="e.g. DUFFERIN, CGC, Miller Paving"
           className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition"
         />
-      </motion.div>
+      </Motion.div>
 
       {/* Contact Name */}
-      <motion.div variants={itemVariants}>
+      <Motion.div variants={itemVariants}>
         <label className="block text-sm font-medium text-gray-700 mb-2">
           Contact Name
         </label>
@@ -234,10 +231,10 @@ export default function SupplierForm({ supplier = null, onClose }) {
           placeholder="Enter contact name"
           className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition"
         />
-      </motion.div>
+      </Motion.div>
 
       {/* Contact Email */}
-      <motion.div variants={itemVariants}>
+      <Motion.div variants={itemVariants}>
         <label className="block text-sm font-medium text-gray-700 mb-2">
           Contact Email
         </label>
@@ -254,10 +251,10 @@ export default function SupplierForm({ supplier = null, onClose }) {
         {validationErrors.contactEmail && (
           <p className="text-red-500 text-sm mt-1">{validationErrors.contactEmail}</p>
         )}
-      </motion.div>
+      </Motion.div>
 
       {/* Phone */}
-      <motion.div variants={itemVariants}>
+      <Motion.div variants={itemVariants}>
         <label className="block text-sm font-medium text-gray-700 mb-2">
           Phone
         </label>
@@ -274,10 +271,10 @@ export default function SupplierForm({ supplier = null, onClose }) {
         {validationErrors.phone && (
           <p className="text-red-500 text-sm mt-1">{validationErrors.phone}</p>
         )}
-      </motion.div>
+      </Motion.div>
 
       {/* Address */}
-      <motion.div variants={itemVariants}>
+      <Motion.div variants={itemVariants}>
         <label className="block text-sm font-medium text-gray-700 mb-2">
           Address
         </label>
@@ -289,10 +286,10 @@ export default function SupplierForm({ supplier = null, onClose }) {
           rows="3"
           className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition resize-none"
         />
-      </motion.div>
+      </Motion.div>
 
       {/* Submit Button */}
-      <motion.div variants={itemVariants} className="flex gap-3 pt-4">
+      <Motion.div variants={itemVariants} className="flex gap-3 pt-4">
         <button
           type="submit"
           disabled={loading}
@@ -310,7 +307,7 @@ export default function SupplierForm({ supplier = null, onClose }) {
         >
           Close
         </button>
-      </motion.div>
-    </motion.form>
+      </Motion.div>
+    </Motion.form>
   );
-    }}};
+}
