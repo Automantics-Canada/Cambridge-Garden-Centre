@@ -21,6 +21,8 @@ export default function SupplierPage() {
   const [filterType, setFilterType] = useState('');
   const [deleteConfirm, setDeleteConfirm] = useState(null);
   const [expandedSupplierId, setExpandedSupplierId] = useState(null);
+  const [selectedRate, setSelectedRate] = useState(null);
+  const [rateDeleteConfirm, setRateDeleteConfirm] = useState(null);
 
   useEffect(() => {
     dispatch(fetchSuppliers());
@@ -78,6 +80,7 @@ export default function SupplierPage() {
   const handleCloseRateModal = () => {
     setIsRateModalOpen(false);
     setRateModalSupplierId(null);
+    setSelectedRate(null);
   };
 
   const filteredSuppliers = suppliers.filter(supplier => {
@@ -300,8 +303,34 @@ export default function SupplierPage() {
                                         <p className="text-sm font-bold text-gray-900">{rate.productName}</p>
                                         <p className="text-[10px] text-gray-500 uppercase">{rate.unit} • Effective {new Date(rate.effectiveFrom).toLocaleDateString()}</p>
                                       </div>
-                                      <div className="text-right">
-                                        <p className="text-sm font-black text-green-700 font-mono">${Number(rate.rate).toFixed(2)}</p>
+                                      <div className="flex items-center gap-4">
+                                        <div className="text-right">
+                                          <p className="text-sm font-black text-green-700 font-mono">${Number(rate.rate).toFixed(2)}</p>
+                                        </div>
+                                        <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                          <button
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              setSelectedRate(rate);
+                                              setRateModalSupplierId(supplier.id);
+                                              setIsRateModalOpen(true);
+                                            }}
+                                            className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-md transition-colors"
+                                            title="Edit Rate"
+                                          >
+                                            <Edit size={14} />
+                                          </button>
+                                          <button
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              setRateDeleteConfirm({ supplierId: supplier.id, rateId: rate.id, productName: rate.productName });
+                                            }}
+                                            className="p-1.5 text-red-600 hover:bg-red-50 rounded-md transition-colors"
+                                            title="Delete Rate"
+                                          >
+                                            <Trash2 size={14} />
+                                          </button>
+                                        </div>
                                       </div>
                                     </div>
                                   ))}
@@ -335,9 +364,13 @@ export default function SupplierPage() {
       <Modal
         isOpen={isRateModalOpen}
         onClose={handleCloseRateModal}
-        title="Add Negotiated Rate"
+        title={selectedRate ? 'Edit Negotiated Rate' : 'Add Negotiated Rate'}
       >
-        <RateForm supplierId={rateModalSupplierId} onClose={handleCloseRateModal} />
+        <RateForm 
+          supplierId={rateModalSupplierId} 
+          rate={selectedRate}
+          onClose={handleCloseRateModal} 
+        />
       </Modal>
 
       {/* Delete Confirmation Modal */}
@@ -370,6 +403,54 @@ export default function SupplierPage() {
                 </button>
                 <button
                   onClick={confirmDelete}
+                  disabled={loading}
+                  className="flex-1 bg-red-600 text-white py-2 rounded-lg font-medium hover:bg-red-700 disabled:bg-gray-400 transition-colors flex items-center justify-center gap-2"
+                >
+                  {loading && (
+                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  )}
+                  Delete
+                </button>
+              </div>
+            </Motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Rate Delete Confirmation Modal */}
+      <AnimatePresence>
+        {rateDeleteConfirm && (
+          <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center">
+            <Motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white rounded-xl shadow-2xl max-w-sm w-full mx-4 p-6"
+            >
+              <div className="flex gap-4 mb-4">
+                <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center flex-shrink-0">
+                  <AlertCircle className="w-6 h-6 text-red-600" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-gray-900">Delete Rate?</h3>
+                  <p className="text-gray-600 text-sm mt-1">
+                    Are you sure you want to delete the rate for <span className="font-semibold">{rateDeleteConfirm.productName}</span>?
+                  </p>
+                </div>
+              </div>
+              <div className="flex gap-3 pt-4">
+                <button
+                  onClick={() => setRateDeleteConfirm(null)}
+                  className="flex-1 bg-gray-200 text-gray-700 py-2 rounded-lg font-medium hover:bg-gray-300 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={async () => {
+                    await dispatch(deleteSupplierRate({ supplierId: rateDeleteConfirm.supplierId, rateId: rateDeleteConfirm.rateId })).unwrap();
+                    setRateDeleteConfirm(null);
+                    toast.success('Rate deleted successfully');
+                  }}
                   disabled={loading}
                   className="flex-1 bg-red-600 text-white py-2 rounded-lg font-medium hover:bg-red-700 disabled:bg-gray-400 transition-colors flex items-center justify-center gap-2"
                 >

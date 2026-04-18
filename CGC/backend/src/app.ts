@@ -7,6 +7,7 @@ import orderRoutes from './modules/orders/order.routes.js';
 import ticketRoutes from './modules/tickets/ticket.routes.js';
 import SupplierRoutes from './modules/supplier/supplier.routes.js';
 import invoiceRoutes from './modules/invoices/invoice.routes.js';
+import productRoutes from './modules/products/product.routes.js';
 
 const app = express();
 
@@ -25,6 +26,7 @@ app.use('/api/orders', orderRoutes);
 app.use('/api/tickets', ticketRoutes);
 app.use('/api/suppliers', SupplierRoutes);
 app.use('/api/invoices', invoiceRoutes);
+app.use('/api/products', productRoutes);
 
 app.use(errorHandler);
 

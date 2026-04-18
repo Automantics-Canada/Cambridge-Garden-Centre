@@ -404,3 +404,9 @@ model SystemSetting {
   updatedBy   User?    @relation(fields: [updatedById], references: [id])
   updatedAt   DateTime @default(now())
 }
+
+model Product {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String   @unique
+  createdAt DateTime @default(now())
+}

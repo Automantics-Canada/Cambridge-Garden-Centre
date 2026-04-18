@@ -1,12 +1,14 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { motion as Motion } from 'framer-motion';
 import toast from 'react-hot-toast';
-import { addSupplierRate } from '../store/supplierSlice';
+import { addSupplierRate, updateSupplierRate } from '../store/supplierSlice';
+import { fetchProducts } from '../store/productSlice';
 
-export default function RateForm({ supplierId, onClose }) {
+export default function RateForm({ supplierId, rate, onClose }) {
   const dispatch = useDispatch();
   const { loading } = useSelector((state) => state.suppliers);
+  const { products } = useSelector((state) => state.products);
 
   const [formData, setFormData] = useState({
     productName: '',
@@ -18,9 +20,25 @@ export default function RateForm({ supplierId, onClose }) {
 
   const [errors, setErrors] = useState({});
 
+  useEffect(() => {
+    dispatch(fetchProducts());
+  }, [dispatch]);
+
+  useEffect(() => {
+    if (rate) {
+      setFormData({
+        productName: rate.productName || '',
+        rate: rate.rate || '',
+        unit: rate.unit || 'tonne',
+        effectiveFrom: rate.effectiveFrom ? new Date(rate.effectiveFrom).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
+        notes: rate.notes || '',
+      });
+    }
+  }, [rate]);
+
   const validate = () => {
     const newErrors = {};
-    if (!formData.productName.trim()) newErrors.productName = 'Product name is required';
+    if (!formData.productName.trim()) newErrors.productName = 'Product is required';
     if (!formData.rate || formData.rate <= 0) newErrors.rate = 'Valid rate is required';
     if (!formData.unit.trim()) newErrors.unit = 'Unit is required';
     if (!formData.effectiveFrom) newErrors.effectiveFrom = 'Effective date is required';
@@ -34,17 +52,31 @@ export default function RateForm({ supplierId, onClose }) {
     if (!validate()) return;
 
     try {
-      await dispatch(addSupplierRate({ 
-        supplierId, 
-        data: {
-          ...formData,
-          rate: Number(formData.rate)
-        } 
-      })).unwrap();
-      toast.success('Rate added successfully');
+      if (rate) {
+        // Update mode
+        await dispatch(updateSupplierRate({ 
+          supplierId, 
+          rateId: rate.id,
+          data: {
+            ...formData,
+            rate: Number(formData.rate)
+          } 
+        })).unwrap();
+        toast.success('Rate updated successfully');
+      } else {
+        // Add mode
+        await dispatch(addSupplierRate({ 
+          supplierId, 
+          data: {
+            ...formData,
+            rate: Number(formData.rate)
+          } 
+        })).unwrap();
+        toast.success('Rate added successfully');
+      }
       onClose();
     } catch (err) {
-      toast.error(err || 'Failed to add rate');
+      toast.error(err || 'Failed to save rate');
     }
   };
 
@@ -79,19 +111,27 @@ export default function RateForm({ supplierId, onClose }) {
     >
       <Motion.div variants={itemVariants}>
         <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">
-          Product Name *
+          Product *
         </label>
-        <input
-          type="text"
+        <select
           name="productName"
           value={formData.productName}
           onChange={handleChange}
-          placeholder="e.g. Type A Gravel"
           className={`w-full border rounded-xl p-2.5 text-sm outline-none focus:ring-2 focus:ring-green-100 transition-all ${
             errors.productName ? 'border-red-500' : 'border-gray-200'
           }`}
-        />
+        >
+          <option value="">Select a product</option>
+          {products.map(p => (
+            <option key={p.id} value={p.name}>{p.name}</option>
+          ))}
+        </select>
         {errors.productName && <p className="text-red-500 text-[10px] mt-1">{errors.productName}</p>}
+        {products.length === 0 && (
+          <p className="text-[10px] text-amber-600 mt-1">
+            No products found. Please add products in the Products section first.
+          </p>
+        )}
       </Motion.div>
 
       <div className="grid grid-cols-2 gap-4">
@@ -174,7 +214,7 @@ export default function RateForm({ supplierId, onClose }) {
           className="flex-1 py-2.5 text-sm font-bold text-white bg-green-600 hover:bg-green-700 rounded-xl transition-all shadow-lg shadow-green-100 disabled:opacity-50 flex items-center justify-center gap-2"
         >
           {loading && <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
-          Add Rate
+          {rate ? 'Update Rate' : 'Add Rate'}
         </button>
       </Motion.div>
     </Motion.form>

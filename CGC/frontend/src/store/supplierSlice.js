@@ -62,6 +62,18 @@ export const addSupplierRate = createAsyncThunk(
   }
 );
 
+export const updateSupplierRate = createAsyncThunk(
+  'suppliers/updateSupplierRate',
+  async ({ supplierId, rateId, data }, { rejectWithValue }) => {
+    try {
+      const response = await api.patch(`/api/suppliers/${supplierId}/rates/${rateId}`, data);
+      return { supplierId, rateId, rate: response.data };
+    } catch (error) {
+      return rejectWithValue(error.response?.data?.error || 'Failed to update rate');
+    }
+  }
+);
+
 export const deleteSupplierRate = createAsyncThunk(
   'suppliers/deleteSupplierRate',
   async ({ supplierId, rateId }, { rejectWithValue }) => {
@@ -182,6 +194,26 @@ const supplierSlice = createSlice({
         }
       })
       .addCase(addSupplierRate.rejected, (state, action) => {
+        state.loading = false;
+        state.error = action.payload;
+      });
+
+    // Update Rate
+    builder
+      .addCase(updateSupplierRate.pending, (state) => {
+        state.loading = true;
+      })
+      .addCase(updateSupplierRate.fulfilled, (state, action) => {
+        state.loading = false;
+        const supplier = state.suppliers.find(s => s.id === action.payload.supplierId);
+        if (supplier && supplier.negotiatedRates) {
+          const index = supplier.negotiatedRates.findIndex(r => r.id === action.payload.rateId);
+          if (index !== -1) {
+            supplier.negotiatedRates[index] = action.payload.rate;
+          }
+        }
+      })
+      .addCase(updateSupplierRate.rejected, (state, action) => {
         state.loading = false;
         state.error = action.payload;
       });
