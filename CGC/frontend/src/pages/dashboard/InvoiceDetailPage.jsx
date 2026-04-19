@@ -174,13 +174,13 @@ export default function InvoiceDetailPage() {
             {invoice.fileUrl ? (
               invoice.fileUrl.toLowerCase().endsWith('.pdf') ? (
                 <iframe 
-                  src={invoice.fileUrl.startsWith('http') ? invoice.fileUrl : `http://localhost:4000${invoice.fileUrl}`} 
+                  src={invoice.fileUrl.startsWith('http') ? invoice.fileUrl : `https://cambridge-garden-centre-1.onrender.com${invoice.fileUrl}`} 
                   className="w-full h-full border-none rounded shadow-lg"
                   title="Invoice Document"
                 ></iframe>
               ) : (
                 <img 
-                  src={invoice.fileUrl.startsWith('http') ? invoice.fileUrl : `http://localhost:4000${invoice.fileUrl}`} 
+                  src={invoice.fileUrl.startsWith('http') ? invoice.fileUrl : `https://cambridge-garden-centre-1.onrender.com${invoice.fileUrl}`} 
                   className="max-w-full max-h-full object-contain shadow-lg rounded"
                   alt="Invoice Document"
                 />

@@ -164,7 +164,7 @@ export default function VerificationDesk() {
 
   const getFullUrl = (url) => {
     if (!url) return '';
-    return url.startsWith('http') ? url : `http://localhost:4000${url}`;
+    return url.startsWith('http') ? url : `https://cambridge-garden-centre-1.onrender.com${url}`;
   };
 
   return (

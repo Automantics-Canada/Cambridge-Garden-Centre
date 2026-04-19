@@ -324,7 +324,7 @@ export default function TicketsPage() {
                       <div className="w-12 h-12 bg-gray-100 rounded-lg overflow-hidden border border-gray-200 cursor-zoom-in" onClick={() => setSelectedTicket(ticket)}>
                         {ticket.imageUrl ? (
                           <img 
-                            src={ticket.imageUrl.startsWith('http') ? ticket.imageUrl : `http://localhost:4000${ticket.imageUrl}`} 
+                            src={ticket.imageUrl.startsWith('http') ? ticket.imageUrl : `https://cambridge-garden-centre-1.onrender.com${ticket.imageUrl}`} 
                             alt="Ticket thumb" 
                             className="w-full h-full object-cover"
                           />
@@ -415,7 +415,7 @@ export default function TicketsPage() {
                 <div className="flex-[1.2] bg-gray-900 p-4 flex items-center justify-center overflow-hidden border-r relative group">
                   {selectedTicket.imageUrl ? (
                     <img 
-                      src={selectedTicket.imageUrl.startsWith('http') ? selectedTicket.imageUrl : `http://localhost:4000${selectedTicket.imageUrl}`} 
+                      src={selectedTicket.imageUrl.startsWith('http') ? selectedTicket.imageUrl : `https://cambridge-garden-centre-1.onrender.com${selectedTicket.imageUrl}`} 
                       className="max-w-full max-h-full object-contain shadow-2xl transition-transform duration-300 group-hover:scale-[1.02]"
                       alt="Full ticket"
                     />
