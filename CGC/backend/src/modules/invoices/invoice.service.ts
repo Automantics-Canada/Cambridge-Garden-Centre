@@ -56,7 +56,7 @@ export const InvoiceService = {
 
     // Find supplier by email domain or keywords
     const match = params.fromEmail.match(/@(.+)$/);
-    const domain = (match && match[1] ? match[1].split('>')[0] : '').toLowerCase(); // Fix for "Name <email@domain.com>"
+    const domain = (match?.[1]?.split('>')[0] ?? '').toLowerCase();
 
     let supplier = await prisma.supplier.findFirst({
       where: domain ? { emailDomains: { hasSome: [domain] } } : {},
@@ -224,7 +224,7 @@ export const InvoiceService = {
         // --- MATCH 3: Rate Match ---
         // 7.1 Match 3: Look up negotiated_rates table
         const allRates = await prisma.negotiatedRate.findMany({
-          where: { 
+          where: {
             supplierId: updatedSupplierId,
             effectiveFrom: { lte: new Date(updatedInvoice.invoiceDate) },
             OR: [

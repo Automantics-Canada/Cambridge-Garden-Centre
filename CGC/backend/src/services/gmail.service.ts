@@ -42,7 +42,7 @@ export class GmailService {
     try {
       this.isPolling = true;
       console.log('📬 Checking Gmail for new unread invoices...');
-      
+
       // Look for NEW messages with attachments
       const res = await this.gmail.users.messages.list({
         userId: 'me',
@@ -78,7 +78,7 @@ export class GmailService {
       console.log(`Processing email from ${from}: "${subject}"`);
 
       const attachments = this.getAttachments(message.payload!);
-      
+
       if (attachments.length === 0) {
         console.log('No valid attachments found in this email.');
         await this.markAsRead(messageId);
@@ -106,7 +106,7 @@ export class GmailService {
         });
 
         const buffer = Buffer.from(attachRes.data.data!, 'base64');
-        
+
         // Trigger Ingestion Pipeline
         console.log(`Ingesting attachment: ${attachment.filename}`);
         const result = await InvoiceService.ingestEmailInvoice({
@@ -119,7 +119,7 @@ export class GmailService {
 
         // Trigger OCR process automatically via unified background processor
         if (result.ocrJob.id) {
-           triggerOcrProcessing(result.ocrJob.id);
+          triggerOcrProcessing(result.ocrJob.id);
         }
       }
 
@@ -132,7 +132,7 @@ export class GmailService {
 
   private static getAttachments(payload: any): any[] {
     const attachments: any[] = [];
-    
+
     const findAttachments = (part: any) => {
       if (part.filename && part.body?.attachmentId) {
         // Only allow PDF and Images
@@ -152,12 +152,11 @@ export class GmailService {
 
   private static async markAsRead(messageId: string) {
     try {
-      await this.gmail.users.messages.batchModify({
+      await this.gmail.users.messages.modify({
         userId: 'me',
-        ids: [messageId],
-        resource: {
+        id: messageId,
+        requestBody: {
           removeLabelIds: ['UNREAD'],
-          addLabelIds: [], // Could add a 'PROCESSED' label here if it exists
         },
       });
     } catch (error) {

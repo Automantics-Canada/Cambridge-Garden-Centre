@@ -1,0 +1,2 @@
+OrderNumber,CustomerName,BuyerType,Product,Quantity,Unit,PONumber,OrderDate,DeliveryDate,InvoiceNumber,HasInvoice
+ORD-DUFF-1005,Highview Homes,CONTRACTOR,Screening,30,Tons,PO-HIGHVIEW-SCREEN-01,2026-04-19,2026-04-20,,no
