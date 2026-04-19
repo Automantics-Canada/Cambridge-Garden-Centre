@@ -172,9 +172,9 @@ export default function VerificationDesk() {
       {/* 1. Selection Sidebar */}
       <div className="w-80 bg-white border-r flex flex-col shadow-sm z-20">
         <div className="p-6 border-b">
-          <h2 className="text-xl font-black text-gray-900 tracking-tight">Match Desk</h2>
+          <h2 className="text-xl font-light text-gray-900 tracking-tight">Match Desk</h2>
           <div className="mt-4 relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-300" />
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-800" />
             <input 
               type="text" 
               placeholder="Search invoices..."
@@ -197,14 +197,14 @@ export default function VerificationDesk() {
               }`}
             >
               <div className="flex justify-between items-start mb-1">
-                <span className="text-sm font-black tracking-tight">{inv.invoiceNumber}</span>
-                <span className={`text-[8px] font-black uppercase px-2 py-0.5 rounded-full ${
+                <span className="text-sm font-light tracking-tight">{inv.invoiceNumber}</span>
+                <span className={`text-[8px] font-light uppercase px-2 py-0.5 rounded-full ${
                   inv.status === 'VERIFIED' ? 'bg-green-400/20 text-green-100' : 'bg-yellow-400/20 text-yellow-100'
                 }`}>
                   {inv.status}
                 </span>
               </div>
-              <p className={`text-xs font-bold ${selectedInvoice?.id === inv.id ? 'text-green-100' : 'text-gray-500'}`}>
+              <p className={`text-xs font-normal ${selectedInvoice?.id === inv.id ? 'text-green-100' : 'text-gray-800'}`}>
                 {inv.supplier?.name}
               </p>
             </button>
@@ -215,9 +215,9 @@ export default function VerificationDesk() {
       {/* 2. The Desk */}
       <div className="flex-1 flex flex-col overflow-hidden bg-gray-100">
         {!selectedInvoice ? (
-          <div className="flex-1 flex items-center justify-center flex-col text-gray-400">
+          <div className="flex-1 flex items-center justify-center flex-col text-gray-900">
             <History className="w-16 h-16 mb-4 opacity-20" />
-            <p className="text-lg font-bold">Select an invoice to verify</p>
+            <p className="text-lg font-normal">Select an invoice to verify</p>
           </div>
         ) : (
           <>
@@ -225,15 +225,15 @@ export default function VerificationDesk() {
             <div className="h-20 bg-white border-b px-8 flex items-center justify-between z-10 shadow-sm">
               <div className="flex items-center gap-8">
                  <div className="flex flex-col">
-                    <span className="text-[10px] font-extrabold text-gray-400 uppercase tracking-widest">Supplier</span>
-                    <span className="text-base font-black text-gray-900">{selectedInvoice.supplier?.name}</span>
+                    <span className="text-[10px] font-light text-gray-900 uppercase tracking-widest">Supplier</span>
+                    <span className="text-base font-light text-gray-900">{selectedInvoice.supplier?.name}</span>
                  </div>
                  <div className="w-px h-8 bg-gray-200" />
                  <div className="flex flex-col">
-                    <span className="text-[10px] font-extrabold text-gray-400 uppercase tracking-widest">Verification Status</span>
+                    <span className="text-[10px] font-light text-gray-900 uppercase tracking-widest">Verification Status</span>
                     <div className="flex items-center gap-2 mt-0.5">
                        <div className={`w-2 h-2 rounded-full ${selectedInvoice.status === 'VERIFIED' ? 'bg-green-500' : 'bg-yellow-500'} animate-pulse`} />
-                       <span className={`text-xs font-bold uppercase ${selectedInvoice.status === 'VERIFIED' ? 'text-green-700' : 'text-yellow-700'}`}>
+                       <span className={`text-xs font-normal uppercase ${selectedInvoice.status === 'VERIFIED' ? 'text-green-700' : 'text-yellow-700'}`}>
                           {selectedInvoice.status.replace('_', ' ')}
                        </span>
                     </div>
@@ -245,14 +245,14 @@ export default function VerificationDesk() {
                     <>
                       <button 
                         onClick={() => setShowDisputeInput(!showDisputeInput)}
-                        className={`px-6 py-2.5 rounded-xl font-bold text-xs transition-all border ${showDisputeInput ? 'bg-red-500 text-white border-red-500' : 'bg-white text-red-600 border-red-100 hover:bg-red-50'}`}
+                        className={`px-6 py-2.5 rounded-xl font-normal text-xs transition-all border ${showDisputeInput ? 'bg-red-500 text-white border-red-500' : 'bg-white text-red-600 border-red-100 hover:bg-red-50'}`}
                       >
                         {showDisputeInput ? 'Cancel Dispute' : 'Flag Dispute'}
                       </button>
                       <button 
                         onClick={handleVerify}
                         disabled={isProcessing}
-                        className="px-8 py-2.5 bg-[#1B4332] hover:bg-black text-white font-black text-xs rounded-xl transition-all shadow-lg shadow-green-200 flex items-center gap-2 disabled:opacity-50"
+                        className="px-8 py-2.5 bg-[#1B4332] hover:bg-black text-white font-light text-xs rounded-xl transition-all shadow-lg shadow-green-200 flex items-center gap-2 disabled:opacity-50"
                       >
                         {isProcessing ? 'Processing...' : <><CheckCircle className="w-4 h-4" /> Final Approve</>}
                       </button>
@@ -261,7 +261,7 @@ export default function VerificationDesk() {
                  {selectedInvoice.status !== 'PENDING_REVIEW' && (
                     <button 
                       onClick={() => api.post(`/api/invoices/${selectedInvoice.id}/reopen`).then(() => fetchInvoiceDetails(selectedInvoice.id))}
-                      className="px-6 py-2.5 bg-gray-800 text-white rounded-xl font-black text-xs hover:bg-black transition-all"
+                      className="px-6 py-2.5 bg-gray-800 text-white rounded-xl font-light text-xs hover:bg-black transition-all"
                     >
                       Reopen Record
                     </button>
@@ -274,7 +274,7 @@ export default function VerificationDesk() {
               <div className="bg-red-600 px-8 py-5 flex items-center gap-6 animate-in slide-in-from-top fade-in duration-300">
                  <AlertTriangle className="w-8 h-8 text-red-100" />
                  <div className="flex-1">
-                    <label className="text-[10px] font-black text-red-100 uppercase tracking-widest">Why are you disputing this?</label>
+                    <label className="text-[10px] font-light text-red-100 uppercase tracking-widest">Why are you disputing this?</label>
                     <input 
                       type="text" 
                       placeholder="e.g. Quantity mismatch on gravel line... or Rate doesn't match negotiated..."
@@ -287,7 +287,7 @@ export default function VerificationDesk() {
                  <button 
                   onClick={handleDispute}
                   disabled={isProcessing}
-                  className="px-8 py-3 bg-white text-red-600 font-black text-xs rounded-xl hover:shadow-xl transition-all disabled:opacity-50"
+                  className="px-8 py-3 bg-white text-red-600 font-light text-xs rounded-xl hover:shadow-xl transition-all disabled:opacity-50"
                  >
                     {isProcessing ? 'Flagging...' : 'Confirm Dispute'}
                  </button>
@@ -303,24 +303,24 @@ export default function VerificationDesk() {
                         <img src={getFullUrl(selectedInvoice.fileUrl)} className="w-full h-full object-cover grayscale-[30%] group-hover:grayscale-0 transition-all duration-500" alt="Invoice" />
                         <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent flex flex-col justify-end p-8">
                            <div className="flex items-center justify-between">
-                              <span className="text-white text-[10px] font-black uppercase tracking-widest opacity-80">Original Bill</span>
+                              <span className="text-white text-[10px] font-light uppercase tracking-widest opacity-80">Original Bill</span>
                               <Maximize2 className="text-white w-5 h-5 opacity-0 group-hover:opacity-100 transition-opacity" />
                            </div>
-                           <h3 className="text-white text-2xl font-black mt-1">INV-{selectedInvoice.invoiceNumber}</h3>
+                           <h3 className="text-white text-2xl font-light mt-1">INV-{selectedInvoice.invoiceNumber}</h3>
                         </div>
                      </div>
                   </div>
                   
                   <div className="bg-[#1B4332] rounded-[40px] p-8 text-white shadow-xl shadow-green-100">
-                     <h4 className="text-[10px] font-black uppercase tracking-widest text-green-300/50 mb-4">Invoice Summary</h4>
+                     <h4 className="text-[10px] font-light uppercase tracking-widest text-green-300/50 mb-4">Invoice Summary</h4>
                      <div className="space-y-4">
                         <div className="flex items-center justify-between">
-                           <span className="text-sm font-bold opacity-60">Total Billed</span>
-                           <span className="text-xl font-black">${Number(selectedInvoice.totalAmount).toLocaleString()}</span>
+                           <span className="text-sm font-normal opacity-60">Total Billed</span>
+                           <span className="text-xl font-light">${Number(selectedInvoice.totalAmount).toLocaleString()}</span>
                         </div>
                         <div className="flex items-center justify-between border-t border-green-700/50 pt-4">
-                           <span className="text-sm font-bold opacity-100 text-green-200">Payment Status</span>
-                           <span className="text-xs font-black bg-white/10 px-3 py-1 rounded-full uppercase tracking-widest">{selectedInvoice.status}</span>
+                           <span className="text-sm font-normal opacity-100 text-green-200">Payment Status</span>
+                           <span className="text-xs font-light bg-white/10 px-3 py-1 rounded-full uppercase tracking-widest">{selectedInvoice.status}</span>
                         </div>
                      </div>
                   </div>
@@ -332,21 +332,21 @@ export default function VerificationDesk() {
                     <div key={li.id} className="bg-white rounded-[40px] p-8 border border-gray-100 shadow-sm hover:shadow-md transition-all">
                        <div className="flex items-start justify-between mb-8">
                           <div className="flex items-center gap-4">
-                             <div className="w-12 h-12 bg-gray-50 rounded-2xl flex items-center justify-center font-black text-gray-300">
+                             <div className="w-12 h-12 bg-gray-50 rounded-2xl flex items-center justify-center font-light text-gray-800">
                                 {String(idx + 1).padStart(2, '0')}
                              </div>
                              <div>
-                                <h3 className="text-lg font-black text-gray-900 tracking-tight">{li.description}</h3>
+                                <h3 className="text-lg font-light text-gray-900 tracking-tight">{li.description}</h3>
                                 <div className="flex items-center gap-3 mt-1">
-                                   <span className="text-xs font-bold text-gray-400">QTY: {Number(li.quantity).toFixed(0)} {li.unit}</span>
+                                   <span className="text-xs font-normal text-gray-900">QTY: {Number(li.quantity).toFixed(0)} {li.unit}</span>
                                    <div className="w-1 h-1 bg-gray-200 rounded-full" />
-                                   <span className="text-xs font-black text-[#1B4332]">PO: {li.poNumber || 'N/A'}</span>
+                                   <span className="text-xs font-light text-[#1B4332]">PO: {li.poNumber || 'N/A'}</span>
                                 </div>
                              </div>
                           </div>
                           <div className="text-right">
-                             <p className="text-2xl font-black text-gray-900">${Number(li.lineTotal).toFixed(0)}</p>
-                             <p className="text-[10px] font-black text-gray-300 uppercase tracking-widest">Extracted Rate: ${li.unitRate}/ton</p>
+                             <p className="text-2xl font-light text-gray-900">${Number(li.lineTotal).toFixed(0)}</p>
+                             <p className="text-[10px] font-light text-gray-800 uppercase tracking-widest">Extracted Rate: ${li.unitRate}/ton</p>
                           </div>
                        </div>
 
@@ -354,7 +354,7 @@ export default function VerificationDesk() {
                           {/* Ticket Linking */}
                           <div className="bg-gray-50 rounded-[30px] p-6 border-2 border-dashed border-gray-100">
                              <div className="flex items-center justify-between mb-4">
-                                <span className="text-[10px] font-black uppercase tracking-widest text-gray-400 flex items-center gap-2">
+                                <span className="text-[10px] font-light uppercase tracking-widest text-gray-900 flex items-center gap-2">
                                    <Truck className="w-3 h-3" /> Delivery Evidence
                                 </span>
                                 {li.matchedTickets?.length > 0 && <CheckCircle className="w-4 h-4 text-green-500" />}
@@ -368,20 +368,20 @@ export default function VerificationDesk() {
                                           <img src={getFullUrl(t.imageUrl)} className="w-full h-full object-cover" alt="Ticket" />
                                        </div>
                                        <div className="flex-1">
-                                          <p className="text-[10px] font-bold text-gray-900">T-{t.ticketNumber || t.id.substring(0,6)}</p>
-                                          <p className="text-[9px] font-black text-purple-600 uppercase tracking-tighter">{Number(t.quantity)} {t.unit}</p>
+                                          <p className="text-[10px] font-normal text-gray-900">T-{t.ticketNumber || t.id.substring(0,6)}</p>
+                                          <p className="text-[9px] font-light text-purple-600 uppercase tracking-tighter">{Number(t.quantity)} {t.unit}</p>
                                        </div>
                                        <button className="opacity-0 group-hover:opacity-100 p-1.5 hover:bg-red-50 text-red-400 rounded-lg transition-all">
                                           <X className="w-3 h-3" />
                                        </button>
                                     </div>
                                   ))}
-                                  <button onClick={() => setLinkingLineItem({ id: li.id, type: 'ticket' })} className="w-full py-2 text-[10px] font-black uppercase text-gray-400 hover:text-green-600 transition-colors">Add Link +</button>
+                                  <button onClick={() => setLinkingLineItem({ id: li.id, type: 'ticket' })} className="w-full py-2 text-[10px] font-light uppercase text-gray-900 hover:text-green-600 transition-colors">Add Link +</button>
                                </div>
                              ) : (
                                <div className="py-4 text-center">
                                   <AlertTriangle className="w-6 h-6 text-red-200 mx-auto mb-2" />
-                                  <button onClick={() => setLinkingLineItem({ id: li.id, type: 'ticket' })} className="text-[10px] font-black uppercase text-[#1B4332] hover:underline underline-offset-4">Manual Ticket Link</button>
+                                  <button onClick={() => setLinkingLineItem({ id: li.id, type: 'ticket' })} className="text-[10px] font-light uppercase text-[#1B4332] hover:underline underline-offset-4">Manual Ticket Link</button>
                                </div>
                              )}
                           </div>
@@ -389,7 +389,7 @@ export default function VerificationDesk() {
                           {/* Order Linking */}
                           <div className="bg-gray-50 rounded-[30px] p-6 border-2 border-dashed border-gray-100">
                              <div className="flex items-center justify-between mb-4">
-                                <span className="text-[10px] font-black uppercase tracking-widest text-gray-400 flex items-center gap-2">
+                                <span className="text-[10px] font-light uppercase tracking-widest text-gray-900 flex items-center gap-2">
                                    <ShoppingCart className="w-3 h-3" /> Spruce Order
                                 </span>
                                 {li.matchedOrderId && <CheckCircle className="w-4 h-4 text-blue-500" />}
@@ -398,11 +398,11 @@ export default function VerificationDesk() {
                              {li.matchedOrderId ? (
                                <div className="bg-blue-600 rounded-2xl p-4 text-white relative overflow-hidden group">
                                   <div className="relative z-10">
-                                     <p className="text-[9px] font-black text-blue-200 uppercase tracking-widest mb-1">Authorization</p>
-                                     <p className="text-sm font-black tracking-tight">{li.matchedOrder?.spruceOrderId}</p>
+                                     <p className="text-[9px] font-light text-blue-200 uppercase tracking-widest mb-1">Authorization</p>
+                                     <p className="text-sm font-light tracking-tight">{li.matchedOrder?.spruceOrderId}</p>
                                      <div className="flex items-center justify-between mt-3">
-                                        <span className="text-[10px] font-bold opacity-70">QTY Match</span>
-                                        <span className="text-xs font-black">{Number(li.matchedOrder?.quantity)} {li.matchedOrder?.unit}</span>
+                                        <span className="text-[10px] font-normal opacity-70">QTY Match</span>
+                                        <span className="text-xs font-light">{Number(li.matchedOrder?.quantity)} {li.matchedOrder?.unit}</span>
                                      </div>
                                   </div>
                                   <button className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 p-1 bg-white/10 hover:bg-white/20 rounded-lg transition-all">
@@ -412,7 +412,7 @@ export default function VerificationDesk() {
                              ) : (
                                <div className="py-4 text-center">
                                   <Package className="w-6 h-6 text-gray-200 mx-auto mb-2" />
-                                  <button onClick={() => setLinkingLineItem({ id: li.id, type: 'order' })} className="text-[10px] font-black uppercase text-blue-600 hover:underline underline-offset-4">Find Order Link</button>
+                                  <button onClick={() => setLinkingLineItem({ id: li.id, type: 'order' })} className="text-[10px] font-light uppercase text-blue-600 hover:underline underline-offset-4">Find Order Link</button>
                                </div>
                              )}
                           </div>
@@ -431,21 +431,21 @@ export default function VerificationDesk() {
            <div className="bg-white w-full max-w-xl rounded-[40px] overflow-hidden shadow-2xl animate-in zoom-in-95 duration-200">
               <div className="p-8 border-b flex items-center justify-between bg-gray-50">
                  <div>
-                    <h2 className="text-2xl font-black text-gray-900 tracking-tight">Manual Association</h2>
-                    <p className="text-xs font-bold text-gray-400 uppercase mt-1 tracking-widest">Lookup {linkingLineItem.type} in central database</p>
+                    <h2 className="text-2xl font-light text-gray-900 tracking-tight">Manual Association</h2>
+                    <p className="text-xs font-normal text-gray-900 uppercase mt-1 tracking-widest">Lookup {linkingLineItem.type} in central database</p>
                  </div>
                  <button onClick={() => setLinkingLineItem(null)} className="p-3 hover:bg-gray-200 rounded-2xl transition-all">
-                    <X className="w-6 h-6 text-gray-400" />
+                    <X className="w-6 h-6 text-gray-900" />
                  </button>
               </div>
               
               <div className="p-8 space-y-6">
                  <div className="relative">
-                    <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-300" />
+                    <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-800" />
                     <input 
                       type="text" 
                       placeholder={`Search ${linkingLineItem.type}s by number, PO, or material...`}
-                      className="w-full pl-12 pr-4 py-4 bg-gray-100 border-none rounded-2xl text-base font-bold focus:ring-4 focus:ring-green-100 outline-none transition-all"
+                      className="w-full pl-12 pr-4 py-4 bg-gray-100 border-none rounded-2xl text-base font-normal focus:ring-4 focus:ring-green-100 outline-none transition-all"
                       onChange={e => searchManualLinks(e.target.value)}
                       autoFocus
                     />
@@ -455,9 +455,9 @@ export default function VerificationDesk() {
                     {searching ? (
                       <Loader message="Searching records..." />
                     ) : searchResults.length === 0 ? (
-                      <div className="py-12 text-center text-gray-300">
+                      <div className="py-12 text-center text-gray-800">
                          <Search className="w-12 h-12 mx-auto mb-4 opacity-10" />
-                         <p className="font-bold text-sm">Type to begin searching</p>
+                         <p className="font-normal text-sm">Type to begin searching</p>
                       </div>
                     ) : (
                       searchResults.map(res => (
@@ -471,13 +471,13 @@ export default function VerificationDesk() {
                                  {linkingLineItem.type === 'order' ? <ShoppingCart className="w-5 h-5 text-blue-500" /> : <Truck className="w-5 h-5 text-purple-500" />}
                               </div>
                               <div>
-                                 <p className="text-base font-black text-gray-900">{res.spruceOrderId || res.ticketNumber || res.id.substring(0,8)}</p>
-                                 <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">{res.product || res.material || 'General Material'}</p>
+                                 <p className="text-base font-light text-gray-900">{res.spruceOrderId || res.ticketNumber || res.id.substring(0,8)}</p>
+                                 <p className="text-[10px] font-light text-gray-900 uppercase tracking-widest">{res.product || res.material || 'General Material'}</p>
                               </div>
                            </div>
                            <div className="text-right">
-                              <p className="text-sm font-black text-gray-900">{res.quantity} {res.unit}</p>
-                              <div className="flex items-center gap-1 text-[10px] font-bold text-green-700 uppercase">
+                              <p className="text-sm font-light text-gray-900">{res.quantity} {res.unit}</p>
+                              <div className="flex items-center gap-1 text-[10px] font-normal text-green-700 uppercase">
                                  PO: {res.poNumber || 'N/A'} <ChevronRight className="w-3 h-3" />
                               </div>
                            </div>
@@ -505,11 +505,11 @@ export default function VerificationDesk() {
               />
            </div>
            <div className="h-20 flex items-center justify-center gap-8">
-              <button className="flex items-center gap-2 text-white/60 hover:text-white font-bold transition-colors">
+              <button className="flex items-center gap-2 text-white/60 hover:text-white font-normal transition-colors">
                  <Search className="w-5 h-5" /> Zoom In
               </button>
               <div className="w-px h-6 bg-white/10" />
-              <button className="flex items-center gap-2 text-white/60 hover:text-white font-bold transition-colors">
+              <button className="flex items-center gap-2 text-white/60 hover:text-white font-normal transition-colors">
                  <ExternalLink className="w-5 h-5" /> Open in New Tab
               </button>
            </div>
