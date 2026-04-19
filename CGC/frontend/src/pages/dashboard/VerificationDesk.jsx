@@ -118,6 +118,24 @@ export default function VerificationDesk() {
     }
   };
 
+  const handleLinkTickets = async (ticketId) => {
+    setIsProcessing(true);
+    try {
+      // For now we link one ticket at a time from this UI
+      await api.post('/api/invoices/line-items/link-tickets', {
+        lineItemId: linkingLineItem.id,
+        ticketIds: [ticketId]
+      });
+      toast.success('Ticket linked successfully');
+      setLinkingLineItem(null);
+      fetchInvoiceDetails(selectedInvoice.id);
+    } catch (err) {
+      toast.error('Ticket linking failed');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
   const searchManualLinks = async (query) => {
     if (!query) {
       setSearchResults([]);
@@ -445,7 +463,7 @@ export default function VerificationDesk() {
                       searchResults.map(res => (
                         <button 
                           key={res.id} 
-                          onClick={() => linkingLineItem.type === 'order' ? handleLinkOrder(res.id) : toast.success('Ticket linking UI is next phase!')}
+                          onClick={() => linkingLineItem.type === 'order' ? handleLinkOrder(res.id) : handleLinkTickets(res.id)}
                           className="w-full flex items-center justify-between p-5 hover:bg-green-50 rounded-[24px] border border-transparent hover:border-green-100 transition-all text-left"
                         >
                            <div className="flex items-center gap-4">
