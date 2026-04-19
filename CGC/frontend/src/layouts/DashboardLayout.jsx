@@ -90,13 +90,14 @@ export default function DashboardLayout() {
         <div className="p-4 border-t border-[#2D6A4F] mt-auto">
           <div className="flex items-center gap-3">
             <div className="w-8 h-8 rounded-full bg-[#2D6A4F] flex items-center justify-center font-bold text-sm flex-shrink-0">
-              {user?.name?.substring(0,2).toUpperCase() || "SK"}
+              {user?.name ? user.name.substring(0, 2).toUpperCase() : "U"}
             </div>
             {sidebarOpen && (
               <div className="flex-1 overflow-hidden">
-                <div className="text-sm font-semibold truncate">{user?.name || "Sarah K."}</div>
-                <div className="text-xs text-green-300 truncate">{user?.email || user?.role || "Admin"}</div>
-                {user?.email && <div className="text-xs text-green-400 truncate">{user?.role || "Admin"}</div>}
+                <div className="text-sm font-semibold truncate text-white">{user?.name || 'User'}</div>
+                <div className="text-xs text-green-300 truncate font-medium uppercase tracking-wider">
+                  {user?.role?.replace('_', ' ') || 'Staff'}
+                </div>
               </div>
             )}
             <button 

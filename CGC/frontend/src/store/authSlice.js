@@ -63,7 +63,7 @@ const authSlice = createSlice({
         
         // Handle response mapping. The backend returns user object directly and a token if implemented.
         // Looking at backend auth.controller.ts, AuthService.login(email, password) returns { token, ...user }
-        const { token, ...user } = action.payload;
+        const { token, user } = action.payload;
         
         state.user = user;
         state.token = token;
