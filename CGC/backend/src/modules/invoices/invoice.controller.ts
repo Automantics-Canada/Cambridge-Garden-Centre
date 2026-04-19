@@ -10,11 +10,12 @@ export const InvoiceController = {
 
       const { fromEmail = 'supplier@example.com', subject = 'Invoice Attached' } = req.body;
 
-      const { invoice, ocrJob } = await InvoiceService.ingestMockEmailInvoice({
+      const { invoice, ocrJob } = await InvoiceService.ingestEmailInvoice({
         buffer: req.file.buffer,
         originalName: req.file.originalname,
         fromEmail,
         subject,
+        gmailMessageId: `manual-${Date.now()}`
       });
 
       // Kick off OCR in the background, don't await

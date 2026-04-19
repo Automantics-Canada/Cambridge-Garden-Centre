@@ -27,6 +27,7 @@ const INITIAL_FORM = {
 export default function RatesPage() {
   const [rates, setRates] = useState([]);
   const [suppliers, setSuppliers] = useState([]);
+  const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -36,12 +37,12 @@ export default function RatesPage() {
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      const [resSuppliers, resSuppliersFull] = await Promise.all([
+      const [resSuppliers, resProducts] = await Promise.all([
         api.get('/api/suppliers'),
-        api.get('/api/suppliers') // Reusing as rates are usually fetched nested or from a rates endpoint. 
-                             // Let's assume we want all rates from all suppliers.
+        api.get('/api/products')
       ]);
       setSuppliers(resSuppliers.data);
+      setProducts(resProducts.data);
       
       // Extract all rates from all suppliers
       const allRates = resSuppliers.data.flatMap(s => 
@@ -103,6 +104,18 @@ export default function RatesPage() {
       handleCloseModal();
     } catch (err) {
       toast.error(err.response?.data?.error || 'Failed to save rate');
+    }
+  };
+
+  const handleDeactivate = async (rate) => {
+    if (!window.confirm(`Deactivate rate for "${rate.productName}"? This sets the expiration to today.`)) return;
+    try {
+      const today = new Date().toISOString().split('T')[0];
+      await api.patch(`/api/suppliers/${rate.supplierId}/rates/${rate.id}`, { effectiveTo: today });
+      toast.success('Rate deactivated');
+      fetchData();
+    } catch (err) {
+      toast.error('Failed to deactivate');
     }
   };
 
@@ -193,8 +206,11 @@ export default function RatesPage() {
                         {!isActive && <span className="text-[10px] text-red-500 font-bold uppercase italic">Expired</span>}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium space-x-2">
-                        <button onClick={() => handleOpenModal(rate)} className="text-gray-400 hover:text-gray-900 transition-colors p-1"><Edit2 className="w-4 h-4" /></button>
-                        <button onClick={() => handleDelete(rate)} className="text-gray-400 hover:text-red-600 transition-colors p-1"><Trash2 className="w-4 h-4" /></button>
+                        <button onClick={() => handleOpenModal(rate)} className="text-gray-400 hover:text-gray-900 transition-colors p-1" title="Edit"><Edit2 className="w-4 h-4" /></button>
+                        {isActive && (
+                          <button onClick={() => handleDeactivate(rate)} className="text-gray-400 hover:text-orange-600 transition-colors p-1" title="Deactivate"><X className="w-4 h-4" /></button>
+                        )}
+                        <button onClick={() => handleDelete(rate)} className="text-gray-400 hover:text-red-600 transition-colors p-1" title="Delete"><Trash2 className="w-4 h-4" /></button>
                       </td>
                     </tr>
                   );
@@ -231,13 +247,23 @@ export default function RatesPage() {
 
                 <div>
                   <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Product Name *</label>
-                  <input 
-                    type="text" 
-                    className="w-full border rounded-xl p-2.5 text-sm outline-none focus:ring-2 focus:ring-gray-100 border-gray-200 transition-all"
-                    placeholder="e.g. Type A Gravel"
+                  <select 
+                    className="w-full border rounded-xl p-2.5 text-sm outline-none focus:ring-2 focus:ring-gray-100 border-gray-200 transition-all bg-white"
                     value={formData.productName}
                     onChange={e => setFormData({...formData, productName: e.target.value})}
-                  />
+                  >
+                    <option value="">Select Product</option>
+                    {products.map(p => <option key={p.id} value={p.name}>{p.name}</option>)}
+                    <option value="CUSTOM">+ Add Custom Item...</option>
+                  </select>
+                  {formData.productName === 'CUSTOM' && (
+                    <input 
+                      type="text"
+                      className="mt-2 w-full border rounded-xl p-2.5 text-sm outline-none focus:ring-2 focus:ring-gray-100 border-gray-200 transition-all"
+                      placeholder="Enter custom product name..."
+                      onChange={e => setFormData({...formData, productName: e.target.value})}
+                    />
+                  )}
                 </div>
 
                 <div className="grid grid-cols-2 gap-4">

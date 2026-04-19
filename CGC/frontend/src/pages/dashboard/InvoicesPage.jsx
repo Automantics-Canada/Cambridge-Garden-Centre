@@ -29,7 +29,15 @@ export default function InvoicesPage() {
   const [activeTab, setActiveTab] = useState('ALL');
   const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef(null);
+  const [suppliers, setSuppliers] = useState([]);
   const [search, setSearch] = useState('');
+  const [filters, setFilters] = useState({
+    supplierId: 'ALL',
+    senderType: 'ALL',
+    hasDiscrepancies: false,
+    dateStart: '',
+    dateEnd: ''
+  });
 
   const fetchInvoices = useCallback(async () => {
     setLoading(true);
@@ -47,9 +55,19 @@ export default function InvoicesPage() {
     }
   }, [activeTab]);
 
+  const fetchSuppliers = useCallback(async () => {
+    try {
+      const res = await api.get('/api/suppliers');
+      setSuppliers(res.data);
+    } catch (err) {
+      console.error('Error fetching suppliers:', err);
+    }
+  }, []);
+
   useEffect(() => {
     fetchInvoices();
-  }, [fetchInvoices]);
+    fetchSuppliers();
+  }, [fetchInvoices, fetchSuppliers]);
 
   const handleFileUpload = async (event) => {
     const file = event.target.files?.[0];
@@ -84,10 +102,25 @@ export default function InvoicesPage() {
     }
   };
 
-  const filteredInvoices = invoices.filter(inv => 
-    inv.invoiceNumber?.toLowerCase().includes(search.toLowerCase()) ||
-    inv.supplier?.name?.toLowerCase().includes(search.toLowerCase())
-  );
+  const filteredInvoices = invoices.filter(inv => {
+    const matchesSearch = inv.invoiceNumber?.toLowerCase().includes(search.toLowerCase()) ||
+                         inv.supplier?.name?.toLowerCase().includes(search.toLowerCase());
+    
+    const matchesSupplier = filters.supplierId === 'ALL' || inv.supplierId === filters.supplierId;
+    const matchesType = filters.senderType === 'ALL' || inv.senderType === filters.senderType;
+    const flaggedCount = inv.lineItems?.filter(li => li.flag !== 'OK').length || 0;
+    const matchesDiscrepancy = !filters.hasDiscrepancies || flaggedCount > 0;
+    
+    let matchesDate = true;
+    if (filters.dateStart) {
+      matchesDate = matchesDate && new Date(inv.invoiceDate) >= new Date(filters.dateStart);
+    }
+    if (filters.dateEnd) {
+      matchesDate = matchesDate && new Date(inv.invoiceDate) <= new Date(filters.dateEnd);
+    }
+
+    return matchesSearch && matchesSupplier && matchesType && matchesDiscrepancy && matchesDate;
+  });
 
   return (
     <div className="flex flex-col h-full space-y-4">
@@ -139,16 +172,76 @@ export default function InvoicesPage() {
           </nav>
         </div>
 
-        <div className="p-4">
-          <div className="relative max-w-md">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+        <div className="p-4 flex flex-wrap gap-4 items-end">
+          <div className="flex-1 min-w-[240px]">
+            <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Search</label>
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+              <input 
+                type="text" 
+                placeholder="Invoice # or supplier..."
+                className="w-full pl-10 pr-4 py-2 border rounded-xl text-sm outline-none focus:ring-2 focus:ring-green-100 transition-all border-gray-200"
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+              />
+            </div>
+          </div>
+
+          <div className="w-48">
+             <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Supplier</label>
+             <select 
+               className="w-full px-3 py-2 border rounded-xl text-sm outline-none bg-white border-gray-200"
+               value={filters.supplierId}
+               onChange={e => setFilters({...filters, supplierId: e.target.value})}
+             >
+               <option value="ALL">All Suppliers</option>
+               {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+             </select>
+          </div>
+
+          <div className="w-40">
+             <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Type</label>
+             <select 
+               className="w-full px-3 py-2 border rounded-xl text-sm outline-none bg-white border-gray-200"
+               value={filters.senderType}
+               onChange={e => setFilters({...filters, senderType: e.target.value})}
+             >
+               <option value="ALL">All Types</option>
+               <option value="SUPPLIER">Supplier</option>
+               <option value="TRUCKING_COMPANY">Trucking</option>
+             </select>
+          </div>
+
+          <div className="flex gap-2 items-center">
+            <div>
+              <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">From</label>
+              <input 
+                type="date" 
+                className="px-3 py-1.5 border rounded-xl text-xs outline-none bg-white border-gray-200"
+                value={filters.dateStart}
+                onChange={e => setFilters({...filters, dateStart: e.target.value})}
+              />
+            </div>
+            <div>
+              <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">To</label>
+              <input 
+                type="date" 
+                className="px-3 py-1.5 border rounded-xl text-xs outline-none bg-white border-gray-200"
+                value={filters.dateEnd}
+                onChange={e => setFilters({...filters, dateEnd: e.target.value})}
+              />
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 pb-2">
             <input 
-              type="text" 
-              placeholder="Search by invoice # or supplier..."
-              className="w-full pl-10 pr-4 py-2 border rounded-xl text-sm outline-none focus:ring-2 focus:ring-green-100 transition-all"
-              value={search}
-              onChange={e => setSearch(e.target.value)}
+              type="checkbox" 
+              id="discrepancy"
+              className="w-4 h-4 rounded text-green-600 focus:ring-green-500 border-gray-300"
+              checked={filters.hasDiscrepancies}
+              onChange={e => setFilters({...filters, hasDiscrepancies: e.target.checked})}
             />
+            <label htmlFor="discrepancy" className="text-sm font-medium text-gray-700">Flagged Only</label>
           </div>
         </div>
       </div>

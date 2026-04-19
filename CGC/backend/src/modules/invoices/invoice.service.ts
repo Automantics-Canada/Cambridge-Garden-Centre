@@ -45,23 +45,31 @@ function stringsMatchFuzzy(a: string, b: string): boolean {
 }
 
 export const InvoiceService = {
-  async ingestMockEmailInvoice(params: {
+  async ingestEmailInvoice(params: {
     buffer: Buffer;
     originalName: string;
     fromEmail: string;
     subject: string;
+    gmailMessageId: string;
   }) {
     const fileUrl = await saveInvoiceImage(params.buffer, params.originalName);
 
-    // Mock finding a supplier by email domain
+    // Find supplier by email domain or keywords
     const match = params.fromEmail.match(/@(.+)$/);
-    const domain = match && match[1] ? match[1] : '';
+    const domain = (match && match[1] ? match[1].split('>')[0] : '').toLowerCase(); // Fix for "Name <email@domain.com>"
 
     let supplier = await prisma.supplier.findFirst({
       where: domain ? { emailDomains: { hasSome: [domain] } } : {},
     });
 
     if (!supplier) {
+      // Try fuzzy match on name in subject
+      const allSuppliers = await prisma.supplier.findMany();
+      supplier = allSuppliers.find(s => params.subject.toLowerCase().includes(s.name.toLowerCase())) || null;
+    }
+
+    if (!supplier) {
+      // Fallback to first supplier or a "General" supplier
       supplier = await prisma.supplier.findFirst();
     }
 
@@ -69,7 +77,7 @@ export const InvoiceService = {
 
     const invoice = await prisma.invoice.create({
       data: {
-        invoiceNumber: `MOCK-${Date.now()}`,
+        invoiceNumber: `PENDING-${Date.now()}`,
         senderType: SenderType.SUPPLIER,
         supplierId: supplier.id,
         invoiceDate: new Date(),
@@ -78,7 +86,7 @@ export const InvoiceService = {
         fileUrl,
         emailFrom: params.fromEmail,
         emailSubject: params.subject,
-        gmailMessageId: `mock-gmail-${Date.now()}`,
+        gmailMessageId: params.gmailMessageId,
         status: InvoiceStatus.PENDING_REVIEW,
         OcrJobStatus: OcrJobStatus.PENDING,
       },
@@ -216,7 +224,14 @@ export const InvoiceService = {
         // --- MATCH 3: Rate Match ---
         // 7.1 Match 3: Look up negotiated_rates table
         const allRates = await prisma.negotiatedRate.findMany({
-          where: { supplierId: updatedSupplierId },
+          where: { 
+            supplierId: updatedSupplierId,
+            effectiveFrom: { lte: new Date(updatedInvoice.invoiceDate) },
+            OR: [
+              { effectiveTo: null },
+              { effectiveTo: { gte: new Date(updatedInvoice.invoiceDate) } }
+            ]
+          },
         });
 
         const rateMatch = allRates.find(r => stringsMatchFuzzy(r.productName, item.description));

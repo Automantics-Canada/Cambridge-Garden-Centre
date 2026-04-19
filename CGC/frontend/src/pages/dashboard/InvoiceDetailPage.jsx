@@ -110,12 +110,18 @@ export default function InvoiceDetailPage() {
   );
 
   const isLocked = invoice.status === 'VERIFIED' || invoice.status === 'DISPUTED';
-  const totalDiscrepancy = invoice.lineItems?.reduce((acc, item) => acc + (item.rateDiscrepancy || 0), 0) || 0;
+  
+  // sum all rate and qty discrepancies
+  const totalDiscrepancy = invoice.lineItems?.reduce((acc, item) => {
+    return acc + (item.rateDiscrepancy || 0) + (Number(item.qtyDiscrepancy || 0) * Number(item.unitRate || 0));
+  }, 0) || 0;
+
   const approvedTotal = invoice.lineItems?.reduce((acc, item) => {
-    // Only sum non-disputed lines? The spec says Approved Amount = sum of non-disputed lines.
-    // In v1 we keep it simple: whole invoice is verified or disputed.
-    // So if verified, approved = total. If pending, let's show what would be approved.
-    return acc + Number(item.lineTotal || 0);
+    // Approved = Sum of non-disputed lines (OK flag)
+    if (item.flag === 'OK') {
+      return acc + Number(item.lineTotal || 0);
+    }
+    return acc;
   }, 0) || 0;
 
   return (
