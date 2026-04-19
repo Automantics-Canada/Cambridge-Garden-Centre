@@ -2,6 +2,7 @@ import { google } from 'googleapis';
 import { env } from '../config/env.js';
 import { InvoiceService } from '../modules/invoices/invoice.service.js';
 import { prisma } from '../db/prisma.js';
+import { triggerOcrProcessing } from './ocrJobProcessor.js';
 
 const SCOPES = ['https://www.googleapis.com/auth/gmail.readonly', 'https://www.googleapis.com/auth/gmail.modify'];
 
@@ -19,11 +20,17 @@ export class GmailService {
   }
 
   private static gmail = google.gmail({ version: 'v1', auth: this.auth });
+  private static isPolling = false;
 
   /**
    * Polls Gmail for new unread messages in ap@cambridgegardencentre.ca
    */
   static async pollInvoices() {
+    if (this.isPolling) {
+      console.log('⏳ Gmail polling already in progress. Skipping...');
+      return;
+    }
+
     if (!env.gmailClientId || !env.gmailRefreshToken) {
       console.warn('⚠️ Gmail API credentials not fully configured. Skipping polling.', {
         hasClientId: !!env.gmailClientId,
@@ -33,12 +40,13 @@ export class GmailService {
     }
 
     try {
-      console.log('📬 Checking Gmail for new invoices...');
+      this.isPolling = true;
+      console.log('📬 Checking Gmail for new unread invoices...');
       
-      // Look for recent messages with attachments (ignoring unread status for better reliability)
+      // Look for NEW messages with attachments
       const res = await this.gmail.users.messages.list({
         userId: 'me',
-        q: 'has:attachment',
+        q: 'is:unread has:attachment',
         maxResults: 10
       });
 
@@ -50,6 +58,8 @@ export class GmailService {
       }
     } catch (error) {
       console.error('❌ Error polling Gmail:', error);
+    } finally {
+      this.isPolling = false;
     }
   }
 
@@ -107,11 +117,9 @@ export class GmailService {
           gmailMessageId: compositeId
         });
 
-        // Trigger OCR process automatically
-        if (result.invoice.id) {
-           InvoiceService.processInvoiceOcr(result.invoice.id).catch(err => {
-             console.error(`OCR failed for invoice ${result.invoice.id}:`, err);
-           });
+        // Trigger OCR process automatically via unified background processor
+        if (result.ocrJob.id) {
+           triggerOcrProcessing(result.ocrJob.id);
         }
       }
 

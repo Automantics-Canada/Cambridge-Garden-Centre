@@ -3,6 +3,7 @@ import { env } from './config/env.js';
 import { prisma } from './db/prisma.js';
 import { verifyStorageConnection } from './services/supabaseStorage.js';
 import { GmailService } from './services/gmail.service.js';
+import { processPendingOcrJobs } from './services/ocrJobProcessor.js';
 
 async function main() {
   try {
@@ -26,9 +27,15 @@ async function main() {
       setInterval(() => {
         GmailService.pollInvoices();
       }, GMAIL_POLL_INTERVAL);
+      GmailService.pollInvoices(); // Initial run
 
-      // Run once on startup
-      GmailService.pollInvoices();
+      // Initialize OCR Job Worker (2 minute interval)
+      const OCR_POLL_INTERVAL = 2 * 60 * 1000;
+      console.log(`🔍 OCR Background Worker active every ${OCR_POLL_INTERVAL/1000} seconds.`);
+      setInterval(() => {
+        processPendingOcrJobs();
+      }, OCR_POLL_INTERVAL);
+      processPendingOcrJobs(); // Initial run
     });
   } catch (error) {
     console.error('Failed to start server:', error);

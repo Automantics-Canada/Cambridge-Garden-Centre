@@ -1,5 +1,6 @@
 import type { Request, Response, NextFunction } from 'express';
 import { InvoiceService } from './invoice.service.js';
+import { triggerOcrProcessing } from '../../services/ocrJobProcessor.js';
 
 export const InvoiceController = {
   async ingestMockEmail(req: Request, res: Response, next: NextFunction) {
@@ -18,10 +19,10 @@ export const InvoiceController = {
         gmailMessageId: `manual-${Date.now()}`
       });
 
-      // Kick off OCR in the background, don't await
-      InvoiceService.processInvoiceOcr(invoice.id).catch((err) => {
-        console.error(`Background OCR failed for invoice ${invoice.id}:`, err);
-      });
+      // Kick off OCR via unified processor
+      if (ocrJob.id) {
+        triggerOcrProcessing(ocrJob.id);
+      }
 
       res.status(202).json({
         message: 'Mock email ingested, invoice pending OCR',
