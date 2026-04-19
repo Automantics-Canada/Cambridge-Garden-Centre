@@ -172,11 +172,19 @@ export default function InvoiceDetailPage() {
           </div>
           <div className="flex-1 overflow-hidden bg-gray-100 flex items-center justify-center p-4">
             {invoice.fileUrl ? (
-              <iframe 
-                src={`http://localhost:4000${invoice.fileUrl}`} 
-                className="w-full h-full border-none rounded shadow-lg"
-                title="Invoice Document"
-              ></iframe>
+              invoice.fileUrl.toLowerCase().endsWith('.pdf') ? (
+                <iframe 
+                  src={invoice.fileUrl.startsWith('http') ? invoice.fileUrl : `http://localhost:4000${invoice.fileUrl}`} 
+                  className="w-full h-full border-none rounded shadow-lg"
+                  title="Invoice Document"
+                ></iframe>
+              ) : (
+                <img 
+                  src={invoice.fileUrl.startsWith('http') ? invoice.fileUrl : `http://localhost:4000${invoice.fileUrl}`} 
+                  className="max-w-full max-h-full object-contain shadow-lg rounded"
+                  alt="Invoice Document"
+                />
+              )
             ) : (
               <div className="text-gray-400">Preview not available</div>
             )}
