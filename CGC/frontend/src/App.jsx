@@ -14,6 +14,7 @@ import './App.css';
 import SupplierPage from './pages/dashboard/SupplierPage';
 import RatesPage from './pages/dashboard/RatesPage';
 import ProductPage from './pages/dashboard/ProductPage';
+import VerificationDesk from './pages/dashboard/VerificationDesk';
 
 const ProtectedRoute = ({ children }) => {
   const isAuthenticated = useSelector((state) => state.auth.isAuthenticated);
@@ -42,6 +43,7 @@ function App() {
           <Route path="supplier" element={<SupplierPage />} />
           <Route path="rates" element={<RatesPage />} />
           <Route path="products" element={<ProductPage />} />
+          <Route path="verification-desk" element={<VerificationDesk />} />
         </Route>
       </Routes>
     </BrowserRouter>

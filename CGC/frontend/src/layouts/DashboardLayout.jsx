@@ -4,7 +4,8 @@ import { useDispatch, useSelector } from 'react-redux';
 import { 
   LayoutDashboard, ShoppingCart, Truck, Users, 
   MapPin, UserSquare, Briefcase, Calculator, 
-  BarChart, Settings, Menu, Search, Eye, Bell, LogOut, ChevronLeft, ChevronRight, Package
+  BarChart, Settings, Menu, Search, Eye, Bell, LogOut, ChevronLeft, ChevronRight, Package,
+  File
 } from 'lucide-react';
 import { logout } from '../store/authSlice';
 import clsx from 'clsx';
@@ -20,6 +21,7 @@ export default function DashboardLayout() {
       title: 'MAIN',
       items: [
         { name: 'Dashboard', path: '/dashboard', icon: <LayoutDashboard size={20} /> },
+        { name: 'Verification Desk', path: '/dashboard/verification-desk', icon: <File size={20} /> },
         { name: 'Tickets', path: '/dashboard/tickets', icon: <Briefcase size={20} /> },
         { name: 'Orders', path: '/dashboard/orders', icon: <ShoppingCart size={20} /> },
         { name: 'Suppliers', path: '/dashboard/supplier', icon: <Truck size={20} /> },

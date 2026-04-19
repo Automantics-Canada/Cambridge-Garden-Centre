@@ -28,6 +28,8 @@ export default function TicketsPage() {
   
   // Filters
   const [search, setSearch] = useState('');
+  const [isUploading, setIsUploading] = useState(false);
+  const fileInputRef = useRef(null);
   const [supplierId, setSupplierId] = useState('');
   const [source, setSource] = useState('');
   const [startDate, setStartDate] = useState('');
@@ -100,6 +102,35 @@ export default function TicketsPage() {
     }
   };
 
+  const handleFileUpload = async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    if (!file.name.match(/\.(jpg|jpeg|png)$/i)) {
+      toast.error('Please upload a valid JPG or PNG file');
+      return;
+    }
+
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('fromEmail', 'driver_upload@cambridgegardencentre.ca');
+
+    setIsUploading(true);
+    try {
+      await api.post('/api/tickets/email', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      toast.success('Ticket uploaded and processing!');
+      fetchTickets();
+      fetchStats();
+    } catch (err) {
+      toast.error('Upload failed');
+    } finally {
+      setIsUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
   const handleLinkToOrder = async (ticketId, orderId) => {
     try {
       await api.post(`/api/tickets/${ticketId}/link`, { orderId });
@@ -138,7 +169,23 @@ export default function TicketsPage() {
             Process and link supplier delivery tickets received via WhatsApp and Email.
           </p>
         </div>
-        <div className="mt-4 sm:mt-0 flex gap-4">
+        <div className="mt-4 sm:mt-0 flex gap-4 items-center">
+          <input 
+            type="file" 
+            accept=".jpg,.jpeg,.png" 
+            ref={fileInputRef} 
+            onChange={handleFileUpload} 
+            className="hidden" 
+          />
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={isUploading}
+            className="flex items-center gap-2 bg-[#1B4332] hover:bg-black text-white px-4 py-2 rounded-lg font-medium text-xs transition-all shadow-md disabled:opacity-50"
+          >
+            {isUploading ? <Loader className="w-4 h-4" /> : <Mail className="w-4 h-4" />}
+            {isUploading ? 'Processing...' : 'Simulate Delivery Ticket'}
+          </button>
+
           <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 flex items-center gap-3">
              <div className="bg-yellow-100 p-2 rounded-full">
                 <AlertCircle className="w-5 h-5 text-yellow-600" />
