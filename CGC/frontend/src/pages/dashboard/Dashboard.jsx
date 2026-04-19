@@ -89,33 +89,10 @@ export default function Dashboard() {
           </p>
         </div>
         
-        {/* Dashboard Filters */}
-        <div className="flex flex-wrap gap-3 bg-white p-3 rounded-2xl border shadow-sm items-center">
-           <div className="flex items-center gap-2 text-xs font-bold text-gray-400 uppercase tracking-wider px-2">
-             <Filter className="w-3 h-3" /> Global Filters
-           </div>
-           <select 
-            className="text-sm border-none bg-gray-50 rounded-lg px-3 py-1.5 focus:ring-0 outline-none font-medium text-gray-700"
-            value={buyerType}
-            onChange={e => setBuyerType(e.target.value)}
-           >
-              <option value="">All Buyer Types</option>
-              <option value="RETAIL">Retail</option>
-              <option value="CONTRACTOR">Contractor</option>
-           </select>
-           <select 
-            className="text-sm border-none bg-gray-50 rounded-lg px-3 py-1.5 focus:ring-0 outline-none font-medium text-gray-700 max-w-[150px]"
-            value={supplierId}
-            onChange={e => setSupplierId(e.target.value)}
-           >
-              <option value="">All Suppliers</option>
-              {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-           </select>
-        </div>
       </div>
 
       {/* KPI Widgets */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
         <div className="bg-white p-6 rounded-3xl border border-gray-200 shadow-sm hover:shadow-md transition-all group">
           <div className="flex items-center justify-between mb-4">
             <div className="p-3 bg-blue-50 rounded-2xl group-hover:bg-blue-600 transition-colors">
@@ -147,16 +124,6 @@ export default function Dashboard() {
           <p className="text-3xl font-black text-gray-900 mt-1">{stats.totalMonthly}</p>
         </div>
 
-        <div className="bg-green-600 p-6 rounded-3xl shadow-lg shadow-green-100 relative overflow-hidden group">
-          <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:scale-125 transition-transform duration-500">
-             <TrendingUp className="w-24 h-24 text-white" />
-          </div>
-          <div className="relative z-10">
-            <p className="text-green-100 text-sm font-bold uppercase tracking-wider">Potential Savings</p>
-            <p className="text-4xl font-black text-white mt-2">${Number(stats.savingsDetected).toFixed(2)}</p>
-            <p className="text-green-100 text-xs mt-2 italic font-medium">From detected discrepancies</p>
-          </div>
-        </div>
       </div>
 
       {/* Main Grid: Recent Invoices & Supplier Status */}
