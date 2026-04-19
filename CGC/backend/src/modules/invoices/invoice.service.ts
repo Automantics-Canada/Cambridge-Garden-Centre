@@ -397,5 +397,53 @@ export const InvoiceService = {
     });
 
     return updated;
+  },
+
+  async linkOrderToLineItem(lineItemId: string, orderId: string, userId: string) {
+    const updated = await prisma.invoiceLineItem.update({
+      where: { id: lineItemId },
+      data: {
+        matchedOrderId: orderId,
+        flag: 'OK', // Reset flag since we manually matched it
+      },
+      include: { invoice: true }
+    });
+
+    await prisma.auditLog.create({
+      data: {
+        entityType: AuditEntityType.INVOICE,
+        entityId: updated.invoiceId,
+        actionType: AuditActionType.SYSTEM_CONFIG_CHANGE,
+        performedById: userId,
+        details: { action: 'MANUAL_ORDER_LINK', lineItemId, orderId },
+      },
+    });
+
+    return updated;
+  },
+
+  async linkTicketsToLineItem(lineItemId: string, ticketIds: string[], userId: string) {
+    const updated = await prisma.invoiceLineItem.update({
+      where: { id: lineItemId },
+      data: {
+        matchedTickets: {
+          set: ticketIds.map(id => ({ id }))
+        },
+        flag: 'OK'
+      },
+      include: { invoice: true }
+    });
+
+    await prisma.auditLog.create({
+      data: {
+        entityType: AuditEntityType.INVOICE,
+        entityId: updated.invoiceId,
+        actionType: AuditActionType.SYSTEM_CONFIG_CHANGE,
+        performedById: userId,
+        details: { action: 'MANUAL_TICKET_LINK', lineItemId, ticketIds },
+      },
+    });
+
+    return updated;
   }
 };

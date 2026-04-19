@@ -6,12 +6,15 @@ import {
   ShoppingCart, 
   CheckCircle, 
   AlertCircle, 
-  ChevronRight, 
   Search,
   Maximize2,
   Package,
   AlertTriangle,
-  History
+  History,
+  X,
+  Link,
+  ChevronRight,
+  ExternalLink
 } from 'lucide-react';
 import Loader from '../../components/Loader';
 import toast from 'react-hot-toast';
@@ -22,14 +25,23 @@ export default function VerificationDesk() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [filterStatus, setFilterStatus] = useState('ALL');
+  const [isProcessing, setIsProcessing] = useState(false);
+  
+  // Interaction states
+  const [zoomedImage, setZoomedImage] = useState(null);
+  const [showDisputeInput, setShowDisputeInput] = useState(false);
+  const [disputeNote, setDisputeNote] = useState('');
+  const [linkingLineItem, setLinkingLineItem] = useState(null); // { id, type: 'order' | 'ticket' }
+  const [searchResults, setSearchResults] = useState([]);
+  const [searching, setSearching] = useState(false);
 
   const fetchInvoices = useCallback(async () => {
     setLoading(true);
     try {
       const res = await api.get('/api/invoices');
       setInvoices(res.data);
+      // Auto-select first if none selected
       if (res.data.length > 0 && !selectedInvoice) {
-        // Fetch full details for the first invoice
         fetchInvoiceDetails(res.data[0].id);
       }
     } catch (err) {
@@ -43,6 +55,8 @@ export default function VerificationDesk() {
     try {
       const res = await api.get(`/api/invoices/${id}`);
       setSelectedInvoice(res.data);
+      setDisputeNote(res.data.disputeNote || '');
+      setShowDisputeInput(false);
     } catch (err) {
       toast.error('Failed to load invoice details');
     }
@@ -51,6 +65,75 @@ export default function VerificationDesk() {
   useEffect(() => {
     fetchInvoices();
   }, []);
+
+  const handleVerify = async () => {
+    if (!selectedInvoice) return;
+    setIsProcessing(true);
+    try {
+      await api.post(`/api/invoices/${selectedInvoice.id}/verify`);
+      toast.success('Invoice verified successfully');
+      fetchInvoices();
+      fetchInvoiceDetails(selectedInvoice.id);
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Verification failed');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const handleDispute = async () => {
+    if (!selectedInvoice) return;
+    if (!disputeNote.trim()) {
+      toast.error('Please enter a dispute note');
+      return;
+    }
+    setIsProcessing(true);
+    try {
+      await api.post(`/api/invoices/${selectedInvoice.id}/dispute`, { note: disputeNote });
+      toast.success('Invoice marked as disputed');
+      setShowDisputeInput(false);
+      fetchInvoices();
+      fetchInvoiceDetails(selectedInvoice.id);
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed to mark as disputed');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const handleLinkOrder = async (orderId) => {
+    setIsProcessing(true);
+    try {
+      await api.post('/api/invoices/line-items/link-order', {
+        lineItemId: linkingLineItem.id,
+        orderId
+      });
+      toast.success('Order linked successfully');
+      setLinkingLineItem(null);
+      fetchInvoiceDetails(selectedInvoice.id);
+    } catch (err) {
+      toast.error('Linking failed');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const searchManualLinks = async (query) => {
+    if (!query) {
+      setSearchResults([]);
+      return;
+    }
+    setSearching(true);
+    try {
+      const endpoint = linkingLineItem.type === 'order' ? '/api/orders' : '/api/tickets';
+      const res = await api.get(endpoint, { params: { search: query } });
+      setSearchResults(res.data);
+    } catch (err) {
+      console.error('Search error', err);
+    } finally {
+      setSearching(false);
+    }
+  };
 
   const filteredInvoices = invoices.filter(inv => {
     const matchesSearch = inv.invoiceNumber.toLowerCase().includes(search.toLowerCase()) || 
@@ -61,14 +144,17 @@ export default function VerificationDesk() {
 
   if (loading && invoices.length === 0) return <Loader message="Setting up your verification desk..." />;
 
+  const getFullUrl = (url) => {
+    if (!url) return '';
+    return url.startsWith('http') ? url : `http://localhost:4000${url}`;
+  };
+
   return (
     <div className="flex h-full bg-[#F3F4F6] -m-8 relative overflow-hidden">
       {/* 1. Selection Sidebar */}
       <div className="w-80 bg-white border-r flex flex-col shadow-sm z-20">
         <div className="p-6 border-b">
           <h2 className="text-xl font-black text-gray-900 tracking-tight">Match Desk</h2>
-          <p className="text-xs text-gray-400 font-bold uppercase mt-1 tracking-widest">Awaiting Verification</p>
-          
           <div className="mt-4 relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-300" />
             <input 
@@ -89,7 +175,7 @@ export default function VerificationDesk() {
               className={`w-full text-left p-4 rounded-2xl transition-all border ${
                 selectedInvoice?.id === inv.id 
                 ? 'bg-[#1B4332] border-[#1B4332] shadow-lg shadow-green-100 text-white' 
-                : 'bg-white border-gray-100 hover:border-green-200 hover:bg-green-50/30'
+                : 'bg-white border-gray-100 hover:border-green-200 hover:bg-green-50/30 text-gray-900'
               }`}
             >
               <div className="flex justify-between items-start mb-1">
@@ -103,240 +189,314 @@ export default function VerificationDesk() {
               <p className={`text-xs font-bold ${selectedInvoice?.id === inv.id ? 'text-green-100' : 'text-gray-500'}`}>
                 {inv.supplier?.name}
               </p>
-              <div className="mt-3 flex items-center justify-between">
-                <p className="text-sm font-black">${Number(inv.totalAmount).toFixed(2)}</p>
-                <div className="flex -space-x-1.5">
-                   {[...Array(2)].map((_, i) => (
-                     <div key={i} className={`w-5 h-5 rounded-full border-2 ${selectedInvoice?.id === inv.id ? 'border-[#1B4332] bg-green-800' : 'border-white bg-gray-100'} flex items-center justify-center`}>
-                        <FileText className="w-2.5 h-2.5 opacity-50" />
-                     </div>
-                   ))}
-                </div>
-              </div>
             </button>
           ))}
         </div>
       </div>
 
-      {/* 2. The Desk - Triple Panel Match View */}
+      {/* 2. The Desk */}
       <div className="flex-1 flex flex-col overflow-hidden bg-gray-100">
         {!selectedInvoice ? (
           <div className="flex-1 flex items-center justify-center flex-col text-gray-400">
-            <div className="p-8 bg-white rounded-full shadow-sm mb-6">
-              <History className="w-16 h-16 text-gray-200" />
-            </div>
-            <p className="text-lg font-bold">Select an invoice to begin verification</p>
+            <History className="w-16 h-16 mb-4 opacity-20" />
+            <p className="text-lg font-bold">Select an invoice to verify</p>
           </div>
         ) : (
           <>
-            {/* Context Bar */}
-            <div className="h-16 bg-white border-b px-8 flex items-center justify-between z-10">
-              <div className="flex items-center gap-6">
-                 <div className="flex items-center gap-2">
-                    <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Supplier</span>
-                    <span className="text-sm font-black text-gray-900">{selectedInvoice.supplier?.name}</span>
+            {/* Header */}
+            <div className="h-20 bg-white border-b px-8 flex items-center justify-between z-10 shadow-sm">
+              <div className="flex items-center gap-8">
+                 <div className="flex flex-col">
+                    <span className="text-[10px] font-extrabold text-gray-400 uppercase tracking-widest">Supplier</span>
+                    <span className="text-base font-black text-gray-900">{selectedInvoice.supplier?.name}</span>
                  </div>
-                 <div className="w-px h-6 bg-gray-200" />
-                 <div className="flex items-center gap-2">
-                    <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">3-Way Match Check</span>
-                    <div className="flex items-center gap-1.5">
-                       <span className="w-2 h-2 rounded-full bg-green-500 shadow-sm shadow-green-200" />
-                       <span className="text-[11px] font-black text-green-700 uppercase tracking-tighter">Ready to Verify</span>
+                 <div className="w-px h-8 bg-gray-200" />
+                 <div className="flex flex-col">
+                    <span className="text-[10px] font-extrabold text-gray-400 uppercase tracking-widest">Verification Status</span>
+                    <div className="flex items-center gap-2 mt-0.5">
+                       <div className={`w-2 h-2 rounded-full ${selectedInvoice.status === 'VERIFIED' ? 'bg-green-500' : 'bg-yellow-500'} animate-pulse`} />
+                       <span className={`text-xs font-bold uppercase ${selectedInvoice.status === 'VERIFIED' ? 'text-green-700' : 'text-yellow-700'}`}>
+                          {selectedInvoice.status.replace('_', ' ')}
+                       </span>
                     </div>
                  </div>
               </div>
 
-              <div className="flex gap-3">
-                 <button className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold text-xs rounded-xl transition-all">Mark Disputed</button>
-                 <button className="px-6 py-2 bg-[#2D6A4F] hover:bg-[#1B4332] text-white font-black text-xs rounded-xl transition-all shadow-md">Complete Verification</button>
+              <div className="flex gap-4">
+                 {selectedInvoice.status === 'PENDING_REVIEW' && (
+                    <>
+                      <button 
+                        onClick={() => setShowDisputeInput(!showDisputeInput)}
+                        className={`px-6 py-2.5 rounded-xl font-bold text-xs transition-all border ${showDisputeInput ? 'bg-red-500 text-white border-red-500' : 'bg-white text-red-600 border-red-100 hover:bg-red-50'}`}
+                      >
+                        {showDisputeInput ? 'Cancel Dispute' : 'Flag Dispute'}
+                      </button>
+                      <button 
+                        onClick={handleVerify}
+                        disabled={isProcessing}
+                        className="px-8 py-2.5 bg-[#1B4332] hover:bg-black text-white font-black text-xs rounded-xl transition-all shadow-lg shadow-green-200 flex items-center gap-2 disabled:opacity-50"
+                      >
+                        {isProcessing ? 'Processing...' : <><CheckCircle className="w-4 h-4" /> Final Approve</>}
+                      </button>
+                    </>
+                 )}
+                 {selectedInvoice.status !== 'PENDING_REVIEW' && (
+                    <button 
+                      onClick={() => api.post(`/api/invoices/${selectedInvoice.id}/reopen`).then(() => fetchInvoiceDetails(selectedInvoice.id))}
+                      className="px-6 py-2.5 bg-gray-800 text-white rounded-xl font-black text-xs hover:bg-black transition-all"
+                    >
+                      Reopen Record
+                    </button>
+                 )}
               </div>
             </div>
 
-            {/* Triple Panels */}
-            <div className="flex-1 flex overflow-hidden p-6 gap-6">
-              {/* Panel 1: THE INVOICE (Left) */}
-              <div className="flex-1 flex flex-col bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
-                <div className="p-5 border-b flex items-center justify-between bg-gray-50/50">
-                  <div className="flex items-center gap-3">
-                    <div className="p-2 bg-white rounded-xl shadow-sm border border-gray-100">
-                      <FileText className="w-5 h-5 text-[#2D6A4F]" />
-                    </div>
-                    <span className="text-sm font-black text-gray-900 uppercase tracking-tight">1. Vendor Invoice</span>
-                  </div>
-                  <button className="p-1.5 hover:bg-gray-200 rounded-lg transition-colors">
-                    <Maximize2 className="w-4 h-4 text-gray-400" />
-                  </button>
-                </div>
-                
-                <div className="flex-1 overflow-y-auto p-6 space-y-6">
-                  {/* Digital Preview */}
-                  <div className="aspect-[4/3] bg-gray-900 rounded-2xl relative overflow-hidden group cursor-zoom-in">
-                    <img 
-                      src={selectedInvoice.fileUrl.startsWith('http') ? selectedInvoice.fileUrl : `http://localhost:4000${selectedInvoice.fileUrl}`} 
-                      className="w-full h-full object-contain opacity-90 group-hover:opacity-100 transition-opacity"
-                      alt="Invoice"
+            {/* Dispute Form Overlay */}
+            {showDisputeInput && (
+              <div className="bg-red-600 px-8 py-5 flex items-center gap-6 animate-in slide-in-from-top fade-in duration-300">
+                 <AlertTriangle className="w-8 h-8 text-red-100" />
+                 <div className="flex-1">
+                    <label className="text-[10px] font-black text-red-100 uppercase tracking-widest">Why are you disputing this?</label>
+                    <input 
+                      type="text" 
+                      placeholder="e.g. Quantity mismatch on gravel line... or Rate doesn't match negotiated..."
+                      className="w-full bg-red-700/50 border-red-400/50 rounded-xl px-4 py-2 mt-1 text-white placeholder-red-300 outline-none focus:ring-2 focus:ring-white transition-all border text-sm"
+                      value={disputeNote}
+                      onChange={e => setDisputeNote(e.target.value)}
+                      autoFocus
                     />
-                    <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent flex flex-col justify-end p-4">
-                       <p className="text-white text-xs font-bold uppercase tracking-widest">Original Document</p>
-                    </div>
-                  </div>
-
-                  {/* Extracted Billing Table */}
-                  <div className="space-y-4">
-                    <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest px-1">Billed Items Extraction</h4>
-                    <div className="space-y-2">
-                       {selectedInvoice.lineItems?.map((li, idx) => (
-                         <div key={idx} className="p-4 bg-gray-50 rounded-2xl border border-gray-100 group">
-                            <div className="flex justify-between items-start mb-2">
-                               <p className="text-sm font-black text-gray-900 leading-tight flex-1 pr-4">{li.description}</p>
-                               <p className="text-sm font-black text-[#2D6A4F] whitespace-nowrap">${Number(li.lineTotal).toFixed(2)}</p>
-                            </div>
-                            <div className="flex items-center gap-4 text-[10px] text-gray-500 font-bold uppercase tracking-tighter">
-                               <span>Qty: {Number(li.quantity).toFixed(0)} {li.unit}</span>
-                               <div className="w-1 h-1 bg-gray-300 rounded-full" />
-                               <span>Rate: ${Number(li.unitRate).toFixed(2)}</span>
-                               <div className="w-1 h-1 bg-gray-300 rounded-full" />
-                               <span className="text-green-600">PO: {li.poNumber || 'N/A'}</span>
-                            </div>
-                         </div>
-                       ))}
-                    </div>
-                  </div>
-                </div>
+                 </div>
+                 <button 
+                  onClick={handleDispute}
+                  disabled={isProcessing}
+                  className="px-8 py-3 bg-white text-red-600 font-black text-xs rounded-xl hover:shadow-xl transition-all disabled:opacity-50"
+                 >
+                    {isProcessing ? 'Flagging...' : 'Confirm Dispute'}
+                 </button>
               </div>
+            )}
 
-              {/* Panel 2: DELIVERY EVIDENCE (Middle) */}
-              <div className="flex-1 flex flex-col bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
-                <div className="p-5 border-b flex items-center justify-between bg-gray-50/50">
-                  <div className="flex items-center gap-3">
-                    <div className="p-2 bg-white rounded-xl shadow-sm border border-gray-100">
-                      <Truck className="w-5 h-5 text-purple-600" />
-                    </div>
-                    <span className="text-sm font-black text-gray-900 uppercase tracking-tight">2. Delivery Tickets</span>
-                  </div>
-                  <span className="bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-widest">
-                    {selectedInvoice.lineItems?.reduce((acc, li) => acc + (li.matchedTickets?.length || 0), 0)} Linked
-                  </span>
-                </div>
-
-                <div className="flex-1 overflow-y-auto p-6">
-                   <div className="space-y-6">
-                      {selectedInvoice.lineItems?.map((li, idx) => (
-                        <div key={idx} className="space-y-3">
-                           <div className="flex items-center gap-2 px-1">
-                              <span className="w-4 h-4 bg-gray-100 rounded-full flex items-center justify-center text-[10px] font-black text-gray-400">{idx + 1}</span>
-                              <p className="text-[11px] font-black text-gray-400 uppercase tracking-tighter truncate w-40">{li.description}</p>
+            {/* Main Content Area */}
+            <div className="flex-1 flex overflow-hidden p-6 gap-6">
+               {/* 1. DOCUMENT PREVIEW (Sticky Left) */}
+               <div className="w-[450px] flex flex-col gap-4">
+                  <div className="bg-white rounded-[40px] shadow-sm border p-2 flex-col flex overflow-hidden">
+                     <div className="aspect-[3/4] rounded-[32px] overflow-hidden relative group cursor-pointer" onClick={() => setZoomedImage(getFullUrl(selectedInvoice.fileUrl))}>
+                        <img src={getFullUrl(selectedInvoice.fileUrl)} className="w-full h-full object-cover grayscale-[30%] group-hover:grayscale-0 transition-all duration-500" alt="Invoice" />
+                        <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent flex flex-col justify-end p-8">
+                           <div className="flex items-center justify-between">
+                              <span className="text-white text-[10px] font-black uppercase tracking-widest opacity-80">Original Bill</span>
+                              <Maximize2 className="text-white w-5 h-5 opacity-0 group-hover:opacity-100 transition-opacity" />
                            </div>
+                           <h3 className="text-white text-2xl font-black mt-1">INV-{selectedInvoice.invoiceNumber}</h3>
+                        </div>
+                     </div>
+                  </div>
+                  
+                  <div className="bg-[#1B4332] rounded-[40px] p-8 text-white shadow-xl shadow-green-100">
+                     <h4 className="text-[10px] font-black uppercase tracking-widest text-green-300/50 mb-4">Invoice Summary</h4>
+                     <div className="space-y-4">
+                        <div className="flex items-center justify-between">
+                           <span className="text-sm font-bold opacity-60">Total Billed</span>
+                           <span className="text-xl font-black">${Number(selectedInvoice.totalAmount).toLocaleString()}</span>
+                        </div>
+                        <div className="flex items-center justify-between border-t border-green-700/50 pt-4">
+                           <span className="text-sm font-bold opacity-100 text-green-200">Payment Status</span>
+                           <span className="text-xs font-black bg-white/10 px-3 py-1 rounded-full uppercase tracking-widest">{selectedInvoice.status}</span>
+                        </div>
+                     </div>
+                  </div>
+               </div>
 
-                           {!li.matchedTickets || li.matchedTickets.length === 0 ? (
-                             <div className="p-6 border-2 border-dashed border-red-100 bg-red-50/30 rounded-3xl flex flex-col items-center text-center">
-                                <AlertTriangle className="w-8 h-8 text-red-300 mb-2" />
-                                <p className="text-xs font-black text-red-800 uppercase tracking-tight">Missing Ticket Link</p>
-                                <p className="text-[10px] text-red-500 font-bold mt-1">No delivery evidence found for this material.</p>
+               {/* 2. MATCHING LOGIC (Right Scrollable) */}
+               <div className="flex-1 overflow-y-auto space-y-6 pr-4">
+                  {selectedInvoice.lineItems?.map((li, idx) => (
+                    <div key={li.id} className="bg-white rounded-[40px] p-8 border border-gray-100 shadow-sm hover:shadow-md transition-all">
+                       <div className="flex items-start justify-between mb-8">
+                          <div className="flex items-center gap-4">
+                             <div className="w-12 h-12 bg-gray-50 rounded-2xl flex items-center justify-center font-black text-gray-300">
+                                {String(idx + 1).padStart(2, '0')}
                              </div>
-                           ) : (
-                             <div className="space-y-3">
-                                {li.matchedTickets.map((t, tIdx) => (
-                                  <div key={tIdx} className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden flex flex-col">
-                                     <div className="flex p-3 items-center gap-3">
-                                        <div className="w-12 h-12 bg-gray-50 rounded-xl overflow-hidden border">
-                                           <img 
-                                              src={t.imageUrl.startsWith('http') ? t.imageUrl : `http://localhost:4000${t.imageUrl}`} 
-                                              className="w-full h-full object-cover"
-                                              alt="Ticket"
-                                           />
-                                        </div>
-                                        <div className="flex-1">
-                                           <p className="text-[10px] font-black text-gray-900 leading-tight">Ticket #{t.ticketNumber || 'N/A'}</p>
-                                           <p className="text-[9px] text-gray-400 font-bold uppercase tracking-wider">{t.material || 'Material'}</p>
-                                        </div>
-                                        <div className="text-right">
-                                           <p className="text-xs font-black text-purple-600">{Number(t.quantity).toFixed(0)} {t.unit}</p>
-                                           <p className="text-[8px] text-gray-400 font-bold uppercase">{new Date(t.ticketDate || t.receivedAt).toLocaleDateString()}</p>
-                                        </div>
-                                     </div>
-                                     <div className="px-3 pb-3">
-                                        <div className="h-1.5 w-full bg-gray-50 rounded-full overflow-hidden">
-                                           <div className="h-full bg-purple-500 w-[95%]" />
-                                        </div>
+                             <div>
+                                <h3 className="text-lg font-black text-gray-900 tracking-tight">{li.description}</h3>
+                                <div className="flex items-center gap-3 mt-1">
+                                   <span className="text-xs font-bold text-gray-400">QTY: {Number(li.quantity).toFixed(0)} {li.unit}</span>
+                                   <div className="w-1 h-1 bg-gray-200 rounded-full" />
+                                   <span className="text-xs font-black text-[#1B4332]">PO: {li.poNumber || 'N/A'}</span>
+                                </div>
+                             </div>
+                          </div>
+                          <div className="text-right">
+                             <p className="text-2xl font-black text-gray-900">${Number(li.lineTotal).toFixed(0)}</p>
+                             <p className="text-[10px] font-black text-gray-300 uppercase tracking-widest">Extracted Rate: ${li.unitRate}/ton</p>
+                          </div>
+                       </div>
+
+                       <div className="grid grid-cols-2 gap-6">
+                          {/* Ticket Linking */}
+                          <div className="bg-gray-50 rounded-[30px] p-6 border-2 border-dashed border-gray-100">
+                             <div className="flex items-center justify-between mb-4">
+                                <span className="text-[10px] font-black uppercase tracking-widest text-gray-400 flex items-center gap-2">
+                                   <Truck className="w-3 h-3" /> Delivery Evidence
+                                </span>
+                                {li.matchedTickets?.length > 0 && <CheckCircle className="w-4 h-4 text-green-500" />}
+                             </div>
+                             
+                             {li.matchedTickets?.length > 0 ? (
+                               <div className="space-y-3">
+                                  {li.matchedTickets.map(t => (
+                                    <div key={t.id} className="bg-white p-3 rounded-2xl flex items-center gap-3 border shadow-sm group">
+                                       <div className="w-10 h-10 rounded-lg overflow-hidden border cursor-pointer" onClick={() => setZoomedImage(getFullUrl(t.imageUrl))}>
+                                          <img src={getFullUrl(t.imageUrl)} className="w-full h-full object-cover" alt="Ticket" />
+                                       </div>
+                                       <div className="flex-1">
+                                          <p className="text-[10px] font-bold text-gray-900">T-{t.ticketNumber || t.id.substring(0,6)}</p>
+                                          <p className="text-[9px] font-black text-purple-600 uppercase tracking-tighter">{Number(t.quantity)} {t.unit}</p>
+                                       </div>
+                                       <button className="opacity-0 group-hover:opacity-100 p-1.5 hover:bg-red-50 text-red-400 rounded-lg transition-all">
+                                          <X className="w-3 h-3" />
+                                       </button>
+                                    </div>
+                                  ))}
+                                  <button onClick={() => setLinkingLineItem({ id: li.id, type: 'ticket' })} className="w-full py-2 text-[10px] font-black uppercase text-gray-400 hover:text-green-600 transition-colors">Add Link +</button>
+                               </div>
+                             ) : (
+                               <div className="py-4 text-center">
+                                  <AlertTriangle className="w-6 h-6 text-red-200 mx-auto mb-2" />
+                                  <button onClick={() => setLinkingLineItem({ id: li.id, type: 'ticket' })} className="text-[10px] font-black uppercase text-[#1B4332] hover:underline underline-offset-4">Manual Ticket Link</button>
+                               </div>
+                             )}
+                          </div>
+
+                          {/* Order Linking */}
+                          <div className="bg-gray-50 rounded-[30px] p-6 border-2 border-dashed border-gray-100">
+                             <div className="flex items-center justify-between mb-4">
+                                <span className="text-[10px] font-black uppercase tracking-widest text-gray-400 flex items-center gap-2">
+                                   <ShoppingCart className="w-3 h-3" /> Spruce Order
+                                </span>
+                                {li.matchedOrderId && <CheckCircle className="w-4 h-4 text-blue-500" />}
+                             </div>
+
+                             {li.matchedOrderId ? (
+                               <div className="bg-blue-600 rounded-2xl p-4 text-white relative overflow-hidden group">
+                                  <div className="relative z-10">
+                                     <p className="text-[9px] font-black text-blue-200 uppercase tracking-widest mb-1">Authorization</p>
+                                     <p className="text-sm font-black tracking-tight">{li.matchedOrder?.spruceOrderId}</p>
+                                     <div className="flex items-center justify-between mt-3">
+                                        <span className="text-[10px] font-bold opacity-70">QTY Match</span>
+                                        <span className="text-xs font-black">{Number(li.matchedOrder?.quantity)} {li.matchedOrder?.unit}</span>
                                      </div>
                                   </div>
-                                ))}
-                             </div>
-                           )}
-                        </div>
-                      ))}
-                   </div>
-                </div>
-              </div>
-
-              {/* Panel 3: SPRUCE ORDER (Right) */}
-              <div className="flex-1 flex flex-col bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
-                <div className="p-5 border-b flex items-center justify-between bg-gray-50/50">
-                  <div className="flex items-center gap-3">
-                    <div className="p-2 bg-white rounded-xl shadow-sm border border-gray-100">
-                      <ShoppingCart className="w-5 h-5 text-blue-600" />
+                                  <button className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 p-1 bg-white/10 hover:bg-white/20 rounded-lg transition-all">
+                                     <X className="w-3 h-3" />
+                                  </button>
+                               </div>
+                             ) : (
+                               <div className="py-4 text-center">
+                                  <Package className="w-6 h-6 text-gray-200 mx-auto mb-2" />
+                                  <button onClick={() => setLinkingLineItem({ id: li.id, type: 'order' })} className="text-[10px] font-black uppercase text-blue-600 hover:underline underline-offset-4">Find Order Link</button>
+                               </div>
+                             )}
+                          </div>
+                       </div>
                     </div>
-                    <span className="text-sm font-black text-gray-900 uppercase tracking-tight">3. Spruce Auth</span>
-                  </div>
-                </div>
-
-                <div className="flex-1 overflow-y-auto p-6">
-                   <div className="space-y-6">
-                      {selectedInvoice.lineItems?.map((li, idx) => (
-                        <div key={idx} className="space-y-3">
-                           <div className="flex items-center gap-2 px-1">
-                              <span className="w-4 h-4 bg-gray-100 rounded-full flex items-center justify-center text-[10px] font-black text-gray-400">{idx + 1}</span>
-                              <p className="text-[11px] font-black text-gray-400 uppercase tracking-tighter truncate w-40">{li.description}</p>
-                           </div>
-
-                           {!li.matchedOrder ? (
-                             <div className="p-6 border-2 border-dashed border-gray-100 bg-gray-50/50 rounded-3xl flex flex-col items-center text-center">
-                                <Package className="w-8 h-8 text-gray-200 mb-2" />
-                                <p className="text-xs font-black text-gray-400 uppercase tracking-tight">No Order Link</p>
-                                <p className="text-[10px] text-gray-400 font-bold mt-1">Manual association required.</p>
-                             </div>
-                           ) : (
-                             <div className="bg-gradient-to-br from-blue-50 to-indigo-50/30 rounded-3xl p-5 border border-blue-100 relative overflow-hidden group">
-                                <div className="absolute top-0 right-0 p-3 opacity-10 group-hover:scale-125 transition-transform">
-                                   <ShoppingCart className="w-12 h-12 text-blue-600" />
-                                </div>
-                                <div className="relative z-10">
-                                   <div className="flex justify-between items-start mb-4">
-                                      <div>
-                                         <p className="text-[10px] font-black text-blue-600 uppercase tracking-widest leading-none mb-1">Authorization</p>
-                                         <p className="text-sm font-black text-gray-900 leading-none">{li.matchedOrder.spruceOrderId}</p>
-                                      </div>
-                                      <span className="text-[10px] font-black text-indigo-700 bg-indigo-100 px-2 py-0.5 rounded-full">PO: {li.matchedOrder.poNumber || 'None'}</span>
-                                   </div>
-
-                                   <div className="grid grid-cols-2 gap-4">
-                                      <div>
-                                         <p className="text-[9px] font-bold text-gray-400 uppercase">Product</p>
-                                         <p className="text-[11px] font-black text-gray-700 truncate">{li.matchedOrder.product}</p>
-                                      </div>
-                                      <div>
-                                         <p className="text-[9px] font-bold text-gray-400 uppercase">Authorized Qty</p>
-                                         <p className="text-sm font-black text-gray-900">{Number(li.matchedOrder.quantity).toFixed(0)} {li.matchedOrder.unit}</p>
-                                      </div>
-                                   </div>
-
-                                   <div className="mt-4 pt-4 border-t border-blue-100/50 flex items-center justify-between">
-                                      <p className="text-[9px] font-bold text-blue-500 uppercase">Customer: {li.matchedOrder.customerName}</p>
-                                      <CheckCircle className="w-4 h-4 text-green-500" />
-                                   </div>
-                                </div>
-                             </div>
-                           )}
-                        </div>
-                      ))}
-                   </div>
-                </div>
-              </div>
+                  ))}
+               </div>
             </div>
           </>
         )}
       </div>
+
+      {/* Manual Link Modal */}
+      {linkingLineItem && (
+        <div className="fixed inset-0 bg-black/80 z-[100] flex items-center justify-center p-6 backdrop-blur-sm">
+           <div className="bg-white w-full max-w-xl rounded-[40px] overflow-hidden shadow-2xl animate-in zoom-in-95 duration-200">
+              <div className="p-8 border-b flex items-center justify-between bg-gray-50">
+                 <div>
+                    <h2 className="text-2xl font-black text-gray-900 tracking-tight">Manual Association</h2>
+                    <p className="text-xs font-bold text-gray-400 uppercase mt-1 tracking-widest">Lookup {linkingLineItem.type} in central database</p>
+                 </div>
+                 <button onClick={() => setLinkingLineItem(null)} className="p-3 hover:bg-gray-200 rounded-2xl transition-all">
+                    <X className="w-6 h-6 text-gray-400" />
+                 </button>
+              </div>
+              
+              <div className="p-8 space-y-6">
+                 <div className="relative">
+                    <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-300" />
+                    <input 
+                      type="text" 
+                      placeholder={`Search ${linkingLineItem.type}s by number, PO, or material...`}
+                      className="w-full pl-12 pr-4 py-4 bg-gray-100 border-none rounded-2xl text-base font-bold focus:ring-4 focus:ring-green-100 outline-none transition-all"
+                      onChange={e => searchManualLinks(e.target.value)}
+                      autoFocus
+                    />
+                 </div>
+
+                 <div className="max-h-80 overflow-y-auto space-y-2 pr-2 custom-scrollbar">
+                    {searching ? (
+                      <Loader message="Searching records..." />
+                    ) : searchResults.length === 0 ? (
+                      <div className="py-12 text-center text-gray-300">
+                         <Search className="w-12 h-12 mx-auto mb-4 opacity-10" />
+                         <p className="font-bold text-sm">Type to begin searching</p>
+                      </div>
+                    ) : (
+                      searchResults.map(res => (
+                        <button 
+                          key={res.id} 
+                          onClick={() => linkingLineItem.type === 'order' ? handleLinkOrder(res.id) : toast.success('Ticket linking UI is next phase!')}
+                          className="w-full flex items-center justify-between p-5 hover:bg-green-50 rounded-[24px] border border-transparent hover:border-green-100 transition-all text-left"
+                        >
+                           <div className="flex items-center gap-4">
+                              <div className="w-12 h-12 bg-white rounded-xl shadow-sm border flex items-center justify-center">
+                                 {linkingLineItem.type === 'order' ? <ShoppingCart className="w-5 h-5 text-blue-500" /> : <Truck className="w-5 h-5 text-purple-500" />}
+                              </div>
+                              <div>
+                                 <p className="text-base font-black text-gray-900">{res.spruceOrderId || res.ticketNumber || res.id.substring(0,8)}</p>
+                                 <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">{res.product || res.material || 'General Material'}</p>
+                              </div>
+                           </div>
+                           <div className="text-right">
+                              <p className="text-sm font-black text-gray-900">{res.quantity} {res.unit}</p>
+                              <div className="flex items-center gap-1 text-[10px] font-bold text-green-700 uppercase">
+                                 PO: {res.poNumber || 'N/A'} <ChevronRight className="w-3 h-3" />
+                              </div>
+                           </div>
+                        </button>
+                      ))
+                    )}
+                 </div>
+              </div>
+           </div>
+        </div>
+      )}
+
+      {/* Lightbox */}
+      {zoomedImage && (
+        <div className="fixed inset-0 bg-black/95 z-[200] flex flex-col p-12 overflow-hidden animate-in fade-in duration-300" onClick={() => setZoomedImage(null)}>
+           <button className="absolute top-8 right-8 p-4 bg-white/10 hover:bg-white/20 rounded-full text-white transition-all backdrop-blur-md">
+              <X className="w-8 h-8" />
+           </button>
+           <div className="flex-1 flex items-center justify-center">
+              <img 
+                src={zoomedImage} 
+                className="max-w-full max-h-full object-contain shadow-2xl rounded-lg animate-in zoom-in-95 duration-500" 
+                onClick={e => e.stopPropagation()} 
+                alt="Document Zoom"
+              />
+           </div>
+           <div className="h-20 flex items-center justify-center gap-8">
+              <button className="flex items-center gap-2 text-white/60 hover:text-white font-bold transition-colors">
+                 <Search className="w-5 h-5" /> Zoom In
+              </button>
+              <div className="w-px h-6 bg-white/10" />
+              <button className="flex items-center gap-2 text-white/60 hover:text-white font-bold transition-colors">
+                 <ExternalLink className="w-5 h-5" /> Open in New Tab
+              </button>
+           </div>
+        </div>
+      )}
     </div>
   );
 }

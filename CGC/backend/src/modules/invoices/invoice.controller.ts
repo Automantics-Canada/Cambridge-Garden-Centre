@@ -63,7 +63,7 @@ export const InvoiceController = {
   async verifyInvoice(req: Request, res: Response, next: NextFunction) {
     try {
       // Assuming authMiddleware attaches req.user
-      const userId = (req as any).user?.userId; 
+      const userId = (req as any).user?.id; 
       if (!userId) return res.status(401).json({ error: 'Unauthorized' });
 
       const id = req.params.id as string;
@@ -97,6 +97,32 @@ export const InvoiceController = {
       const { reason } = req.body;
       const id = req.params.id as string;
       const updated = await InvoiceService.reopenInvoice(id, userId, reason || 'Reopened for review');
+      res.json(updated);
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  async linkOrderToLineItem(req: Request, res: Response, next: NextFunction) {
+    try {
+      const userId = (req as any).user?.id;
+      if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+
+      const { lineItemId, orderId } = req.body;
+      const updated = await InvoiceService.linkOrderToLineItem(lineItemId, orderId, userId);
+      res.json(updated);
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  async linkTicketsToLineItem(req: Request, res: Response, next: NextFunction) {
+    try {
+      const userId = (req as any).user?.id;
+      if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+
+      const { lineItemId, ticketIds } = req.body;
+      const updated = await InvoiceService.linkTicketsToLineItem(lineItemId, ticketIds, userId);
       res.json(updated);
     } catch (error) {
       next(error);
