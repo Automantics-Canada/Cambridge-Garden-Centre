@@ -1,0 +1,3 @@
+OrderNumber,CustomerName,BuyerType,Product,Quantity,Unit,PONumber,OrderDate,DeliveryDate,InvoiceNumber,HasInvoice
+ORD-DUFF-1005,Highview Homes,CONTRACTOR,Screening,30,Tons,PO-HIGHVIEW-SCREEN-01,2026-04-19,2026-04-20,,no
+ORD-DUFF-1006,Highview Homes,CONTRACTOR,3/4 Crush Limestone,30,Tons,PO-HIGHVIEW-LIME-99,2026-04-20,2026-04-20,,no
