@@ -244,12 +244,12 @@ export default function VerificationDesk() {
               <div className="flex gap-4">
                  {selectedInvoice.status === 'PENDING_REVIEW' && (
                     <>
-                      {/* <button 
+                      <button 
                         onClick={() => setShowDisputeInput(!showDisputeInput)}
                         className={`px-6 py-2.5 rounded-xl font-normal text-xs transition-all border ${showDisputeInput ? 'bg-red-500 text-white border-red-500' : 'bg-white text-red-600 border-red-100 hover:bg-red-50'}`}
                       >
-                        {/* {showDisputeInput ? 'Cancel Dispute' : 'Flag Dispute'} */}
-                    {/* //  </button> } */}
+                        {showDisputeInput ? 'Cancel Dispute' : 'Flag Dispute'}
+                      </button>
                       <button 
                         onClick={handleVerify}
                         disabled={isProcessing}
