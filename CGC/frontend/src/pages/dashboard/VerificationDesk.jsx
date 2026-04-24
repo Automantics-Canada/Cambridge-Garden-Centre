@@ -16,6 +16,7 @@ import {
   ChevronRight,
   ExternalLink
 } from 'lucide-react';
+import { SidebarSkeleton, Skeleton } from '../../components/Skeleton';
 import Loader from '../../components/Loader';
 import toast from 'react-hot-toast';
 
@@ -160,7 +161,7 @@ export default function VerificationDesk() {
     return matchesSearch && inv.status === filterStatus;
   });
 
-  if (loading && invoices.length === 0) return <Loader message="Setting up your verification desk..." />;
+  if (loading && invoices.length === 0) return <VerificationDeskSkeleton />;
 
   const getFullUrl = (url) => {
     if (!url) return '';
@@ -243,12 +244,12 @@ export default function VerificationDesk() {
               <div className="flex gap-4">
                  {selectedInvoice.status === 'PENDING_REVIEW' && (
                     <>
-                      <button 
+                      {/* <button 
                         onClick={() => setShowDisputeInput(!showDisputeInput)}
                         className={`px-6 py-2.5 rounded-xl font-normal text-xs transition-all border ${showDisputeInput ? 'bg-red-500 text-white border-red-500' : 'bg-white text-red-600 border-red-100 hover:bg-red-50'}`}
                       >
-                        {showDisputeInput ? 'Cancel Dispute' : 'Flag Dispute'}
-                      </button>
+                        {/* {showDisputeInput ? 'Cancel Dispute' : 'Flag Dispute'} */}
+                    {/* //  </button> } */}
                       <button 
                         onClick={handleVerify}
                         disabled={isProcessing}
@@ -515,6 +516,55 @@ export default function VerificationDesk() {
            </div>
         </div>
       )}
+    </div>
+  );
+}
+function VerificationDeskSkeleton() {
+  return (
+    <div className="flex h-full bg-[#F3F4F6] -m-8 relative overflow-hidden">
+      <SidebarSkeleton />
+      <div className="flex-1 flex flex-col bg-gray-100">
+        <div className="h-20 bg-white border-b px-8 flex items-center justify-between shadow-sm">
+          <div className="flex items-center gap-8">
+            <div className="flex flex-col gap-2">
+              <Skeleton variant="text" width="60px" height="10px" />
+              <Skeleton variant="text" width="120px" height="20px" />
+            </div>
+            <div className="w-px h-8 bg-gray-200" />
+            <div className="flex flex-col gap-2">
+              <Skeleton variant="text" width="80px" height="10px" />
+              <Skeleton variant="rectangle" width="100px" height="16px" className="rounded-full" />
+            </div>
+          </div>
+          <div className="flex gap-4">
+            <Skeleton variant="rectangle" width="140px" height="40px" className="rounded-xl" />
+          </div>
+        </div>
+
+        <div className="flex-1 flex p-6 gap-6 overflow-hidden">
+          <div className="w-[450px] flex flex-col gap-4">
+            <Skeleton variant="rectangle" height="600px" className="rounded-[40px]" />
+            <Skeleton variant="rectangle" height="150px" className="rounded-[40px]" />
+          </div>
+          <div className="flex-1 space-y-6">
+            {[...Array(3)].map((_, i) => (
+              <div key={i} className="bg-white rounded-[40px] p-8 border border-gray-100 shadow-sm space-y-6">
+                <div className="flex items-center gap-4">
+                  <Skeleton variant="rectangle" width="48px" height="48px" className="rounded-2xl" />
+                  <div className="space-y-2">
+                    <Skeleton variant="text" width="200px" height="24px" />
+                    <Skeleton variant="text" width="150px" height="16px" />
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-6">
+                  <Skeleton variant="rectangle" height="120px" className="rounded-[30px]" />
+                  <Skeleton variant="rectangle" height="120px" className="rounded-[30px]" />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

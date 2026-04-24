@@ -1,7 +1,7 @@
 import axios from 'axios';
 
 const api = axios.create({
-  baseURL: 'https://cambridge-garden-centre-1.onrender.com',
+  baseURL: 'http://localhost:4000',
 });
 
 api.interceptors.request.use(

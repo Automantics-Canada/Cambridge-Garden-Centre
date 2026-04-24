@@ -12,6 +12,7 @@ import {
   Filter,
   Users
 } from 'lucide-react';
+import { Skeleton } from '../../components/Skeleton';
 import Loader from '../../components/Loader';
 
 export default function Dashboard() {
@@ -74,7 +75,7 @@ export default function Dashboard() {
     fetchDashboardData();
   }, [fetchDashboardData]);
 
-  if (loading) return <Loader message="Analyzing operations data..." />;
+  if (loading) return <DashboardSkeleton />;
 
   return (
     <div className="max-w-7xl mx-auto space-y-8 pb-12">
@@ -227,6 +228,72 @@ export default function Dashboard() {
                </p>
             </div>
          </div>
+      </div>
+    </div>
+  );
+}
+function DashboardSkeleton() {
+  return (
+    <div className="max-w-7xl mx-auto space-y-8 pb-12">
+      <div className="flex flex-col gap-2">
+        <Skeleton variant="text" width="200px" height="32px" />
+        <Skeleton variant="text" width="300px" height="20px" />
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+        {[...Array(3)].map((_, i) => (
+          <div key={i} className="bg-white p-6 rounded-3xl border border-gray-200 shadow-sm space-y-4">
+            <div className="flex items-center justify-between">
+              <Skeleton variant="rectangle" width="48px" height="48px" className="rounded-2xl" />
+              <Skeleton variant="rectangle" width="80px" height="24px" className="rounded-full" />
+            </div>
+            <div className="space-y-2">
+              <Skeleton variant="text" width="100px" height="14px" />
+              <Skeleton variant="text" width="60px" height="32px" />
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        <div className="lg:col-span-2 bg-white rounded-3xl border border-gray-200 shadow-sm overflow-hidden">
+          <div className="p-6 border-b flex justify-between">
+            <Skeleton variant="text" width="250px" height="24px" />
+            <Skeleton variant="text" width="60px" height="16px" />
+          </div>
+          <div className="p-6 space-y-4">
+            {[...Array(5)].map((_, i) => (
+              <div key={i} className="flex justify-between items-center py-2 border-b border-gray-50 last:border-0">
+                <div className="space-y-2">
+                  <Skeleton variant="text" width="120px" height="16px" />
+                  <Skeleton variant="text" width="80px" height="12px" />
+                </div>
+                <Skeleton variant="text" width="100px" height="16px" />
+                <Skeleton variant="text" width="80px" height="16px" />
+                <Skeleton variant="rectangle" width="70px" height="20px" className="rounded-full" />
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="bg-white rounded-3xl border border-gray-200 shadow-sm p-6 space-y-6">
+          <Skeleton variant="text" width="180px" height="24px" />
+          <div className="space-y-4">
+            {[...Array(2)].map((_, i) => (
+              <div key={i} className="flex items-center justify-between p-4 rounded-2xl bg-gray-50">
+                <div className="flex items-center gap-3">
+                  <Skeleton variant="rectangle" width="40px" height="40px" className="rounded-xl" />
+                  <div className="space-y-2">
+                    <Skeleton variant="text" width="120px" height="16px" />
+                    <Skeleton variant="text" width="100px" height="12px" />
+                  </div>
+                </div>
+                <Skeleton variant="rectangle" width="16px" height="16px" />
+              </div>
+            ))}
+          </div>
+          <Skeleton variant="rectangle" height="100px" className="rounded-2xl" />
+        </div>
       </div>
     </div>
   );

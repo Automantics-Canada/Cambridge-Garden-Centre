@@ -8,6 +8,7 @@ import { fetchSuppliers, deleteSupplier, clearSuccess, clearError } from '../../
 import Modal from '../../components/Modal';
 import SupplierForm from '../../components/SupplierForm';
 import RateForm from '../../components/RateForm';
+import { Skeleton } from '../../components/Skeleton';
 import Loader from '../../components/Loader';
 
 export default function SupplierPage() {
@@ -165,7 +166,7 @@ export default function SupplierPage() {
         className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden"
       >
         {loading ? (
-          <Loader message="Loading suppliers..." />
+          <SupplierTableSkeleton />
         ) : filteredSuppliers.length === 0 ? (
           <div className="p-12 text-center">
             <AlertCircle className="w-12 h-12 text-gray-400 mx-auto mb-4" />
@@ -465,5 +466,54 @@ export default function SupplierPage() {
         )}
       </AnimatePresence>
     </Motion.div>
+  );
+}
+function SupplierTableSkeleton() {
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full">
+        <thead>
+          <tr className="bg-gray-50 border-b border-gray-200">
+            <th className="px-6 py-4 w-10"></th>
+            <th className="text-left px-6 py-4 font-semibold text-gray-900">Name</th>
+            <th className="text-left px-6 py-4 font-semibold text-gray-900">Type</th>
+            <th className="text-left px-6 py-4 font-semibold text-gray-900">Contact</th>
+            <th className="text-left px-6 py-4 font-semibold text-gray-900">Email</th>
+            <th className="text-left px-6 py-4 font-semibold text-gray-900">Rates</th>
+            <th className="text-right px-6 py-4 font-semibold text-gray-900">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {[...Array(8)].map((_, i) => (
+            <tr key={i} className="border-b border-gray-200">
+              <td className="px-6 py-4">
+                <Skeleton variant="rectangle" width="18px" height="18px" className="rounded" />
+              </td>
+              <td className="px-6 py-4">
+                <Skeleton variant="text" width="150px" height="16px" />
+              </td>
+              <td className="px-6 py-4">
+                <Skeleton variant="rectangle" width="80px" height="20px" className="rounded-full" />
+              </td>
+              <td className="px-6 py-4">
+                <Skeleton variant="text" width="120px" height="16px" />
+              </td>
+              <td className="px-6 py-4">
+                <Skeleton variant="text" width="180px" height="16px" />
+              </td>
+              <td className="px-6 py-4">
+                <Skeleton variant="text" width="60px" height="16px" />
+              </td>
+              <td className="px-6 py-4">
+                <div className="flex justify-end gap-3">
+                  <Skeleton variant="rectangle" width="34px" height="34px" className="rounded-lg" />
+                  <Skeleton variant="rectangle" width="34px" height="34px" className="rounded-lg" />
+                </div>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }

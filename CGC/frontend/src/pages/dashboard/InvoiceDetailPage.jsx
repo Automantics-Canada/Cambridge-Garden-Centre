@@ -12,6 +12,7 @@ import {
   Info
 } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { Skeleton } from '../../components/Skeleton';
 import Loader from '../../components/Loader';
 
 const FLAG_COLORS = {
@@ -101,7 +102,7 @@ export default function InvoiceDetailPage() {
     }
   };
 
-  if (loading) return <Loader message="Loading invoice details..." />;
+  if (loading) return <InvoiceDetailSkeleton />;
   if (!invoice) return (
     <div className="p-8 text-center bg-white rounded-xl border">
       <h2 className="text-xl font-semibold mb-4 text-gray-900">Invoice not found</h2>
@@ -155,7 +156,7 @@ export default function InvoiceDetailPage() {
               onClick={() => setShowReopenDialog(true)}
               className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 flex items-center gap-2 transition-all"
             >
-              <History className="w-4 h-4" /> Reopen
+              {/* <History className="w-4 h-4" /> Reopen */}
             </button>
           )}
         </div>
@@ -422,6 +423,56 @@ export default function InvoiceDetailPage() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+function InvoiceDetailSkeleton() {
+  return (
+    <div className="flex flex-col h-full space-y-4">
+      <div className="flex items-center justify-between bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
+        <div className="flex items-center gap-4">
+          <Skeleton variant="rectangle" width="40px" height="40px" className="rounded-lg" />
+          <div className="space-y-2">
+            <Skeleton variant="text" width="200px" height="24px" />
+            <Skeleton variant="text" width="150px" height="16px" />
+          </div>
+        </div>
+      </div>
+
+      <div className="flex-1 flex gap-4 overflow-hidden">
+        <div className="flex-1 bg-white rounded-xl border border-gray-200 shadow-sm p-4">
+          <Skeleton variant="rectangle" height="100%" className="rounded-lg" />
+        </div>
+        <div className="w-[45%] flex flex-col gap-4">
+          <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6 space-y-6 flex-1">
+            <div className="grid grid-cols-2 gap-8">
+              {[...Array(4)].map((_, i) => (
+                <div key={i} className="space-y-2">
+                  <Skeleton variant="text" width="60px" height="12px" />
+                  <Skeleton variant="text" width="100px" height="16px" />
+                </div>
+              ))}
+            </div>
+            <div className="space-y-4 pt-6 border-t">
+              <Skeleton variant="text" width="150px" height="20px" />
+              {[...Array(3)].map((_, i) => (
+                <Skeleton key={i} variant="rectangle" height="100px" className="rounded-lg" />
+              ))}
+            </div>
+          </div>
+          <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4 h-[200px]">
+            <Skeleton variant="text" width="120px" height="16px" className="mb-4" />
+            <div className="space-y-3">
+              {[...Array(3)].map((_, i) => (
+                <div key={i} className="flex gap-3">
+                  <Skeleton variant="circular" width="12px" height="12px" />
+                  <Skeleton variant="text" width="80%" height="12px" />
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

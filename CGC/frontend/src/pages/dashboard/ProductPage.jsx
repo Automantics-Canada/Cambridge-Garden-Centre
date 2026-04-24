@@ -6,6 +6,7 @@ import clsx from 'clsx';
 import toast from 'react-hot-toast';
 import { fetchProducts, createProduct, updateProduct, deleteProduct, clearSuccess, clearError } from '../../store/productSlice';
 import Modal from '../../components/Modal';
+import { Skeleton } from '../../components/Skeleton';
 import Loader from '../../components/Loader';
 
 export default function ProductPage() {
@@ -132,7 +133,7 @@ export default function ProductPage() {
 
       <Motion.div variants={itemVariants} className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
         {loading && products.length === 0 ? (
-          <Loader message="Loading products..." />
+          <ProductTableSkeleton />
         ) : filteredProducts.length === 0 ? (
           <div className="p-12 text-center">
             <Package className="w-12 h-12 text-gray-400 mx-auto mb-4" />
@@ -287,5 +288,38 @@ export default function ProductPage() {
         )}
       </AnimatePresence>
     </Motion.div>
+  );
+}
+function ProductTableSkeleton() {
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full">
+        <thead>
+          <tr className="bg-gray-50 border-b border-gray-200">
+            <th className="text-left px-6 py-4 font-semibold text-gray-900">Product Name</th>
+            <th className="text-left px-6 py-4 font-semibold text-gray-900">Created At</th>
+            <th className="text-right px-6 py-4 font-semibold text-gray-900">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {[...Array(8)].map((_, i) => (
+            <tr key={i} className="border-b border-gray-200">
+              <td className="px-6 py-4">
+                <Skeleton variant="text" width="200px" height="16px" />
+              </td>
+              <td className="px-6 py-4">
+                <Skeleton variant="text" width="120px" height="16px" />
+              </td>
+              <td className="px-6 py-4">
+                <div className="flex justify-end gap-3">
+                  <Skeleton variant="rectangle" width="34px" height="34px" className="rounded-lg" />
+                  <Skeleton variant="rectangle" width="34px" height="34px" className="rounded-lg" />
+                </div>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }

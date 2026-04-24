@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import api from '../../api/axios';
 import { Search, Upload } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { Skeleton } from '../../components/Skeleton';
 import Loader from '../../components/Loader';
 
 export default function OrdersPage() {
@@ -193,9 +194,7 @@ export default function OrdersPage() {
                   <td colSpan="8"><Loader message="Importing CSV... Please wait." /></td>
                 </tr>
               ) : loading ? (
-                <tr>
-                   <td colSpan="8" className="py-12 text-center text-sm text-gray-500">Loading orders...</td>
-                </tr>
+                <OrdersTableSkeleton />
               ) : orders.length === 0 ? (
                 <tr>
                    <td colSpan="8" className="py-12 text-center text-sm text-gray-500">No orders found matching criteria.</td>
@@ -261,5 +260,40 @@ export default function OrdersPage() {
         </div>
       </div>
     </div>
+  );
+}
+function OrdersTableSkeleton() {
+  return (
+    <>
+      {[...Array(10)].map((_, i) => (
+        <tr key={i}>
+          <td className="whitespace-nowrap py-4 pl-4 pr-3 sm:pl-6">
+            <Skeleton variant="text" width="120px" height="16px" />
+            <Skeleton variant="text" width="80px" height="12px" className="mt-1" />
+          </td>
+          <td className="whitespace-nowrap px-3 py-4">
+            <Skeleton variant="text" width="140px" height="16px" />
+          </td>
+          <td className="whitespace-nowrap px-3 py-4">
+            <Skeleton variant="rectangle" width="80px" height="20px" className="rounded-full" />
+          </td>
+          <td className="whitespace-nowrap px-3 py-4">
+            <Skeleton variant="text" width="100px" height="16px" />
+          </td>
+          <td className="whitespace-nowrap px-3 py-4">
+            <Skeleton variant="text" width="60px" height="16px" />
+          </td>
+          <td className="whitespace-nowrap px-3 py-4">
+            <Skeleton variant="text" width="100px" height="16px" />
+          </td>
+          <td className="whitespace-nowrap px-3 py-4">
+            <Skeleton variant="text" width="80px" height="16px" />
+          </td>
+          <td className="whitespace-nowrap px-3 py-4">
+            <Skeleton variant="rectangle" width="70px" height="20px" className="rounded-full" />
+          </td>
+        </tr>
+      ))}
+    </>
   );
 }

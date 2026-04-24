@@ -12,6 +12,7 @@ import {
   AlertCircle
 } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { Skeleton } from '../../components/Skeleton';
 import Loader from '../../components/Loader';
 
 const INITIAL_FORM = {
@@ -189,7 +190,7 @@ export default function RatesPage() {
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
               {loading ? (
-                <tr><td colSpan="6"><Loader message="Fetching data..." /></td></tr>
+                <RatesTableSkeleton />
               ) : filteredRates.length === 0 ? (
                 <tr><td colSpan="6" className="px-6 py-12 text-center text-gray-500">No rates found matching search.</td></tr>
               ) : (
@@ -342,5 +343,37 @@ export default function RatesPage() {
         </div>
       )}
     </div>
+  );
+}
+function RatesTableSkeleton() {
+  return (
+    <>
+      {[...Array(10)].map((_, i) => (
+        <tr key={i}>
+          <td className="px-6 py-4 whitespace-nowrap">
+            <Skeleton variant="text" width="140px" height="16px" />
+          </td>
+          <td className="px-6 py-4 whitespace-nowrap">
+            <Skeleton variant="text" width="120px" height="16px" />
+          </td>
+          <td className="px-6 py-4 whitespace-nowrap">
+            <Skeleton variant="text" width="60px" height="16px" />
+          </td>
+          <td className="px-6 py-4 whitespace-nowrap">
+            <Skeleton variant="text" width="50px" height="16px" />
+          </td>
+          <td className="px-6 py-4 whitespace-nowrap">
+            <Skeleton variant="text" width="100px" height="16px" />
+          </td>
+          <td className="px-6 py-4 whitespace-nowrap text-right space-x-2">
+            <div className="flex justify-end gap-2">
+              <Skeleton variant="rectangle" width="24px" height="24px" className="rounded-md" />
+              <Skeleton variant="rectangle" width="24px" height="24px" className="rounded-md" />
+              <Skeleton variant="rectangle" width="24px" height="24px" className="rounded-md" />
+            </div>
+          </td>
+        </tr>
+      ))}
+    </>
   );
 }

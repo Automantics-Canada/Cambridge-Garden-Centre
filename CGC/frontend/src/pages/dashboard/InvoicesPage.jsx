@@ -13,6 +13,7 @@ import {
   History
 } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { Skeleton } from '../../components/Skeleton';
 import Loader from '../../components/Loader';
 
 const STATUS_TABS = [
@@ -263,7 +264,7 @@ export default function InvoicesPage() {
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
               {loading ? (
-                <tr><td colSpan="7"><Loader message="Loading invoices..." /></td></tr>
+                <InvoicesTableSkeleton />
               ) : filteredInvoices.length === 0 ? (
                 <tr><td colSpan="7" className="px-6 py-12 text-center text-gray-500">No invoices found.</td></tr>
               ) : (
@@ -321,5 +322,41 @@ export default function InvoicesPage() {
         </div>
       </div>
     </div>
+  );
+}
+function InvoicesTableSkeleton() {
+  return (
+    <>
+      {[...Array(10)].map((_, i) => (
+        <tr key={i}>
+          <td className="px-6 py-4 whitespace-nowrap">
+            <div className="flex items-center gap-3">
+              <Skeleton variant="rectangle" width="32px" height="32px" className="rounded-lg" />
+              <Skeleton variant="text" width="100px" height="16px" />
+            </div>
+          </td>
+          <td className="px-6 py-4 whitespace-nowrap">
+            <Skeleton variant="text" width="120px" height="16px" />
+          </td>
+          <td className="px-6 py-4 whitespace-nowrap">
+            <Skeleton variant="text" width="80px" height="16px" />
+          </td>
+          <td className="px-6 py-4 whitespace-nowrap">
+            <Skeleton variant="text" width="80px" height="16px" />
+          </td>
+          <td className="px-6 py-4 whitespace-nowrap">
+            <div className="flex justify-center">
+              <Skeleton variant="text" width="30px" height="16px" />
+            </div>
+          </td>
+          <td className="px-6 py-4 whitespace-nowrap">
+            <Skeleton variant="rectangle" width="80px" height="20px" className="rounded-full" />
+          </td>
+          <td className="px-6 py-4 whitespace-nowrap text-right">
+            <Skeleton variant="rectangle" width="32px" height="32px" className="rounded-lg ml-auto" />
+          </td>
+        </tr>
+      ))}
+    </>
   );
 }
