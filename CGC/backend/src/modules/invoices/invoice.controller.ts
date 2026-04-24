@@ -76,7 +76,7 @@ export const InvoiceController = {
 
   async disputeInvoice(req: Request, res: Response, next: NextFunction) {
     try {
-      const userId = (req as any).user?.userId;
+      const userId = (req as any).user?.id;
       if (!userId) return res.status(401).json({ error: 'Unauthorized' });
       
       const { note } = req.body;
@@ -91,7 +91,7 @@ export const InvoiceController = {
 
   async reopenInvoice(req: Request, res: Response, next: NextFunction) {
     try {
-      const userId = (req as any).user?.userId;
+      const userId = (req as any).user?.id;
       if (!userId) return res.status(401).json({ error: 'Unauthorized' });
 
       const { reason } = req.body;

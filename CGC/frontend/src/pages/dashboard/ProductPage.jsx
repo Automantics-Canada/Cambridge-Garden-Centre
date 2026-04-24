@@ -17,6 +17,9 @@ export default function ProductPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [deleteConfirm, setDeleteConfirm] = useState(null);
   const [productName, setProductName] = useState('');
+  const [productUnit, setProductUnit] = useState('ton');
+
+  const unitOptions = ['ton', 'kg', 'lb', 'load', 'yard', 'meter', 'each'];
 
   useEffect(() => {
     dispatch(fetchProducts());
@@ -25,9 +28,10 @@ export default function ProductPage() {
   useEffect(() => {
     if (success) {
       toast.success(successMessage);
-      dispatch(clearSuccess());
+       dispatch(clearSuccess());
       setIsModalOpen(false);
       setProductName('');
+      setProductUnit('ton');
       setSelectedProduct(null);
     }
   }, [success, successMessage, dispatch]);
@@ -39,15 +43,17 @@ export default function ProductPage() {
     }
   }, [error, dispatch]);
 
-  const handleCreateNew = () => {
+   const handleCreateNew = () => {
     setSelectedProduct(null);
     setProductName('');
+    setProductUnit('ton');
     setIsModalOpen(true);
   };
 
-  const handleEdit = (product) => {
+   const handleEdit = (product) => {
     setSelectedProduct(product);
     setProductName(product.name);
+    setProductUnit(product.unit || 'ton');
     setIsModalOpen(true);
   };
 
@@ -73,10 +79,10 @@ export default function ProductPage() {
       return;
     }
 
-    if (selectedProduct) {
-      dispatch(updateProduct({ id: selectedProduct.id, name: productName.trim() }));
+     if (selectedProduct) {
+      dispatch(updateProduct({ id: selectedProduct.id, name: productName.trim(), unit: productUnit }));
     } else {
-      dispatch(createProduct({ name: productName.trim() }));
+      dispatch(createProduct({ name: productName.trim(), unit: productUnit }));
     }
   };
 
@@ -157,6 +163,7 @@ export default function ProductPage() {
               <thead>
                 <tr className="bg-gray-50 border-b border-gray-200">
                   <th className="text-left px-6 py-4 font-semibold text-gray-900">Product Name</th>
+                  <th className="text-left px-6 py-4 font-semibold text-gray-900">Unit</th>
                   <th className="text-left px-6 py-4 font-semibold text-gray-900">Created At</th>
                   <th className="text-right px-6 py-4 font-semibold text-gray-900">Actions</th>
                 </tr>
@@ -172,6 +179,11 @@ export default function ProductPage() {
                   >
                     <td className="px-6 py-4">
                       <p className="font-medium text-gray-900">{product.name}</p>
+                    </td>
+                    <td className="px-6 py-4">
+                      <span className="px-2 py-1 bg-gray-100 text-gray-600 text-[10px] font-bold rounded uppercase tracking-wider">
+                        {product.unit || 'ton'}
+                      </span>
                     </td>
                     <td className="px-6 py-4">
                       <p className="text-gray-600 text-sm">{new Date(product.createdAt).toLocaleDateString()}</p>
@@ -217,7 +229,7 @@ export default function ProductPage() {
             <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">
               Product Name *
             </label>
-            <input
+             <input
               type="text"
               value={productName}
               onChange={(e) => setProductName(e.target.value)}
@@ -225,6 +237,20 @@ export default function ProductPage() {
               autoFocus
               className="w-full border border-gray-200 rounded-xl p-2.5 text-sm outline-none focus:ring-2 focus:ring-green-100 transition-all"
             />
+          </div>
+          <div>
+            <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">
+              Base Unit *
+            </label>
+            <select
+              value={productUnit}
+              onChange={(e) => setProductUnit(e.target.value)}
+              className="w-full border border-gray-200 rounded-xl p-2.5 text-sm outline-none focus:ring-2 focus:ring-green-100 transition-all"
+            >
+              {unitOptions.map(unit => (
+                <option key={unit} value={unit}>{unit.toUpperCase()}</option>
+              ))}
+            </select>
           </div>
           <div className="pt-4 flex gap-3">
             <button
@@ -297,6 +323,7 @@ function ProductTableSkeleton() {
         <thead>
           <tr className="bg-gray-50 border-b border-gray-200">
             <th className="text-left px-6 py-4 font-semibold text-gray-900">Product Name</th>
+            <th className="text-left px-6 py-4 font-semibold text-gray-900">Unit</th>
             <th className="text-left px-6 py-4 font-semibold text-gray-900">Created At</th>
             <th className="text-right px-6 py-4 font-semibold text-gray-900">Actions</th>
           </tr>
@@ -306,6 +333,9 @@ function ProductTableSkeleton() {
             <tr key={i} className="border-b border-gray-200">
               <td className="px-6 py-4">
                 <Skeleton variant="text" width="200px" height="16px" />
+              </td>
+              <td className="px-6 py-4">
+                <Skeleton variant="rectangle" width="40px" height="20px" className="rounded" />
               </td>
               <td className="px-6 py-4">
                 <Skeleton variant="text" width="120px" height="16px" />

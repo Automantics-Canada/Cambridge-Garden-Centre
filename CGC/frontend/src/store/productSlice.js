@@ -28,9 +28,9 @@ export const createProduct = createAsyncThunk(
 
 export const updateProduct = createAsyncThunk(
   'products/updateProduct',
-  async ({ id, name }, { rejectWithValue }) => {
+  async ({ id, ...productData }, { rejectWithValue }) => {
     try {
-      const response = await api.put(`/api/products/${id}`, { name });
+      const response = await api.put(`/api/products/${id}`, productData);
       return response.data;
     } catch (error) {
       return rejectWithValue(error.response?.data?.error || 'Failed to update product');

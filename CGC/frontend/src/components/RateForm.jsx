@@ -18,6 +18,8 @@ export default function RateForm({ supplierId, rate, onClose }) {
     notes: '',
   });
 
+  const unitOptions = ['ton', 'kg', 'lb', 'load', 'yard', 'meter', 'each'];
+
   const [errors, setErrors] = useState({});
 
   useEffect(() => {
@@ -80,9 +82,20 @@ export default function RateForm({ supplierId, rate, onClose }) {
     }
   };
 
-  const handleChange = (e) => {
+   const handleChange = (e) => {
     const { name, value } = e.target;
-    setFormData(prev => ({ ...prev, [name]: value }));
+    
+    if (name === 'productName') {
+      const selectedProduct = products.find(p => p.name === value);
+      if (selectedProduct && selectedProduct.unit) {
+        setFormData(prev => ({ ...prev, productName: value, unit: selectedProduct.unit }));
+      } else {
+        setFormData(prev => ({ ...prev, productName: value }));
+      }
+    } else {
+      setFormData(prev => ({ ...prev, [name]: value }));
+    }
+
     if (errors[name]) {
       setErrors(prev => ({ ...prev, [name]: '' }));
     }
@@ -153,20 +166,22 @@ export default function RateForm({ supplierId, rate, onClose }) {
           {errors.rate && <p className="text-red-500 text-[10px] mt-1">{errors.rate}</p>}
         </Motion.div>
 
-        <Motion.div variants={itemVariants}>
+         <Motion.div variants={itemVariants}>
           <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">
             Unit *
           </label>
-          <input
-            type="text"
+          <select
             name="unit"
             value={formData.unit}
             onChange={handleChange}
-            placeholder="tonne, load, etc"
-            className={`w-full border rounded-xl p-2.5 text-sm outline-none focus:ring-2 focus:ring-green-100 transition-all uppercase font-bold ${
+            className={`w-full border rounded-xl p-2.5 text-sm outline-none focus:ring-2 focus:ring-green-100 transition-all ${
               errors.unit ? 'border-red-500' : 'border-gray-200'
             }`}
-          />
+          >
+            {unitOptions.map(unit => (
+              <option key={unit} value={unit}>{unit.toUpperCase()}</option>
+            ))}
+          </select>
           {errors.unit && <p className="text-red-500 text-[10px] mt-1">{errors.unit}</p>}
         </Motion.div>
       </div>

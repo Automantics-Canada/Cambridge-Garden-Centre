@@ -199,10 +199,12 @@ export default function VerificationDesk() {
             >
               <div className="flex justify-between items-start mb-1">
                 <span className="text-sm font-light tracking-tight">{inv.invoiceNumber}</span>
-                <span className={`text-[8px] font-light uppercase px-2 py-0.5 rounded-full ${
-                  inv.status === 'VERIFIED' ? 'bg-green-400/20 text-green-100' : 'bg-yellow-400/20 text-yellow-100'
+                <span className={`text-[10px] font-medium uppercase px-2.5 py-0.5 rounded-full ${
+                  selectedInvoice?.id === inv.id 
+                    ? inv.status === 'VERIFIED' ? 'bg-green-400 text-white' : 'bg-yellow-400 text-gray-900'
+                    : inv.status === 'VERIFIED' ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'
                 }`}>
-                  {inv.status}
+                  {inv.status.replace('_', ' ')}
                 </span>
               </div>
               <p className={`text-xs font-normal ${selectedInvoice?.id === inv.id ? 'text-green-100' : 'text-gray-800'}`}>

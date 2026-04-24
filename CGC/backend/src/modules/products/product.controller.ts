@@ -12,14 +12,14 @@ export const listProducts = async (_req: AuthRequest, res: Response) => {
 };
 
 export const createProduct = async (req: AuthRequest, res: Response) => {
-  const { name } = req.body;
+  const { name, unit } = req.body;
 
   if (!name) {
     return res.status(400).json({ error: 'Name is required' });
   }
 
   try {
-    const product = await ProductService.create({ name });
+    const product = await ProductService.create({ name, unit });
     res.status(201).json(product);
   } catch (error: any) {
     if (error.code === 'P2002') {
@@ -31,14 +31,14 @@ export const createProduct = async (req: AuthRequest, res: Response) => {
 
 export const updateProduct = async (req: AuthRequest, res: Response) => {
   const { id } = req.params;
-  const { name } = req.body;
+  const { name, unit } = req.body;
 
   if (!name) {
     return res.status(400).json({ error: 'Name is required' });
   }
 
   try {
-    const product = await ProductService.update(id as string, { name });
+    const product = await ProductService.update(id as string, { name, unit });
     res.json(product);
   } catch (error: any) {
     if (error.code === 'P2002') {
