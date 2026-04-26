@@ -163,11 +163,25 @@ export const TicketService = {
         }
       }
 
+      // Find supplier if extracted
+      let updatedSupplierId = ticket.supplierId;
+      if (extracted.supplierName) {
+        const foundSupplier = await prisma.supplier.findFirst({
+          where: {
+            name: { contains: extracted.supplierName, mode: 'insensitive' },
+          },
+        });
+        if (foundSupplier) {
+          updatedSupplierId = foundSupplier.id;
+        }
+      }
+
       const updatedTicket = await prisma.ticket.update({
         where: { id: ticketId },
         data: {
           ocrRawText: extracted.rawText,
           ocrConfidence: extracted.ocrConfidence,
+          supplierId: updatedSupplierId,
           material: extracted.material || ticket.material,
           quantity: extracted.quantity || ticket.quantity,
           poNumber: finalPoNumber,

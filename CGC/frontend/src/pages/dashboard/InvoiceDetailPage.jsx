@@ -112,18 +112,17 @@ export default function InvoiceDetailPage() {
 
   const isLocked = invoice.status === 'VERIFIED' || invoice.status === 'DISPUTED';
   
-  // sum all rate and qty discrepancies
-  const totalDiscrepancy = invoice.lineItems?.reduce((acc, item) => {
-    return acc + (item.rateDiscrepancy || 0) + (Number(item.qtyDiscrepancy || 0) * Number(item.unitRate || 0));
+  // Logic: Calculate expected subtotal using negotiated rates (fallback to billed rate if unknown)
+  const expectedSubtotal = invoice.lineItems?.reduce((acc, item) => {
+    const rate = Number(item.negotiatedRate || item.unitRate || 0);
+    return acc + (Number(item.quantity || 0) * rate);
   }, 0) || 0;
 
-  const approvedTotal = invoice.lineItems?.reduce((acc, item) => {
-    // Approved = Sum of non-disputed lines (OK flag)
-    if (item.flag === 'OK') {
-      return acc + Number(item.lineTotal || 0);
-    }
-    return acc;
-  }, 0) || 0;
+  const expectedTotalWithHST = expectedSubtotal * 1.13;
+  const discrepancy = Number(invoice.totalAmount || 0) - expectedTotalWithHST;
+  
+  // Approved total is what we expect to pay
+  const approvedTotal = expectedTotalWithHST;
 
   return (
     <div className="flex flex-col h-full space-y-4">
@@ -315,9 +314,9 @@ export default function InvoiceDetailPage() {
                   <p className="text-[10px] text-gray-500 uppercase font-bold">Approved Amount</p>
                   <p className="text-lg font-bold text-gray-900">${Number(approvedTotal).toFixed(2)}</p>
                 </div>
-                <div className={`p-3 rounded-xl border shadow-xs ${totalDiscrepancy > 0 ? 'bg-red-50 border-red-200' : 'bg-white border-gray-200'}`}>
+                <div className={`p-3 rounded-xl border shadow-xs ${Math.abs(discrepancy) > 0.01 ? 'bg-red-50 border-red-200' : 'bg-white border-gray-200'}`}>
                   <p className="text-[10px] text-gray-500 uppercase font-bold">Discrepancy</p>
-                  <p className={`text-lg font-bold ${totalDiscrepancy > 0 ? 'text-red-600' : 'text-gray-900'}`}>${Number(totalDiscrepancy).toFixed(2)}</p>
+                  <p className={`text-lg font-bold ${Math.abs(discrepancy) > 0.01 ? 'text-red-600' : 'text-gray-900'}`}>${Number(discrepancy).toFixed(2)}</p>
                 </div>
               </div>
 

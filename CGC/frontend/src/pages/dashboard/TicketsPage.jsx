@@ -380,11 +380,11 @@ export default function TicketsPage() {
 
       {/* Detail Modal */}
       {selectedTicket && (
-        <div className="fixed inset-0 z-50 overflow-hidden" aria-labelledby="modal-title" role="dialog" aria-modal="true">
-          <div className="flex items-center justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
+        <div className="fixed inset-0 z-50 overflow-hidden flex items-center justify-center" aria-labelledby="modal-title" role="dialog" aria-modal="true">
+          <div className="flex items-center justify-center min-h-screen w-full p-4 text-center">
             <div className="fixed inset-0 bg-gray-600 bg-opacity-75 transition-opacity backdrop-blur-sm" onClick={() => setSelectedTicket(null)}></div>
 
-            <div className="inline-block align-bottom bg-white rounded-2xl text-left overflow-hidden shadow-2xl transform transition-all sm:my-8 sm:align-middle sm:max-w-6xl sm:w-full h-[90vh] flex flex-col">
+            <div className="inline-block align-middle bg-white rounded-2xl text-left overflow-hidden shadow-2xl transform transition-all sm:max-w-6xl sm:w-full h-[90vh] flex flex-col">
               
               <div className="flex justify-between items-center px-6 py-4 border-b bg-gray-50">
                 <div className="flex items-center gap-3">

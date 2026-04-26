@@ -83,12 +83,26 @@ export async function processOcrJob(jobId: string): Promise<void> {
         }
       }
 
+      // Find supplier if extracted
+      let updatedSupplierId = ocrJob.ticket.supplierId;
+      if (extracted.supplierName) {
+        const foundSupplier = await prisma.supplier.findFirst({
+          where: {
+            name: { contains: extracted.supplierName, mode: 'insensitive' },
+          },
+        });
+        if (foundSupplier) {
+          updatedSupplierId = foundSupplier.id;
+        }
+      }
+
       // Update ticket with extracted data
       await prisma.ticket.update({
         where: { id: ocrJob.ticket.id },
         data: {
           ocrRawText: extracted.rawText,
           ocrConfidence: extracted.ocrConfidence,
+          supplierId: updatedSupplierId,
           material: extracted.material || ocrJob.ticket.material,
           quantity: extracted.quantity || ocrJob.ticket.quantity,
           poNumber: finalPoNumber,
