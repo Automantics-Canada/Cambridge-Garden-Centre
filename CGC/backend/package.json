@@ -9,7 +9,9 @@
     "start": "node dist/server.js",
     "db:push": "prisma db push",
     "db:generate": "prisma generate",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "keep-alive": "node scripts/keep-alive.js",
+    "ping-once": "node scripts/ping-once.js"
   },
   "keywords": [],
   "author": "",
