@@ -143,6 +143,13 @@ enum WhatsAppMessageStatus {
    Core business models (6)
  */
 
+enum DriverTaskStatus {
+  NOT_STARTED
+  AT_SUPPLIER
+  IN_TRANSIT
+  COMPLETED
+}
+
 model Order {
   id            String    @id @default(uuid()) @db.Uuid
   spruceOrderId String    @unique
@@ -159,6 +166,10 @@ model Order {
   hasInvoice    Boolean   @default(false)
   invoiceNumber String?
   createdAt     DateTime  @default(now())
+
+  driverId       String?        @db.Uuid
+  driver         Driver?        @relation(fields: [driverId], references: [id])
+  deliveryStatus DriverTaskStatus @default(NOT_STARTED)
 
   tickets   Ticket[]
   lineItems InvoiceLineItem[]
@@ -188,6 +199,7 @@ model Ticket {
   receivedAt    DateTime      @default(now())
   driverId      String?       @db.Uuid
   driver        Driver?       @relation(fields: [driverId], references: [id])
+  deliveryStatus DriverTaskStatus @default(NOT_STARTED)
 
   matchedInvoiceLineItems InvoiceLineItem[]
   ocrJobs   OcrJob[]      @relation("TicketOcrJobs")
@@ -300,12 +312,14 @@ model User {
 }
 
 model Driver {
-  id        String   @id @default(uuid()) @db.Uuid
-  name      String
-  phone     String   @unique
-  active    Boolean  @default(true)
-  createdAt DateTime @default(now())
+  id               String   @id @default(uuid()) @db.Uuid
+  name             String
+  phone            String   @unique
+  ratePerDelivery  Decimal  @default(0) @db.Decimal
+  active           Boolean  @default(true)
+  createdAt        DateTime @default(now())
 
+  orders    Order[]
   tickets   Ticket[]
   messages  WhatsAppMessage[]
 }

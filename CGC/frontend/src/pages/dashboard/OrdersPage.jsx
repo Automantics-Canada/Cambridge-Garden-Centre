@@ -1,11 +1,14 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import api from '../../api/axios';
+
 import { Search, Upload } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { Skeleton } from '../../components/Skeleton';
 import Loader from '../../components/Loader';
 
 export default function OrdersPage() {
+  const [searchParams] = useSearchParams();
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
@@ -17,6 +20,7 @@ export default function OrdersPage() {
   const [endDate, setEndDate] = useState('');
   const [buyerType, setBuyerType] = useState('');
   const [supplierId, setSupplierId] = useState('');
+  const [driverId, setDriverId] = useState(searchParams.get('driverId') || '');
   const [hasInvoice, setHasInvoice] = useState('');
   const [hasLinkedTickets, setHasLinkedTickets] = useState('');
 
@@ -28,7 +32,8 @@ export default function OrdersPage() {
       if (startDate) params.startDate = startDate;
       if (endDate) params.endDate = endDate;
       if (buyerType) params.buyerType = buyerType;
-      if (supplierId) params.supplierId = supplierId; // Could be a simple text input for name in UI, backend assumes ID. Let's send it anyway. We'll use text input for now.
+      if (supplierId) params.supplierId = supplierId; 
+      if (driverId) params.driverId = driverId;
       if (hasInvoice) params.hasInvoice = hasInvoice === 'yes';
       if (hasLinkedTickets) params.hasLinkedTickets = hasLinkedTickets === 'yes';
 
@@ -39,7 +44,8 @@ export default function OrdersPage() {
     } finally {
       setLoading(false);
     }
-  }, [search, startDate, endDate, buyerType, supplierId, hasInvoice, hasLinkedTickets]);
+  }, [search, startDate, endDate, buyerType, supplierId, driverId, hasInvoice, hasLinkedTickets]);
+
 
   const handleFileUpload = async (event) => {
     const file = event.target.files?.[0];

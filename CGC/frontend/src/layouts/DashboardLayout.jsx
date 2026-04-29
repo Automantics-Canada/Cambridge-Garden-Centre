@@ -27,9 +27,11 @@ export default function DashboardLayout() {
         { name: 'Suppliers', path: '/dashboard/supplier', icon: <Truck size={20} /> },
         { name: 'Products', path: '/dashboard/products', icon: <Package size={20} /> },
         { name: 'Invoices', path: '/dashboard/invoices', icon: <Calculator size={20} /> },
+        { name: 'Drivers', path: '/dashboard/drivers', icon: <UserSquare size={20} /> },
       ]
     }
   ];
+
 
   return (
     <div className="flex h-screen bg-gray-50 overflow-hidden font-sans">

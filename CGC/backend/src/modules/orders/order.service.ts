@@ -13,9 +13,13 @@ export interface ImportSummary {
 
 export const OrderService = {
   async getOrders(filters: any) {
-    const { startDate, endDate, buyerType, supplierId, hasInvoice, hasLinkedTickets, search } = filters;
+    const { startDate, endDate, buyerType, supplierId, driverId, hasInvoice, hasLinkedTickets, search } = filters;
     
     let where: any = {};
+
+    if (driverId) {
+      where.driverId = driverId;
+    }
 
     if (startDate || endDate) {
       where.orderDate = {};
