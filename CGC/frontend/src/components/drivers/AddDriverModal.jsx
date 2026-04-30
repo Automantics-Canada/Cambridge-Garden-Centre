@@ -6,7 +6,10 @@ export default function AddDriverModal({ isOpen, onClose, onSuccess }) {
   const [formData, setFormData] = useState({
     name: '',
     phone: '',
-    ratePerDelivery: ''
+    email: '',
+    type: 'CGC_FLEET',
+    ratePerDelivery: '',
+    ratePerTrip: ''
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -39,7 +42,7 @@ export default function AddDriverModal({ isOpen, onClose, onSuccess }) {
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="p-6 space-y-5">
+        <form onSubmit={handleSubmit} className="p-6 space-y-5 h-[70vh] overflow-y-auto">
           {error && (
             <div className="bg-red-50 border border-red-100 text-red-600 p-3 rounded-xl text-sm font-medium">
               {error}
@@ -71,7 +74,30 @@ export default function AddDriverModal({ isOpen, onClose, onSuccess }) {
           </div>
 
           <div className="space-y-1.5">
-            <label className="text-xs font-bold text-gray-500 uppercase tracking-wider ml-1">Rate per Delivery ($)</label>
+            <label className="text-xs font-bold text-gray-500 uppercase tracking-wider ml-1">Email</label>
+            <input
+              type="email"
+              className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-[#2D6A4F] focus:ring-4 focus:ring-[#2D6A4F]/10 outline-none transition-all placeholder:text-gray-300"
+              placeholder="e.g. dave@example.com"
+              value={formData.email}
+              onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+            />
+          </div>
+
+          <div className="space-y-1.5">
+            <label className="text-xs font-bold text-gray-500 uppercase tracking-wider ml-1">Driver Type</label>
+            <select
+              className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-[#2D6A4F] focus:ring-4 focus:ring-[#2D6A4F]/10 outline-none transition-all bg-white"
+              value={formData.type}
+              onChange={(e) => setFormData({ ...formData, type: e.target.value })}
+            >
+              <option value="CGC_FLEET">CGC Fleet</option>
+              <option value="INDEPENDENT">Independent</option>
+            </select>
+          </div>
+
+          <div className="space-y-1.5">
+            <label className="text-xs font-bold text-gray-500 uppercase tracking-wider ml-1">Rate per Trip ($)</label>
             <div className="relative">
               <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 font-medium">$</span>
               <input
@@ -80,8 +106,8 @@ export default function AddDriverModal({ isOpen, onClose, onSuccess }) {
                 required
                 className="w-full pl-8 pr-4 py-3 rounded-xl border border-gray-200 focus:border-[#2D6A4F] focus:ring-4 focus:ring-[#2D6A4F]/10 outline-none transition-all placeholder:text-gray-300"
                 placeholder="0.00"
-                value={formData.ratePerDelivery}
-                onChange={(e) => setFormData({ ...formData, ratePerDelivery: e.target.value })}
+                value={formData.ratePerTrip}
+                onChange={(e) => setFormData({ ...formData, ratePerTrip: e.target.value })}
               />
             </div>
           </div>

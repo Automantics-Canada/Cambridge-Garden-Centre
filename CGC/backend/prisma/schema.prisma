@@ -150,6 +150,19 @@ enum DriverTaskStatus {
   COMPLETED
 }
 
+enum DriverType {
+  CGC_FLEET
+  INDEPENDENT
+}
+
+enum DeliveryStatus {
+  UNASSIGNED
+  ASSIGNED
+  PICKED_UP
+  IN_TRANSIT
+  DELIVERED
+}
+
 model Order {
   id            String    @id @default(uuid()) @db.Uuid
   spruceOrderId String    @unique
@@ -170,9 +183,11 @@ model Order {
   driverId       String?        @db.Uuid
   driver         Driver?        @relation(fields: [driverId], references: [id])
   deliveryStatus DriverTaskStatus @default(NOT_STARTED)
+  priority       Int            @default(1)
 
-  tickets   Ticket[]
-  lineItems InvoiceLineItem[]
+  tickets    Ticket[]
+  lineItems  InvoiceLineItem[]
+  deliveries Delivery[]
 }
 
 model Ticket {
@@ -200,6 +215,7 @@ model Ticket {
   driverId      String?       @db.Uuid
   driver        Driver?       @relation(fields: [driverId], references: [id])
   deliveryStatus DriverTaskStatus @default(NOT_STARTED)
+  spruceMatched Boolean       @default(false)
 
   matchedInvoiceLineItems InvoiceLineItem[]
   ocrJobs   OcrJob[]      @relation("TicketOcrJobs")
@@ -312,16 +328,35 @@ model User {
 }
 
 model Driver {
-  id               String   @id @default(uuid()) @db.Uuid
+  id               String     @id @default(uuid()) @db.Uuid
   name             String
-  phone            String   @unique
-  ratePerDelivery  Decimal  @default(0) @db.Decimal
-  active           Boolean  @default(true)
-  createdAt        DateTime @default(now())
+  email            String?    @unique
+  phone            String     @unique
+  type             DriverType @default(CGC_FLEET)
+  ratePerDelivery  Decimal    @default(0) @db.Decimal
+  ratePerTrip      Decimal?   @db.Decimal
+  active           Boolean    @default(true)
+  createdAt        DateTime   @default(now())
 
-  orders    Order[]
-  tickets   Ticket[]
-  messages  WhatsAppMessage[]
+  orders     Order[]
+  tickets    Ticket[]
+  messages   WhatsAppMessage[]
+  deliveries Delivery[]
+}
+
+model Delivery {
+  id               String         @id @default(uuid()) @db.Uuid
+  orderId          String         @db.Uuid
+  order            Order          @relation(fields: [orderId], references: [id])
+  driverId         String?        @db.Uuid
+  driver           Driver?        @relation(fields: [driverId], references: [id])
+  status           DeliveryStatus @default(UNASSIGNED)
+  priority         Int            @default(1)
+  pickupType       String         @default("EXTERNAL")
+  pickupPhotoUrl   String?
+  deliveryPhotoUrl String?
+  startedAt        DateTime?
+  completedAt      DateTime?
 }
 
 model AuditLog {

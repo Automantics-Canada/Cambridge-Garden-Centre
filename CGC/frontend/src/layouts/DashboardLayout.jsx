@@ -28,6 +28,8 @@ export default function DashboardLayout() {
         { name: 'Products', path: '/dashboard/products', icon: <Package size={20} /> },
         { name: 'Invoices', path: '/dashboard/invoices', icon: <Calculator size={20} /> },
         { name: 'Drivers', path: '/dashboard/drivers', icon: <UserSquare size={20} /> },
+        { name: 'Dispatch Board', path: '/dashboard/dispatch', icon: <MapPin size={20} /> },
+        { name: 'Deliveries', path: '/dashboard/deliveries', icon: <Truck size={20} /> },
       ]
     }
   ];

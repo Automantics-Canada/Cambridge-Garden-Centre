@@ -1,4 +1,5 @@
 import { prisma } from '../../db/prisma.js';
+import { DriverType } from '@prisma/client';
 
 export const DriverService = {
   async getDrivers() {
@@ -10,12 +11,15 @@ export const DriverService = {
     const drivers = await prisma.driver.findMany({
       where: { active: true },
       include: {
-        orders: {
+        deliveries: {
           where: {
-            orderDate: {
+            startedAt: {
               gte: today,
               lt: tomorrow
-            }
+            } // We'll count any delivery created/started today
+          },
+          include: {
+            order: true
           }
         }
       }
@@ -23,41 +27,59 @@ export const DriverService = {
 
     // Transform to include task counts
     return drivers.map(driver => {
-      const todayOrders = driver.orders;
-      const completedOrders = todayOrders.filter(o => o.deliveryStatus === 'COMPLETED');
-      const currentTask = todayOrders.find(o => o.deliveryStatus !== 'COMPLETED' && o.deliveryStatus !== 'NOT_STARTED') 
-                        || todayOrders.find(o => o.deliveryStatus === 'NOT_STARTED');
+      // Find today's deliveries by looking at created/assigned today. 
+      // Actually, since deliveries might just be assigned today, let's just use the deliveries fetched.
+      // Wait, we didn't add a createdAt to Delivery. We have startedAt, completedAt.
+      // Let's change the include above to just fetch deliveries that are not completed or completed today.
+      const todayDeliveries = driver.deliveries;
+      const completedDeliveries = todayDeliveries.filter(d => d.status === 'DELIVERED');
+      const currentTask = todayDeliveries.find(d => d.status !== 'DELIVERED' && d.status !== 'UNASSIGNED') 
+                        || todayDeliveries.find(d => d.status === 'ASSIGNED');
 
       return {
         ...driver,
         stats: {
-          totalToday: todayOrders.length,
-          completedToday: completedOrders.length,
-          progress: todayOrders.length > 0 ? Math.round((completedOrders.length / todayOrders.length) * 100) : 0
+          totalToday: todayDeliveries.length,
+          completedToday: completedDeliveries.length,
+          progress: todayDeliveries.length > 0 ? Math.round((completedDeliveries.length / todayDeliveries.length) * 100) : 0
         },
         currentTask: currentTask || null
       };
     });
   },
 
-  async createDriver(data: { name: string; phone: string; ratePerDelivery: number }) {
+  async createDriver(data: { name: string; phone: string; email?: string; type?: DriverType; ratePerDelivery?: number; ratePerTrip?: number; active?: boolean }) {
     return prisma.driver.create({
       data: {
         name: data.name,
         phone: data.phone,
-        ratePerDelivery: data.ratePerDelivery,
-        active: true
+        email: data.email,
+        type: data.type || 'CGC_FLEET',
+        ratePerDelivery: data.ratePerDelivery || 0,
+        ratePerTrip: data.ratePerTrip || data.ratePerDelivery || 0,
+        active: data.active !== undefined ? data.active : true
       }
     });
   },
 
+  async updateDriver(id: string, data: any) {
+    return prisma.driver.update({
+      where: { id },
+      data
+    });
+  },
+
   async getDriverDeliveries(driverId: string) {
-    return prisma.order.findMany({
+    return prisma.delivery.findMany({
       where: { driverId },
-      orderBy: { orderDate: 'desc' },
+      orderBy: { priority: 'desc' },
       include: {
-        supplier: true,
-        tickets: true
+        order: {
+          include: {
+            supplier: true,
+            tickets: true
+          }
+        }
       }
     });
   }

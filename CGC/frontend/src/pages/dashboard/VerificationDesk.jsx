@@ -371,7 +371,10 @@ export default function VerificationDesk() {
                                           <img src={getFullUrl(t.imageUrl)} className="w-full h-full object-cover" alt="Ticket" />
                                        </div>
                                        <div className="flex-1">
-                                          <p className="text-[10px] font-normal text-gray-900">T-{t.ticketNumber || t.id.substring(0,6)}</p>
+                                          <div className="flex items-center gap-2">
+                                            <p className="text-[10px] font-normal text-gray-900">T-{t.ticketNumber || t.id.substring(0,6)}</p>
+                                            {t.spruceMatched && <span className="bg-green-100 text-green-700 px-1.5 py-0.5 rounded text-[8px] font-bold tracking-widest flex items-center gap-0.5"><CheckCircle className="w-2 h-2"/> SPRUCE MATCHED</span>}
+                                          </div>
                                           <p className="text-[9px] font-light text-purple-600 uppercase tracking-tighter">{Number(t.quantity)} {t.unit}</p>
                                        </div>
                                        <button className="opacity-0 group-hover:opacity-100 p-1.5 hover:bg-red-50 text-red-400 rounded-lg transition-all">
@@ -399,18 +402,53 @@ export default function VerificationDesk() {
                              </div>
 
                              {li.matchedOrderId ? (
-                               <div className="bg-blue-600 rounded-2xl p-4 text-white relative overflow-hidden group">
-                                  <div className="relative z-10">
-                                     <p className="text-[9px] font-light text-blue-200 uppercase tracking-widest mb-1">Authorization</p>
-                                     <p className="text-sm font-light tracking-tight">{li.matchedOrder?.spruceOrderId}</p>
-                                     <div className="flex items-center justify-between mt-3">
-                                        <span className="text-[10px] font-normal opacity-70">QTY Match</span>
-                                        <span className="text-xs font-light">{Number(li.matchedOrder?.quantity)} {li.matchedOrder?.unit}</span>
+                               <div className="space-y-4">
+                                 <div className="bg-blue-600 rounded-2xl p-4 text-white relative overflow-hidden group">
+                                    <div className="relative z-10">
+                                       <p className="text-[9px] font-light text-blue-200 uppercase tracking-widest mb-1">Authorization</p>
+                                       <p className="text-sm font-light tracking-tight">{li.matchedOrder?.spruceOrderId}</p>
+                                       <div className="flex items-center justify-between mt-3">
+                                          <span className="text-[10px] font-normal opacity-70">QTY Match</span>
+                                          <span className="text-xs font-light">{Number(li.matchedOrder?.quantity)} {li.matchedOrder?.unit}</span>
+                                       </div>
+                                    </div>
+                                    <button className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 p-1 bg-white/10 hover:bg-white/20 rounded-lg transition-all">
+                                       <X className="w-3 h-3" />
+                                    </button>
+                                 </div>
+                                 
+                                 {/* Delivery Details */}
+                                 {li.matchedOrder?.deliveries?.map(del => (
+                                   <div key={del.id} className="bg-white rounded-2xl p-4 border border-gray-100 shadow-sm">
+                                     <div className="flex justify-between items-center mb-3">
+                                       <div className="flex items-center gap-2">
+                                          <Truck className="w-4 h-4 text-gray-500" />
+                                          <span className="text-xs font-semibold text-gray-900">{del.driver?.name || 'Unassigned'}</span>
+                                       </div>
+                                       <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full uppercase tracking-tighter ${del.status === 'DELIVERED' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>
+                                          {del.status.replace('_', ' ')}
+                                       </span>
                                      </div>
-                                  </div>
-                                  <button className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 p-1 bg-white/10 hover:bg-white/20 rounded-lg transition-all">
-                                     <X className="w-3 h-3" />
-                                  </button>
+                                     <div className="grid grid-cols-2 gap-2">
+                                        <div className="border border-gray-100 rounded-lg overflow-hidden group/img relative bg-gray-50 aspect-video flex flex-col justify-end">
+                                           {del.pickupPhotoUrl ? (
+                                             <img src={getFullUrl(del.pickupPhotoUrl)} className="absolute inset-0 w-full h-full object-cover cursor-pointer hover:opacity-90" alt="Pickup" onClick={() => setZoomedImage(getFullUrl(del.pickupPhotoUrl))} />
+                                           ) : (
+                                              <span className="text-[9px] text-gray-400 absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 font-medium">No Pickup Photo</span>
+                                           )}
+                                           <div className="bg-gradient-to-t from-black/50 p-1.5 relative z-10"><p className="text-[8px] text-white font-bold uppercase tracking-widest text-shadow">Pickup</p></div>
+                                        </div>
+                                        <div className="border border-gray-100 rounded-lg overflow-hidden group/img relative bg-gray-50 aspect-video flex flex-col justify-end">
+                                           {del.deliveryPhotoUrl ? (
+                                             <img src={getFullUrl(del.deliveryPhotoUrl)} className="absolute inset-0 w-full h-full object-cover cursor-pointer hover:opacity-90" alt="Delivery" onClick={() => setZoomedImage(getFullUrl(del.deliveryPhotoUrl))} />
+                                           ) : (
+                                              <span className="text-[9px] text-gray-400 absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 font-medium">No Delivery Photo</span>
+                                           )}
+                                           <div className="bg-gradient-to-t from-black/50 p-1.5 relative z-10"><p className="text-[8px] text-white font-bold uppercase tracking-widest text-shadow">Delivery</p></div>
+                                        </div>
+                                     </div>
+                                   </div>
+                                 ))}
                                </div>
                              ) : (
                                <div className="py-4 text-center">

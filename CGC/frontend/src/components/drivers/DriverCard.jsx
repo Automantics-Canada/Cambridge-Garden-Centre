@@ -2,7 +2,7 @@ import React from 'react';
 import { Link } from 'react-router-dom';
 
 export default function DriverCard({ driver }) {
-  const { name, phone, ratePerDelivery, stats, currentTask } = driver;
+  const { name, phone, ratePerTrip, type, stats, currentTask } = driver;
   
   const initials = name.split(' ').map(n => n[0]).join('').toUpperCase();
 
@@ -16,7 +16,7 @@ export default function DriverCard({ driver }) {
             </div>
             <div>
               <h3 className="font-bold text-gray-900">{name}</h3>
-              <p className="text-xs text-gray-500">Fleet • ${ratePerDelivery}/delivery</p>
+              <p className="text-xs text-gray-500">{type === 'CGC_FLEET' ? 'Fleet' : 'Independent'} • ${ratePerTrip}/trip</p>
               <div className="flex items-center gap-1 mt-1">
                 <div className="w-2 h-2 rounded-full bg-green-500"></div>
                 <span className="text-[10px] font-semibold text-green-600 uppercase tracking-wider">Active</span>
@@ -46,12 +46,12 @@ export default function DriverCard({ driver }) {
           {currentTask ? (
             <div>
               <div className="flex justify-between items-center">
-                <span className="font-bold text-gray-900">{currentTask.spruceOrderId}</span>
+                <span className="font-bold text-gray-900">{currentTask.order?.spruceOrderId || 'Unknown Order'}</span>
                 <span className="text-[10px] font-bold text-orange-600 bg-orange-50 border border-orange-100 px-2 py-0.5 rounded-full uppercase tracking-tight">
-                  {currentTask.deliveryStatus.replace('_', ' ')}
+                  {currentTask.status.replace('_', ' ')}
                 </span>
               </div>
-              <p className="text-xs text-gray-500 mt-1 truncate">{currentTask.customerName}</p>
+              <p className="text-xs text-gray-500 mt-1 truncate">{currentTask.order?.customerName}</p>
             </div>
           ) : (
             <div className="flex items-center justify-center h-full py-2">
@@ -61,7 +61,7 @@ export default function DriverCard({ driver }) {
         </div>
 
         <Link 
-          to={`/dashboard/orders?driverId=${driver.id}`}
+          to={`/dashboard/deliveries?driverId=${driver.id}`}
           className="w-full flex items-center justify-center gap-2 border border-gray-200 text-gray-700 py-2.5 rounded-lg text-sm font-semibold hover:bg-gray-50 transition-colors"
         >
           View Deliveries

@@ -4,6 +4,7 @@ import { prisma } from './db/prisma.js';
 import { verifyStorageConnection } from './services/supabaseStorage.js';
 import { GmailService } from './services/gmail.service.js';
 import { processPendingOcrJobs } from './services/ocrJobProcessor.js';
+import { startSpruceReconciliationJob } from './jobs/spruceReconciliation.job.js';
 
 async function main() {
   try {
@@ -36,6 +37,9 @@ async function main() {
       //   processPendingOcrJobs();
       // }, OCR_POLL_INTERVAL);
       // processPendingOcrJobs(); // Initial run
+
+      // Initialize Spruce EOD Cron Job
+      startSpruceReconciliationJob();
     });
   } catch (error) {
     console.error('Failed to start server:', error);

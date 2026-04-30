@@ -47,6 +47,7 @@
     "googleapis": "^171.4.0",
     "jsonwebtoken": "^9.0.3",
     "multer": "^2.1.1",
+    "node-cron": "^4.2.1",
     "nodemon": "^3.1.14",
     "string-similarity": "^4.0.4",
     "uuid": "^9.0.1"

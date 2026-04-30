@@ -9,6 +9,8 @@ import SupplierRoutes from './modules/supplier/supplier.routes.js';
 import invoiceRoutes from './modules/invoices/invoice.routes.js';
 import productRoutes from './modules/products/product.routes.js';
 import driverRoutes from './modules/drivers/driver.routes.js';
+import dispatchRoutes from './modules/dispatch/dispatch.routes.js';
+import deliveriesRoutes from './modules/deliveries/deliveries.routes.js';
 
 const app = express();
 
@@ -29,6 +31,8 @@ app.use('/api/suppliers', SupplierRoutes);
 app.use('/api/invoices', invoiceRoutes);
 app.use('/api/products', productRoutes);
 app.use('/api/drivers', driverRoutes);
+app.use('/api/dispatch', dispatchRoutes);
+app.use('/api/deliveries', deliveriesRoutes);
 
 
 app.use(errorHandler);

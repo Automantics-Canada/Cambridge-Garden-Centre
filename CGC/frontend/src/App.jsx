@@ -15,7 +15,9 @@ import RatesPage from './pages/dashboard/RatesPage';
 import ProductPage from './pages/dashboard/ProductPage';
 import VerificationDesk from './pages/dashboard/VerificationDesk';
 import DriversPage from './pages/drivers/DriversPage';
-
+import DispatchBoard from './pages/dispatch/DispatchBoard';
+import DeliveriesPage from './pages/deliveries/DeliveriesPage';
+import DriverMobileView from './pages/driver/DriverMobileView';
 
 const ProtectedRoute = ({ children }) => {
   const isAuthenticated = useSelector((state) => state.auth.isAuthenticated);
@@ -46,8 +48,11 @@ function App() {
           <Route path="products" element={<ProductPage />} />
           <Route path="verification-desk" element={<VerificationDesk />} />
           <Route path="drivers" element={<DriversPage />} />
-
+          <Route path="dispatch" element={<DispatchBoard />} />
+          <Route path="deliveries" element={<DeliveriesPage />} />
         </Route>
+        
+        <Route path="/driver/today" element={<DriverMobileView />} />
       </Routes>
     </BrowserRouter>
   );

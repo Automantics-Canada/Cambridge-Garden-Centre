@@ -321,7 +321,12 @@ export const InvoiceService = {
       include: {
         supplier: true,
         lineItems: {
-          include: { matchedOrder: true, matchedTickets: true }
+          include: { 
+            matchedOrder: {
+              include: { deliveries: { include: { driver: true } } }
+            }, 
+            matchedTickets: true 
+          }
         },
         verifiedBy: true,
         ocrJobs: { orderBy: { startedAt: 'desc' } },
