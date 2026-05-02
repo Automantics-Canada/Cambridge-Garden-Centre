@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import api from '../../api/axios';
-import { Truck, Search, MapPin, ExternalLink, Calendar, ChevronDown, ChevronUp, User, Clock, Image as ImageIcon, History, MoreVertical, Flag, Package2 } from 'lucide-react';
+import { Truck, Search, MapPin, ExternalLink, Calendar, ChevronDown, ChevronUp, User, Clock, Image as ImageIcon, History, MoreVertical, Flag, Package2, GripVertical } from 'lucide-react';
 import { DeliveryTableSkeleton } from '../../components/Skeleton';
 import { FadeInUp, StaggerContainer, StaggerItem } from '../../components/Animated';
 import { Reorder, motion, AnimatePresence } from 'framer-motion';
@@ -52,6 +52,26 @@ export default function DeliveriesPage() {
     } catch (e) {
       console.error(e);
       toast.error('Failed to update status');
+    }
+  };
+
+  const handleReorder = async (driverId, newDeliveries) => {
+    // We need to re-assign priorities based on the new order for this specific driver's deliveries
+    const otherDeliveries = deliveries.filter(d => d.driverId !== driverId);
+    const sortedForDriver = newDeliveries.map((d, index) => ({ ...d, priority: index + 1 }));
+    
+    setDeliveries([...otherDeliveries, ...sortedForDriver]);
+
+    try {
+      await api.post('/api/dispatch/reorder', {
+        driverId,
+        deliveryIds: newDeliveries.map(d => d.id)
+      });
+      toast.success('Priority updated');
+    } catch (e) {
+      console.error(e);
+      toast.error('Failed to update priority');
+      fetchData(); // Rollback
     }
   };
 
@@ -125,25 +145,38 @@ export default function DeliveriesPage() {
                     exit={{ height: 0, opacity: 0 }}
                     className="overflow-hidden border-t border-gray-100"
                   >
-                    <div className="p-4 sm:p-6 bg-gray-50/30 space-y-4">
+                    <div className="p-4 sm:p-6 bg-gray-50/30">
                       {driverDeliveries.length === 0 ? (
                         <div className="py-10 text-center text-gray-400 font-medium italic">No deliveries assigned today</div>
                       ) : (
-                        driverDeliveries.map((del, idx) => {
-                          const isDelExpanded = expandedDeliveryId === del.id;
-                          return (
-                            <div key={del.id} className={`bg-white rounded-xl border transition-all duration-300 ${isDelExpanded ? 'border-amber-200 shadow-md ring-1 ring-amber-100' : 'border-gray-200 shadow-sm hover:border-gray-300'}`}>
-                              {/* Delivery Header */}
-                              <div className="px-5 py-4 flex items-center justify-between gap-4">
-                                <div className="flex items-center gap-4 flex-1">
-                                  <div className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center text-[10px] font-black text-gray-500">
-                                    {idx + 1}
+                        <Reorder.Group 
+                          axis="y" 
+                          values={driverDeliveries} 
+                          onReorder={(newOrder) => handleReorder(driver.id, newOrder)}
+                          className="space-y-4"
+                        >
+                          {driverDeliveries.map((del, idx) => {
+                            const isDelExpanded = expandedDeliveryId === del.id;
+                            return (
+                              <Reorder.Item 
+                                value={del} 
+                                key={del.id}
+                                className={`bg-white rounded-xl border transition-all duration-300 ${isDelExpanded ? 'border-amber-200 shadow-md ring-1 ring-amber-100' : 'border-gray-200 shadow-sm hover:border-gray-300'}`}
+                              >
+                                {/* Delivery Header */}
+                                <div className="px-5 py-4 flex items-center justify-between gap-4">
+                                  <div className="flex items-center gap-4 flex-1">
+                                    <div className="cursor-grab active:cursor-grabbing p-1 text-gray-300 hover:text-gray-500 transition-colors">
+                                      <GripVertical size={20} />
+                                    </div>
+                                    <div className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center text-[10px] font-black text-gray-500">
+                                      {idx + 1}
+                                    </div>
+                                    <div>
+                                      <h4 className="font-bold text-gray-900 leading-none">{del.order.spruceOrderId}</h4>
+                                      <p className="text-[10px] text-gray-500 mt-1 font-bold uppercase truncate max-w-[200px]">{del.order.customerName}</p>
+                                    </div>
                                   </div>
-                                  <div>
-                                    <h4 className="font-bold text-gray-900 leading-none">{del.order.spruceOrderId}</h4>
-                                    <p className="text-[10px] text-gray-500 mt-1 font-bold uppercase truncate max-w-[200px]">{del.order.customerName}</p>
-                                  </div>
-                                </div>
 
                                 <div className="hidden md:block flex-1">
                                    <p className="text-[10px] font-black text-gray-400 uppercase leading-none mb-1">PRIORITY</p>
@@ -263,11 +296,12 @@ export default function DeliveriesPage() {
                                   </motion.div>
                                 )}
                               </AnimatePresence>
-                            </div>
+                            </Reorder.Item>
                           );
-                        })
-                      )}
-                    </div>
+                        })}
+                      </Reorder.Group>
+                    )}
+                  </div>
                   </motion.div>
                 )}
               </AnimatePresence>

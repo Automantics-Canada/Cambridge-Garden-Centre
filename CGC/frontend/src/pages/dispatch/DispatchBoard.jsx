@@ -65,7 +65,7 @@ export default function DispatchBoard() {
 
     try {
       const deliveryIds = newDeliveries.map(d => d.id);
-      await api.patch('/api/dispatch/reorder', { driverId, deliveryIds });
+      await api.post('/api/dispatch/reorder', { driverId, deliveryIds });
       // No need to fetchBoard here as we did optimistic update, 
       // but maybe priority values in state need updating? 
       // The backend re-assigns priorities 1, 2, 3...

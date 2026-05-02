@@ -5,6 +5,6 @@ const router = Router();
 
 router.get('/', getDispatchBoard);
 router.post('/assign', assignDriver);
-router.patch('/reorder', reorderDeliveries);
+router.post('/reorder', reorderDeliveries);
 
 export default router;

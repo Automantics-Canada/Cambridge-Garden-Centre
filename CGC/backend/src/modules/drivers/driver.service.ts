@@ -13,10 +13,10 @@ export const DriverService = {
       include: {
         deliveries: {
           where: {
-            startedAt: {
+            createdAt: {
               gte: today,
               lt: tomorrow
-            } // We'll count any delivery created/started today
+            }
           },
           include: {
             order: true
@@ -33,8 +33,9 @@ export const DriverService = {
       // Let's change the include above to just fetch deliveries that are not completed or completed today.
       const todayDeliveries = driver.deliveries;
       const completedDeliveries = todayDeliveries.filter(d => d.status === 'DELIVERED');
-      const currentTask = todayDeliveries.find(d => d.status !== 'DELIVERED' && d.status !== 'UNASSIGNED') 
-                        || todayDeliveries.find(d => d.status === 'ASSIGNED');
+      const currentTask = todayDeliveries.find(d => 
+        ['PLACED', 'OUT_FOR_DELIVERY', 'IN_TRANSIT', 'ON_HOLD', 'DELAYED'].includes(d.status)
+      );
 
       return {
         ...driver,

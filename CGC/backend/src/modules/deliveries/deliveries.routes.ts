@@ -6,7 +6,7 @@ const router = Router();
 const upload = multer({ storage: multer.memoryStorage() });
 
 router.get('/', getDeliveries);
-router.post('/:id/status', updateStatus);
+router.patch('/:id/status', updateStatus);
 router.post('/:id/photos', upload.single('file'), uploadPhoto);
 
 export default router;
