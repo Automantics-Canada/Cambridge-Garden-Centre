@@ -84,8 +84,8 @@ export const SupplierService = {
       where: { id: rateId },
       data: {
         ...data,
-        effectiveFrom: data.effectiveFrom ? new Date(data.effectiveFrom) : undefined,
-        effectiveTo: data.effectiveTo ? new Date(data.effectiveTo) : undefined,
+        ...(data.effectiveFrom !== undefined && { effectiveFrom: new Date(data.effectiveFrom) }),
+        ...(data.effectiveTo !== undefined && { effectiveTo: new Date(data.effectiveTo) }),
       }
     });
   }

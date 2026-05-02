@@ -18,7 +18,7 @@ export const getDeliveries = async (req: Request, res: Response) => {
 
 export const updateStatus = async (req: Request, res: Response) => {
   try {
-    const { id } = req.params;
+    const { id } = req.params as { id: string };
     const { status, notes } = req.body;
     const delivery = await DeliveriesService.updateStatus(id, status, notes);
     res.json(delivery);
@@ -29,7 +29,7 @@ export const updateStatus = async (req: Request, res: Response) => {
 
 export const uploadPhoto = async (req: Request, res: Response) => {
   try {
-    const { id } = req.params;
+    const { id } = req.params as { id: string };
     const { type } = req.body; // 'pickup' | 'delivery'
     
     if (!req.file) {
@@ -42,6 +42,6 @@ export const uploadPhoto = async (req: Request, res: Response) => {
     const delivery = await DeliveriesService.uploadPhoto(id, type, req.file.buffer, req.file.originalname);
     res.json(delivery);
   } catch (error: any) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: error.message }); 
   }
 };

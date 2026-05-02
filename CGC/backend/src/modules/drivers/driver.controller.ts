@@ -30,7 +30,7 @@ export const createDriver = async (req: Request, res: Response) => {
 
 export const updateDriver = async (req: Request, res: Response) => {
   try {
-    const { id } = req.params;
+    const { id } = req.params as { id: string };
     const data = req.body;
     
     // Convert to number if passed as string
@@ -46,7 +46,7 @@ export const updateDriver = async (req: Request, res: Response) => {
 
 export const getDriverDeliveries = async (req: Request, res: Response) => {
   try {
-    const { id } = req.params;
+    const { id } = req.params as { id: string };
     const deliveries = await DriverService.getDriverDeliveries(id);
     res.json(deliveries);
   } catch (error: any) {

@@ -54,7 +54,7 @@ export const DriverService = {
       data: {
         name: data.name,
         phone: data.phone,
-        email: data.email,
+        ...(data.email !== undefined && { email: data.email }),
         type: data.type || 'CGC_FLEET',
         ratePerDelivery: data.ratePerDelivery || 0,
         ratePerTrip: data.ratePerTrip || data.ratePerDelivery || 0,

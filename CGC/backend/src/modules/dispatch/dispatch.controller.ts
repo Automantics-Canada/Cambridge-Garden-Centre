@@ -18,10 +18,6 @@ export const assignDriver = async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'orderId and driverId are required' });
     }
     const delivery = await DispatchService.assignDriver(orderId, driverId, priority);
-    
-    // Trigger notification
-    await NotificationService.sendAssignmentNotification(driverId, [delivery]);
-
     res.json(delivery);
   } catch (error: any) {
     res.status(500).json({ error: error.message });
