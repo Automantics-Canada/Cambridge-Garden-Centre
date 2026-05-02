@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import api from '../../api/axios';
 import { Truck, MapPin, Search } from 'lucide-react';
 
+import { DispatchBoardSkeleton } from '../../components/Skeleton';
+
 export default function DispatchBoard() {
   const [board, setBoard] = useState({ unassignedOrders: [], unassignedDeliveries: [], drivers: [] });
   const [loading, setLoading] = useState(true);
@@ -55,7 +57,7 @@ export default function DispatchBoard() {
       </div>
 
       {loading ? (
-        <div className="flex justify-center p-12"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[#2D6A4F]"></div></div>
+        <DispatchBoardSkeleton activeTab={activeTab} />
       ) : activeTab === 'unassigned' ? (
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
           <table className="w-full text-left text-sm">

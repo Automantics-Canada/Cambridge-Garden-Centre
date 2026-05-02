@@ -3,6 +3,8 @@ import { useSearchParams } from 'react-router-dom';
 import api from '../../api/axios';
 import { MapPin, Camera, CheckCircle2, Navigation, AlertCircle } from 'lucide-react';
 
+import { MobileDriverSkeleton } from '../../components/Skeleton';
+
 export default function DriverMobileView() {
   const [searchParams] = useSearchParams();
   const token = searchParams.get('token');
@@ -72,7 +74,7 @@ export default function DriverMobileView() {
   };
 
   if (loading) {
-    return <div className="min-h-screen bg-gray-900 flex items-center justify-center"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-green-500"></div></div>;
+    return <MobileDriverSkeleton />;
   }
 
   if (error) {

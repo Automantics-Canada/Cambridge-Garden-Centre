@@ -3,6 +3,8 @@ import { useSearchParams } from 'react-router-dom';
 import api from '../../api/axios';
 import { Truck, Search, MapPin, ExternalLink, Calendar, ChevronDown, ChevronUp } from 'lucide-react';
 
+import { DeliveryTableSkeleton } from '../../components/Skeleton';
+
 export default function DeliveriesPage() {
   const [searchParams] = useSearchParams();
   const [deliveries, setDeliveries] = useState([]);
@@ -48,7 +50,7 @@ export default function DeliveriesPage() {
       </div>
 
       {loading ? (
-         <div className="flex justify-center p-12"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[#2D6A4F]"></div></div>
+         <DeliveryTableSkeleton />
       ) : (
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
           <table className="w-full text-left text-sm">
