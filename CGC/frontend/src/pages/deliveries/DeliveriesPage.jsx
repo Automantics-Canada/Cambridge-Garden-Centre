@@ -1,182 +1,280 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import api from '../../api/axios';
-import { Truck, Search, MapPin, ExternalLink, Calendar, ChevronDown, ChevronUp } from 'lucide-react';
-
+import { Truck, Search, MapPin, ExternalLink, Calendar, ChevronDown, ChevronUp, User, Clock, Image as ImageIcon, History, MoreVertical, Flag, Package2 } from 'lucide-react';
 import { DeliveryTableSkeleton } from '../../components/Skeleton';
-
 import { FadeInUp, StaggerContainer, StaggerItem } from '../../components/Animated';
+import { Reorder, motion, AnimatePresence } from 'framer-motion';
+import { toast } from 'react-hot-toast';
+import StatusBadge from '../../components/deliveries/StatusBadge';
+import StatusTimeline from '../../components/deliveries/StatusTimeline';
 
 export default function DeliveriesPage() {
   const [searchParams] = useSearchParams();
   const [deliveries, setDeliveries] = useState([]);
+  const [drivers, setDrivers] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [expandedId, setExpandedId] = useState(null);
+  const [expandedDriverId, setExpandedDriverId] = useState(null);
+  const [expandedDeliveryId, setExpandedDeliveryId] = useState(null);
 
-  const driverId = searchParams.get('driverId');
+  const driverIdParam = searchParams.get('driverId');
+
+  const fetchData = async () => {
+    try {
+      setLoading(true);
+      const [delRes, driverRes] = await Promise.all([
+        api.get('/api/deliveries'),
+        api.get('/api/drivers')
+      ]);
+      setDeliveries(delRes.data);
+      setDrivers(driverRes.data);
+      
+      if (driverIdParam) {
+        setExpandedDriverId(driverIdParam);
+      }
+    } catch (e) {
+      console.error('Failed to fetch data', e);
+      toast.error('Failed to load deliveries');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    const fetchDeliveries = async () => {
-      try {
-        setLoading(true);
-        let url = '/api/deliveries';
-        if (driverId) url += `?driverId=${driverId}`;
-        const res = await api.get(url);
-        setDeliveries(res.data);
-      } catch (e) {
-        console.error('Failed to fetch deliveries', e);
-      } finally {
-        setLoading(false);
-      }
-    };
-    fetchDeliveries();
-  }, [driverId]);
+    fetchData();
+  }, []);
 
-  const toggleExpand = (id) => {
-    setExpandedId(expandedId === id ? null : id);
+  const handleStatusUpdate = async (deliveryId, newStatus) => {
+    try {
+      await api.patch(`/api/deliveries/${deliveryId}/status`, { status: newStatus });
+      toast.success(`Status updated to ${newStatus}`);
+      fetchData();
+    } catch (e) {
+      console.error(e);
+      toast.error('Failed to update status');
+    }
   };
 
-  const statusColors = {
-    UNASSIGNED: 'bg-gray-100 text-gray-700 border-gray-200',
-    ASSIGNED: 'bg-gray-100 text-gray-800 border-gray-300',
-    PICKED_UP: 'bg-blue-50 text-blue-700 border-blue-200',
-    IN_TRANSIT: 'bg-amber-50 text-amber-700 border-amber-200',
-    DELIVERED: 'bg-green-50 text-green-700 border-green-200'
-  };
+  const groupedDeliveries = useMemo(() => {
+    const map = {};
+    deliveries.forEach(del => {
+      const dId = del.driverId || 'unassigned';
+      if (!map[dId]) map[dId] = [];
+      map[dId].push(del);
+    });
+    return map;
+  }, [deliveries]);
+
+  if (loading) return <DeliveryTableSkeleton />;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 max-w-6xl mx-auto pb-20">
       <FadeInUp>
-        <h1 className="text-2xl font-bold text-gray-900">Deliveries Log</h1>
-        <p className="text-sm text-gray-500">Track and review all dispatch activities and photos.</p>
+        <div className="flex justify-between items-end">
+          <div>
+            <h1 className="text-2xl font-black text-gray-900 tracking-tight">Deliveries Management</h1>
+            <p className="text-sm text-gray-500 mt-1 font-medium">Monitor active workflows, status updates, and delivery evidence.</p>
+          </div>
+        </div>
       </FadeInUp>
 
-      {loading ? (
-         <DeliveryTableSkeleton />
-      ) : (
-        <FadeInUp delay={0.1} className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-          <table className="w-full text-left text-sm">
-            <thead className="bg-gray-50 text-gray-500 border-b border-gray-200">
-              <tr>
-                <th className="px-6 py-4 font-semibold">Order</th>
-                <th className="px-6 py-4 font-semibold">Driver</th>
-                <th className="px-6 py-4 font-semibold">Status</th>
-                <th className="px-6 py-4 font-semibold">Time</th>
-                <th className="px-6 py-4 font-semibold text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {deliveries.map(del => (
-                <React.Fragment key={del.id}>
-                  <tr className={`hover:bg-gray-50/50 transition-colors cursor-pointer ${expandedId === del.id ? 'bg-gray-50' : ''}`} onClick={() => toggleExpand(del.id)}>
-                    <td className="px-6 py-4">
-                      <div className="font-bold text-gray-900">{del.order.spruceOrderId}</div>
-                      <div className="text-xs text-gray-500">{del.order.customerName}</div>
-                    </td>
-                    <td className="px-6 py-4">
-                      {del.driver ? (
-                         <div>
-                           <div className="font-semibold text-gray-800">{del.driver.name}</div>
-                           <div className="text-xs text-gray-500">{del.driver.type === 'CGC_FLEET' ? 'Fleet' : 'Independent'}</div>
-                         </div>
-                      ) : <span className="text-gray-400 italic">Unassigned</span>}
-                    </td>
-                    <td className="px-6 py-4">
-                       <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider border ${statusColors[del.status]}`}>
-                         {del.status.replace('_', ' ')}
-                       </span>
-                    </td>
-                    <td className="px-6 py-4">
-                      <div className="text-xs text-gray-600">
-                        {del.startedAt ? new Date(del.startedAt).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : '--'} 
-                        {' → '} 
-                        {del.completedAt ? new Date(del.completedAt).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : '--'}
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 text-right">
-                       <button className="p-2 text-gray-400 hover:text-[#2D6A4F] rounded-lg hover:bg-green-50 transition-colors">
-                         {expandedId === del.id ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
-                       </button>
-                    </td>
-                  </tr>
-                  
-                  {expandedId === del.id && (
-                    <tr>
-                      <td colSpan="5" className="px-0 py-0 border-b border-gray-200">
-                        <div className="bg-gray-50 p-6 border-l-4 border-[#2D6A4F] animate-in slide-in-from-top-2 duration-200">
-                          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-                            
-                            {/* Details Pane */}
-                            <div className="space-y-4">
-                              <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wider">Delivery Details</h4>
-                              <div>
-                                <p className="font-semibold text-gray-900 text-sm">{del.order.customerName}</p>
-                                <p className="text-sm text-gray-600 mt-1">{Number(del.order.quantity)} {del.order.unit} {del.order.product}</p>
-                                {del.order.supplier && (
-                                  <p className="text-xs text-gray-500 mt-2">Supplier: {del.order.supplier.name}</p>
+      <div className="space-y-4">
+        {drivers.map(driver => {
+          const driverDeliveries = (groupedDeliveries[driver.id] || []).sort((a, b) => (a.priority || 0) - (b.priority || 0));
+          const isExpanded = expandedDriverId === driver.id;
+
+          return (
+            <div key={driver.id} className={`bg-white rounded-2xl border transition-all duration-300 ${isExpanded ? 'border-[#2D6A4F] shadow-lg ring-1 ring-[#2D6A4F]/10' : 'border-gray-200 shadow-sm hover:border-gray-300'}`}>
+              {/* Driver Header */}
+              <button 
+                onClick={() => setExpandedDriverId(isExpanded ? null : driver.id)}
+                className="w-full px-6 py-5 flex items-center justify-between text-left group"
+              >
+                <div className="flex items-center gap-5">
+                  <div className={`w-12 h-12 rounded-2xl flex items-center justify-center font-black text-lg transition-colors ${isExpanded ? 'bg-[#1B4332] text-white' : 'bg-gray-100 text-gray-400 group-hover:bg-gray-200'}`}>
+                    {driver.name.split(' ').map(n => n[0]).join('').toUpperCase()}
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-gray-900 text-lg leading-none">{driver.name}</h3>
+                    <div className="flex items-center gap-3 mt-2 text-xs font-bold uppercase tracking-tight text-gray-400">
+                      <span className="flex items-center gap-1.5"><Truck size={12} /> {driver.type === 'CGC_FLEET' ? 'FLEET' : 'EXTERNAL'}</span>
+                      <span>•</span>
+                      <span className="flex items-center gap-1.5"><Package2 size={12} /> {driverDeliveries.length} ASSIGNMENTS</span>
+                    </div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-4">
+                   <div className="text-right mr-4 hidden sm:block">
+                     <p className="text-[10px] font-black text-gray-400 uppercase leading-none mb-1">COMPLETED</p>
+                     <p className="text-lg font-black text-gray-900 leading-none">
+                       {driverDeliveries.filter(d => d.status === 'DELIVERED').length} / {driverDeliveries.length}
+                     </p>
+                   </div>
+                   <div className={`p-2 rounded-xl transition-colors ${isExpanded ? 'bg-[#2D6A4F]/10 text-[#2D6A4F]' : 'bg-gray-50 text-gray-400'}`}>
+                     {isExpanded ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
+                   </div>
+                </div>
+              </button>
+
+              {/* Deliveries List */}
+              <AnimatePresence>
+                {isExpanded && (
+                  <motion.div 
+                    initial={{ height: 0, opacity: 0 }}
+                    animate={{ height: 'auto', opacity: 1 }}
+                    exit={{ height: 0, opacity: 0 }}
+                    className="overflow-hidden border-t border-gray-100"
+                  >
+                    <div className="p-4 sm:p-6 bg-gray-50/30 space-y-4">
+                      {driverDeliveries.length === 0 ? (
+                        <div className="py-10 text-center text-gray-400 font-medium italic">No deliveries assigned today</div>
+                      ) : (
+                        driverDeliveries.map((del, idx) => {
+                          const isDelExpanded = expandedDeliveryId === del.id;
+                          return (
+                            <div key={del.id} className={`bg-white rounded-xl border transition-all duration-300 ${isDelExpanded ? 'border-amber-200 shadow-md ring-1 ring-amber-100' : 'border-gray-200 shadow-sm hover:border-gray-300'}`}>
+                              {/* Delivery Header */}
+                              <div className="px-5 py-4 flex items-center justify-between gap-4">
+                                <div className="flex items-center gap-4 flex-1">
+                                  <div className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center text-[10px] font-black text-gray-500">
+                                    {idx + 1}
+                                  </div>
+                                  <div>
+                                    <h4 className="font-bold text-gray-900 leading-none">{del.order.spruceOrderId}</h4>
+                                    <p className="text-[10px] text-gray-500 mt-1 font-bold uppercase truncate max-w-[200px]">{del.order.customerName}</p>
+                                  </div>
+                                </div>
+
+                                <div className="hidden md:block flex-1">
+                                   <p className="text-[10px] font-black text-gray-400 uppercase leading-none mb-1">PRIORITY</p>
+                                   <div className="flex items-center gap-1.5 text-gray-900 font-bold text-sm">
+                                     <Flag size={14} className={idx === 0 ? "text-orange-500" : "text-gray-300"} />
+                                     {idx === 0 ? 'Urgent' : `Standard (${idx + 1})`}
+                                   </div>
+                                </div>
+
+                                <div className="flex items-center gap-4">
+                                  <StatusBadge status={del.status} />
+                                  <div className="flex items-center gap-2">
+                                    <select 
+                                      className="text-[10px] font-black border border-gray-200 rounded-lg px-2 py-1 outline-none focus:ring-1 focus:ring-[#2D6A4F]"
+                                      value={del.status}
+                                      onChange={(e) => handleStatusUpdate(del.id, e.target.value)}
+                                    >
+                                      <option value="PLACED">Placed</option>
+                                      <option value="OUT_FOR_DELIVERY">Out for Delivery</option>
+                                      <option value="IN_TRANSIT">In Transit</option>
+                                      <option value="DELIVERED">Delivered</option>
+                                      <option value="ON_HOLD">On Hold</option>
+                                      <option value="DELAYED">Delayed</option>
+                                      <option value="CANCELLED">Cancelled</option>
+                                    </select>
+                                    <button 
+                                      onClick={() => setExpandedDeliveryId(isDelExpanded ? null : del.id)}
+                                      className={`p-1.5 rounded-lg transition-colors ${isDelExpanded ? 'bg-amber-100 text-amber-600' : 'hover:bg-gray-100 text-gray-400'}`}
+                                    >
+                                      {isDelExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Delivery Details */}
+                              <AnimatePresence>
+                                {isDelExpanded && (
+                                  <motion.div 
+                                    initial={{ height: 0, opacity: 0 }}
+                                    animate={{ height: 'auto', opacity: 1 }}
+                                    exit={{ height: 0, opacity: 0 }}
+                                    className="overflow-hidden border-t border-gray-50"
+                                  >
+                                    <div className="p-6 grid grid-cols-1 lg:grid-cols-3 gap-8">
+                                      {/* Column 1: Order & Customer */}
+                                      <div className="space-y-6">
+                                        <div>
+                                          <label className="text-[10px] font-black text-gray-400 uppercase tracking-wider mb-2 block">Order Info</label>
+                                          <div className="bg-gray-50 rounded-xl p-4 space-y-3">
+                                            <div className="flex items-center justify-between">
+                                               <span className="text-xs text-gray-500 font-bold uppercase">Customer</span>
+                                               <span className="text-xs text-gray-900 font-black">{del.order.customerName}</span>
+                                            </div>
+                                            <div className="flex items-center justify-between">
+                                               <span className="text-xs text-gray-500 font-bold uppercase">Material</span>
+                                               <span className="text-xs text-gray-900 font-black">{del.order.product}</span>
+                                            </div>
+                                            <div className="flex items-center justify-between">
+                                               <span className="text-xs text-gray-500 font-bold uppercase">Quantity</span>
+                                               <span className="text-xs text-gray-900 font-black">{Number(del.order.quantity)} {del.order.unit}</span>
+                                            </div>
+                                          </div>
+                                        </div>
+                                        <div>
+                                          <label className="text-[10px] font-black text-gray-400 uppercase tracking-wider mb-2 block">Timeline Summary</label>
+                                          <div className="flex items-center gap-4 text-[10px] font-black text-gray-500">
+                                             <div className="flex flex-col">
+                                               <span className="text-gray-400 uppercase">Started</span>
+                                               <span className="text-gray-900">{del.startedAt ? new Date(del.startedAt).toLocaleTimeString() : '--:--'}</span>
+                                             </div>
+                                             <div className="flex flex-col">
+                                               <span className="text-gray-400 uppercase">Completed</span>
+                                               <span className="text-gray-900">{del.completedAt ? new Date(del.completedAt).toLocaleTimeString() : '--:--'}</span>
+                                             </div>
+                                          </div>
+                                        </div>
+                                      </div>
+
+                                      {/* Column 2: Evidence Photos */}
+                                      <div className="space-y-4">
+                                        <label className="text-[10px] font-black text-gray-400 uppercase tracking-wider mb-2 block">Evidence Photos</label>
+                                        <div className="grid grid-cols-2 gap-3">
+                                          <div>
+                                            <p className="text-[9px] font-black text-gray-400 uppercase mb-1">Pickup</p>
+                                            {del.pickupPhotoUrl ? (
+                                              <img src={del.pickupPhotoUrl} className="w-full h-32 object-cover rounded-xl border border-gray-200" alt="Pickup" />
+                                            ) : (
+                                              <div className="w-full h-32 bg-gray-50 border-2 border-dashed border-gray-200 rounded-xl flex flex-col items-center justify-center text-gray-300">
+                                                <ImageIcon size={20} />
+                                                <span className="text-[10px] font-black mt-1">NO PHOTO</span>
+                                              </div>
+                                            )}
+                                          </div>
+                                          <div>
+                                            <p className="text-[9px] font-black text-gray-400 uppercase mb-1">Delivery</p>
+                                            {del.deliveryPhotoUrl ? (
+                                              <img src={del.deliveryPhotoUrl} className="w-full h-32 object-cover rounded-xl border border-gray-200" alt="Delivery" />
+                                            ) : (
+                                              <div className="w-full h-32 bg-gray-50 border-2 border-dashed border-gray-200 rounded-xl flex flex-col items-center justify-center text-gray-300">
+                                                <ImageIcon size={20} />
+                                                <span className="text-[10px] font-black mt-1">NO PHOTO</span>
+                                              </div>
+                                            )}
+                                          </div>
+                                        </div>
+                                      </div>
+
+                                      {/* Column 3: Status History */}
+                                      <div className="space-y-4">
+                                        <label className="text-[10px] font-black text-gray-400 uppercase tracking-wider mb-2 block">Update History</label>
+                                        <div className="max-h-[200px] overflow-y-auto pr-2 custom-scrollbar">
+                                          <StatusTimeline history={del.history} />
+                                        </div>
+                                      </div>
+                                    </div>
+                                  </motion.div>
                                 )}
-                              </div>
+                              </AnimatePresence>
                             </div>
-
-                            {/* Driver Pane */}
-                            <div className="space-y-4">
-                              <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wider">Driver Details</h4>
-                              {del.driver ? (
-                                <div>
-                                  <p className="font-semibold text-gray-900 text-sm flex items-center gap-2">
-                                    <Truck size={14} className="text-[#2D6A4F]"/>
-                                    {del.driver.name}
-                                  </p>
-                                  <p className="text-sm text-gray-600 mt-1">{del.driver.phone}</p>
-                                  <p className="text-xs text-gray-500 mt-2">Rate: ${del.driver.ratePerTrip}/trip</p>
-                                </div>
-                              ) : <p className="text-sm text-gray-500 italic">No driver assigned</p>}
-                            </div>
-
-                            {/* Photos Pane */}
-                            <div className="space-y-4">
-                              <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wider">Evidence Photos</h4>
-                              <div className="flex gap-4">
-                                <div className="flex-1">
-                                  <p className="text-[10px] font-bold text-gray-500 mb-1">PICKUP {del.pickupType === 'EXTERNAL' && '(REQ)'}</p>
-                                  {del.pickupPhotoUrl ? (
-                                    <a href={del.pickupPhotoUrl} target="_blank" rel="noopener noreferrer">
-                                      <img src={del.pickupPhotoUrl} alt="Pickup" className="w-full h-24 object-cover rounded-lg border border-gray-200 hover:opacity-80 transition-opacity" />
-                                    </a>
-                                  ) : (
-                                    <div className="w-full h-24 bg-gray-100 rounded-lg border border-dashed border-gray-300 flex items-center justify-center text-xs text-gray-400">
-                                      Missing
-                                    </div>
-                                  )}
-                                </div>
-                                <div className="flex-1">
-                                  <p className="text-[10px] font-bold text-gray-500 mb-1">DELIVERY</p>
-                                  {del.deliveryPhotoUrl ? (
-                                    <a href={del.deliveryPhotoUrl} target="_blank" rel="noopener noreferrer">
-                                      <img src={del.deliveryPhotoUrl} alt="Delivery" className="w-full h-24 object-cover rounded-lg border border-gray-200 hover:opacity-80 transition-opacity" />
-                                    </a>
-                                  ) : (
-                                    <div className="w-full h-24 bg-gray-100 rounded-lg border border-dashed border-gray-300 flex items-center justify-center text-xs text-gray-400">
-                                      Missing
-                                    </div>
-                                  )}
-                                </div>
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      </td>
-                    </tr>
-                  )}
-                </React.Fragment>
-              ))}
-              {deliveries.length === 0 && (
-                <tr><td colSpan="5" className="px-6 py-12 text-center text-gray-500">No deliveries found.</td></tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      )}
+                          );
+                        })
+                      )}
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

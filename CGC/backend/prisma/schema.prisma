@@ -1,17 +1,295 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
-
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
   directUrl = env("DIRECT_URL")
+}
+
+model Order {
+  id             String            @id @default(uuid()) @db.Uuid
+  spruceOrderId  String            @unique
+  poNumber       String?
+  customerName   String
+  buyerType      BuyerType
+  product        String
+  quantity       Decimal           @db.Decimal
+  unit           String
+  supplierId     String?           @db.Uuid
+  orderDate      DateTime          @db.Date
+  deliveryDate   DateTime?         @db.Date
+  hasInvoice     Boolean           @default(false)
+  invoiceNumber  String?
+  createdAt      DateTime          @default(now())
+  deliveryStatus DriverTaskStatus  @default(NOT_STARTED)
+  driverId       String?           @db.Uuid
+  priority       Int               @default(1)
+  deliveries     Delivery[]
+  lineItems      InvoiceLineItem[]
+  driver         Driver?           @relation(fields: [driverId], references: [id])
+  supplier       Supplier?         @relation(fields: [supplierId], references: [id])
+  tickets        Ticket[]
+}
+
+model Ticket {
+  id                      String            @id @default(uuid()) @db.Uuid
+  ticketNumber            String?
+  source                  TicketSource
+  supplierId              String?           @db.Uuid
+  poNumber                String?
+  material                String?
+  quantity                Decimal?          @db.Decimal
+  unit                    String?
+  rateOnTicket            Decimal?          @db.Decimal
+  ticketDate              DateTime?         @db.Date
+  imageUrl                String
+  ocrRawText              String
+  ocrConfidence           Float
+  linkedOrderId           String?           @db.Uuid
+  linkMethod              String?
+  linkedById              String?           @db.Uuid
+  status                  TicketStatus
+  receivedAt              DateTime          @default(now())
+  driverId                String?           @db.Uuid
+  deliveryStatus          DriverTaskStatus  @default(NOT_STARTED)
+  spruceMatched           Boolean           @default(false)
+  ocrJobs                 OcrJob[]          @relation("TicketOcrJobs")
+  driver                  Driver?           @relation(fields: [driverId], references: [id])
+  linkedBy                User?             @relation(fields: [linkedById], references: [id])
+  linkedOrder             Order?            @relation(fields: [linkedOrderId], references: [id])
+  supplier                Supplier?         @relation(fields: [supplierId], references: [id])
+  matchedInvoiceLineItems InvoiceLineItem[] @relation("InvoiceLineItemToTicket")
+}
+
+model Invoice {
+  id             String               @id @default(uuid()) @db.Uuid
+  invoiceNumber  String
+  senderType     SenderType
+  supplierId     String               @db.Uuid
+  invoiceDate    DateTime             @db.Date
+  dueDate        DateTime?            @db.Date
+  totalAmount    Decimal              @db.Decimal
+  currency       String
+  fileUrl        String
+  emailFrom      String
+  emailSubject   String
+  gmailMessageId String               @unique
+  status         InvoiceStatus        @default(PENDING_REVIEW)
+  verifiedById   String?              @db.Uuid
+  verifiedAt     DateTime?
+  disputeNote    String?
+  receivedAt     DateTime             @default(now())
+  ocrRawText     String?
+  OcrJobStatus   OcrJobStatus         @default(PENDING)
+  emailEvent     EmailIngestionEvent?
+  supplier       Supplier             @relation(fields: [supplierId], references: [id])
+  verifiedBy     User?                @relation(fields: [verifiedById], references: [id])
+  lineItems      InvoiceLineItem[]
+  ocrJobs        OcrJob[]             @relation("InvoiceOcrJobs")
+}
+
+model InvoiceLineItem {
+  id              String       @id @default(uuid()) @db.Uuid
+  invoiceId       String       @db.Uuid
+  lineNumber      Int
+  poNumber        String?
+  description     String
+  quantity        Decimal      @db.Decimal
+  unit            String
+  unitRate        Decimal      @db.Decimal
+  lineTotal       Decimal      @db.Decimal
+  negotiatedRate  Decimal?     @db.Decimal
+  rateDiscrepancy Decimal?     @db.Decimal
+  qtyDiscrepancy  Decimal?     @db.Decimal
+  flag            LineItemFlag
+  matchedOrderId  String?      @db.Uuid
+  isOverridden    Boolean      @default(false)
+  overrideNote    String?
+  invoice         Invoice      @relation(fields: [invoiceId], references: [id])
+  matchedOrder    Order?       @relation(fields: [matchedOrderId], references: [id])
+  matchedTickets  Ticket[]     @relation("InvoiceLineItemToTicket")
+}
+
+model NegotiatedRate {
+  id            String    @id @default(uuid()) @db.Uuid
+  supplierId    String    @db.Uuid
+  productName   String
+  rate          Decimal   @db.Decimal
+  unit          String
+  effectiveFrom DateTime  @db.Date
+  effectiveTo   DateTime? @db.Date
+  notes         String?
+  createdById   String    @db.Uuid
+  createdAt     DateTime  @default(now())
+  createdBy     User      @relation(fields: [createdById], references: [id])
+  supplier      Supplier  @relation(fields: [supplierId], references: [id])
+}
+
+model Supplier {
+  id              String                @id @default(uuid()) @db.Uuid
+  name            String
+  type            SupplierType
+  emailDomains    String[]
+  contactName     String?
+  contactEmail    String?
+  phone           String?
+  address         String?
+  active          Boolean               @default(true)
+  keywords        String[]
+  emailEvents     EmailIngestionEvent[]
+  invoices        Invoice[]
+  negotiatedRates NegotiatedRate[]
+  orders          Order[]
+  tickets         Ticket[]
+}
+
+model User {
+  name             String
+  email            String            @unique
+  active           Boolean           @default(true)
+  createdAt        DateTime          @default(now())
+  passwordHash     String
+  phone            String?
+  role             UserRole
+  id               String            @id @default(uuid()) @db.Uuid
+  auditLogs        AuditLog[]
+  verifiedInvoices Invoice[]
+  createdRates     NegotiatedRate[]
+  spruceImports    SpruceImportJob[]
+  systemSettings   SystemSetting[]
+  linkedTickets    Ticket[]
+}
+
+model Driver {
+  id              String            @id @default(uuid()) @db.Uuid
+  name            String
+  phone           String            @unique
+  active          Boolean           @default(true)
+  createdAt       DateTime          @default(now())
+  ratePerDelivery Decimal           @default(0) @db.Decimal
+  email           String?           @unique
+  ratePerTrip     Decimal?          @db.Decimal
+  type            DriverType        @default(CGC_FLEET)
+  deliveries      Delivery[]
+  orders          Order[]
+  tickets         Ticket[]
+  messages        WhatsAppMessage[]
+}
+
+model Delivery {
+  id               String         @id @default(uuid()) @db.Uuid
+  orderId          String         @db.Uuid
+  driverId         String?        @db.Uuid
+  status           DeliveryStatus @default(UNASSIGNED)
+  priority         Int            @default(1)
+  pickupType       String         @default("EXTERNAL")
+  pickupPhotoUrl   String?
+  deliveryPhotoUrl String?
+  startedAt        DateTime?
+  completedAt      DateTime?
+  driver           Driver?        @relation(fields: [driverId], references: [id])
+  order            Order          @relation(fields: [orderId], references: [id])
+  history          DeliveryHistory[]
+}
+
+model AuditLog {
+  id            String          @id @default(uuid()) @db.Uuid
+  entityType    AuditEntityType
+  entityId      String
+  actionType    AuditActionType
+  performedById String?         @db.Uuid
+  details       Json?
+  createdAt     DateTime        @default(now())
+  performedBy   User?           @relation(fields: [performedById], references: [id])
+}
+
+model SpruceImportJob {
+  id           String                 @id @default(uuid()) @db.Uuid
+  uploadedById String                 @db.Uuid
+  fileUrl      String
+  startedAt    DateTime               @default(now())
+  finishedAt   DateTime?
+  status       ImportStatus           @default(PENDING)
+  totalRows    Int                    @default(0)
+  createdCount Int                    @default(0)
+  updatedCount Int                    @default(0)
+  skippedCount Int                    @default(0)
+  errorSummary String?
+  uploadedBy   User                   @relation(fields: [uploadedById], references: [id])
+  rowErrors    SpruceImportRowError[]
+}
+
+model SpruceImportRowError {
+  id           String          @id @default(uuid()) @db.Uuid
+  importJobId  String          @db.Uuid
+  rowNumber    Int
+  rawRowData   String
+  errorMessage String
+  importJob    SpruceImportJob @relation(fields: [importJobId], references: [id])
+}
+
+model OcrJob {
+  id           String       @id @default(uuid()) @db.Uuid
+  provider     OcrProvider
+  startedAt    DateTime?
+  finishedAt   DateTime?
+  errorMessage String?
+  rawResponse  Json?
+  ticketId     String?      @db.Uuid
+  invoiceId    String?      @db.Uuid
+  type         OcrJobType
+  status       OcrJobStatus @default(PENDING)
+  invoice      Invoice?     @relation("InvoiceOcrJobs", fields: [invoiceId], references: [id])
+  ticket       Ticket?      @relation("TicketOcrJobs", fields: [ticketId], references: [id])
+}
+
+model EmailIngestionEvent {
+  id                 String               @id @default(uuid()) @db.Uuid
+  gmailMessageId     String               @unique
+  subject            String
+  fromAddress        String
+  toAddress          String
+  supplierId         String?              @db.Uuid
+  senderTypeResolved SenderTypeResolved?
+  createdInvoiceId   String?              @unique @db.Uuid
+  createdTicketIds   String[]
+  status             EmailIngestionStatus @default(PROCESSED)
+  errorMessage       String?
+  receivedAt         DateTime             @default(now())
+  createdInvoice     Invoice?             @relation(fields: [createdInvoiceId], references: [id])
+  supplier           Supplier?            @relation(fields: [supplierId], references: [id])
+}
+
+model WhatsAppMessage {
+  id           String                @id @default(uuid()) @db.Uuid
+  driverId     String?               @db.Uuid
+  fromPhone    String
+  messageId    String
+  messageType  WhatsAppMessageType
+  mediaUrl     String?
+  rawPayload   Json
+  status       WhatsAppMessageStatus @default(PROCESSED)
+  errorMessage String?
+  receivedAt   DateTime              @default(now())
+  driver       Driver?               @relation(fields: [driverId], references: [id])
+}
+
+model SystemSetting {
+  id          String   @id @default(uuid()) @db.Uuid
+  key         String   @unique
+  value       Json
+  updatedById String?  @db.Uuid
+  updatedAt   DateTime @default(now())
+  updatedBy   User?    @relation(fields: [updatedById], references: [id])
+}
+
+model Product {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String   @unique
+  createdAt DateTime @default(now())
+  unit      String   @default("ton")
 }
 
 enum BuyerType {
@@ -102,11 +380,11 @@ enum AuditActionType {
   TICKET_REVIEWED
   RATE_CREATED
   RATE_UPDATED
+  INVOICE_LINE_OVERRIDDEN
   EMAIL_INGESTION_ERROR
   WHATSAPP_WEBHOOK_ERROR
   OCR_RETRY
   SYSTEM_CONFIG_CHANGE
-  INVOICE_LINE_OVERRIDDEN
 }
 
 enum ImportStatus {
@@ -139,10 +417,6 @@ enum WhatsAppMessageStatus {
   FAILED
 }
 
-/* 
-   Core business models (6)
- */
-
 enum DriverTaskStatus {
   NOT_STARTED
   AT_SUPPLIER
@@ -157,309 +431,20 @@ enum DriverType {
 
 enum DeliveryStatus {
   UNASSIGNED
-  ASSIGNED
-  PICKED_UP
+  PLACED
+  OUT_FOR_DELIVERY
   IN_TRANSIT
   DELIVERED
+  ON_HOLD
+  DELAYED
+  CANCELLED
 }
 
-model Order {
-  id            String    @id @default(uuid()) @db.Uuid
-  spruceOrderId String    @unique
-  poNumber      String?
-  customerName  String
-  buyerType     BuyerType
-  product       String
-  quantity      Decimal   @db.Decimal
-  unit          String
-  supplierId    String?   @db.Uuid
-  supplier      Supplier? @relation(fields: [supplierId], references: [id])
-  orderDate     DateTime  @db.Date
-  deliveryDate  DateTime? @db.Date
-  hasInvoice    Boolean   @default(false)
-  invoiceNumber String?
-  createdAt     DateTime  @default(now())
-
-  driverId       String?        @db.Uuid
-  driver         Driver?        @relation(fields: [driverId], references: [id])
-  deliveryStatus DriverTaskStatus @default(NOT_STARTED)
-  priority       Int            @default(1)
-
-  tickets    Ticket[]
-  lineItems  InvoiceLineItem[]
-  deliveries Delivery[]
-}
-
-model Ticket {
-  id            String        @id @default(uuid()) @db.Uuid
-  ticketNumber  String?
-  source        TicketSource
-  supplierId    String?       @db.Uuid
-  supplier      Supplier?     @relation(fields: [supplierId], references: [id])
-  poNumber      String?
-  material      String?
-  quantity      Decimal?      @db.Decimal
-  unit          String?
-  rateOnTicket  Decimal?      @db.Decimal
-  ticketDate    DateTime?     @db.Date
-  imageUrl      String
-  ocrRawText    String
-  ocrConfidence Float
-  linkedOrderId String?       @db.Uuid
-  linkedOrder   Order?        @relation(fields: [linkedOrderId], references: [id])
-  linkMethod    String?       // "AUTO" or "MANUAL"
-  linkedById    String?       @db.Uuid
-  linkedBy      User?         @relation(fields: [linkedById], references: [id])
-  status        TicketStatus
-  receivedAt    DateTime      @default(now())
-  driverId      String?       @db.Uuid
-  driver        Driver?       @relation(fields: [driverId], references: [id])
-  deliveryStatus DriverTaskStatus @default(NOT_STARTED)
-  spruceMatched Boolean       @default(false)
-
-  matchedInvoiceLineItems InvoiceLineItem[]
-  ocrJobs   OcrJob[]      @relation("TicketOcrJobs")
-}
-
-model Invoice {
-  id             String        @id @default(uuid()) @db.Uuid
-  invoiceNumber  String
-  senderType     SenderType
-  supplierId     String        @db.Uuid
-  supplier       Supplier      @relation(fields: [supplierId], references: [id])
-  invoiceDate    DateTime      @db.Date
-  dueDate        DateTime?     @db.Date
-  totalAmount    Decimal       @db.Decimal
-  currency       String
-  fileUrl        String
-  emailFrom      String
-  emailSubject   String
-  gmailMessageId String        @unique
-  status         InvoiceStatus @default(PENDING_REVIEW)
-  verifiedById   String?       @db.Uuid
-  verifiedBy     User?         @relation(fields: [verifiedById], references: [id])
-  verifiedAt     DateTime?
-  disputeNote    String?
-  receivedAt     DateTime      @default(now())
-  OcrJobStatus      OcrJobStatus     @default(PENDING)
-  ocrRawText     String?
-
-  lineItems  InvoiceLineItem[]
-  ocrJobs    OcrJob[]            @relation("InvoiceOcrJobs")
-  emailEvent EmailIngestionEvent?
-}
-
-model InvoiceLineItem {
-  id              String      @id @default(uuid()) @db.Uuid
-  invoiceId       String      @db.Uuid
-  invoice         Invoice     @relation(fields: [invoiceId], references: [id])
-  lineNumber      Int
-  poNumber        String?
-  description     String
-  quantity        Decimal     @db.Decimal
-  unit            String
-  unitRate        Decimal     @db.Decimal
-  lineTotal       Decimal     @db.Decimal
-  matchedTickets  Ticket[]
-  matchedOrderId  String?     @db.Uuid
-  matchedOrder    Order?      @relation(fields: [matchedOrderId], references: [id])
-  negotiatedRate  Decimal?    @db.Decimal
-  rateDiscrepancy Decimal?    @db.Decimal
-  qtyDiscrepancy  Decimal?    @db.Decimal
-  flag            LineItemFlag
-  isOverridden    Boolean     @default(false)
-  overrideNote    String?
-}
-
-model NegotiatedRate {
-  id           String   @id @default(uuid()) @db.Uuid
-  supplierId   String   @db.Uuid
-  supplier     Supplier @relation(fields: [supplierId], references: [id])
-  productName  String
-  rate         Decimal  @db.Decimal
-  unit         String
-  effectiveFrom DateTime @db.Date
-  effectiveTo  DateTime? @db.Date
-  notes        String?
-  createdById  String   @db.Uuid
-  createdBy    User     @relation(fields: [createdById], references: [id])
-  createdAt    DateTime @default(now())
-}
-
-model Supplier {
-  id             String             @id @default(uuid()) @db.Uuid
-  name           String
-  type           SupplierType
-  emailDomains   String[]
-  keywords       String[]
-  contactName    String?
-  contactEmail   String?
-  phone          String?
-  address        String?
-  active         Boolean            @default(true)
-
-  orders         Order[]
-  tickets        Ticket[]
-  invoices       Invoice[]
-  negotiatedRates NegotiatedRate[]
-  emailEvents    EmailIngestionEvent[]
-}
-
-/* ===========================
-   Supporting / infra models (9)
-   =========================== */
-
-model User {
-  id            String           @id @default(uuid()) @db.Uuid
-  name          String
-  email         String           @unique
-  passwordHash  String
-  role          UserRole
-  phone         String?
-  active        Boolean          @default(true)
-  createdAt     DateTime         @default(now())
-
-  verifiedInvoices Invoice[]
-  linkedTickets    Ticket[]
-  createdRates     NegotiatedRate[]
-  auditLogs        AuditLog[]
-  spruceImports    SpruceImportJob[]
-  systemSettings   SystemSetting[]
-}
-
-model Driver {
-  id               String     @id @default(uuid()) @db.Uuid
-  name             String
-  email            String?    @unique
-  phone            String     @unique
-  type             DriverType @default(CGC_FLEET)
-  ratePerDelivery  Decimal    @default(0) @db.Decimal
-  ratePerTrip      Decimal?   @db.Decimal
-  active           Boolean    @default(true)
-  createdAt        DateTime   @default(now())
-
-  orders     Order[]
-  tickets    Ticket[]
-  messages   WhatsAppMessage[]
-  deliveries Delivery[]
-}
-
-model Delivery {
-  id               String         @id @default(uuid()) @db.Uuid
-  orderId          String         @db.Uuid
-  order            Order          @relation(fields: [orderId], references: [id])
-  driverId         String?        @db.Uuid
-  driver           Driver?        @relation(fields: [driverId], references: [id])
-  status           DeliveryStatus @default(UNASSIGNED)
-  priority         Int            @default(1)
-  pickupType       String         @default("EXTERNAL")
-  pickupPhotoUrl   String?
-  deliveryPhotoUrl String?
-  startedAt        DateTime?
-  completedAt      DateTime?
-}
-
-model AuditLog {
-  id            String          @id @default(uuid()) @db.Uuid
-  entityType    AuditEntityType
-  entityId      String          // UUID of the target entity, stored as string
-  actionType    AuditActionType
-  performedById String?         @db.Uuid
-  performedBy   User?           @relation(fields: [performedById], references: [id])
-  details       Json?
-  createdAt     DateTime        @default(now())
-}
-
-model SpruceImportJob {
-  id           String              @id @default(uuid()) @db.Uuid
-  uploadedById String              @db.Uuid
-  uploadedBy   User                @relation(fields: [uploadedById], references: [id])
-  fileUrl      String
-  startedAt    DateTime            @default(now())
-  finishedAt   DateTime?
-  status       ImportStatus        @default(PENDING)
-  totalRows    Int                 @default(0)
-  createdCount Int                 @default(0)
-  updatedCount Int                 @default(0)
-  skippedCount Int                 @default(0)
-  errorSummary String?
-
-  rowErrors    SpruceImportRowError[]
-}
-
-model SpruceImportRowError {
-  id           String          @id @default(uuid()) @db.Uuid
-  importJobId  String          @db.Uuid
-  importJob    SpruceImportJob @relation(fields: [importJobId], references: [id])
-  rowNumber    Int
-  rawRowData   String
-  errorMessage String
-}
-
-model OcrJob {
-  id          String        @id @default(uuid()) @db.Uuid
-  type        OcrJobType
-  provider    OcrProvider
-  status      OcrJobStatus     @default(PENDING)
-  startedAt   DateTime?
-  finishedAt  DateTime?
-  errorMessage String?
-  rawResponse Json?
-
-  ticketId   String?  @db.Uuid
-  invoiceId  String?  @db.Uuid
-
-  ticket     Ticket?  @relation("TicketOcrJobs",  fields: [ticketId],  references: [id])
-  invoice    Invoice? @relation("InvoiceOcrJobs", fields: [invoiceId], references: [id])
-}
-
-model EmailIngestionEvent {
-  id                 String                 @id @default(uuid()) @db.Uuid
-  gmailMessageId     String                 @unique
-  subject            String
-  fromAddress        String
-  toAddress          String
-
-  supplierId         String?                @db.Uuid
-  supplier           Supplier?              @relation(fields: [supplierId], references: [id])
-
-  senderTypeResolved SenderTypeResolved?
-
-  createdInvoiceId   String?                @unique @db.Uuid
-  createdInvoice     Invoice?               @relation(fields: [createdInvoiceId], references: [id])
-
-  createdTicketIds   String[]               // UUIDs of tickets created from this email
-  status             EmailIngestionStatus   @default(PROCESSED)
-  errorMessage       String?
-  receivedAt         DateTime               @default(now())
-}
-
-model WhatsAppMessage {
-  id           String                @id @default(uuid()) @db.Uuid
-  driverId     String?               @db.Uuid
-  driver       Driver?               @relation(fields: [driverId], references: [id])
-  fromPhone    String
-  messageId    String
-  messageType  WhatsAppMessageType
-  mediaUrl     String?
-  rawPayload   Json
-  status       WhatsAppMessageStatus @default(PROCESSED)
-  errorMessage String?
-  receivedAt   DateTime              @default(now())
-}
-
-model SystemSetting {
-  id          String   @id @default(uuid()) @db.Uuid
-  key         String   @unique
-  value       Json
-  updatedById String?  @db.Uuid
-  updatedBy   User?    @relation(fields: [updatedById], references: [id])
-  updatedAt   DateTime @default(now())
-}
-
-model Product {
-  id        String   @id @default(uuid()) @db.Uuid
-  name      String   @unique
-  unit      String   @default("ton")
-  createdAt DateTime @default(now())
+model DeliveryHistory {
+  id          String         @id @default(uuid()) @db.Uuid
+  deliveryId  String         @db.Uuid
+  delivery    Delivery       @relation(fields: [deliveryId], references: [id])
+  status      DeliveryStatus
+  notes       String?
+  createdAt   DateTime       @default(now())
 }

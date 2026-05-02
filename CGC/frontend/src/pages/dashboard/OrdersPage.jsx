@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import api from '../../api/axios';
-
 import { Search, Upload } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { Skeleton } from '../../components/Skeleton';
@@ -14,8 +13,7 @@ export default function OrdersPage() {
   const [loading, setLoading] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef(null);
-  
-  // Filter states
+
   const [search, setSearch] = useState('');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
@@ -33,26 +31,26 @@ export default function OrdersPage() {
       if (startDate) params.startDate = startDate;
       if (endDate) params.endDate = endDate;
       if (buyerType) params.buyerType = buyerType;
-      if (supplierId) params.supplierId = supplierId; 
+      if (supplierId) params.supplierId = supplierId;
       if (driverId) params.driverId = driverId;
       if (hasInvoice) params.hasInvoice = hasInvoice === 'yes';
       if (hasLinkedTickets) params.hasLinkedTickets = hasLinkedTickets === 'yes';
 
       const res = await api.get('/api/orders', { params });
-      setOrders(res.data);
+      setOrders(Array.isArray(res.data) ? res.data : []);
     } catch (err) {
       console.error('Error fetching orders:', err);
+      toast.error('Failed to fetch orders');
     } finally {
       setLoading(false);
     }
   }, [search, startDate, endDate, buyerType, supplierId, driverId, hasInvoice, hasLinkedTickets]);
 
-
   const handleFileUpload = async (event) => {
     const file = event.target.files?.[0];
     if (!file) return;
 
-    if (!file.name.endsWith('.csv')) {
+    if (!file.name.toLowerCase().endsWith('.csv')) {
       toast.error('Please upload a valid CSV file');
       return;
     }
@@ -65,24 +63,25 @@ export default function OrdersPage() {
       const res = await api.post('/api/orders/import', formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
       });
-      toast.success(`Import complete! ${res.data.createdCount} created, ${res.data.updatedCount} updated.`);
+
+      toast.success(
+        `Import complete! ${res.data?.createdCount ?? 0} created, ${res.data?.updatedCount ?? 0} updated.`
+      );
       fetchOrders();
     } catch (err) {
       toast.error(err.response?.data?.error || 'Failed to import CSV');
       console.error('Import error:', err);
     } finally {
       setIsUploading(false);
-      if (fileInputRef.current) {
-        fileInputRef.current.value = '';
-      }
+      if (fileInputRef.current) fileInputRef.current.value = '';
     }
   };
 
   useEffect(() => {
-    // Debounce search slightly
     const timer = setTimeout(() => {
       fetchOrders();
     }, 300);
+
     return () => clearTimeout(timer);
   }, [fetchOrders]);
 
@@ -95,13 +94,14 @@ export default function OrdersPage() {
             View and import Spruce orders via CSV.
           </p>
         </div>
+
         <div className="mt-4 sm:ml-16 sm:mt-0 sm:flex-none">
-          <input 
-            type="file" 
-            accept=".csv" 
-            ref={fileInputRef} 
-            onChange={handleFileUpload} 
-            className="hidden" 
+          <input
+            type="file"
+            accept=".csv"
+            ref={fileInputRef}
+            onChange={handleFileUpload}
+            className="hidden"
           />
           <button
             onClick={() => fileInputRef.current?.click()}
@@ -111,13 +111,14 @@ export default function OrdersPage() {
             {isUploading ? (
               <>Processing...</>
             ) : (
-              <><Upload className="w-4 h-4" /> Import CSV</>
+              <>
+                <Upload className="w-4 h-4" /> Import CSV
+              </>
             )}
           </button>
         </div>
       </FadeInUp>
-      
-      {/* Filters */}
+
       <FadeInUp delay={0.1} className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm space-y-4">
         <div className="flex flex-wrap gap-4 items-end">
           <div className="w-full sm:w-auto flex-1 min-w-[200px]">
@@ -135,19 +136,33 @@ export default function OrdersPage() {
               />
             </div>
           </div>
-          
+
           <div>
             <label className="block text-xs font-medium text-gray-700 mb-1">Date Range</label>
             <div className="flex items-center gap-2">
-              <input type="date" className="border-gray-300 rounded-md sm:text-sm p-2 border" value={startDate} onChange={e => setStartDate(e.target.value)}/>
+              <input
+                type="date"
+                className="border-gray-300 rounded-md sm:text-sm p-2 border"
+                value={startDate}
+                onChange={(e) => setStartDate(e.target.value)}
+              />
               <span className="text-gray-500">-</span>
-              <input type="date" className="border-gray-300 rounded-md sm:text-sm p-2 border" value={endDate} onChange={e => setEndDate(e.target.value)}/>
+              <input
+                type="date"
+                className="border-gray-300 rounded-md sm:text-sm p-2 border"
+                value={endDate}
+                onChange={(e) => setEndDate(e.target.value)}
+              />
             </div>
           </div>
 
           <div>
             <label className="block text-xs font-medium text-gray-700 mb-1">Buyer Type</label>
-            <select className="border-gray-300 rounded-md sm:text-sm p-2 pr-8 border" value={buyerType} onChange={e => setBuyerType(e.target.value)}>
+            <select
+              className="border-gray-300 rounded-md sm:text-sm p-2 pr-8 border"
+              value={buyerType}
+              onChange={(e) => setBuyerType(e.target.value)}
+            >
               <option value="">All Types</option>
               <option value="RETAIL">Retail</option>
               <option value="CONTRACTOR">Contractor</option>
@@ -156,7 +171,11 @@ export default function OrdersPage() {
 
           <div>
             <label className="block text-xs font-medium text-gray-700 mb-1">Has Invoice?</label>
-            <select className="border-gray-300 rounded-md sm:text-sm p-2 pr-8 border" value={hasInvoice} onChange={e => setHasInvoice(e.target.value)}>
+            <select
+              className="border-gray-300 rounded-md sm:text-sm p-2 pr-8 border"
+              value={hasInvoice}
+              onChange={(e) => setHasInvoice(e.target.value)}
+            >
               <option value="">Any</option>
               <option value="yes">Yes</option>
               <option value="no">No</option>
@@ -165,7 +184,11 @@ export default function OrdersPage() {
 
           <div>
             <label className="block text-xs font-medium text-gray-700 mb-1">Has Linked Tickets?</label>
-            <select className="border-gray-300 rounded-md sm:text-sm p-2 pr-8 border" value={hasLinkedTickets} onChange={e => setHasLinkedTickets(e.target.value)}>
+            <select
+              className="border-gray-300 rounded-md sm:text-sm p-2 pr-8 border"
+              value={hasLinkedTickets}
+              onChange={(e) => setHasLinkedTickets(e.target.value)}
+            >
               <option value="">Any</option>
               <option value="yes">Yes</option>
               <option value="no">No</option>
@@ -173,44 +196,75 @@ export default function OrdersPage() {
           </div>
 
           <div>
-             <label className="block text-xs font-medium text-gray-700 mb-1">Supplier ID</label>
-             <input type="text" placeholder="UUID" className="border-gray-300 rounded-md sm:text-sm p-2 border" value={supplierId} onChange={e => setSupplierId(e.target.value)} />
+            <label className="block text-xs font-medium text-gray-700 mb-1">Supplier ID</label>
+            <input
+              type="text"
+              placeholder="UUID"
+              className="border-gray-300 rounded-md sm:text-sm p-2 border"
+              value={supplierId}
+              onChange={(e) => setSupplierId(e.target.value)}
+            />
           </div>
         </div>
-      </div>
+      </FadeInUp>
 
-      {/* Table */}
       <div className="flex-1 bg-white rounded-xl border border-gray-200 shadow-sm flex flex-col overflow-hidden">
         <div className="overflow-x-auto">
           <table className="min-w-full divide-y divide-gray-300">
             <thead className="bg-green-50 sticky top-0">
               <tr>
-                <th scope="col" className="py-3.5 pl-4 pr-3 text-left text-sm font-semibold text-gray-900 sm:pl-6 text-nowrap">Spruce ID</th>
-                <th scope="col" className="px-3 py-3.5 text-left text-sm font-semibold text-gray-900">Customer</th>
-                <th scope="col" className="px-3 py-3.5 text-left text-sm font-semibold text-gray-900">Buyer Type</th>
-                <th scope="col" className="px-3 py-3.5 text-left text-sm font-semibold text-gray-900 text-nowrap">Product</th>
-                <th scope="col" className="px-3 py-3.5 text-left text-sm font-semibold text-gray-900">Quantity</th>
-                <th scope="col" className="px-3 py-3.5 text-left text-sm font-semibold text-gray-900">Supplier</th>
-                <th scope="col" className="px-3 py-3.5 text-left text-sm font-semibold text-gray-900">Order Date</th>
-                <th scope="col" className="px-3 py-3.5 text-left text-sm font-semibold text-gray-900 text-nowrap">Invoice Status</th>
+                <th scope="col" className="py-3.5 pl-4 pr-3 text-left text-sm font-semibold text-gray-900 sm:pl-6 text-nowrap">
+                  Spruce ID
+                </th>
+                <th scope="col" className="px-3 py-3.5 text-left text-sm font-semibold text-gray-900">
+                  Customer
+                </th>
+                <th scope="col" className="px-3 py-3.5 text-left text-sm font-semibold text-gray-900">
+                  Buyer Type
+                </th>
+                <th scope="col" className="px-3 py-3.5 text-left text-sm font-semibold text-gray-900 text-nowrap">
+                  Product
+                </th>
+                <th scope="col" className="px-3 py-3.5 text-left text-sm font-semibold text-gray-900">
+                  Quantity
+                </th>
+                <th scope="col" className="px-3 py-3.5 text-left text-sm font-semibold text-gray-900">
+                  Supplier
+                </th>
+                <th scope="col" className="px-3 py-3.5 text-left text-sm font-semibold text-gray-900">
+                  Order Date
+                </th>
+                <th scope="col" className="px-3 py-3.5 text-left text-sm font-semibold text-gray-900 text-nowrap">
+                  Invoice Status
+                </th>
               </tr>
             </thead>
+
             <StaggerContainer component="tbody" className="divide-y divide-gray-200 bg-white">
               {isUploading ? (
                 <tr>
-                  <td colSpan="8"><Loader message="Importing CSV... Please wait." /></td>
+                  <td colSpan={8}>
+                    <Loader message="Importing CSV... Please wait." />
+                  </td>
                 </tr>
               ) : loading ? (
                 <OrdersTableSkeleton />
               ) : orders.length === 0 ? (
                 <tr>
-                   <td colSpan="8" className="py-12 text-center text-sm text-gray-500">No orders found matching criteria.</td>
+                  <td colSpan={8} className="py-12 text-center text-sm text-gray-500">
+                    No orders found matching criteria.
+                  </td>
                 </tr>
               ) : (
                 orders.map((order) => {
                   const hasGaps = !order.poNumber && (!order.tickets || order.tickets.length === 0);
+
                   return (
-                    <StaggerItem key={order.id} component="tr" className={`${hasGaps ? 'bg-amber-50 hover:bg-amber-100' : 'hover:bg-gray-50'}`}>
+                    <StaggerItem
+                      key={order.id}
+                      component="tr"
+                      className={hasGaps ? 'bg-amber-50 hover:bg-amber-100' : 'hover:bg-gray-50'}
+                    >
                       <td className="whitespace-nowrap py-4 pl-4 pr-3 text-sm sm:pl-6">
                         <div className="font-medium text-gray-900 flex items-center gap-2">
                           {order.spruceOrderId}
@@ -220,37 +274,52 @@ export default function OrdersPage() {
                             </span>
                           )}
                         </div>
-                        <div className="text-gray-500 text-xs">PO: {order.poNumber || <span className="text-red-400 italic font-medium">None</span>}</div>
+                        <div className="text-gray-500 text-xs">
+                          PO: {order.poNumber || <span className="text-red-400 italic font-medium">None</span>}
+                        </div>
                       </td>
+
                       <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-900 font-medium">
                         {order.customerName}
                       </td>
+
                       <td className="whitespace-nowrap px-3 py-4 text-sm">
-                        <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider ${
-                          order.buyerType === 'CONTRACTOR' ? 'bg-indigo-100 text-indigo-800 border border-indigo-200' : 'bg-green-100 text-green-800 border border-green-200'
-                        }`}>
+                        <span
+                          className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider ${
+                            order.buyerType === 'CONTRACTOR'
+                              ? 'bg-indigo-100 text-indigo-800 border border-indigo-200'
+                              : 'bg-green-100 text-green-800 border border-green-200'
+                          }`}
+                        >
                           {order.buyerType}
                         </span>
                       </td>
+
                       <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-900">
                         {order.product}
                       </td>
+
                       <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-500 font-medium italic">
                         {order.quantity} {order.unit}
                       </td>
+
                       <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-500">
                         {order.supplier?.name || '-'}
                       </td>
+
                       <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-500">
-                        {new Date(order.orderDate).toLocaleDateString()}
+                        {order.orderDate ? new Date(order.orderDate).toLocaleDateString() : '-'}
                       </td>
+
                       <td className="whitespace-nowrap px-3 py-4 text-sm">
                         {order.hasInvoice ? (
                           <div className="flex flex-col">
                             <span className="inline-flex items-center rounded-full bg-green-100 px-2.5 py-0.5 text-[10px] font-bold uppercase text-green-800 w-fit">
                               Invoiced
                             </span>
-                            <span className="text-[10px] text-gray-400 mt-1">{order.invoiceNumber}</span>
+                            <span className="text-[10px] text-gray-400 mt-1">
+                              {order.invoiceNumber || ''}
+                            </span>
                           </div>
                         ) : (
                           <span className="inline-flex items-center rounded-full bg-gray-100 px-2.5 py-0.5 text-[10px] font-bold uppercase text-gray-500">
@@ -269,6 +338,7 @@ export default function OrdersPage() {
     </div>
   );
 }
+
 function OrdersTableSkeleton() {
   return (
     <>

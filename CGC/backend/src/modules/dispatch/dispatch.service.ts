@@ -1,5 +1,6 @@
 import { prisma } from '../../db/prisma.js';
 import { DeliveryStatus } from '@prisma/client';
+import { MailService } from '../../services/mail.service.js';
 
 export const DispatchService = {
   async getDispatchBoard() {
@@ -54,14 +55,29 @@ export const DispatchService = {
       where: { orderId }
     });
 
+    let priorityToUse = priority;
+    if (!existing) {
+      // Find the current max priority for this driver today
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const lastDelivery = await prisma.delivery.findFirst({
+        where: { 
+          driverId,
+          startedAt: { gte: today }
+        },
+        orderBy: { priority: 'desc' }
+      });
+      priorityToUse = (lastDelivery?.priority || 0) + 1;
+    }
+
     let delivery;
     if (existing) {
       delivery = await prisma.delivery.update({
         where: { id: existing.id },
         data: {
           driverId,
-          status: 'ASSIGNED',
-          priority
+          status: 'PLACED',
+          priority: priorityToUse
         }
       });
     } else {
@@ -69,21 +85,50 @@ export const DispatchService = {
         data: {
           orderId,
           driverId,
-          status: 'ASSIGNED',
-          priority
+          status: 'PLACED',
+          priority: priorityToUse
         }
       });
     }
+
+    // Add history entry
+    await prisma.deliveryHistory.create({
+      data: {
+        deliveryId: delivery.id,
+        status: 'PLACED',
+        notes: 'Order assigned to driver'
+      }
+    });
 
     // Sync back to order for legacy compatibility
     await prisma.order.update({
       where: { id: orderId },
       data: {
         driverId,
-        deliveryStatus: 'NOT_STARTED' // Mapping ASSIGNED to NOT_STARTED for legacy
+        deliveryStatus: 'NOT_STARTED' // Mapping PLACED to NOT_STARTED for legacy
       }
     });
 
+    // Send email to driver
+    await MailService.sendAssignmentEmail(driverId, delivery.id);
+
     return delivery;
+  },
+
+  async reorderDeliveries(driverId: string, deliveryIds: string[]) {
+    // Update priorities for all deliveries in the list
+    const updates = deliveryIds.map((id, index) => {
+      return prisma.delivery.update({
+        where: { id },
+        data: { priority: index + 1 }
+      });
+    });
+
+    await prisma.$transaction(updates);
+
+    // Send priority update email
+    await MailService.sendPriorityUpdateEmail(driverId);
+
+    return { success: true };
   }
 };

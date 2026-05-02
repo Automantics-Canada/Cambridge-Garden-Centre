@@ -1,6 +1,5 @@
 import { prisma } from '../../db/prisma.js';
 import { DeliveryStatus } from '@prisma/client';
-// import { supabaseStorage } from '../../services/supabaseStorage.js';
 import supabaseStorage from '../../services/supabaseStorage.js';
 
 export const DeliveriesService = {
@@ -13,38 +12,47 @@ export const DeliveriesService = {
           include: {
             supplier: true
           }
+        },
+        history: {
+          orderBy: { createdAt: 'desc' }
         }
       },
       orderBy: {
-        startedAt: 'desc'
+        priority: 'asc'
       }
     });
   },
 
-  async updateStatus(id: string, status: DeliveryStatus) {
+  async updateStatus(id: string, status: DeliveryStatus, notes?: string) {
     const delivery = await prisma.delivery.findUnique({ where: { id } });
     if (!delivery) throw new Error('Delivery not found');
 
     const updateData: any = { status };
-    if (status === 'PICKED_UP' && !delivery.startedAt) {
+    if (status === 'IN_TRANSIT' && !delivery.startedAt) {
       updateData.startedAt = new Date();
     } else if (status === 'DELIVERED') {
       updateData.completedAt = new Date();
     }
 
-    return prisma.delivery.update({
+    const updated = await prisma.delivery.update({
       where: { id },
       data: updateData,
       include: { driver: true, order: true }
     });
+
+    // Record history
+    await prisma.deliveryHistory.create({
+      data: {
+        deliveryId: id,
+        status,
+        notes: notes || `Status updated to ${status}`
+      }
+    });
+
+    return updated;
   },
 
   async uploadPhoto(id: string, type: 'pickup' | 'delivery', fileBuffer: Buffer, filename: string) {
-    // Generate a unique path in Supabase
-    const path = `deliveries/${id}/${type}-${Date.now()}-${filename}`;
-    // Assuming supabaseStorage.uploadFile exists, or we use a general one.
-    // Let's use uploadTicketImage as a generic uploader if no general one exists, or implement it if missing.
-    // We will assume there is a generic uploadFile or we adapt uploadTicketImage.
     const uploadResult = await supabaseStorage.uploadTicketImage(fileBuffer, `${id}-${type}`, filename);
     
     const updateData = type === 'pickup' ? { pickupPhotoUrl: uploadResult.publicUrl } : { deliveryPhotoUrl: uploadResult.publicUrl };
