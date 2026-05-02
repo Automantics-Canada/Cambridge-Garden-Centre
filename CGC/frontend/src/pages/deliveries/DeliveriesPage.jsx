@@ -5,6 +5,8 @@ import { Truck, Search, MapPin, ExternalLink, Calendar, ChevronDown, ChevronUp }
 
 import { DeliveryTableSkeleton } from '../../components/Skeleton';
 
+import { FadeInUp, StaggerContainer, StaggerItem } from '../../components/Animated';
+
 export default function DeliveriesPage() {
   const [searchParams] = useSearchParams();
   const [deliveries, setDeliveries] = useState([]);
@@ -44,15 +46,15 @@ export default function DeliveriesPage() {
 
   return (
     <div className="space-y-6">
-      <div>
+      <FadeInUp>
         <h1 className="text-2xl font-bold text-gray-900">Deliveries Log</h1>
         <p className="text-sm text-gray-500">Track and review all dispatch activities and photos.</p>
-      </div>
+      </FadeInUp>
 
       {loading ? (
          <DeliveryTableSkeleton />
       ) : (
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+        <FadeInUp delay={0.1} className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
           <table className="w-full text-left text-sm">
             <thead className="bg-gray-50 text-gray-500 border-b border-gray-200">
               <tr>

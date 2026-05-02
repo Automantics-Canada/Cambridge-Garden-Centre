@@ -1,4 +1,4 @@
-import React from 'react';
+import { motion } from 'framer-motion';
 import { Link } from 'react-router-dom';
 
 export default function DriverCard({ driver }) {
@@ -7,7 +7,10 @@ export default function DriverCard({ driver }) {
   const initials = name.split(' ').map(n => n[0]).join('').toUpperCase();
 
   return (
-    <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden hover:shadow-md transition-shadow">
+    <motion.div 
+      whileHover={{ y: -5, transition: { duration: 0.2 } }}
+      className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden hover:shadow-md transition-shadow"
+    >
       <div className="p-5">
         <div className="flex items-start justify-between mb-4">
           <div className="flex items-center gap-3">
@@ -67,6 +70,6 @@ export default function DriverCard({ driver }) {
           View Deliveries
         </Link>
       </div>
-    </div>
+    </motion.div>
   );
 }

@@ -10,6 +10,8 @@ import {
 import { logout } from '../store/authSlice';
 import clsx from 'clsx';
 
+import { motion, AnimatePresence } from 'framer-motion';
+
 export default function DashboardLayout() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const location = useLocation();
@@ -34,7 +36,6 @@ export default function DashboardLayout() {
     }
   ];
 
-
   return (
     <div className="flex h-screen bg-gray-50 overflow-hidden font-sans">
       {/* Sidebar */}
@@ -52,10 +53,13 @@ export default function DashboardLayout() {
 
         <div className="p-4 mb-4 mt-2">
           {sidebarOpen ? (
-            <div>
+            <motion.div
+              initial={{ opacity: 0, x: -20 }}
+              animate={{ opacity: 1, x: 0 }}
+            >
               <h1 className="text-2xl font-bold tracking-tight">CGC</h1>
               <p className="text-xs text-green-300">Operations</p>
-            </div>
+            </motion.div>
           ) : (
             <h1 className="text-2xl font-bold text-center">C</h1>
           )}
@@ -66,10 +70,15 @@ export default function DashboardLayout() {
             <div key={idx}>
               {sidebarOpen && <div className="text-xs font-semibold text-green-500 mb-2 uppercase tracking-wider pl-3">{group.title}</div>}
               <ul className="space-y-1">
-                {group.items.map((item) => {
+                {group.items.map((item, i) => {
                   const isActive = location.pathname === item.path;
                   return (
-                    <li key={item.name}>
+                    <motion.li 
+                      key={item.name}
+                      initial={{ opacity: 0, x: -10 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      transition={{ delay: i * 0.05 }}
+                    >
                       <Link
                         to={item.path}
                         className={clsx(
@@ -82,7 +91,7 @@ export default function DashboardLayout() {
                         {item.icon}
                         {sidebarOpen && <span className="ml-3 font-medium">{item.name}</span>}
                       </Link>
-                    </li>
+                    </motion.li>
                   )
                 })}
               </ul>
@@ -129,11 +138,19 @@ export default function DashboardLayout() {
 
       {/* Main Content */}
       <div className="flex-1 flex flex-col h-screen overflow-hidden">
-
-
         {/* Page Content */}
         <main className="flex-1 overflow-auto bg-[#F9FBF9] p-6 lg:p-8">
-          <Outlet />
+          <AnimatePresence mode="wait">
+            <motion.div
+              key={location.pathname}
+              initial={{ opacity: 0, y: 15 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -15 }}
+              transition={{ duration: 0.25, ease: "easeOut" }}
+            >
+              <Outlet />
+            </motion.div>
+          </AnimatePresence>
         </main>
       </div>
     </div>

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { useNavigate, Link } from 'react-router-dom';
 import { loginAsync, clearError } from '../store/authSlice';
+import { FadeInUp } from '../components/Animated';
 
 export default function Login() {
   const [email, setEmail] = useState('');
@@ -27,7 +28,7 @@ export default function Login() {
 
   return (
     <div className="min-h-screen bg-[#1D5333] flex items-center justify-center p-4">
-      <div className="bg-white rounded-xl shadow-2xl p-8 w-full max-w-md">
+      <FadeInUp className="bg-white rounded-xl shadow-2xl p-8 w-full max-w-md">
         <div className="text-center mb-8">
           <h1 className="text-3xl font-bold text-[#1B4332]">CGC Login</h1>
           <p className="text-gray-500 mt-2">Welcome back to Operations</p>
@@ -77,7 +78,7 @@ export default function Login() {
             Register here
           </Link>
         </p>
-      </div>
+      </FadeInUp>
     </div>
   );
 }

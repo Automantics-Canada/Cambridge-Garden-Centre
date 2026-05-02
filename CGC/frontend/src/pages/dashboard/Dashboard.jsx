@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { Skeleton } from '../../components/Skeleton';
 import Loader from '../../components/Loader';
+import { FadeInUp, StaggerContainer, StaggerItem } from '../../components/Animated';
 
 export default function Dashboard() {
   const user = useSelector((state) => state.auth.user);
@@ -80,7 +81,7 @@ export default function Dashboard() {
   return (
     <div className="max-w-7xl mx-auto space-y-8 pb-12">
       {/* Header */}
-      <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
+      <FadeInUp className="flex flex-col md:flex-row md:items-end justify-between gap-4">
         <div>
           <h1 className="text-3xl font-extrabold text-gray-900 tracking-tight flex items-center gap-2">
             Dashboard
@@ -89,12 +90,11 @@ export default function Dashboard() {
             Welcome back, <span className="text-[#1B4332] font-bold">{user?.name || 'User'}</span>. Here is what's happening today.
           </p>
         </div>
-        
-      </div>
+      </FadeInUp>
 
       {/* KPI Widgets */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-        <div className="bg-white p-6 rounded-3xl border border-gray-200 shadow-sm hover:shadow-md transition-all group">
+      <StaggerContainer className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+        <StaggerItem className="bg-white p-6 rounded-3xl border border-gray-200 shadow-sm hover:shadow-md transition-all group">
           <div className="flex items-center justify-between mb-4">
             <div className="p-3 bg-blue-50 rounded-2xl group-hover:bg-blue-600 transition-colors">
               <Clock className="w-6 h-6 text-blue-600 group-hover:text-white" />
@@ -103,9 +103,9 @@ export default function Dashboard() {
           </div>
           <p className="text-gray-500 text-sm font-medium">Pending Review</p>
           <p className="text-3xl font-black text-gray-900 mt-1">{stats.pendingCount}</p>
-        </div>
+        </StaggerItem>
 
-        <div className="bg-white p-6 rounded-3xl border border-gray-200 shadow-sm hover:shadow-md transition-all group">
+        <StaggerItem className="bg-white p-6 rounded-3xl border border-gray-200 shadow-sm hover:shadow-md transition-all group">
           <div className="flex items-center justify-between mb-4">
             <div className="p-3 bg-red-50 rounded-2xl group-hover:bg-red-600 transition-colors">
               <AlertCircle className="w-6 h-6 text-red-600 group-hover:text-white" />
@@ -113,9 +113,9 @@ export default function Dashboard() {
           </div>
           <p className="text-gray-500 text-sm font-medium">Disputed Invoices</p>
           <p className="text-3xl font-black text-gray-900 mt-1">{stats.disputedCount}</p>
-        </div>
+        </StaggerItem>
 
-        <div className="bg-white p-6 rounded-3xl border border-gray-200 shadow-sm hover:shadow-md transition-all group">
+        <StaggerItem className="bg-white p-6 rounded-3xl border border-gray-200 shadow-sm hover:shadow-md transition-all group">
           <div className="flex items-center justify-between mb-4">
             <div className="p-3 bg-green-50 rounded-2xl group-hover:bg-green-600 transition-colors">
               <FileCheck className="w-6 h-6 text-green-600 group-hover:text-white" />
@@ -123,9 +123,8 @@ export default function Dashboard() {
           </div>
           <p className="text-gray-500 text-sm font-medium">Monthly Processed</p>
           <p className="text-3xl font-black text-gray-900 mt-1">{stats.totalMonthly}</p>
-        </div>
-
-      </div>
+        </StaggerItem>
+      </StaggerContainer>
 
       {/* Main Grid: Recent Invoices & Supplier Status */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">

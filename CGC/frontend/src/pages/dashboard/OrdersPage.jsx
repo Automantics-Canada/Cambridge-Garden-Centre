@@ -6,6 +6,7 @@ import { Search, Upload } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { Skeleton } from '../../components/Skeleton';
 import Loader from '../../components/Loader';
+import { FadeInUp, StaggerContainer, StaggerItem } from '../../components/Animated';
 
 export default function OrdersPage() {
   const [searchParams] = useSearchParams();
@@ -87,7 +88,7 @@ export default function OrdersPage() {
 
   return (
     <div className="flex flex-col h-full space-y-4">
-      <div className="sm:flex sm:items-center justify-between bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
+      <FadeInUp className="sm:flex sm:items-center justify-between bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
         <div className="sm:flex-auto">
           <h1 className="text-2xl font-semibold text-gray-900">Orders</h1>
           <p className="mt-2 text-sm text-gray-700">
@@ -114,10 +115,10 @@ export default function OrdersPage() {
             )}
           </button>
         </div>
-      </div>
+      </FadeInUp>
       
       {/* Filters */}
-      <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm space-y-4">
+      <FadeInUp delay={0.1} className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm space-y-4">
         <div className="flex flex-wrap gap-4 items-end">
           <div className="w-full sm:w-auto flex-1 min-w-[200px]">
             <label className="block text-xs font-medium text-gray-700 mb-1">Search Text</label>
@@ -194,7 +195,7 @@ export default function OrdersPage() {
                 <th scope="col" className="px-3 py-3.5 text-left text-sm font-semibold text-gray-900 text-nowrap">Invoice Status</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-200 bg-white">
+            <StaggerContainer component="tbody" className="divide-y divide-gray-200 bg-white">
               {isUploading ? (
                 <tr>
                   <td colSpan="8"><Loader message="Importing CSV... Please wait." /></td>
@@ -209,7 +210,7 @@ export default function OrdersPage() {
                 orders.map((order) => {
                   const hasGaps = !order.poNumber && (!order.tickets || order.tickets.length === 0);
                   return (
-                    <tr key={order.id} className={`${hasGaps ? 'bg-amber-50 hover:bg-amber-100' : 'hover:bg-gray-50'}`}>
+                    <StaggerItem key={order.id} component="tr" className={`${hasGaps ? 'bg-amber-50 hover:bg-amber-100' : 'hover:bg-gray-50'}`}>
                       <td className="whitespace-nowrap py-4 pl-4 pr-3 text-sm sm:pl-6">
                         <div className="font-medium text-gray-900 flex items-center gap-2">
                           {order.spruceOrderId}
@@ -257,11 +258,11 @@ export default function OrdersPage() {
                           </span>
                         )}
                       </td>
-                    </tr>
+                    </StaggerItem>
                   );
                 })
               )}
-            </tbody>
+            </StaggerContainer>
           </table>
         </div>
       </div>

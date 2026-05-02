@@ -4,6 +4,8 @@ import { Truck, MapPin, Search } from 'lucide-react';
 
 import { DispatchBoardSkeleton } from '../../components/Skeleton';
 
+import { FadeInUp, StaggerContainer, StaggerItem } from '../../components/Animated';
+
 export default function DispatchBoard() {
   const [board, setBoard] = useState({ unassignedOrders: [], unassignedDeliveries: [], drivers: [] });
   const [loading, setLoading] = useState(true);
@@ -36,12 +38,12 @@ export default function DispatchBoard() {
 
   return (
     <div className="space-y-6">
-      <div>
+      <FadeInUp>
         <h1 className="text-2xl font-bold text-gray-900">Dispatch Board</h1>
         <p className="text-sm text-gray-500">Manage daily assignments and track driver workflows.</p>
-      </div>
+      </FadeInUp>
 
-      <div className="flex gap-4 border-b border-gray-200">
+      <FadeInUp delay={0.1} className="flex gap-4 border-b border-gray-200">
         <button
           className={`pb-3 font-semibold text-sm transition-colors ${activeTab === 'unassigned' ? 'border-b-2 border-[#2D6A4F] text-[#2D6A4F]' : 'text-gray-500 hover:text-gray-700'}`}
           onClick={() => setActiveTab('unassigned')}
@@ -54,12 +56,12 @@ export default function DispatchBoard() {
         >
           Assigned Drivers ({board.drivers.length})
         </button>
-      </div>
+      </FadeInUp>
 
       {loading ? (
         <DispatchBoardSkeleton activeTab={activeTab} />
       ) : activeTab === 'unassigned' ? (
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+        <FadeInUp delay={0.2} className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
           <table className="w-full text-left text-sm">
             <thead className="bg-gray-50 text-gray-500">
               <tr>
@@ -98,9 +100,9 @@ export default function DispatchBoard() {
           </table>
         </div>
       ) : (
-        <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+        <StaggerContainer className="grid grid-cols-1 xl:grid-cols-2 gap-6">
           {board.drivers.map(driver => (
-            <div key={driver.id} className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
+            <StaggerItem key={driver.id} className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
               <div className="bg-gray-50 px-5 py-4 border-b border-gray-100 flex justify-between items-center">
                 <div>
                   <h3 className="font-bold text-gray-900 flex items-center gap-2">
@@ -140,9 +142,9 @@ export default function DispatchBoard() {
                   ))
                 )}
               </div>
-            </div>
+            </StaggerItem>
           ))}
-        </div>
+        </StaggerContainer>
       )}
     </div>
   );
