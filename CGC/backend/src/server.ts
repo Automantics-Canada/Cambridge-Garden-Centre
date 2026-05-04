@@ -1,5 +1,5 @@
-import app from './app.js';
 import { env } from './config/env.js';
+import app from './app.js';
 import { prisma } from './db/prisma.js';
 import { verifyStorageConnection } from './services/supabaseStorage.js';
 import { GmailService } from './services/gmail.service.js';

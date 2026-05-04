@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import api from '../../api/axios';
-import { Truck, MapPin, Search, ChevronUp, ChevronDown, Flag, User, GripVertical } from 'lucide-react';
+import { Truck, MapPin, Search, ChevronUp, ChevronDown, Flag, User, GripVertical, Mail } from 'lucide-react';
 import { motion, Reorder } from 'framer-motion';
 import { toast } from 'react-hot-toast';
 import { DispatchBoardSkeleton } from '../../components/Skeleton';
@@ -12,7 +12,6 @@ export default function DispatchBoard() {
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('unassigned');
   
-  // Confirmation Modal State
   const [confirmModal, setConfirmModal] = useState({ isOpen: false, order: null, driver: null });
 
   const fetchBoard = async () => {
@@ -38,13 +37,33 @@ export default function DispatchBoard() {
   const handleAssign = async () => {
     const { order, driver } = confirmModal;
     try {
-      await api.post('/api/dispatch/assign', { orderId: order.id, driverId: driver.id });
-      toast.success(`Assigned ${order.spruceOrderId} to ${driver.name}`);
+      const res = await api.post('/api/dispatch/assign', { orderId: order.id, driverId: driver.id });
+      
+      if (res.data.mailSent) {
+        toast.success(`Assigned & Emailed ${order.spruceOrderId} to ${driver.name}`);
+      } else {
+        toast.success(`Assigned ${order.spruceOrderId} to ${driver.name}`);
+        toast.error(`Email failed: ${res.data.mailError || 'Check driver email'}`, { icon: '⚠️' });
+      }
+      
       setConfirmModal({ isOpen: false, order: null, driver: null });
       fetchBoard();
     } catch (e) {
       console.error('Assign failed', e);
       toast.error('Assignment failed');
+    }
+  };
+
+  const handleResendEmail = async (deliveryId) => {
+    try {
+      const res = await api.post(`/api/dispatch/resend-email/${deliveryId}`);
+      if (res.data.success) {
+        toast.success('Email resent successfully');
+      } else {
+        toast.error(`Failed to send: ${res.data.error || 'Check credentials'}`);
+      }
+    } catch (e) {
+      toast.error('Failed to resend email');
     }
   };
 
@@ -66,13 +85,9 @@ export default function DispatchBoard() {
     try {
       const deliveryIds = newDeliveries.map(d => d.id);
       await api.post('/api/dispatch/reorder', { driverId, deliveryIds });
-      // No need to fetchBoard here as we did optimistic update, 
-      // but maybe priority values in state need updating? 
-      // The backend re-assigns priorities 1, 2, 3...
     } catch (e) {
       console.error('Reorder failed', e);
       toast.error('Failed to save priority');
-      fetchBoard(); // Revert on failure
     }
   };
 
@@ -225,6 +240,13 @@ export default function DispatchBoard() {
                         </div>
 
                         <div className="flex flex-col gap-1">
+                          <button 
+                            onClick={(e) => { e.stopPropagation(); handleResendEmail(del.id); }}
+                            className="p-1 hover:bg-gray-100 rounded text-[#2D6A4F] hover:text-[#1B4332] transition-colors"
+                            title="Resend Link Email"
+                          >
+                            <Mail size={16} />
+                          </button>
                           <button className="p-1 hover:bg-gray-100 rounded text-gray-400 hover:text-gray-900 transition-colors">
                             <ChevronUp size={16} />
                           </button>
@@ -241,7 +263,6 @@ export default function DispatchBoard() {
           ))}
         </div>
       )}
-      {/* Assignment Confirmation Modal */}
       <Modal 
         isOpen={confirmModal.isOpen} 
         onClose={() => setConfirmModal({ isOpen: false, order: null, driver: null })}

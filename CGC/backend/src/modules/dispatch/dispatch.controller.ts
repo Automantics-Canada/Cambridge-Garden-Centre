@@ -36,3 +36,13 @@ export const reorderDeliveries = async (req: Request, res: Response) => {
     res.status(500).json({ error: error.message });
   }
 };
+
+export const resendEmail = async (req: Request, res: Response) => {
+  try {
+    const deliveryId = req.params.deliveryId as string;
+    const result = await DispatchService.resendAssignmentEmail(deliveryId);
+    res.json(result);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+};

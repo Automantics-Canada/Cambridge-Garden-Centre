@@ -110,9 +110,13 @@ export const DispatchService = {
     });
 
     // Send email to driver
-    await MailService.sendAssignmentEmail(driverId, delivery.id);
+    const mailResult = await MailService.sendAssignmentEmail(driverId, delivery.id);
 
-    return delivery;
+    return {
+      ...delivery,
+      mailSent: mailResult?.success || false,
+      mailError: mailResult?.error
+    };
   },
 
   async reorderDeliveries(driverId: string, deliveryIds: string[]) {
@@ -130,5 +134,15 @@ export const DispatchService = {
     await MailService.sendPriorityUpdateEmail(driverId);
 
     return { success: true };
+  },
+
+  async resendAssignmentEmail(deliveryId: string) {
+    const delivery = await prisma.delivery.findUnique({
+      where: { id: deliveryId }
+    });
+    if (!delivery || !delivery.driverId) {
+      throw new Error('Delivery or driver not found');
+    }
+    return await MailService.sendAssignmentEmail(delivery.driverId, deliveryId);
   }
 };
