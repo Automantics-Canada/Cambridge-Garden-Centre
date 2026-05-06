@@ -122,6 +122,40 @@ export const TicketService = {
     return { ticket, ocrJob };
   },
 
+  /**
+   * Ticket uploaded manually by admin: save file, create Ticket, queue OCR.
+   */
+  async ingestManualTicket(params: {
+    buffer: Buffer;
+    originalName: string;
+  }) {
+    const imageUrl = await saveTicketImage(params.buffer, params.originalName);
+
+    const ticket = await prisma.ticket.create({
+      data: {
+        source: TicketSource.MANUAL,
+        imageUrl,
+        ocrRawText: '',
+        ocrConfidence: 0,
+        status: TicketStatus.UNLINKED,
+        receivedAt: new Date(),
+      },
+    });
+
+    const ocrJob = await prisma.ocrJob.create({
+      data: {
+        type: OcrJobType.TICKET,
+        provider: OcrProvider.AWS_TEXTRACT,
+        status: OcrJobStatus.PENDING,
+        ticketId: ticket.id,
+      },
+    });
+
+    triggerOcrProcessing(ocrJob.id);
+
+    return { ticket, ocrJob };
+  },
+
   async processTicketOcr(ticketId: string) {
     const ticket = await prisma.ticket.findUnique({
       where: { id: ticketId },

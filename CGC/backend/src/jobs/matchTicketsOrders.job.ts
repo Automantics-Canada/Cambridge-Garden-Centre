@@ -2,9 +2,8 @@ import cron from 'node-cron';
 import { prisma } from '../db/prisma.js';
 
 export const startMatchTicketsOrdersJob = () => {
-  // TODO: Change to '0 23 * * *' (11 PM daily) in production.
-  // For testing, runs every 5 minutes.
-  cron.schedule('*/5 * * * *', async () => {
+  // Production: Runs at 11:00 PM every day.
+  cron.schedule('0 23 * * *', async () => {
     console.log('[Cron] Starting Ticket-Order Match Job...');
     try {
       const unlinkedTickets = await prisma.ticket.findMany({

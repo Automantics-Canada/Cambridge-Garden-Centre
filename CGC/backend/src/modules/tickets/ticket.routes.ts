@@ -1,8 +1,10 @@
 import { Router } from 'express';
 import multer from 'multer';
+import { authMiddleware } from '../../middleware/authMiddleware.js';
 import {
   ingestWhatsappTicket,
   ingestEmailTicket,
+  uploadManualTicket,
   processTicketOcr,
   getTickets,
   getTicketStats,
@@ -24,6 +26,9 @@ const upload = multer({
 router.post('/whatsapp', upload.single('file'), ingestWhatsappTicket);
 
 router.post('/email', upload.single('file'), ingestEmailTicket);
+
+// Manual upload by admin (authenticated)
+router.post('/upload', authMiddleware, upload.single('file'), uploadManualTicket);
 
 router.post('/:id/process-ocr', processTicketOcr);
 

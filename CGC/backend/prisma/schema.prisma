@@ -301,6 +301,7 @@ enum BuyerType {
 enum TicketSource {
   WHATSAPP
   EMAIL
+  MANUAL
 }
 
 enum TicketStatus {

@@ -116,11 +116,10 @@ export const DispatchService = {
 
     console.timeEnd(`Assignment-${orderId}`);
 
-    // Trigger email in background
-    // console.log(`[MAIL] Triggering background email for ${driverId}...`);
-    // MailService.sendAssignmentEmail(driverId, delivery.id).catch(err => {
-    //   console.error('[MAIL] Background assignment email failed:', err);
-    // });
+    // Trigger assignment email in background (non-blocking)
+    MailService.sendAssignmentEmail(driverId, delivery.id).catch(err => {
+      console.error('[MAIL] Background assignment email failed:', err);
+    });
 
     return delivery;
   },

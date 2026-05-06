@@ -1,5 +1,5 @@
 import { TextractClient, AnalyzeDocumentCommand, type Block } from '@aws-sdk/client-textract';
-import { pdfToPng } from 'pdf-to-png-converter';
+import { PDFDocument } from 'pdf-lib';
 import { PDFParse } from 'pdf-parse';
 import { prisma } from '../../db/prisma.js';
 import type { Prisma } from '@prisma/client';
@@ -27,30 +27,23 @@ export const OrderPdfImportService = {
     const errors: ImportSummary['errors'] = [];
 
     try {
-      console.log('[OrderPdfImport] Attempting PDF to PNG conversion...');
-      let pngPages: any[] = [];
-      try {
-        pngPages = await pdfToPng(buffer, {
-          disableFontFace: true,
-          useSystemFonts: false,
-          viewportScale: 2.0
-        });
-        console.log(`[OrderPdfImport] Converted to ${pngPages.length} pages via pdf-to-png.`);
-      } catch (pngErr: any) {
-        console.warn('[OrderPdfImport] pdf-to-png failed, falling back to direct text extraction:', pngErr.message);
-        // If PNG conversion fails (common on Windows with pdfjs-dist paths), fallback to direct text extraction
-        return await this.importViaTextExtraction(buffer);
-      }
+      console.log('[OrderPdfImport] Attempting PDF split via pdf-lib...');
+      const pdfDoc = await PDFDocument.load(buffer);
+      const pageCount = pdfDoc.getPageCount();
+      console.log(`[OrderPdfImport] Processing ${pageCount} pages...`);
 
-      for (let pageIdx = 0; pageIdx < pngPages.length; pageIdx++) {
-        const page = pngPages[pageIdx];
-        if (!page) continue;
-        
-        console.log(`[OrderPdfImport] Processing page ${pageIdx + 1} via Textract...`);
+      for (let pageIdx = 0; pageIdx < pageCount; pageIdx++) {
+        console.log(`[OrderPdfImport] Sending page ${pageIdx + 1} to Textract...`);
+
+        // Create a new PDF containing only this page
+        const subDoc = await PDFDocument.create();
+        const [copiedPage] = await subDoc.copyPages(pdfDoc, [pageIdx]);
+        subDoc.addPage(copiedPage);
+        const pagePdfBytes = await subDoc.save();
 
         const params = {
           Document: {
-            Bytes: page.content,
+            Bytes: pagePdfBytes,
           },
           FeatureTypes: ['TABLES' as any],
         };
@@ -58,9 +51,13 @@ export const OrderPdfImportService = {
         const command = new AnalyzeDocumentCommand(params);
         const response = await textractClient.send(command);
 
-        if (!response.Blocks) continue;
+        if (!response.Blocks) {
+          console.log(`[OrderPdfImport] Page ${pageIdx + 1}: No blocks returned from Textract.`);
+          continue;
+        }
 
         const tableBlocks = response.Blocks.filter((block) => block.BlockType === 'TABLE');
+        console.log(`[OrderPdfImport] Page ${pageIdx + 1} found ${tableBlocks.length} tables.`);
         if (tableBlocks.length === 0) continue;
 
         for (const tableBlock of tableBlocks) {
@@ -98,9 +95,11 @@ export const OrderPdfImportService = {
           if (rows[1]) {
             rows[1].forEach((cell) => {
               if (cell.ColumnIndex !== undefined) {
-                headers[cell.ColumnIndex] = getText(cell, response.Blocks || []).toLowerCase().replace(/\s+/g, '');
+                const headerText = getText(cell, response.Blocks || []).toLowerCase().replace(/\s+/g, '');
+                headers[cell.ColumnIndex] = headerText;
               }
             });
+            console.log(`[OrderPdfImport] Detected Headers:`, Object.values(headers));
           }
 
           const rowKeys = Object.keys(rows).map(Number).sort((a, b) => a - b);
@@ -120,16 +119,19 @@ export const OrderPdfImportService = {
               }
             });
 
-            const spruceOrderId = rowData['document'];
-            const customerName = rowData['customername'];
-            const itemDesc = rowData['itemdesc'];
+            const spruceOrderId = rowData['document'] || rowData['doc#'] || rowData['order#'];
+            const customerName = rowData['customername'] || rowData['customer'];
+            const itemDesc = rowData['itemdesc'] || rowData['description'] || rowData['item'];
             
-            if (!spruceOrderId || !customerName || !itemDesc) continue;
+            if (!spruceOrderId || !customerName || !itemDesc) {
+              console.log(`[OrderPdfImport] Skipping row ${rowIndex}: Missing required fields`, { spruceOrderId, customerName, itemDesc });
+              continue;
+            }
 
             const deliveryDateRaw = rowData['deliverydate'];
             const entryDateRaw = rowData['entrydate'];
             const qtyRaw = rowData['qty'];
-            const poNumber = rowData['ordernotes']?.match(/PO[:\s]*([A-Za-z0-9]+)/i)?.[1] || null;
+            const poNumber = rowData['ordernotes']?.match(/PO[:\s]*([A-Za-z0-9\-\.]+)/i)?.[1] || null;
 
             let orderDate = new Date();
             if (entryDateRaw) {
@@ -210,6 +212,7 @@ export const OrderPdfImportService = {
       const lines = data.text.split('\n').map((l: string) => l.trim()).filter((l: string) => l.length > 0);
       
       console.log(`[OrderPdfImport] Extracted ${lines.length} lines via pdf-parse.`);
+      console.log(`[OrderPdfImport] Sample lines:`, lines.slice(0, 10));
 
       // Since structure is "fixed", we look for lines that look like data rows.
       // A data row usually starts with a Document ID (number)
@@ -217,12 +220,15 @@ export const OrderPdfImportService = {
         const line = lines[i];
         if (!line) continue;
         
-        // Simple regex to detect Spruce-like document lines (e.g. "123456  01/01/24 ...")
-        const match = line.match(/^(\d+)\s+(\d{1,2}\/\d{1,2}\/\d{2,4})\s+(\d{1,2}\/\d{1,2}\/\d{2,4})/);
+        // Broad regex: [ID] [DATE] [DATE] ...
+        // Supports: 123456 05/06/24 05/07/24  OR  INV-123 2024-05-06 2024-05-07
+        const match = line.match(/^([A-Za-z0-9\-]+)\s+(\d{1,4}[-/]\d{1,2}[-/]\d{2,4})\s+(\d{1,4}[-/]\d{1,2}[-/]\d{2,4})/);
         if (match) {
           const spruceOrderId = match[1];
           const entryDateRaw = match[2];
           const deliveryDateRaw = match[3];
+
+          console.log(`[OrderPdfImport] Potential row match:`, { spruceOrderId, entryDateRaw, deliveryDateRaw });
 
           // Reconstruct the rest of the fields by splitting by multiple spaces
           const parts = line.split(/\s{2,}/);
@@ -231,7 +237,9 @@ export const OrderPdfImportService = {
             const itemDesc = parts[4] || 'Unknown Item';
             const qtyRaw = parts[5];
             const orderNotes = parts[6] || '';
-            const poNumber = orderNotes.match(/PO[:\s]*([A-Za-z0-9]+)/i)?.[1] || null;
+            const poNumber = orderNotes.match(/PO[:\s]*([A-Za-z0-9\-\.]+)/i)?.[1] || null;
+
+            console.log(`[OrderPdfImport] Extracted data:`, { customerName, itemDesc, qtyRaw, poNumber });
 
             let orderDate = entryDateRaw ? new Date(entryDateRaw) : new Date();
             let deliveryDate = deliveryDateRaw ? new Date(deliveryDateRaw) : new Date();

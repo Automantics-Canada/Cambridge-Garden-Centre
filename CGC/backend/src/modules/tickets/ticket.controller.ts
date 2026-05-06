@@ -74,6 +74,37 @@ export const ingestEmailTicket = async (req: Request, res: Response) => {
   }
 };
 
+/**
+ * Manual ticket upload by admin:
+ * multipart/form-data:
+ *  - file: ticket image (JPG/PNG)
+ */
+export const uploadManualTicket = async (req: Request, res: Response) => {
+  const file = (req as any).file as Express.Multer.File | undefined;
+
+  if (!file) {
+    return res.status(400).json({ error: 'file is required' });
+  }
+
+  try {
+    const { ticket, ocrJob } = await TicketService.ingestManualTicket({
+      buffer: file.buffer,
+      originalName: file.originalname,
+    });
+
+    return res.status(201).json({
+      message: 'Ticket uploaded manually and queued for OCR',
+      ticket,
+      ocrJobId: ocrJob.id,
+    });
+  } catch (error: any) {
+    console.error('uploadManualTicket error', error);
+    return res
+      .status(500)
+      .json({ error: error?.message ?? 'Unexpected error' });
+  }
+};
+
 export const processTicketOcr = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
