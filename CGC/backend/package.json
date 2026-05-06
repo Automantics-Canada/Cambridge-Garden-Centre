@@ -34,7 +34,8 @@
   },
   "dependencies": {
     "@aws-sdk/client-bedrock-runtime": "^3.1030.0",
-    "@aws-sdk/client-textract": "^3.1020.0",
+    "@aws-sdk/client-s3": "^3.1042.0",
+    "@aws-sdk/client-textract": "^3.1042.0",
     "@prisma/client": "^6.19.2",
     "@supabase/supabase-js": "^2.38.0",
     "axios": "^1.13.6",
@@ -51,6 +52,9 @@
     "node-cron": "^4.2.1",
     "nodemailer": "^8.0.7",
     "nodemon": "^3.1.14",
+    "pdf-parse": "^2.4.5",
+    "pdf-to-png-converter": "^4.0.0",
+    "pdf2json": "^4.0.3",
     "string-similarity": "^4.0.4",
     "uuid": "^9.0.1"
   }

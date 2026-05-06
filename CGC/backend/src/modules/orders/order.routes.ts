@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import multer from 'multer';
-import { importOrdersFromCsv, getOrders } from './order.controller.js';
+import { importOrdersFromCsv, importOrdersFromPdf, getOrders } from './order.controller.js';
 import { authMiddleware, requireRole } from '../../middleware/authMiddleware.js';
 import { UserRole } from '@prisma/client';
 
@@ -20,6 +20,13 @@ router.post(
   requireRole([UserRole.AP_USER, UserRole.OWNER, UserRole.ADMIN]),
   upload.single('file'),
   importOrdersFromCsv
+);
+
+router.post(
+  '/import-pdf',
+  requireRole([UserRole.AP_USER, UserRole.OWNER, UserRole.ADMIN]),
+  upload.single('file'),
+  importOrdersFromPdf
 );
 
 export default router;

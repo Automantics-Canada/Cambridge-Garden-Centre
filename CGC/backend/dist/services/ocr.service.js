@@ -2,6 +2,7 @@ import { TextractClient, DetectDocumentTextCommand, } from '@aws-sdk/client-text
 import path from 'node:path';
 import fs from 'node:fs';
 import { downloadFileToTemp, cleanupTempFile, isSupabaseUrl, getFilenameFromUrl } from './urlHandler.js';
+import { extractStructuredData } from './bedrock.service.js';
 const textractClient = new TextractClient(); // Relies on standard AWS credential provider chain
 /**
  * Extract text from local image using AWS Textract
@@ -55,9 +56,15 @@ async function extractWithTextract(localPath) {
     // Calculate average confidence
     const totalConfidence = lineBlocks.reduce((acc, block) => acc + (block.Confidence || 0), 0);
     const averageConfidence = lineBlocks.length > 0 ? totalConfidence / lineBlocks.length : 0;
-    const extraction = parseTicketData(rawText);
+    const extraction = await extractStructuredData(rawText, 'TICKET');
     return {
-        ...extraction,
+        rawText,
+        supplierName: extraction.supplierName,
+        ticketDate: extraction.date,
+        material: extraction.material || null,
+        quantity: extraction.quantity,
+        poNumber: extraction.poNumber,
+        ticketNumber: extraction.ticketNumber || null,
         ocrConfidence: averageConfidence,
     };
 }

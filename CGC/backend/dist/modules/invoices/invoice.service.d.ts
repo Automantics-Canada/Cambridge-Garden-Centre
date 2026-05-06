@@ -1,18 +1,20 @@
 import { InvoiceStatus } from '@prisma/client';
 export declare const InvoiceService: {
-    ingestMockEmailInvoice(params: {
+    ingestEmailInvoice(params: {
         buffer: Buffer;
         originalName: string;
         fromEmail: string;
         subject: string;
+        gmailMessageId: string;
     }): Promise<{
         invoice: {
             id: string;
             supplierId: string;
             invoiceNumber: string;
-            ocrRawText: string | null;
             status: import("@prisma/client").$Enums.InvoiceStatus;
+            ocrRawText: string | null;
             receivedAt: Date;
+            gmailMessageId: string;
             senderType: import("@prisma/client").$Enums.SenderType;
             invoiceDate: Date;
             dueDate: Date | null;
@@ -21,7 +23,6 @@ export declare const InvoiceService: {
             fileUrl: string;
             emailFrom: string;
             emailSubject: string;
-            gmailMessageId: string;
             verifiedById: string | null;
             verifiedAt: Date | null;
             disputeNote: string | null;
@@ -30,11 +31,11 @@ export declare const InvoiceService: {
         ocrJob: {
             id: string;
             status: import("@prisma/client").$Enums.OcrJobStatus;
+            startedAt: Date | null;
             invoiceId: string | null;
             type: import("@prisma/client").$Enums.OcrJobType;
             errorMessage: string | null;
             provider: import("@prisma/client").$Enums.OcrProvider;
-            startedAt: Date | null;
             finishedAt: Date | null;
             rawResponse: import("@prisma/client/runtime/library").JsonValue | null;
             ticketId: string | null;
@@ -44,9 +45,10 @@ export declare const InvoiceService: {
         id: string;
         supplierId: string;
         invoiceNumber: string;
-        ocrRawText: string | null;
         status: import("@prisma/client").$Enums.InvoiceStatus;
+        ocrRawText: string | null;
         receivedAt: Date;
+        gmailMessageId: string;
         senderType: import("@prisma/client").$Enums.SenderType;
         invoiceDate: Date;
         dueDate: Date | null;
@@ -55,7 +57,6 @@ export declare const InvoiceService: {
         fileUrl: string;
         emailFrom: string;
         emailSubject: string;
-        gmailMessageId: string;
         verifiedById: string | null;
         verifiedAt: Date | null;
         disputeNote: string | null;
@@ -68,32 +69,15 @@ export declare const InvoiceService: {
         supplier: {
             name: string;
             id: string;
+            phone: string | null;
+            active: boolean;
             type: import("@prisma/client").$Enums.SupplierType;
             emailDomains: string[];
-            keywords: string[];
             contactName: string | null;
             contactEmail: string | null;
-            phone: string | null;
             address: string | null;
-            active: boolean;
+            keywords: string[];
         };
-        lineItems: {
-            id: string;
-            poNumber: string | null;
-            quantity: import("@prisma/client/runtime/library").Decimal;
-            unit: string;
-            invoiceId: string;
-            lineNumber: number;
-            description: string;
-            unitRate: import("@prisma/client/runtime/library").Decimal;
-            lineTotal: import("@prisma/client/runtime/library").Decimal;
-            matchedTicketId: string | null;
-            matchedOrderId: string | null;
-            negotiatedRate: import("@prisma/client/runtime/library").Decimal | null;
-            rateDiscrepancy: import("@prisma/client/runtime/library").Decimal | null;
-            qtyDiscrepancy: import("@prisma/client/runtime/library").Decimal | null;
-            flag: import("@prisma/client").$Enums.LineItemFlag;
-        }[];
         verifiedBy: {
             name: string;
             id: string;
@@ -104,13 +88,32 @@ export declare const InvoiceService: {
             passwordHash: string;
             role: import("@prisma/client").$Enums.UserRole;
         } | null;
+        lineItems: {
+            id: string;
+            poNumber: string | null;
+            quantity: import("@prisma/client/runtime/library").Decimal;
+            unit: string;
+            invoiceId: string;
+            lineNumber: number;
+            description: string;
+            unitRate: import("@prisma/client/runtime/library").Decimal;
+            lineTotal: import("@prisma/client/runtime/library").Decimal;
+            negotiatedRate: import("@prisma/client/runtime/library").Decimal | null;
+            rateDiscrepancy: import("@prisma/client/runtime/library").Decimal | null;
+            qtyDiscrepancy: import("@prisma/client/runtime/library").Decimal | null;
+            flag: import("@prisma/client").$Enums.LineItemFlag;
+            matchedOrderId: string | null;
+            isOverridden: boolean;
+            overrideNote: string | null;
+        }[];
     } & {
         id: string;
         supplierId: string;
         invoiceNumber: string;
-        ocrRawText: string | null;
         status: import("@prisma/client").$Enums.InvoiceStatus;
+        ocrRawText: string | null;
         receivedAt: Date;
+        gmailMessageId: string;
         senderType: import("@prisma/client").$Enums.SenderType;
         invoiceDate: Date;
         dueDate: Date | null;
@@ -119,7 +122,6 @@ export declare const InvoiceService: {
         fileUrl: string;
         emailFrom: string;
         emailSubject: string;
-        gmailMessageId: string;
         verifiedById: string | null;
         verifiedAt: Date | null;
         disputeNote: string | null;
@@ -129,22 +131,35 @@ export declare const InvoiceService: {
         supplier: {
             name: string;
             id: string;
+            phone: string | null;
+            active: boolean;
             type: import("@prisma/client").$Enums.SupplierType;
             emailDomains: string[];
-            keywords: string[];
             contactName: string | null;
             contactEmail: string | null;
-            phone: string | null;
             address: string | null;
-            active: boolean;
+            keywords: string[];
         };
+        verifiedBy: {
+            name: string;
+            id: string;
+            createdAt: Date;
+            phone: string | null;
+            active: boolean;
+            email: string;
+            passwordHash: string;
+            role: import("@prisma/client").$Enums.UserRole;
+        } | null;
         lineItems: ({
-            matchedTicket: {
+            matchedTickets: {
                 id: string;
                 poNumber: string | null;
                 quantity: import("@prisma/client/runtime/library").Decimal | null;
                 unit: string | null;
                 supplierId: string | null;
+                deliveryStatus: import("@prisma/client").$Enums.DriverTaskStatus;
+                driverId: string | null;
+                status: import("@prisma/client").$Enums.TicketStatus;
                 ticketNumber: string | null;
                 source: import("@prisma/client").$Enums.TicketSource;
                 material: string | null;
@@ -156,11 +171,36 @@ export declare const InvoiceService: {
                 linkedOrderId: string | null;
                 linkMethod: string | null;
                 linkedById: string | null;
-                status: import("@prisma/client").$Enums.TicketStatus;
                 receivedAt: Date;
-                driverId: string | null;
-            } | null;
-            matchedOrder: {
+                spruceMatched: boolean;
+            }[];
+            matchedOrder: ({
+                deliveries: ({
+                    driver: {
+                        name: string;
+                        id: string;
+                        createdAt: Date;
+                        phone: string;
+                        active: boolean;
+                        ratePerDelivery: import("@prisma/client/runtime/library").Decimal;
+                        email: string | null;
+                        ratePerTrip: import("@prisma/client/runtime/library").Decimal | null;
+                        type: import("@prisma/client").$Enums.DriverType;
+                    } | null;
+                } & {
+                    id: string;
+                    createdAt: Date;
+                    driverId: string | null;
+                    priority: number;
+                    orderId: string;
+                    status: import("@prisma/client").$Enums.DeliveryStatus;
+                    pickupType: string;
+                    pickupPhotoUrl: string | null;
+                    deliveryPhotoUrl: string | null;
+                    startedAt: Date | null;
+                    completedAt: Date | null;
+                })[];
+            } & {
                 id: string;
                 spruceOrderId: string;
                 poNumber: string | null;
@@ -175,7 +215,10 @@ export declare const InvoiceService: {
                 hasInvoice: boolean;
                 invoiceNumber: string | null;
                 createdAt: Date;
-            } | null;
+                deliveryStatus: import("@prisma/client").$Enums.DriverTaskStatus;
+                driverId: string | null;
+                priority: number;
+            }) | null;
         } & {
             id: string;
             poNumber: string | null;
@@ -186,31 +229,22 @@ export declare const InvoiceService: {
             description: string;
             unitRate: import("@prisma/client/runtime/library").Decimal;
             lineTotal: import("@prisma/client/runtime/library").Decimal;
-            matchedTicketId: string | null;
-            matchedOrderId: string | null;
             negotiatedRate: import("@prisma/client/runtime/library").Decimal | null;
             rateDiscrepancy: import("@prisma/client/runtime/library").Decimal | null;
             qtyDiscrepancy: import("@prisma/client/runtime/library").Decimal | null;
             flag: import("@prisma/client").$Enums.LineItemFlag;
+            matchedOrderId: string | null;
+            isOverridden: boolean;
+            overrideNote: string | null;
         })[];
-        verifiedBy: {
-            name: string;
-            id: string;
-            createdAt: Date;
-            phone: string | null;
-            active: boolean;
-            email: string;
-            passwordHash: string;
-            role: import("@prisma/client").$Enums.UserRole;
-        } | null;
         ocrJobs: {
             id: string;
             status: import("@prisma/client").$Enums.OcrJobStatus;
+            startedAt: Date | null;
             invoiceId: string | null;
             type: import("@prisma/client").$Enums.OcrJobType;
             errorMessage: string | null;
             provider: import("@prisma/client").$Enums.OcrProvider;
-            startedAt: Date | null;
             finishedAt: Date | null;
             rawResponse: import("@prisma/client/runtime/library").JsonValue | null;
             ticketId: string | null;
@@ -219,9 +253,10 @@ export declare const InvoiceService: {
         id: string;
         supplierId: string;
         invoiceNumber: string;
-        ocrRawText: string | null;
         status: import("@prisma/client").$Enums.InvoiceStatus;
+        ocrRawText: string | null;
         receivedAt: Date;
+        gmailMessageId: string;
         senderType: import("@prisma/client").$Enums.SenderType;
         invoiceDate: Date;
         dueDate: Date | null;
@@ -230,7 +265,6 @@ export declare const InvoiceService: {
         fileUrl: string;
         emailFrom: string;
         emailSubject: string;
-        gmailMessageId: string;
         verifiedById: string | null;
         verifiedAt: Date | null;
         disputeNote: string | null;
@@ -240,9 +274,10 @@ export declare const InvoiceService: {
         id: string;
         supplierId: string;
         invoiceNumber: string;
-        ocrRawText: string | null;
         status: import("@prisma/client").$Enums.InvoiceStatus;
+        ocrRawText: string | null;
         receivedAt: Date;
+        gmailMessageId: string;
         senderType: import("@prisma/client").$Enums.SenderType;
         invoiceDate: Date;
         dueDate: Date | null;
@@ -251,7 +286,6 @@ export declare const InvoiceService: {
         fileUrl: string;
         emailFrom: string;
         emailSubject: string;
-        gmailMessageId: string;
         verifiedById: string | null;
         verifiedAt: Date | null;
         disputeNote: string | null;
@@ -261,9 +295,10 @@ export declare const InvoiceService: {
         id: string;
         supplierId: string;
         invoiceNumber: string;
-        ocrRawText: string | null;
         status: import("@prisma/client").$Enums.InvoiceStatus;
+        ocrRawText: string | null;
         receivedAt: Date;
+        gmailMessageId: string;
         senderType: import("@prisma/client").$Enums.SenderType;
         invoiceDate: Date;
         dueDate: Date | null;
@@ -272,7 +307,6 @@ export declare const InvoiceService: {
         fileUrl: string;
         emailFrom: string;
         emailSubject: string;
-        gmailMessageId: string;
         verifiedById: string | null;
         verifiedAt: Date | null;
         disputeNote: string | null;
@@ -282,9 +316,10 @@ export declare const InvoiceService: {
         id: string;
         supplierId: string;
         invoiceNumber: string;
-        ocrRawText: string | null;
         status: import("@prisma/client").$Enums.InvoiceStatus;
+        ocrRawText: string | null;
         receivedAt: Date;
+        gmailMessageId: string;
         senderType: import("@prisma/client").$Enums.SenderType;
         invoiceDate: Date;
         dueDate: Date | null;
@@ -293,11 +328,90 @@ export declare const InvoiceService: {
         fileUrl: string;
         emailFrom: string;
         emailSubject: string;
-        gmailMessageId: string;
         verifiedById: string | null;
         verifiedAt: Date | null;
         disputeNote: string | null;
         OcrJobStatus: import("@prisma/client").$Enums.OcrJobStatus;
+    }>;
+    linkOrderToLineItem(lineItemId: string, orderId: string, userId: string): Promise<{
+        invoice: {
+            id: string;
+            supplierId: string;
+            invoiceNumber: string;
+            status: import("@prisma/client").$Enums.InvoiceStatus;
+            ocrRawText: string | null;
+            receivedAt: Date;
+            gmailMessageId: string;
+            senderType: import("@prisma/client").$Enums.SenderType;
+            invoiceDate: Date;
+            dueDate: Date | null;
+            totalAmount: import("@prisma/client/runtime/library").Decimal;
+            currency: string;
+            fileUrl: string;
+            emailFrom: string;
+            emailSubject: string;
+            verifiedById: string | null;
+            verifiedAt: Date | null;
+            disputeNote: string | null;
+            OcrJobStatus: import("@prisma/client").$Enums.OcrJobStatus;
+        };
+    } & {
+        id: string;
+        poNumber: string | null;
+        quantity: import("@prisma/client/runtime/library").Decimal;
+        unit: string;
+        invoiceId: string;
+        lineNumber: number;
+        description: string;
+        unitRate: import("@prisma/client/runtime/library").Decimal;
+        lineTotal: import("@prisma/client/runtime/library").Decimal;
+        negotiatedRate: import("@prisma/client/runtime/library").Decimal | null;
+        rateDiscrepancy: import("@prisma/client/runtime/library").Decimal | null;
+        qtyDiscrepancy: import("@prisma/client/runtime/library").Decimal | null;
+        flag: import("@prisma/client").$Enums.LineItemFlag;
+        matchedOrderId: string | null;
+        isOverridden: boolean;
+        overrideNote: string | null;
+    }>;
+    linkTicketsToLineItem(lineItemId: string, ticketIds: string[], userId: string): Promise<{
+        invoice: {
+            id: string;
+            supplierId: string;
+            invoiceNumber: string;
+            status: import("@prisma/client").$Enums.InvoiceStatus;
+            ocrRawText: string | null;
+            receivedAt: Date;
+            gmailMessageId: string;
+            senderType: import("@prisma/client").$Enums.SenderType;
+            invoiceDate: Date;
+            dueDate: Date | null;
+            totalAmount: import("@prisma/client/runtime/library").Decimal;
+            currency: string;
+            fileUrl: string;
+            emailFrom: string;
+            emailSubject: string;
+            verifiedById: string | null;
+            verifiedAt: Date | null;
+            disputeNote: string | null;
+            OcrJobStatus: import("@prisma/client").$Enums.OcrJobStatus;
+        };
+    } & {
+        id: string;
+        poNumber: string | null;
+        quantity: import("@prisma/client/runtime/library").Decimal;
+        unit: string;
+        invoiceId: string;
+        lineNumber: number;
+        description: string;
+        unitRate: import("@prisma/client/runtime/library").Decimal;
+        lineTotal: import("@prisma/client/runtime/library").Decimal;
+        negotiatedRate: import("@prisma/client/runtime/library").Decimal | null;
+        rateDiscrepancy: import("@prisma/client/runtime/library").Decimal | null;
+        qtyDiscrepancy: import("@prisma/client/runtime/library").Decimal | null;
+        flag: import("@prisma/client").$Enums.LineItemFlag;
+        matchedOrderId: string | null;
+        isOverridden: boolean;
+        overrideNote: string | null;
     }>;
 };
 //# sourceMappingURL=invoice.service.d.ts.map

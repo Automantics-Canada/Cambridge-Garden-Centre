@@ -13,6 +13,7 @@ export default function OrdersPage() {
   const [loading, setLoading] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef(null);
+  const pdfInputRef = useRef(null);
 
   const [search, setSearch] = useState('');
   const [startDate, setStartDate] = useState('');
@@ -50,17 +51,22 @@ export default function OrdersPage() {
     const file = event.target.files?.[0];
     if (!file) return;
 
-    if (!file.name.toLowerCase().endsWith('.csv')) {
-      toast.error('Please upload a valid CSV file');
+    const isCsv = file.name.toLowerCase().endsWith('.csv');
+    const isPdf = file.name.toLowerCase().endsWith('.pdf');
+
+    if (!isCsv && !isPdf) {
+      toast.error('Please upload a valid CSV or PDF file');
       return;
     }
+
+    const endpoint = isCsv ? '/api/orders/import' : '/api/orders/import-pdf';
 
     const formData = new FormData();
     formData.append('file', file);
 
     setIsUploading(true);
     try {
-      const res = await api.post('/api/orders/import', formData, {
+      const res = await api.post(endpoint, formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
       });
 
@@ -69,11 +75,12 @@ export default function OrdersPage() {
       );
       fetchOrders();
     } catch (err) {
-      toast.error(err.response?.data?.error || 'Failed to import CSV');
+      toast.error(err.response?.data?.error || 'Failed to import file');
       console.error('Import error:', err);
     } finally {
       setIsUploading(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
+      if (pdfInputRef.current) pdfInputRef.current.value = '';
     }
   };
 
@@ -91,15 +98,22 @@ export default function OrdersPage() {
         <div className="sm:flex-auto">
           <h1 className="text-2xl font-semibold text-gray-900">Orders</h1>
           <p className="mt-2 text-sm text-gray-700">
-            View and import Spruce orders via CSV.
+            View and import orders via CSV or PDF.
           </p>
         </div>
 
-        <div className="mt-4 sm:ml-16 sm:mt-0 sm:flex-none">
+        <div className="mt-4 sm:ml-16 sm:mt-0 sm:flex-none flex items-center gap-2">
           <input
             type="file"
             accept=".csv"
             ref={fileInputRef}
+            onChange={handleFileUpload}
+            className="hidden"
+          />
+          <input
+            type="file"
+            accept=".pdf"
+            ref={pdfInputRef}
             onChange={handleFileUpload}
             className="hidden"
           />
@@ -113,6 +127,19 @@ export default function OrdersPage() {
             ) : (
               <>
                 <Upload className="w-4 h-4" /> Import CSV
+              </>
+            )}
+          </button>
+          <button
+            onClick={() => pdfInputRef.current?.click()}
+            disabled={isUploading}
+            className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg font-medium text-sm transition-colors disabled:opacity-50"
+          >
+            {isUploading ? (
+              <>Processing...</>
+            ) : (
+              <>
+                <Upload className="w-4 h-4" /> Import PDF
               </>
             )}
           </button>

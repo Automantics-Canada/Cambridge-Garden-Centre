@@ -19,10 +19,16 @@ export const DispatchService = {
       include: {
         deliveries: {
           where: {
-            startedAt: { gte: today }
+            OR: [
+              { status: { notIn: ['DELIVERED', 'CANCELLED'] } },
+              { completedAt: { gte: today } }
+            ]
           },
           include: {
-            order: true
+            order: true,
+            history: {
+              orderBy: { createdAt: 'desc' }
+            }
           }
         }
       }
@@ -43,6 +49,7 @@ export const DispatchService = {
       unassignedDeliveries,
       drivers: drivers.map(d => ({
         ...d,
+        deliveries: d.deliveries,
         todayDeliveries: d.deliveries.length,
         completedToday: d.deliveries.filter(del => del.status === 'DELIVERED').length
       }))
@@ -50,6 +57,7 @@ export const DispatchService = {
   },
 
   async assignDriver(orderId: string, driverId: string, priority: number = 1) {
+    console.time(`Assignment-${orderId}`);
     // Check if delivery already exists for this order, or create new
     const existing = await prisma.delivery.findFirst({
       where: { orderId }
@@ -57,13 +65,12 @@ export const DispatchService = {
 
     let priorityToUse = priority;
     if (!existing) {
-      // Find the current max priority for this driver today
       const today = new Date();
       today.setHours(0, 0, 0, 0);
       const lastDelivery = await prisma.delivery.findFirst({
         where: { 
           driverId,
-          startedAt: { gte: today }
+          createdAt: { gte: today }
         },
         orderBy: { priority: 'desc' }
       });
@@ -91,7 +98,6 @@ export const DispatchService = {
       });
     }
 
-    // Add history entry
     await prisma.deliveryHistory.create({
       data: {
         deliveryId: delivery.id,
@@ -100,23 +106,23 @@ export const DispatchService = {
       }
     });
 
-    // Sync back to order for legacy compatibility
     await prisma.order.update({
       where: { id: orderId },
       data: {
         driverId,
-        deliveryStatus: 'NOT_STARTED' // Mapping PLACED to NOT_STARTED for legacy
+        deliveryStatus: 'NOT_STARTED'
       }
     });
 
-    // Send email to driver
-    const mailResult = await MailService.sendAssignmentEmail(driverId, delivery.id);
+    console.timeEnd(`Assignment-${orderId}`);
 
-    return {
-      ...delivery,
-      mailSent: mailResult?.success || false,
-      mailError: mailResult?.error
-    };
+    // Trigger email in background
+    // console.log(`[MAIL] Triggering background email for ${driverId}...`);
+    // MailService.sendAssignmentEmail(driverId, delivery.id).catch(err => {
+    //   console.error('[MAIL] Background assignment email failed:', err);
+    // });
+
+    return delivery;
   },
 
   async reorderDeliveries(driverId: string, deliveryIds: string[]) {
@@ -130,8 +136,10 @@ export const DispatchService = {
 
     await prisma.$transaction(updates);
 
-    // Send priority update email
-    await MailService.sendPriorityUpdateEmail(driverId);
+    // Send priority update email in background
+    MailService.sendPriorityUpdateEmail(driverId).catch(err => {
+      console.error('[MAIL] Background priority update email failed:', err);
+    });
 
     return { success: true };
   },

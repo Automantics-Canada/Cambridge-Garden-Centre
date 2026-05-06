@@ -31,6 +31,7 @@ function getTransporter() {
 
 export const MailService = {
   async sendEmail(to: string, subject: string, text: string, html?: string) {
+    console.time(`SendEmail-${to}`);
     try {
       const info = await getTransporter().sendMail({
         from: `"CGC Dispatch" <${process.env.GMAIL_USER}>`,
@@ -39,9 +40,11 @@ export const MailService = {
         text,
         html: html || text.replace(/\n/g, '<br>'),
       });
+      console.timeEnd(`SendEmail-${to}`);
       console.log(`[MAIL] Email sent: ${info.messageId}`);
       return { success: true, messageId: info.messageId };
     } catch (error: any) {
+      console.timeEnd(`SendEmail-${to}`);
       console.error('[MAIL] Error sending email:', error);
       // Detailed error logging for common issues
       if (error.code === 'EAUTH') {
@@ -52,6 +55,7 @@ export const MailService = {
   },
 
   async sendAssignmentEmail(driverId: string, deliveryId: string) {
+    console.time(`AssignmentEmail-${deliveryId}`);
     const [driver, delivery] = await Promise.all([
       prisma.driver.findUnique({ where: { id: driverId } }),
       prisma.delivery.findUnique({ 
@@ -59,6 +63,7 @@ export const MailService = {
         include: { order: { include: { supplier: true } } }
       })
     ]);
+    console.timeEnd(`AssignmentEmail-${deliveryId}`);
 
     if (!driver) {
       console.error(`[MAIL] Driver not found: ${driverId}`);

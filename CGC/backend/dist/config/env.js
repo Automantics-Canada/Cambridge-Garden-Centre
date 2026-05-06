@@ -24,5 +24,10 @@ export const env = {
     supabaseServiceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY,
     supabaseStorageBucket: process.env.SUPABASE_STORAGE_BUCKET,
     supabaseAnonKey: process.env.SUPABASE_ANON_KEY || '',
+    awsRegion: process.env.AWS_REGION || 'us-east-1',
+    bedrockModelId: process.env.BEDROCK_MODEL_ID || 'anthropic.claude-3-haiku-20240307-v1:0',
+    gmailClientId: process.env.GMAIL_CLIENT_ID || '',
+    gmailClientSecret: process.env.GMAIL_CLIENT_SECRET || '',
+    gmailRefreshToken: process.env.GMAIL_REFRESH_TOKEN || '',
 };
 //# sourceMappingURL=env.js.map

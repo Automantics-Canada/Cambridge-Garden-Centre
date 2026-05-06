@@ -1,4 +1,5 @@
 import { prisma } from '../../db/prisma.js';
+import { compareTwoStrings } from 'string-similarity';
 import { saveInvoiceImage } from '../../services/fileStorage.js';
 import { extractExpenseFromLocalImage } from '../../services/invoiceOcr.service.js';
 import { InvoiceStatus, SenderType, OcrJobType, OcrProvider, OcrJobStatus, LineItemFlag, AuditEntityType, AuditActionType, } from '@prisma/client';
@@ -27,25 +28,32 @@ function normalizeString(str) {
 function stringsMatchFuzzy(a, b) {
     const normA = normalizeString(a);
     const normB = normalizeString(b);
-    return normA.includes(normB) || normB.includes(normA);
+    const similarity = compareTwoStrings(normA, normB);
+    return similarity > 0.6 || normA.includes(normB) || normB.includes(normA);
 }
 export const InvoiceService = {
-    async ingestMockEmailInvoice(params) {
+    async ingestEmailInvoice(params) {
         const fileUrl = await saveInvoiceImage(params.buffer, params.originalName);
-        // Mock finding a supplier by email domain
+        // Find supplier by email domain or keywords
         const match = params.fromEmail.match(/@(.+)$/);
-        const domain = match && match[1] ? match[1] : '';
+        const domain = (match?.[1]?.split('>')[0] ?? '').toLowerCase();
         let supplier = await prisma.supplier.findFirst({
             where: domain ? { emailDomains: { hasSome: [domain] } } : {},
         });
         if (!supplier) {
+            // Try fuzzy match on name in subject
+            const allSuppliers = await prisma.supplier.findMany();
+            supplier = allSuppliers.find(s => params.subject.toLowerCase().includes(s.name.toLowerCase())) || null;
+        }
+        if (!supplier) {
+            // Fallback to first supplier or a "General" supplier
             supplier = await prisma.supplier.findFirst();
         }
         if (!supplier)
             throw new Error('No supplier found in the system to link to');
         const invoice = await prisma.invoice.create({
             data: {
-                invoiceNumber: `MOCK-${Date.now()}`,
+                invoiceNumber: `PENDING-${Date.now()}`,
                 senderType: SenderType.SUPPLIER,
                 supplierId: supplier.id,
                 invoiceDate: new Date(),
@@ -54,7 +62,7 @@ export const InvoiceService = {
                 fileUrl,
                 emailFrom: params.fromEmail,
                 emailSubject: params.subject,
-                gmailMessageId: `mock-gmail-${Date.now()}`,
+                gmailMessageId: params.gmailMessageId,
                 status: InvoiceStatus.PENDING_REVIEW,
                 OcrJobStatus: OcrJobStatus.PENDING,
             },
@@ -109,54 +117,63 @@ export const InvoiceService = {
                 if (!item)
                     continue;
                 let matchedOrderId = null;
-                let matchedTicketId = null;
+                let matchedTicketIds = [];
                 let negotiatedRateVal = null;
                 let flags = [];
                 let rateDiscrepancy = null;
                 let qtyDiscrepancy = null;
+                const linePo = item.poNumber || extracted.poNumber || null;
                 // --- MATCH 1: Invoice Line to Ticket ---
-                if (item.poNumber) {
-                    const ticketMatch = await prisma.ticket.findFirst({
-                        where: { poNumber: item.poNumber, supplierId: updatedSupplierId },
+                // 7.1 Match 1: Primary match: PO number on invoice line === PO number on ticket
+                if (linePo) {
+                    const matchingTickets = await prisma.ticket.findMany({
+                        where: { poNumber: linePo, supplierId: updatedSupplierId },
                     });
-                    if (ticketMatch)
-                        matchedTicketId = ticketMatch.id;
+                    if (matchingTickets.length > 0) {
+                        matchedTicketIds = matchingTickets.map(t => t.id);
+                    }
                 }
-                if (!matchedTicketId) {
-                    // Secondary match: supplier + date range (+/- 3 days) + material + qty (+/- 5%)
+                if (matchedTicketIds.length === 0) {
+                    // Secondary match (if no PO): supplier + date range + material type + quantity within 5% tolerance
                     const invoiceDate = new Date(updatedInvoice.invoiceDate);
                     const minDate = new Date(invoiceDate);
                     minDate.setDate(minDate.getDate() - 3);
                     const maxDate = new Date(invoiceDate);
                     maxDate.setDate(maxDate.getDate() + 3);
-                    const secondaryTicketMatch = await prisma.ticket.findFirst({
+                    const potentialTickets = await prisma.ticket.findMany({
                         where: {
                             supplierId: updatedSupplierId,
                             ticketDate: { gte: minDate, lte: maxDate },
-                            // fuzzy material match or just skip material for secondary match if too strict
                         }
                     });
-                    if (secondaryTicketMatch) {
-                        const ticketQty = Number(secondaryTicketMatch.quantity || 0);
-                        const diff = Math.abs(item.quantity - ticketQty);
-                        const tolerance = item.quantity * 0.05;
-                        if (diff <= tolerance) {
-                            matchedTicketId = secondaryTicketMatch.id;
+                    for (const ticket of potentialTickets) {
+                        if (ticket.material && stringsMatchFuzzy(ticket.material, item.description)) {
+                            const ticketQty = Number(ticket.quantity || 0);
+                            const diff = Math.abs(item.quantity - ticketQty);
+                            const tolerance = item.quantity * 0.05;
+                            if (diff <= tolerance) {
+                                matchedTicketIds.push(ticket.id);
+                                // In secondary match, we usually find one primary ticket, 
+                                // but let's allow finding multiple if they hit the tolerance.
+                                // Spec says "One invoice line can match multiple tickets".
+                            }
                         }
                     }
                 }
-                if (!matchedTicketId)
+                if (matchedTicketIds.length === 0) {
                     flags.push(LineItemFlag.NO_TICKET);
+                }
                 // --- MATCH 2: Invoice Line to Order ---
-                if (item.poNumber) {
+                // 7.1 Match 2: Match via PO number: invoice line PO === order PO number
+                if (linePo) {
                     const orderMatch = await prisma.order.findFirst({
-                        where: { poNumber: item.poNumber, supplierId: updatedSupplierId },
+                        where: { poNumber: linePo, supplierId: updatedSupplierId },
                     });
                     if (orderMatch) {
                         matchedOrderId = orderMatch.id;
                         const orderQty = Number(orderMatch.quantity);
                         const diff = item.quantity - orderQty;
-                        const tolerance = orderQty * 0.02;
+                        const tolerance = orderQty * 0.02; // 2% tolerance
                         if (diff > tolerance) {
                             flags.push(LineItemFlag.QTY_MISMATCH);
                             qtyDiscrepancy = diff;
@@ -170,8 +187,16 @@ export const InvoiceService = {
                     flags.push(LineItemFlag.NO_ORDER);
                 }
                 // --- MATCH 3: Rate Match ---
+                // 7.1 Match 3: Look up negotiated_rates table
                 const allRates = await prisma.negotiatedRate.findMany({
-                    where: { supplierId: updatedSupplierId },
+                    where: {
+                        supplierId: updatedSupplierId,
+                        effectiveFrom: { lte: new Date(updatedInvoice.invoiceDate) },
+                        OR: [
+                            { effectiveTo: null },
+                            { effectiveTo: { gte: new Date(updatedInvoice.invoiceDate) } }
+                        ]
+                    },
                 });
                 const rateMatch = allRates.find(r => stringsMatchFuzzy(r.productName, item.description));
                 if (rateMatch) {
@@ -181,11 +206,15 @@ export const InvoiceService = {
                         flags.push(LineItemFlag.RATE_MISMATCH);
                         rateDiscrepancy = diff;
                     }
+                    else if (diff < 0) {
+                        // informational only if billing less - flag remains OK unless other issues
+                    }
                 }
                 else {
                     flags.push(LineItemFlag.RATE_UNKNOWN);
                 }
                 // --- Final Flagging ---
+                // 7.2 Flag Definitions
                 let finalFlag = LineItemFlag.OK;
                 if (flags.length > 1) {
                     finalFlag = LineItemFlag.MULTIPLE_FLAGS;
@@ -198,13 +227,15 @@ export const InvoiceService = {
                         invoiceId,
                         lineNumber: i + 1,
                         description: item.description,
-                        poNumber: item.poNumber || null,
+                        poNumber: linePo,
                         quantity: item.quantity,
-                        unit: 'ea',
+                        unit: 'ea', // Should probably extract unit from Bedrock too, but keeping 'ea' for now
                         unitRate: item.unitPrice,
                         lineTotal: item.totalPrice,
                         matchedOrderId,
-                        matchedTicketId,
+                        matchedTickets: {
+                            connect: matchedTicketIds.map(id => ({ id }))
+                        },
                         negotiatedRate: negotiatedRateVal,
                         rateDiscrepancy,
                         qtyDiscrepancy,
@@ -251,7 +282,12 @@ export const InvoiceService = {
             include: {
                 supplier: true,
                 lineItems: {
-                    include: { matchedOrder: true, matchedTicket: true }
+                    include: {
+                        matchedOrder: {
+                            include: { deliveries: { include: { driver: true } } }
+                        },
+                        matchedTickets: true
+                    }
                 },
                 verifiedBy: true,
                 ocrJobs: { orderBy: { startedAt: 'desc' } },
@@ -315,6 +351,48 @@ export const InvoiceService = {
                 actionType: AuditActionType.INVOICE_REOPENED,
                 performedById: userId,
                 details: { reason, previousStatus: 'LOCKED' },
+            },
+        });
+        return updated;
+    },
+    async linkOrderToLineItem(lineItemId, orderId, userId) {
+        const updated = await prisma.invoiceLineItem.update({
+            where: { id: lineItemId },
+            data: {
+                matchedOrderId: orderId,
+                flag: 'OK', // Reset flag since we manually matched it
+            },
+            include: { invoice: true }
+        });
+        await prisma.auditLog.create({
+            data: {
+                entityType: AuditEntityType.INVOICE,
+                entityId: updated.invoiceId,
+                actionType: AuditActionType.SYSTEM_CONFIG_CHANGE,
+                performedById: userId,
+                details: { action: 'MANUAL_ORDER_LINK', lineItemId, orderId },
+            },
+        });
+        return updated;
+    },
+    async linkTicketsToLineItem(lineItemId, ticketIds, userId) {
+        const updated = await prisma.invoiceLineItem.update({
+            where: { id: lineItemId },
+            data: {
+                matchedTickets: {
+                    set: ticketIds.map(id => ({ id }))
+                },
+                flag: 'OK'
+            },
+            include: { invoice: true }
+        });
+        await prisma.auditLog.create({
+            data: {
+                entityType: AuditEntityType.INVOICE,
+                entityId: updated.invoiceId,
+                actionType: AuditActionType.SYSTEM_CONFIG_CHANGE,
+                performedById: userId,
+                details: { action: 'MANUAL_TICKET_LINK', lineItemId, ticketIds },
             },
         });
         return updated;

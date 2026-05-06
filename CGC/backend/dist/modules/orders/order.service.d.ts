@@ -12,14 +12,14 @@ export declare const OrderService: {
         supplier: {
             name: string;
             id: string;
+            phone: string | null;
+            active: boolean;
             type: import("@prisma/client").$Enums.SupplierType;
             emailDomains: string[];
-            keywords: string[];
             contactName: string | null;
             contactEmail: string | null;
-            phone: string | null;
             address: string | null;
-            active: boolean;
+            keywords: string[];
         } | null;
         tickets: {
             id: string;
@@ -27,6 +27,9 @@ export declare const OrderService: {
             quantity: import("@prisma/client/runtime/library").Decimal | null;
             unit: string | null;
             supplierId: string | null;
+            deliveryStatus: import("@prisma/client").$Enums.DriverTaskStatus;
+            driverId: string | null;
+            status: import("@prisma/client").$Enums.TicketStatus;
             ticketNumber: string | null;
             source: import("@prisma/client").$Enums.TicketSource;
             material: string | null;
@@ -38,9 +41,8 @@ export declare const OrderService: {
             linkedOrderId: string | null;
             linkMethod: string | null;
             linkedById: string | null;
-            status: import("@prisma/client").$Enums.TicketStatus;
             receivedAt: Date;
-            driverId: string | null;
+            spruceMatched: boolean;
         }[];
     } & {
         id: string;
@@ -57,6 +59,9 @@ export declare const OrderService: {
         hasInvoice: boolean;
         invoiceNumber: string | null;
         createdAt: Date;
+        deliveryStatus: import("@prisma/client").$Enums.DriverTaskStatus;
+        driverId: string | null;
+        priority: number;
     })[]>;
 };
 export declare const OrderImportService: {

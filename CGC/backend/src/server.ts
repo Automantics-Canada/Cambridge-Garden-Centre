@@ -5,7 +5,7 @@ import { verifyStorageConnection } from './services/supabaseStorage.js';
 import { GmailService } from './services/gmail.service.js';
 import { processPendingOcrJobs } from './services/ocrJobProcessor.js';
 import { startSpruceReconciliationJob } from './jobs/spruceReconciliation.job.js';
-
+import { startMatchTicketsOrdersJob } from './jobs/matchTicketsOrders.job.js';
 async function main() {
   try {
     // Optionally connect to Prisma DB to test connection on startup
@@ -40,6 +40,9 @@ async function main() {
 
       // Initialize Spruce EOD Cron Job
       startSpruceReconciliationJob();
+      
+      // Initialize Ticket-Order Matching Job
+      startMatchTicketsOrdersJob();
     });
   } catch (error) {
     console.error('Failed to start server:', error);

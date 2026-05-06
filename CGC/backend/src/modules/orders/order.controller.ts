@@ -1,7 +1,7 @@
 import type { Response } from 'express';
 import type { AuthRequest } from '../../middleware/authMiddleware.js';
 import { OrderImportService, OrderService } from './order.service.js';
-
+import { OrderPdfImportService } from './orderPdfImport.service.js';
 export const importOrdersFromCsv = async (req: AuthRequest, res: Response) => {
   const file = req.file;
 
@@ -21,6 +21,28 @@ export const importOrdersFromCsv = async (req: AuthRequest, res: Response) => {
     return res
       .status(500)
       .json({ error: err?.message || 'Unexpected error during import' });
+  }
+};
+
+export const importOrdersFromPdf = async (req: AuthRequest, res: Response) => {
+  const file = req.file;
+
+  if (!file) {
+    return res.status(400).json({ error: 'PDF file is required (field name: file)' });
+  }
+
+  try {
+    const summary = await OrderPdfImportService.importFromPdf(file.buffer);
+
+    return res.status(200).json({
+      message: 'PDF Import completed',
+      ...summary,
+    });
+  } catch (err: any) {
+    console.error('Order PDF import error', err);
+    return res
+      .status(500)
+      .json({ error: err?.message || 'Unexpected error during PDF import' });
   }
 };
 

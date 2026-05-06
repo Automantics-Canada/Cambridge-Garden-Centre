@@ -4,8 +4,11 @@ import { mapCsvRowToOrder } from './orderCsvMapper.js';
 import { saveCsvFile } from '../../services/fileStorage.js';
 export const OrderService = {
     async getOrders(filters) {
-        const { startDate, endDate, buyerType, supplierId, hasInvoice, hasLinkedTickets, search } = filters;
+        const { startDate, endDate, buyerType, supplierId, driverId, hasInvoice, hasLinkedTickets, search } = filters;
         let where = {};
+        if (driverId) {
+            where.driverId = driverId;
+        }
         if (startDate || endDate) {
             where.orderDate = {};
             if (startDate)

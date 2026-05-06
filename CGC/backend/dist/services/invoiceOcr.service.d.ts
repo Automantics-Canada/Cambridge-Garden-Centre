@@ -3,11 +3,13 @@ export interface InvoiceOcrExtractionResult {
     invoiceDate: Date | null;
     totalAmount: number | null;
     invoiceNumber: string | null;
+    poNumber: string | null;
     lineItems: Array<{
         description: string;
         quantity: number;
         unitPrice: number;
         totalPrice: number;
+        poNumber: string | null;
     }>;
     rawResponse: any;
 }

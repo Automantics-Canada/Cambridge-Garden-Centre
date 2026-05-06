@@ -1,4 +1,5 @@
 import { InvoiceService } from './invoice.service.js';
+import { triggerOcrProcessing } from '../../services/ocrJobProcessor.js';
 export const InvoiceController = {
     async ingestMockEmail(req, res, next) {
         try {
@@ -6,16 +7,17 @@ export const InvoiceController = {
                 return res.status(400).json({ error: 'No file uploaded' });
             }
             const { fromEmail = 'supplier@example.com', subject = 'Invoice Attached' } = req.body;
-            const { invoice, ocrJob } = await InvoiceService.ingestMockEmailInvoice({
+            const { invoice, ocrJob } = await InvoiceService.ingestEmailInvoice({
                 buffer: req.file.buffer,
                 originalName: req.file.originalname,
                 fromEmail,
                 subject,
+                gmailMessageId: `manual-${Date.now()}`
             });
-            // Kick off OCR in the background, don't await
-            InvoiceService.processInvoiceOcr(invoice.id).catch((err) => {
-                console.error(`Background OCR failed for invoice ${invoice.id}:`, err);
-            });
+            // Kick off OCR via unified processor
+            if (ocrJob.id) {
+                triggerOcrProcessing(ocrJob.id);
+            }
             res.status(202).json({
                 message: 'Mock email ingested, invoice pending OCR',
                 invoice,
@@ -56,7 +58,7 @@ export const InvoiceController = {
     async verifyInvoice(req, res, next) {
         try {
             // Assuming authMiddleware attaches req.user
-            const userId = req.user?.userId;
+            const userId = req.user?.id;
             if (!userId)
                 return res.status(401).json({ error: 'Unauthorized' });
             const id = req.params.id;
@@ -69,7 +71,7 @@ export const InvoiceController = {
     },
     async disputeInvoice(req, res, next) {
         try {
-            const userId = req.user?.userId;
+            const userId = req.user?.id;
             if (!userId)
                 return res.status(401).json({ error: 'Unauthorized' });
             const { note } = req.body;
@@ -83,12 +85,38 @@ export const InvoiceController = {
     },
     async reopenInvoice(req, res, next) {
         try {
-            const userId = req.user?.userId;
+            const userId = req.user?.id;
             if (!userId)
                 return res.status(401).json({ error: 'Unauthorized' });
             const { reason } = req.body;
             const id = req.params.id;
             const updated = await InvoiceService.reopenInvoice(id, userId, reason || 'Reopened for review');
+            res.json(updated);
+        }
+        catch (error) {
+            next(error);
+        }
+    },
+    async linkOrderToLineItem(req, res, next) {
+        try {
+            const userId = req.user?.id;
+            if (!userId)
+                return res.status(401).json({ error: 'Unauthorized' });
+            const { lineItemId, orderId } = req.body;
+            const updated = await InvoiceService.linkOrderToLineItem(lineItemId, orderId, userId);
+            res.json(updated);
+        }
+        catch (error) {
+            next(error);
+        }
+    },
+    async linkTicketsToLineItem(req, res, next) {
+        try {
+            const userId = req.user?.id;
+            if (!userId)
+                return res.status(401).json({ error: 'Unauthorized' });
+            const { lineItemId, ticketIds } = req.body;
+            const updated = await InvoiceService.linkTicketsToLineItem(lineItemId, ticketIds, userId);
             res.json(updated);
         }
         catch (error) {

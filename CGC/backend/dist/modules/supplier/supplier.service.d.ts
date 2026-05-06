@@ -16,14 +16,14 @@ export declare const SupplierService: {
     } & {
         name: string;
         id: string;
+        phone: string | null;
+        active: boolean;
         type: import("@prisma/client").$Enums.SupplierType;
         emailDomains: string[];
-        keywords: string[];
         contactName: string | null;
         contactEmail: string | null;
-        phone: string | null;
         address: string | null;
-        active: boolean;
+        keywords: string[];
     })[]>;
     create(data: {
         name: string;
@@ -37,14 +37,14 @@ export declare const SupplierService: {
     }): Promise<{
         name: string;
         id: string;
+        phone: string | null;
+        active: boolean;
         type: import("@prisma/client").$Enums.SupplierType;
         emailDomains: string[];
-        keywords: string[];
         contactName: string | null;
         contactEmail: string | null;
-        phone: string | null;
         address: string | null;
-        active: boolean;
+        keywords: string[];
     }>;
     update(id: string, data: Partial<{
         name: string;
@@ -59,26 +59,26 @@ export declare const SupplierService: {
     }>): Promise<{
         name: string;
         id: string;
+        phone: string | null;
+        active: boolean;
         type: import("@prisma/client").$Enums.SupplierType;
         emailDomains: string[];
-        keywords: string[];
         contactName: string | null;
         contactEmail: string | null;
-        phone: string | null;
         address: string | null;
-        active: boolean;
+        keywords: string[];
     }>;
     remove(id: string): Promise<{
         name: string;
         id: string;
+        phone: string | null;
+        active: boolean;
         type: import("@prisma/client").$Enums.SupplierType;
         emailDomains: string[];
-        keywords: string[];
         contactName: string | null;
         contactEmail: string | null;
-        phone: string | null;
         address: string | null;
-        active: boolean;
+        keywords: string[];
     }>;
     addNegotiatedRate(supplierId: string, data: {
         productName: string;
