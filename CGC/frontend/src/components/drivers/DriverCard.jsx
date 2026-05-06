@@ -2,7 +2,7 @@ import { motion } from 'framer-motion';
 import { Link } from 'react-router-dom';
 
 export default function DriverCard({ driver }) {
-  const { name, phone, ratePerTrip, type, stats, currentTask } = driver;
+  const { name, phone, email, ratePerTrip, type, stats, currentTask } = driver;
   
   const initials = name.split(' ').map(n => n[0]).join('').toUpperCase();
 
@@ -18,8 +18,10 @@ export default function DriverCard({ driver }) {
               {initials}
             </div>
             <div>
-              <h3 className="font-bold text-gray-900">{name}</h3>
-              <p className="text-xs text-gray-500">{type === 'CGC_FLEET' ? 'Fleet' : 'Independent'} • ${ratePerTrip}/trip</p>
+              <h3 className="font-bold text-gray-900 leading-tight">{name}</h3>
+              <p className="text-[10px] text-gray-500 font-medium">{email || 'No email'}</p>
+              <p className="text-[10px] text-gray-500 font-medium">{phone || 'No phone'}</p>
+              <p className="text-xs text-gray-500 mt-1">{type === 'CGC_FLEET' ? 'Fleet' : 'Independent'} • ${ratePerTrip}/trip</p>
               <div className="flex items-center gap-1 mt-1">
                 <div className="w-2 h-2 rounded-full bg-green-500"></div>
                 <span className="text-[10px] font-semibold text-green-600 uppercase tracking-wider">Active</span>

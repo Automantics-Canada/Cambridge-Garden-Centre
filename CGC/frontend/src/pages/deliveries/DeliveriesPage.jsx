@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import api from '../../api/axios';
-import { Truck, Search, MapPin, ExternalLink, Calendar, ChevronDown, ChevronUp, User, Clock, Image as ImageIcon, History, MoreVertical, Flag, Package2, GripVertical } from 'lucide-react';
+import { Truck, Search, MapPin, ExternalLink, Calendar, ChevronDown, ChevronUp, User, Clock, Image as ImageIcon, History, MoreVertical, Flag, Package2, GripVertical, X, Filter } from 'lucide-react';
 import { DeliveryTableSkeleton } from '../../components/Skeleton';
 import { FadeInUp, StaggerContainer, StaggerItem } from '../../components/Animated';
 import { Reorder, motion, AnimatePresence } from 'framer-motion';
@@ -16,6 +16,11 @@ export default function DeliveriesPage() {
   const [loading, setLoading] = useState(true);
   const [expandedDriverId, setExpandedDriverId] = useState(null);
   const [expandedDeliveryId, setExpandedDeliveryId] = useState(null);
+  
+  // Search and Filter State
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedDate, setSelectedDate] = useState('');
+  const [selectedDriver, setSelectedDriver] = useState('');
 
   const driverIdParam = searchParams.get('driverId');
 
@@ -31,6 +36,7 @@ export default function DeliveriesPage() {
       
       if (driverIdParam) {
         setExpandedDriverId(driverIdParam);
+        setSelectedDriver(driverIdParam);
       }
     } catch (e) {
       console.error('Failed to fetch data', e);
@@ -75,15 +81,46 @@ export default function DeliveriesPage() {
     }
   };
 
+  const filteredDeliveries = useMemo(() => {
+    let result = [...deliveries];
+
+    // Search filter
+    if (searchQuery) {
+      const query = searchQuery.toLowerCase();
+      result = result.filter(del => 
+        del.order?.spruceOrderId?.toLowerCase().includes(query) ||
+        del.order?.customerName?.toLowerCase().includes(query) ||
+        del.driver?.name?.toLowerCase().includes(query) ||
+        del.order?.product?.toLowerCase().includes(query)
+      );
+    }
+
+    // Date filter
+    if (selectedDate) {
+      result = result.filter(del => {
+        const delDate = new Date(del.createdAt).toISOString().split('T')[0];
+        return delDate === selectedDate;
+      });
+    }
+
+    // Driver filter
+    if (selectedDriver) {
+      result = result.filter(del => del.driverId === selectedDriver);
+    }
+
+    // Sort by date descending
+    return result.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  }, [deliveries, searchQuery, selectedDate, selectedDriver]);
+
   const groupedDeliveries = useMemo(() => {
     const map = {};
-    deliveries.forEach(del => {
+    filteredDeliveries.forEach(del => {
       const dId = del.driverId || 'unassigned';
       if (!map[dId]) map[dId] = [];
       map[dId].push(del);
     });
     return map;
-  }, [deliveries]);
+  }, [filteredDeliveries]);
 
   if (loading) return <DeliveryTableSkeleton />;
 
@@ -99,12 +136,78 @@ export default function DeliveriesPage() {
       </FadeInUp>
 
       <div className="space-y-4">
-        {deliveries.length === 0 ? (
+        {/* Search and Filters Bar */}
+        <FadeInUp>
+          <div className="bg-white p-4 rounded-2xl border border-gray-200 shadow-sm space-y-4">
+            <div className="flex flex-col md:flex-row gap-4">
+              <div className="relative flex-1">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
+                <input
+                  type="text"
+                  placeholder="Search by Order ID, Customer, or Driver..."
+                  className="w-full pl-10 pr-10 py-2.5 rounded-xl border border-gray-100 focus:border-[#2D6A4F] focus:ring-4 focus:ring-[#2D6A4F]/5 outline-none transition-all text-sm font-medium"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                />
+                {searchQuery && (
+                  <button 
+                    onClick={() => setSearchQuery('')}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                  >
+                    <X size={16} />
+                  </button>
+                )}
+              </div>
+              
+              <div className="flex flex-wrap gap-3">
+                <div className="relative min-w-[160px]">
+                  <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
+                  <input 
+                    type="date"
+                    className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-gray-100 focus:border-[#2D6A4F] focus:ring-4 focus:ring-[#2D6A4F]/5 outline-none transition-all text-sm font-medium bg-white"
+                    value={selectedDate}
+                    onChange={(e) => setSelectedDate(e.target.value)}
+                  />
+                </div>
+
+                <div className="relative min-w-[160px]">
+                  <User className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
+                  <select
+                    className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-gray-100 focus:border-[#2D6A4F] focus:ring-4 focus:ring-[#2D6A4F]/5 outline-none transition-all text-sm font-medium bg-white appearance-none"
+                    value={selectedDriver}
+                    onChange={(e) => setSelectedDriver(e.target.value)}
+                  >
+                    <option value="">All Drivers</option>
+                    {drivers.map(d => (
+                      <option key={d.id} value={d.id}>{d.name}</option>
+                    ))}
+                  </select>
+                  <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" size={16} />
+                </div>
+
+                {(searchQuery || selectedDate || selectedDriver) && (
+                  <button
+                    onClick={() => {
+                      setSearchQuery('');
+                      setSelectedDate('');
+                      setSelectedDriver('');
+                    }}
+                    className="flex items-center gap-2 text-[10px] font-black text-red-500 uppercase tracking-wider px-3 hover:bg-red-50 rounded-lg transition-colors"
+                  >
+                    <X size={14} /> Clear
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        </FadeInUp>
+
+        {filteredDeliveries.length === 0 ? (
           <div className="py-20 text-center bg-white rounded-2xl border border-dashed border-gray-200 text-gray-400 font-medium">
-            No deliveries found in the logs
+            {deliveries.length === 0 ? 'No deliveries found in the logs' : 'No deliveries match your filters'}
           </div>
         ) : (
-          deliveries.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)).map((del, idx) => {
+          filteredDeliveries.map((del, idx) => {
             const isDelExpanded = expandedDeliveryId === del.id;
             return (
               <div 
