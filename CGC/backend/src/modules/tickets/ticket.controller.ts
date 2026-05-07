@@ -167,6 +167,19 @@ export const linkTicketToOrder = async (req: Request, res: Response) => {
   }
 };
 
+export const unlinkTicketFromOrder = async (req: Request, res: Response) => {
+  try {
+    const { orderId } = req.body;
+    if (!orderId) {
+      return res.status(400).json({ error: 'orderId is required' });
+    }
+    await TicketService.unlinkTicketFromOrder(req.params.id as string, orderId);
+    return res.status(204).send();
+  } catch (error: any) {
+    return res.status(500).json({ error: error.message || 'Unexpected error' });
+  }
+};
+
 export const updateTicket = async (req: Request, res: Response) => {
   try {
     const ticket = await TicketService.updateTicket(req.params.id as string, req.body);

@@ -11,6 +11,7 @@ import {
   getTicketById,
   updateTicket,
   linkTicketToOrder,
+  unlinkTicketFromOrder,
   deleteTicket,
   getOcrJobStatus,
   processPendingOcrJobsEndpoint,
@@ -42,6 +43,7 @@ router.get('/stats', getTicketStats);
 router.get('/', getTickets);
 router.get('/:id', getTicketById);
 router.post('/:id/link', linkTicketToOrder);
+router.post('/:id/unlink', unlinkTicketFromOrder);
 router.put('/:id', updateTicket);
 router.delete('/:id', deleteTicket);
 

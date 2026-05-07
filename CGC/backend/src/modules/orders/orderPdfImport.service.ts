@@ -131,7 +131,7 @@ export const OrderPdfImportService = {
             const deliveryDateRaw = rowData['deliverydate'];
             const entryDateRaw = rowData['entrydate'];
             const qtyRaw = rowData['qty'];
-            const poNumber = rowData['ordernotes']?.match(/PO[:\s]*([A-Za-z0-9\-\.]+)/i)?.[1] || null;
+            const poNumber = rowData['podocument'] || rowData['ponumber'] || rowData['po#'] || rowData['ordernotes']?.match(/PO[:\s]*([A-Za-z0-9\-\.]+)/i)?.[1] || null;
 
             let orderDate = new Date();
             if (entryDateRaw) {

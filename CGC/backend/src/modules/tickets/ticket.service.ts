@@ -176,9 +176,9 @@ export const TicketService = {
       
       const finalPoNumber = extracted.poNumber || ticket.poNumber;
       
-      let linkedOrderId = null;
+      let linkedOrderId: string | null = null;
       let ticketStatus: TicketStatus = TicketStatus.UNLINKED;
-      let linkMethod = null;
+      let linkMethod: string | null = null;
 
       if (finalPoNumber) {
         // Attempt to find Order by PO number
@@ -186,14 +186,27 @@ export const TicketService = {
           where: { poNumber: finalPoNumber },
         });
 
-        // Link automatically if exactly one match is found
-        if (matchingOrders.length === 1) {
-          const matchingOrder = matchingOrders[0];
-          if (matchingOrder) {
-            linkedOrderId = matchingOrder.id;
-            ticketStatus = TicketStatus.LINKED;
-            linkMethod = 'AUTO';
+        // Link automatically to all matches
+        if (matchingOrders.length > 0) {
+          for (const order of matchingOrders) {
+            await prisma.ticketOrderMatch.upsert({
+              where: {
+                ticketId_orderId: {
+                  ticketId: ticketId,
+                  orderId: order.id,
+                },
+              },
+              update: {},
+              create: {
+                ticketId: ticketId,
+                orderId: order.id,
+                matchMethod: 'AUTO_PO',
+              },
+            });
           }
+          linkedOrderId = matchingOrders[0]?.id || null;
+          ticketStatus = TicketStatus.LINKED;
+          linkMethod = 'AUTO';
         }
       }
 
@@ -288,7 +301,14 @@ export const TicketService = {
     return prisma.ticket.findMany({
       where,
       orderBy: { receivedAt: 'desc' },
-      include: { supplier: true, driver: true, linkedOrder: true },
+      include: { 
+        supplier: true, 
+        driver: true, 
+        linkedOrder: true,
+        orderMatches: {
+          include: { order: true }
+        }
+      },
     });
   },
 
@@ -305,7 +325,15 @@ export const TicketService = {
   async getTicketById(id: string) {
     return prisma.ticket.findUnique({
       where: { id },
-      include: { supplier: true, driver: true, ocrJobs: true, linkedOrder: true },
+      include: { 
+        supplier: true, 
+        driver: true, 
+        ocrJobs: true, 
+        linkedOrder: true,
+        orderMatches: {
+          include: { order: true }
+        }
+      },
     });
   },
 
@@ -328,7 +356,65 @@ export const TicketService = {
     });
   },
 
+  async unlinkTicketFromOrder(ticketId: string, orderId: string) {
+    // Delete junction record
+    await prisma.ticketOrderMatch.delete({
+      where: {
+        ticketId_orderId: {
+          ticketId,
+          orderId,
+        },
+      },
+    });
+
+    // Check if there are any remaining matches
+    const remainingMatches = await prisma.ticketOrderMatch.findMany({
+      where: { ticketId },
+      orderBy: { matchedAt: 'desc' },
+    });
+
+    if (remainingMatches.length > 0) {
+      // Update legacy field to the next available match
+      await prisma.ticket.update({
+        where: { id: ticketId },
+        data: {
+          linkedOrderId: remainingMatches[0]?.orderId || null,
+        },
+      });
+    } else {
+      // No matches left, reset status
+      await prisma.ticket.update({
+        where: { id: ticketId },
+        data: {
+          linkedOrderId: null,
+          status: TicketStatus.UNLINKED,
+          linkMethod: null,
+        },
+      });
+    }
+  },
+
   async linkTicketToOrder(ticketId: string, orderId: string, userId?: string) {
+    // Create junction record
+    await prisma.ticketOrderMatch.upsert({
+      where: {
+        ticketId_orderId: {
+          ticketId,
+          orderId,
+        },
+      },
+      update: {
+        matchMethod: 'MANUAL',
+        createdBy: userId || null,
+      },
+      create: {
+        ticketId,
+        orderId,
+        matchMethod: 'MANUAL',
+        createdBy: userId || null,
+      },
+    });
+
     return prisma.ticket.update({
       where: { id: ticketId },
       data: {

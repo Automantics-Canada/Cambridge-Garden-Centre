@@ -2,8 +2,8 @@ import cron from 'node-cron';
 import { prisma } from '../db/prisma.js';
 
 export const startMatchTicketsOrdersJob = () => {
-  // Production: Runs at 11:00 PM every day.
-  cron.schedule('0 23 * * *', async () => {
+  // Runs every minute for real-time matching
+  cron.schedule('* * * * *', async () => {
     console.log('[Cron] Starting Ticket-Order Match Job...');
     try {
       const unlinkedTickets = await prisma.ticket.findMany({
@@ -13,18 +13,19 @@ export const startMatchTicketsOrdersJob = () => {
       });
 
       if (unlinkedTickets.length === 0) {
-        console.log('[Cron] No unlinked tickets found.');
+        // Also check if there are any tickets that were linked but might have new matches (many-to-many)
+        // But for now, let's focus on UNLINKED ones as per the primary requirement.
         return;
       }
 
       console.log(`[Cron] Processing ${unlinkedTickets.length} unlinked tickets...`);
 
       for (const ticket of unlinkedTickets) {
-        let matchedOrder = null;
+        let matchingOrders: any[] = [];
 
-        // Try exact match on PO Number first
+        // 1. PO matching (Absolute Priority)
         if (ticket.poNumber) {
-          matchedOrder = await prisma.order.findFirst({
+          matchingOrders = await prisma.order.findMany({
             where: {
               poNumber: ticket.poNumber,
             },
@@ -32,15 +33,15 @@ export const startMatchTicketsOrdersJob = () => {
           });
         }
 
-        // If no match by PO, try combination of Date, Supplier, Material, Quantity
-        if (!matchedOrder && ticket.ticketDate && ticket.supplierId && ticket.material && ticket.quantity) {
+        // 2. Fallback to Date/Supplier/Material/Quantity matching if no PO match
+        if (matchingOrders.length === 0 && ticket.ticketDate && ticket.supplierId && ticket.material && ticket.quantity) {
           const dateStart = new Date(ticket.ticketDate);
-          dateStart.setDate(dateStart.getDate() - 2); // 2 days before
+          dateStart.setDate(dateStart.getDate() - 2);
           
           const dateEnd = new Date(ticket.ticketDate);
-          dateEnd.setDate(dateEnd.getDate() + 2); // 2 days after
+          dateEnd.setDate(dateEnd.getDate() + 2);
 
-          matchedOrder = await prisma.order.findFirst({
+          const fallbackOrder = await prisma.order.findFirst({
             where: {
               supplierId: ticket.supplierId,
               product: {
@@ -51,25 +52,54 @@ export const startMatchTicketsOrdersJob = () => {
                 gte: dateStart,
                 lte: dateEnd,
               },
-              // For decimal comparison, we might need raw query or just exact match for now
               quantity: ticket.quantity,
             },
             orderBy: { orderDate: 'desc' },
           });
+
+          if (fallbackOrder) {
+            matchingOrders = [fallbackOrder];
+          }
         }
 
-        if (matchedOrder) {
+        if (matchingOrders.length > 0) {
+          console.log(`[Cron] Ticket ${ticket.id} matched with ${matchingOrders.length} orders.`);
+
+          for (const order of matchingOrders) {
+            // Create junction table entry (deduplicated by @unique constraint or manual check)
+            try {
+              await prisma.ticketOrderMatch.upsert({
+                where: {
+                  ticketId_orderId: {
+                    ticketId: ticket.id,
+                    orderId: order.id,
+                  }
+                },
+                update: {}, // No update needed if exists
+                create: {
+                  ticketId: ticket.id,
+                  orderId: order.id,
+                  matchMethod: ticket.poNumber === order.poNumber ? 'AUTO_PO' : 'AUTO_FALLBACK',
+                }
+              });
+            } catch (err) {
+              console.error(`[Cron] Error creating match for Ticket ${ticket.id} and Order ${order.id}:`, err);
+            }
+          }
+
+          // Update ticket status
           await prisma.ticket.update({
             where: { id: ticket.id },
             data: {
-              linkedOrderId: matchedOrder.id,
+              linkedOrderId: matchingOrders[0].id, // Backward compatibility
               status: 'LINKED',
               linkMethod: 'AUTO',
             },
           });
-          console.log(`[Cron] Automatically linked Ticket ${ticket.id} to Order ${matchedOrder.id}`);
+          
+          console.log(`[Cron] Automatically linked Ticket ${ticket.id} to ${matchingOrders.length} orders.`);
         } else {
-          console.log(`[Cron] No matching order found for Ticket ${ticket.id}`);
+          // No match found
         }
       }
 
@@ -79,3 +109,4 @@ export const startMatchTicketsOrdersJob = () => {
     }
   });
 };
+

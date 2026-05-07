@@ -20,18 +20,33 @@ export default function DashboardLayout() {
 
   const navGroups = [
     {
-      title: 'MAIN',
+      title: 'Overview',
       items: [
         { name: 'Dashboard', path: '/dashboard', icon: <LayoutDashboard size={20} /> },
+      ]
+    },
+    {
+      title: 'Order Management',
+      items: [
         { name: 'Verification Desk', path: '/dashboard/verification-desk', icon: <File size={20} /> },
         { name: 'Tickets', path: '/dashboard/tickets', icon: <Briefcase size={20} /> },
         { name: 'Orders', path: '/dashboard/orders', icon: <ShoppingCart size={20} /> },
-        { name: 'Suppliers', path: '/dashboard/supplier', icon: <Truck size={20} /> },
-        { name: 'Products', path: '/dashboard/products', icon: <Package size={20} /> },
         { name: 'Invoices', path: '/dashboard/invoices', icon: <Calculator size={20} /> },
+      ]
+    },
+    {
+      title: 'Fleet & Delivery',
+      items: [
         { name: 'Drivers', path: '/dashboard/drivers', icon: <UserSquare size={20} /> },
         { name: 'Dispatch Board', path: '/dashboard/dispatch', icon: <MapPin size={20} /> },
         { name: 'Deliveries', path: '/dashboard/deliveries', icon: <Truck size={20} /> },
+      ]
+    },
+    {
+      title: 'Resources',
+      items: [
+        { name: 'Suppliers', path: '/dashboard/supplier', icon: <Truck size={20} /> },
+        { name: 'Products', path: '/dashboard/products', icon: <Package size={20} /> },
       ]
     }
   ];
@@ -65,10 +80,10 @@ export default function DashboardLayout() {
           )}
         </div>
 
-        <nav className="flex-1 overflow-y-auto px-3 space-y-6">
+        <nav className="flex-1 overflow-y-auto px-3 py-2 space-y-2">
           {navGroups.map((group, idx) => (
-            <div key={idx}>
-              {sidebarOpen && <div className="text-xs font-semibold text-green-500 mb-2 uppercase tracking-wider pl-3">{group.title}</div>}
+            <div key={idx} className={clsx(idx > 0 && "pt-4")}>
+              {sidebarOpen && <div className="text-[10px] font-bold text-green-400/60 mb-2 uppercase tracking-[0.1em] px-3">{group.title}</div>}
               <ul className="space-y-1">
                 {group.items.map((item, i) => {
                   const isActive = location.pathname === item.path;

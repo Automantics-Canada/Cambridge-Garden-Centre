@@ -136,11 +136,31 @@ export default function TicketsPage() {
     try {
       await api.post(`/api/tickets/${ticketId}/link`, { orderId });
       toast.success('Ticket linked to order');
-      setSelectedTicket(null);
+      // Refresh ticket details
+      if (selectedTicket?.id === ticketId) {
+        const res = await api.get(`/api/tickets/${ticketId}`);
+        setSelectedTicket(res.data);
+      }
       fetchTickets();
       fetchStats();
     } catch (err) {
       toast.error('Failed to link ticket');
+    }
+  };
+
+  const handleUnlinkOrder = async (ticketId, orderId) => {
+    try {
+      await api.post(`/api/tickets/${ticketId}/unlink`, { orderId });
+      toast.success('Ticket unlinked from order');
+      // Refresh ticket details if modal is open
+      if (selectedTicket?.id === ticketId) {
+        const res = await api.get(`/api/tickets/${ticketId}`);
+        setSelectedTicket(res.data);
+      }
+      fetchTickets();
+      fetchStats();
+    } catch (err) {
+      toast.error('Failed to unlink ticket');
     }
   };
 
@@ -513,32 +533,43 @@ export default function TicketsPage() {
                   <section className="bg-green-50/50 p-6 rounded-2xl border border-green-100">
                     <div className="flex items-center justify-between mb-4">
                       <h4 className="text-sm font-bold text-gray-900 uppercase tracking-widest flex items-center gap-2">
-                        <LinkIcon className="w-4 h-4 text-green-600" /> Linked Order
+                        <LinkIcon className="w-4 h-4 text-green-600" /> Linked Orders
                       </h4>
                     </div>
 
-                    {selectedTicket.linkedOrder ? (
-                      <div className="bg-white p-4 rounded-xl border border-green-200 flex items-center justify-between">
-                         <div>
-                            <p className="text-xs text-green-600 font-bold uppercase mb-1">Successfully Linked</p>
-                            <p className="text-sm font-bold text-gray-900">Spruce ID: {selectedTicket.linkedOrder.spruceOrderId}</p>
-                            <p className="text-xs text-gray-500">Method: {selectedTicket.linkMethod} Link</p>
-                         </div>
-                         <button 
-                          onClick={() => handleUpdateTicket(selectedTicket.id, { linkedOrderId: null })}
-                          className="text-xs text-red-600 hover:bg-red-50 px-3 py-2 rounded-lg font-bold border border-red-100 transition-colors"
-                         >
-                            Unlink
-                         </button>
-                      </div>
-                    ) : (
-                      <div className="space-y-4">
+                    <div className="space-y-4">
+                      {/* List of currently linked orders */}
+                      {selectedTicket.orderMatches?.length > 0 && (
+                        <div className="space-y-2">
+                          <p className="text-[10px] font-bold text-gray-400 uppercase px-1">Linked Records</p>
+                          {selectedTicket.orderMatches.map(match => (
+                            <div key={match.id} className="bg-white p-3 rounded-xl border border-green-200 flex items-center justify-between shadow-sm">
+                               <div>
+                                  <p className="text-sm font-bold text-gray-900">Spruce ID: {match.order.spruceOrderId}</p>
+                                  <p className="text-[10px] text-gray-500 uppercase">Customer: {match.order.customerName}</p>
+                                  <p className="text-[10px] text-gray-400">Method: {match.matchMethod}</p>
+                               </div>
+                               <button 
+                                onClick={() => handleUnlinkOrder(selectedTicket.id, match.orderId)}
+                                className="text-xs text-red-600 hover:bg-red-50 p-2 rounded-lg font-bold transition-colors"
+                                title="Unlink Order"
+                               >
+                                  <X className="w-4 h-4" />
+                               </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Search for more orders to link */}
+                      <div className="space-y-3 pt-4 border-t border-gray-100">
+                         <p className="text-[10px] font-bold text-gray-400 uppercase px-1">Link {selectedTicket.orderMatches?.length > 0 ? 'Another' : 'an'} Order</p>
                          <div className="relative">
                             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
                             <input 
                               type="text" 
                               placeholder="Search Order by PO, Customer, ID..."
-                              className="w-full pl-10 pr-4 py-3 bg-white border-2 border-green-100 rounded-xl text-sm focus:ring-2 focus:ring-green-500 outline-none shadow-sm"
+                              className="w-full pl-10 pr-4 py-3 bg-white border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-green-500 outline-none shadow-sm"
                               value={orderSearch}
                               onChange={(e) => {
                                 setOrderSearch(e.target.value);
@@ -558,12 +589,13 @@ export default function TicketsPage() {
                                        <p className="text-[10px] text-gray-500 uppercase tracking-tighter">ID: {order.spruceOrderId} | PO: {order.poNumber || 'N/A'}</p>
                                     </div>
                                     <div className="flex items-center gap-3">
-                                       <span className="text-xs font-bold text-gray-500">${Number(order.totalAmount || 0).toFixed(2)}</span>
+                                       <span className="text-xs font-bold text-gray-500">{order.product}</span>
                                        <button 
                                           onClick={() => handleLinkToOrder(selectedTicket.id, order.id)}
                                           className="bg-green-600 text-white p-2 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity"
+                                          disabled={selectedTicket.orderMatches?.some(m => m.orderId === order.id)}
                                        >
-                                          <LinkIcon className="w-4 h-4" />
+                                          {selectedTicket.orderMatches?.some(m => m.orderId === order.id) ? <CheckCircle className="w-4 h-4" /> : <LinkIcon className="w-4 h-4" />}
                                        </button>
                                     </div>
                                  </div>
@@ -575,7 +607,7 @@ export default function TicketsPage() {
                             )}
                          </div>
                       </div>
-                    )}
+                    </div>
                   </section>
                 </div>
               </div>
@@ -588,6 +620,7 @@ export default function TicketsPage() {
     </div>
   );
 }
+
 function TicketsTableSkeleton() {
   return (
     <>

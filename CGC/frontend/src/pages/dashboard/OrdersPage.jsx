@@ -261,6 +261,9 @@ export default function OrdersPage() {
                 <th scope="col" className="px-3 py-3.5 text-left text-sm font-semibold text-gray-900">
                   Order Date
                 </th>
+                <th scope="col" className="px-3 py-3.5 text-left text-sm font-semibold text-gray-900">
+                  Tickets
+                </th>
                 <th scope="col" className="px-3 py-3.5 text-left text-sm font-semibold text-gray-900 text-nowrap">
                   Invoice Status
                 </th>
@@ -270,7 +273,7 @@ export default function OrdersPage() {
             <StaggerContainer component="tbody" className="divide-y divide-gray-200 bg-white">
               {isUploading ? (
                 <tr>
-                  <td colSpan={8}>
+                  <td colSpan={9}>
                     <Loader message="Importing CSV... Please wait." />
                   </td>
                 </tr>
@@ -278,13 +281,13 @@ export default function OrdersPage() {
                 <OrdersTableSkeleton />
               ) : orders.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="py-12 text-center text-sm text-gray-500">
+                  <td colSpan={9} className="py-12 text-center text-sm text-gray-500">
                     No orders found matching criteria.
                   </td>
                 </tr>
               ) : (
                 orders.map((order) => {
-                  const hasGaps = !order.poNumber && (!order.tickets || order.tickets.length === 0);
+                  const hasGaps = !order.poNumber && (!order.ticketMatches || order.ticketMatches.length === 0);
 
                   return (
                     <StaggerItem
@@ -336,6 +339,34 @@ export default function OrdersPage() {
 
                       <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-500">
                         {order.orderDate ? new Date(order.orderDate).toLocaleDateString() : '-'}
+                      </td>
+
+                      <td className="whitespace-nowrap px-3 py-4 text-sm">
+                        <div className="flex -space-x-2 overflow-hidden">
+                          {order.ticketMatches?.length > 0 ? (
+                            order.ticketMatches.map(match => (
+                              <div 
+                                key={match.id} 
+                                className="inline-block h-8 w-8 rounded-full ring-2 ring-white bg-gray-100 overflow-hidden border border-gray-200" 
+                                title={`Ticket: ${match.ticket.ticketNumber || 'N/A'}`}
+                              >
+                                {match.ticket.imageUrl ? (
+                                  <img 
+                                    src={match.ticket.imageUrl.startsWith('http') ? match.ticket.imageUrl : `https://cambridge-garden-centre-1.onrender.com${match.ticket.imageUrl}`} 
+                                    className="h-full w-full object-cover" 
+                                    alt="Ticket"
+                                  />
+                                ) : (
+                                  <div className="h-full w-full flex items-center justify-center bg-gray-200">
+                                    <span className="text-[8px] font-bold">T</span>
+                                  </div>
+                                )}
+                              </div>
+                            ))
+                          ) : (
+                            <span className="text-[10px] text-gray-400 italic">No tickets</span>
+                          )}
+                        </div>
                       </td>
 
                       <td className="whitespace-nowrap px-3 py-4 text-sm">
@@ -392,6 +423,9 @@ function OrdersTableSkeleton() {
           </td>
           <td className="whitespace-nowrap px-3 py-4">
             <Skeleton variant="text" width="80px" height="16px" />
+          </td>
+          <td className="whitespace-nowrap px-3 py-4">
+            <Skeleton variant="rectangle" width="40px" height="24px" className="rounded-full" />
           </td>
           <td className="whitespace-nowrap px-3 py-4">
             <Skeleton variant="rectangle" width="70px" height="20px" className="rounded-full" />

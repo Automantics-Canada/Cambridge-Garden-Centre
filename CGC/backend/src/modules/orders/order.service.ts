@@ -62,7 +62,10 @@ export const OrderService = {
       orderBy: { orderDate: 'desc' },
       include: {
         supplier: true,
-        tickets: true
+        tickets: true,
+        ticketMatches: {
+          include: { ticket: true }
+        }
       }
     });
     
