@@ -348,8 +348,26 @@ export default function VerificationDesk() {
                              </div>
                           </div>
                           <div className="text-right">
-                             <p className="text-2xl font-light text-gray-900">${Number(li.lineTotal).toFixed(0)}</p>
-                             <p className="text-[10px] font-light text-gray-800 uppercase tracking-widest">Extracted Rate: ${li.unitRate}/ton</p>
+                             <p className="text-2xl font-light text-gray-900">${Number(li.lineTotal).toFixed(2)}</p>
+                             <p className="text-[10px] font-light text-gray-800 uppercase tracking-widest">Billed Total</p>
+                             
+                             {li.approvedTotal && (
+                               <div className="mt-2 pt-2 border-t border-gray-100">
+                                 <div className="flex justify-end items-center gap-2">
+                                   <span className="text-[10px] font-normal text-green-700">Approved:</span>
+                                   <span className="text-sm font-semibold text-green-700">${Number(li.approvedTotal).toFixed(2)}</span>
+                                 </div>
+                                 <div className="flex justify-end items-center gap-2">
+                                   <span className="text-[10px] font-normal text-red-600">Discrepancy:</span>
+                                   <span className="text-sm font-bold text-red-600">
+                                     ${(Number(li.lineTotal) - Number(li.approvedTotal)).toFixed(2)}
+                                   </span>
+                                 </div>
+                                 <p className="text-[8px] font-light text-gray-400 mt-1 italic">
+                                   Based on negotiated rate: ${Number(li.negotiatedRate).toFixed(2)} + 13% HST
+                                 </p>
+                               </div>
+                             )}
                           </div>
                        </div>
 

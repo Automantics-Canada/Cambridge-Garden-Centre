@@ -8,13 +8,18 @@ export const startMatchTicketsOrdersJob = () => {
     try {
       const unlinkedTickets = await prisma.ticket.findMany({
         where: {
-          status: 'UNLINKED',
+          OR: [
+            { status: 'UNLINKED' },
+            { 
+              status: 'LINKED',
+              orderMatches: { none: {} }
+            }
+          ]
         },
       });
 
       if (unlinkedTickets.length === 0) {
-        // Also check if there are any tickets that were linked but might have new matches (many-to-many)
-        // But for now, let's focus on UNLINKED ones as per the primary requirement.
+        console.log('[Cron] No unlinked or inconsistent tickets found.');
         return;
       }
 

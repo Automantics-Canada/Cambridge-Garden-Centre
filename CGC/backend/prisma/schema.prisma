@@ -39,6 +39,7 @@ model Ticket {
   ticketNumber            String?
   source                  TicketSource
   supplierId              String?            @db.Uuid
+  supplierName            String?
   poNumber                String?
   material                String?
   quantity                Decimal?           @db.Decimal
@@ -122,6 +123,7 @@ model InvoiceLineItem {
   negotiatedRate  Decimal?     @db.Decimal
   rateDiscrepancy Decimal?     @db.Decimal
   qtyDiscrepancy  Decimal?     @db.Decimal
+  approvedTotal   Decimal?     @db.Decimal
   flag            LineItemFlag
   isOverridden    Boolean      @default(false)
   overrideNote    String?

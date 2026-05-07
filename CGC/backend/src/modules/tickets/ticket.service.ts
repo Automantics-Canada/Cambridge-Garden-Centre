@@ -173,9 +173,9 @@ export const TicketService = {
 
     try {
       const extracted = await extractTextFromLocalImage(ticket.imageUrl);
-      
+
       const finalPoNumber = extracted.poNumber || ticket.poNumber;
-      
+
       let linkedOrderId: string | null = null;
       let ticketStatus: TicketStatus = TicketStatus.UNLINKED;
       let linkMethod: string | null = null;
@@ -229,6 +229,7 @@ export const TicketService = {
           ocrRawText: extracted.rawText,
           ocrConfidence: extracted.ocrConfidence,
           supplierId: updatedSupplierId,
+          supplierName: extracted.supplierName || ticket.supplierName,
           material: extracted.material || ticket.material,
           quantity: extracted.quantity || ticket.quantity,
           poNumber: finalPoNumber,
@@ -270,8 +271,8 @@ export const TicketService = {
   /**
    * Get all tickets with optional filtering
    */
-  async getTickets(filters?: { 
-    status?: TicketStatus; 
+  async getTickets(filters?: {
+    status?: TicketStatus;
     supplierId?: string;
     source?: TicketSource;
     startDate?: string;
@@ -301,9 +302,9 @@ export const TicketService = {
     return prisma.ticket.findMany({
       where,
       orderBy: { receivedAt: 'desc' },
-      include: { 
-        supplier: true, 
-        driver: true, 
+      include: {
+        supplier: true,
+        driver: true,
         linkedOrder: true,
         orderMatches: {
           include: { order: true }
@@ -325,10 +326,10 @@ export const TicketService = {
   async getTicketById(id: string) {
     return prisma.ticket.findUnique({
       where: { id },
-      include: { 
-        supplier: true, 
-        driver: true, 
-        ocrJobs: true, 
+      include: {
+        supplier: true,
+        driver: true,
+        ocrJobs: true,
         linkedOrder: true,
         orderMatches: {
           include: { order: true }

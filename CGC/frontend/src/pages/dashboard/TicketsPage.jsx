@@ -371,7 +371,7 @@ export default function TicketsPage() {
                       <div className="text-xs text-gray-500">{new Date(ticket.receivedAt).toLocaleDateString()}</div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {ticket.supplier?.name || '-'}
+                      {ticket.supplier?.name || ticket.supplierName || '-'}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                       {ticket.material || '-'}
@@ -473,7 +473,7 @@ export default function TicketsPage() {
                         <input 
                           type="text" 
                           className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-green-500 outline-none transition-all"
-                          defaultValue={selectedTicket.supplier?.name}
+                          defaultValue={selectedTicket.supplier?.name || selectedTicket.supplierName}
                           onBlur={(e) => handleUpdateTicket(selectedTicket.id, { supplierName: e.target.value })}
                         />
                       </div>
@@ -539,14 +539,16 @@ export default function TicketsPage() {
 
                     <div className="space-y-4">
                       {/* List of currently linked orders */}
-                      {selectedTicket.orderMatches?.length > 0 && (
+                      {(selectedTicket.orderMatches?.length > 0 || selectedTicket.linkedOrder) ? (
                         <div className="space-y-2">
                           <p className="text-[10px] font-bold text-gray-400 uppercase px-1">Linked Records</p>
-                          {selectedTicket.orderMatches.map(match => (
+                          
+                          {/* Many-to-many matches */}
+                          {selectedTicket.orderMatches?.map(match => (
                             <div key={match.id} className="bg-white p-3 rounded-xl border border-green-200 flex items-center justify-between shadow-sm">
                                <div>
-                                  <p className="text-sm font-bold text-gray-900">Spruce ID: {match.order.spruceOrderId}</p>
-                                  <p className="text-[10px] text-gray-500 uppercase">Customer: {match.order.customerName}</p>
+                                  <p className="text-sm font-bold text-gray-900">Spruce ID: {match.order?.spruceOrderId || 'N/A'}</p>
+                                  <p className="text-[10px] text-gray-500 uppercase">Customer: {match.order?.customerName || 'Unknown'}</p>
                                   <p className="text-[10px] text-gray-400">Method: {match.matchMethod}</p>
                                </div>
                                <button 
@@ -558,8 +560,26 @@ export default function TicketsPage() {
                                </button>
                             </div>
                           ))}
+
+                          {/* Fallback for legacy single-order link if no matches records exist */}
+                          {(!selectedTicket.orderMatches || selectedTicket.orderMatches.length === 0) && selectedTicket.linkedOrder && (
+                            <div className="bg-white p-3 rounded-xl border border-yellow-200 flex items-center justify-between shadow-sm">
+                               <div>
+                                  <p className="text-sm font-bold text-gray-900">Spruce ID: {selectedTicket.linkedOrder.spruceOrderId}</p>
+                                  <p className="text-[10px] text-gray-500 uppercase">Customer: {selectedTicket.linkedOrder.customerName}</p>
+                                  <p className="text-[10px] text-gray-400">Method: {selectedTicket.linkMethod} (Legacy)</p>
+                               </div>
+                               <button 
+                                onClick={() => handleUnlinkOrder(selectedTicket.id, selectedTicket.linkedOrderId)}
+                                className="text-xs text-red-600 hover:bg-red-50 p-2 rounded-lg font-bold transition-colors"
+                                title="Unlink Order"
+                               >
+                                  <X className="w-4 h-4" />
+                               </button>
+                            </div>
+                          )}
                         </div>
-                      )}
+                      ) : null}
 
                       {/* Search for more orders to link */}
                       <div className="space-y-3 pt-4 border-t border-gray-100">

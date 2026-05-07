@@ -99,12 +99,12 @@ export const OrderPdfImportService = {
                 headers[cell.ColumnIndex] = headerText;
               }
             });
-            console.log(`[OrderPdfImport] Detected Headers:`, Object.values(headers));
+            console.log(`[OrderPdfImport] Page ${pageIdx + 1} - ALL Detected Headers (colIndex -> name):`, headers);
           }
 
           const rowKeys = Object.keys(rows).map(Number).sort((a, b) => a - b);
           for (const rowIndex of rowKeys) {
-            if (rowIndex === 1) continue; 
+            if (rowIndex === 1) continue;
 
             const rowCells = rows[rowIndex];
             const rowData: { [key: string]: string } = {};
@@ -119,19 +119,40 @@ export const OrderPdfImportService = {
               }
             });
 
-            const spruceOrderId = rowData['document'] || rowData['doc#'] || rowData['order#'];
-            const customerName = rowData['customername'] || rowData['customer'];
-            const itemDesc = rowData['itemdesc'] || rowData['description'] || rowData['item'];
-            
+            console.log(`[OrderPdfImport] Row ${rowIndex} raw data:`, rowData);
+
+            // Flexible header matching - handle Spruce PDF header variations
+            const findField = (keys: string[]): string | undefined => {
+              // 1. Exact match first
+              for (const key of keys) {
+                const found = Object.keys(rowData).find(h => h === key);
+                if (found && rowData[found]) return rowData[found];
+              }
+              // 2. Contains match (key inside header)
+              for (const key of keys) {
+                const found = Object.keys(rowData).find(h => h.includes(key));
+                if (found && rowData[found]) return rowData[found];
+              }
+              return undefined;
+            };
+
+            const spruceOrderId = findField(['document', 'doc#', 'doc', 'order#', 'orderid', 'id', 'docno', 'documentno']);
+            const customerName = findField(['customername', 'customer', 'client', 'billto', 'name']);
+            const itemDesc = findField(['itemdesc', 'description', 'item', 'product', 'material', 'itemname', 'desc']);
+
             if (!spruceOrderId || !customerName || !itemDesc) {
               console.log(`[OrderPdfImport] Skipping row ${rowIndex}: Missing required fields`, { spruceOrderId, customerName, itemDesc });
+              skipped++;
+              errors.push({ rowNumber: rowIndex, error: `Page ${pageIdx + 1}, Row ${rowIndex}: Missing spruceOrderId="${spruceOrderId}", customerName="${customerName}", itemDesc="${itemDesc}"` });
               continue;
             }
 
-            const deliveryDateRaw = rowData['deliverydate'];
-            const entryDateRaw = rowData['entrydate'];
-            const qtyRaw = rowData['qty'];
-            const poNumber = rowData['podocument'] || rowData['ponumber'] || rowData['po#'] || rowData['ordernotes']?.match(/PO[:\s]*([A-Za-z0-9\-\.]+)/i)?.[1] || null;
+            const deliveryDateRaw = findField(['deliverydate', 'delivery', 'deldate', 'shipdate', 'requireddate']);
+            const entryDateRaw = findField(['entrydate', 'entry', 'orderdate', 'date', 'created']);
+            const qtyRaw = findField(['qty', 'quantity', 'ordered', 'qtyordered', 'units']);
+            const poRaw = findField(['podocument', 'ponumber', 'po#', 'po', 'purchaseorder', 'ponum']);
+            const notesRaw = findField(['ordernotes', 'notes', 'memo', 'reference']);
+            const poNumber = poRaw || notesRaw?.match(/PO[:\s]*([A-Za-z0-9\-\.]+)/i)?.[1] || null;
 
             let orderDate = new Date();
             if (entryDateRaw) {
@@ -146,7 +167,7 @@ export const OrderPdfImportService = {
             }
 
             const quantity = parseFloat(qtyRaw?.replace(/,/g, '') || '0') || 0;
-            
+
             let unit = 'EA';
             const descLower = itemDesc.toLowerCase();
             if (descLower.includes('mt')) unit = 'MT';
@@ -154,7 +175,7 @@ export const OrderPdfImportService = {
             else if (descLower.includes('skid')) unit = 'Skid';
 
             const data: Prisma.OrderUncheckedCreateInput = {
-              spruceOrderId: `${spruceOrderId}-${pageIdx}-${rowIndex}`, 
+              spruceOrderId: spruceOrderId,
               poNumber,
               customerName,
               buyerType: 'CONTRACTOR',

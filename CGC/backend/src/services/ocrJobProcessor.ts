@@ -45,84 +45,10 @@ export async function processOcrJob(jobId: string): Promise<void> {
     console.log(`[OCR] Processing job ${jobId} for entity ${targetId}`);
 
     if (ocrJob.type === OcrJobType.TICKET && ocrJob.ticket) {
-      // Extract text from image using AWS Textract
-      const extracted = await extractTextFromLocalImage(ocrJob.ticket.imageUrl);
-
-      console.log(
-        `[Textract Only] OCR extraction completed for ticket ${ocrJob.ticket.id}`
-      );
-
-      // Determine final PO number (prefer OCR extraction over manual input)
-      const finalPoNumber = extracted.poNumber || ocrJob.ticket.poNumber;
-
-      let linkedOrderId = null;
-      let ticketStatus: TicketStatus = TicketStatus.UNLINKED;
-      let linkMethod = null;
-
-      // Try to auto-link to an order if we have a PO number
-      if (finalPoNumber) {
-        const matchingOrders = await prisma.order.findMany({
-          where: { poNumber: finalPoNumber },
-        });
-
-        // Auto-link only if exactly one match is found
-        if (matchingOrders.length === 1) {
-          const matchingOrder = matchingOrders[0];
-          if (matchingOrder) {
-            linkedOrderId = matchingOrder.id;
-            ticketStatus = TicketStatus.LINKED;
-            linkMethod = 'AUTO';
-            console.log(
-              `[OCR] Auto-linked ticket ${ocrJob.ticket.id} to order ${matchingOrder.id}`
-            );
-          }
-        } else if (matchingOrders.length > 1) {
-          console.warn(
-            `[OCR] Multiple orders found for PO ${finalPoNumber}, ticket remains unlinked`
-          );
-        }
-      }
-
-      // Find supplier if extracted
-      let updatedSupplierId = ocrJob.ticket.supplierId;
-      if (extracted.supplierName) {
-        const foundSupplier = await prisma.supplier.findFirst({
-          where: {
-            name: { contains: extracted.supplierName, mode: 'insensitive' },
-          },
-        });
-        if (foundSupplier) {
-          updatedSupplierId = foundSupplier.id;
-        }
-      }
-
-      // Update ticket with extracted data
-      await prisma.ticket.update({
-        where: { id: ocrJob.ticket.id },
-        data: {
-          ocrRawText: extracted.rawText,
-          ocrConfidence: extracted.ocrConfidence,
-          supplierId: updatedSupplierId,
-          material: extracted.material || ocrJob.ticket.material,
-          quantity: extracted.quantity || ocrJob.ticket.quantity,
-          poNumber: finalPoNumber,
-          ticketNumber: extracted.ticketNumber || ocrJob.ticket.ticketNumber,
-          ticketDate: extracted.ticketDate || ocrJob.ticket.ticketDate,
-          linkedOrderId,
-          status: ticketStatus,
-          linkMethod,
-        },
-      });
-
-      // Mark job as completed
-      await prisma.ocrJob.update({
-        where: { id: jobId },
-        data: {
-          status: OcrJobStatus.COMPLETED,
-          finishedAt: new Date(),
-          rawResponse: extracted as any,
-        },
-      });
+      console.log(`[OCR] Processing Ticket OCR for: ${ocrJob.ticket.id}`);
+      // Delegate to TicketService to ensure consistent logic (junction table, etc.)
+      const { TicketService } = await import('../modules/tickets/ticket.service.js');
+      await TicketService.processTicketOcr(ocrJob.ticket.id);
     } else if (ocrJob.type === OcrJobType.INVOICE && ocrJob.invoice) {
         console.log(`[OCR] Processing Invoice OCR for: ${ocrJob.invoice.id}`);
         // Delegate to InvoiceService

@@ -258,6 +258,14 @@ export const InvoiceService = {
           finalFlag = flags[0] as LineItemFlag;
         }
 
+        // --- Calculation ---
+        let approvedTotal: number | null = null;
+        if (negotiatedRateVal) {
+          const subtotal = item.quantity * negotiatedRateVal;
+          const hst = subtotal * 0.13;
+          approvedTotal = subtotal + hst;
+        }
+
         await prisma.invoiceLineItem.create({
           data: {
             invoiceId,
@@ -265,7 +273,7 @@ export const InvoiceService = {
             description: item.description,
             poNumber: linePo,
             quantity: item.quantity,
-            unit: 'ea', // Should probably extract unit from Bedrock too, but keeping 'ea' for now
+            unit: 'ea', // Should probably extract unit from Bedrock too
             unitRate: item.unitPrice,
             lineTotal: item.totalPrice,
             matchedOrderId,
@@ -275,6 +283,7 @@ export const InvoiceService = {
             negotiatedRate: negotiatedRateVal,
             rateDiscrepancy,
             qtyDiscrepancy,
+            approvedTotal,
             flag: finalFlag,
           }
         });
