@@ -261,9 +261,7 @@ export const InvoiceService = {
         // --- Calculation ---
         let approvedTotal: number | null = null;
         if (negotiatedRateVal) {
-          const subtotal = item.quantity * negotiatedRateVal;
-          const hst = subtotal * 0.13;
-          approvedTotal = subtotal + hst;
+          approvedTotal = item.quantity * negotiatedRateVal;
         }
 
         await prisma.invoiceLineItem.create({
@@ -285,6 +283,28 @@ export const InvoiceService = {
             qtyDiscrepancy,
             approvedTotal,
             flag: finalFlag,
+          }
+        });
+      }
+
+      // --- Total Discrepancy Match ---
+      // Calculate sum of approved line item subtotals
+      const lineItems = await prisma.invoiceLineItem.findMany({ where: { invoiceId } });
+      const totalApprovedSubtotal = lineItems.reduce((sum, item) => {
+        const rate = item.negotiatedRate ? Number(item.negotiatedRate) : 0;
+        return sum + (Number(item.quantity) * rate);
+      }, 0);
+
+      const totalApprovedWithHst = totalApprovedSubtotal * 1.13;
+      const billedTotal = Number(updatedInvoice.totalAmount);
+      const totalDiscrepancy = Math.abs(totalApprovedWithHst - billedTotal);
+
+      // Match with final amount - if difference > $0.05, update disputeNote
+      if (totalDiscrepancy > 0.05) {
+        await prisma.invoice.update({
+          where: { id: invoiceId },
+          data: {
+            disputeNote: `Total amount mismatch. Expected pay: $${totalApprovedWithHst.toFixed(2)} (Subtotal: $${totalApprovedSubtotal.toFixed(2)} + 13% HST). Billed: $${billedTotal.toFixed(2)}.`
           }
         });
       }

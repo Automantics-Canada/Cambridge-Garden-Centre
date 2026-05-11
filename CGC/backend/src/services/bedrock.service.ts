@@ -15,6 +15,7 @@ export interface BedrockExtractionResult {
   poNumber: string | null;
   material?: string | null;
   quantity: number | null;
+  unit?: string | null;
   lineItems?: Array<{
     description: string;
     quantity: number;

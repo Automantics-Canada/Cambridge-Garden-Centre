@@ -232,6 +232,7 @@ export const TicketService = {
           supplierName: extracted.supplierName || ticket.supplierName,
           material: extracted.material || ticket.material,
           quantity: extracted.quantity || ticket.quantity,
+          unit: extracted.unit || ticket.unit,
           poNumber: finalPoNumber,
           ticketNumber: extracted.ticketNumber || ticket.ticketNumber,
           ticketDate: extracted.ticketDate || ticket.ticketDate,

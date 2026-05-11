@@ -15,6 +15,7 @@ export interface OcrExtractionResult {
   ticketDate: Date | null;
   material: string | null;
   quantity: number | null;
+  unit: string | null;
   poNumber: string | null;
   ticketNumber: string | null;
   ocrConfidence: number;
@@ -88,6 +89,7 @@ async function extractWithTextract(localPath: string): Promise<OcrExtractionResu
     ticketDate: extraction.date,
     material: extraction.material || null,
     quantity: extraction.quantity,
+    unit: extraction.unit || null,
     poNumber: extraction.poNumber,
     ticketNumber: extraction.ticketNumber || null,
     ocrConfidence: averageConfidence,
@@ -104,6 +106,7 @@ function parseTicketData(text: string): Omit<OcrExtractionResult, 'ocrConfidence
     ticketDate: null,
     material: null,
     quantity: null,
+    unit: null,
     poNumber: null,
     ticketNumber: null,
   };

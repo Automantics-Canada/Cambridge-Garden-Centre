@@ -174,10 +174,22 @@ export const OrderPdfImportService = {
             else if (descLower.includes('cy')) unit = 'CY';
             else if (descLower.includes('skid')) unit = 'Skid';
 
+            // Find supplierId if possible
+            let supplierId: string | null = null;
+            if (customerName) {
+              const foundSupplier = await prisma.supplier.findFirst({
+                where: { name: { contains: customerName, mode: 'insensitive' } },
+              });
+              if (foundSupplier) {
+                supplierId = foundSupplier.id;
+              }
+            }
+
             const data: Prisma.OrderUncheckedCreateInput = {
-              spruceOrderId: spruceOrderId,
+              spruceOrderId: `${spruceOrderId}-${rowIndex}`,
               poNumber,
               customerName,
+              supplierId,
               buyerType: 'CONTRACTOR',
               product: itemDesc,
               quantity: quantity.toString(),
@@ -272,10 +284,22 @@ export const OrderPdfImportService = {
             else if (descLower.includes('cy')) unit = 'CY';
             else if (descLower.includes('skid')) unit = 'Skid';
 
+            // Find supplierId if possible
+            let supplierId: string | null = null;
+            if (customerName) {
+              const foundSupplier = await prisma.supplier.findFirst({
+                where: { name: { contains: customerName, mode: 'insensitive' } },
+              });
+              if (foundSupplier) {
+                supplierId = foundSupplier.id;
+              }
+            }
+
             const data: Prisma.OrderUncheckedCreateInput = {
               spruceOrderId: `${spruceOrderId}-T-${i}`, // -T- for Text extraction
               poNumber,
               customerName,
+              supplierId,
               buyerType: 'CONTRACTOR',
               product: itemDesc,
               quantity: quantity.toString(),
