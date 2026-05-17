@@ -21,6 +21,7 @@ export interface BedrockExtractionResult {
     quantity: number;
     unitPrice: number;
     totalPrice: number;
+    unit: string;
     poNumber: string | null;
   }>;
 }
@@ -32,6 +33,8 @@ export async function extractStructuredData(
   rawText: string,
   docType: 'TICKET' | 'INVOICE'
 ): Promise<BedrockExtractionResult> {
+  console.log('[Bedrock] DOC TYPE:', docType);
+  console.log('[Bedrock] RAW TEXT LENGTH:', rawText.length);
   const prompt = craftPrompt(rawText, docType);
 
   const command = new InvokeModelCommand({
@@ -67,6 +70,25 @@ export async function extractStructuredData(
       parsed.date = isNaN(d.getTime()) ? null : d;
     }
 
+    // Normalize PO Number (must be exactly 6 digits)
+    if (parsed.poNumber) {
+      const cleaned = String(parsed.poNumber).replace(/\D/g, '');
+      if (cleaned.length === 6) {
+        parsed.poNumber = cleaned;
+      }
+    }
+
+    // Normalize Line Item PO Numbers
+    if (parsed.lineItems && Array.isArray(parsed.lineItems)) {
+      parsed.lineItems = parsed.lineItems.map((item: any) => {
+        if (item.poNumber) {
+          const cleaned = String(item.poNumber).replace(/\D/g, '');
+          if (cleaned.length === 6) item.poNumber = cleaned;
+        }
+        return item;
+      });
+    }
+
     return parsed as BedrockExtractionResult;
   } catch (error) {
     console.error('[Bedrock] Extraction failed:', error);
@@ -90,10 +112,10 @@ Expected JSON Schema:
   "supplierName": "Full name of the supplier",
   "date": "YYYY-MM-DD",
   "ticketNumber": "The ticket or reference number",
-  "poNumber": "The Purchase Order number if present",
+  "poNumber": "The Purchase Order number. IMPORTANT: This is always exactly a 6-digit numerical value (e.g., 123456).",
   "material": "Type of material (e.g. A Gravel, Sand, etc.)",
   "quantity": number (only the numeric value),
-  "unit": "tons, lbs, etc."
+  "unit": "tons, lbs, each, etc. (Always extract the unit shown on the ticket)"
 }
 `;
   } else {
@@ -108,18 +130,19 @@ ${rawText}
 
 Expected JSON Schema:
 {
-  "supplierName": "Full name of the company sending the invoice",
+  "supplierName": "The name of the Vendor/Supplier sending the invoice. IMPORTANT: Ignore 'Cambridge Garden Centre' as it is the Bill To customer. Look at the top of the page for the company issuing the invoice (e.g., 'Dufferin Aggregates').",
   "invoiceNumber": "The invoice ID",
   "date": "YYYY-MM-DD",
-  "poNumber": "The header-level PO number if present",
+  "poNumber": "The header-level PO number. IMPORTANT: This is always exactly a 6-digit numerical value (e.g., 123456).",
   "totalAmount": number,
   "lineItems": [
     {
       "description": "Full description of the item",
       "quantity": number,
+      "unit": "The unit of measure (e.g., 'tons', 'tonnes', 'cy'). This is REQUIRED for every line. Look for it next to the quantity.",
       "unitPrice": number,
       "totalPrice": number,
-      "poNumber": "PO number for this specific line. IMPORTANT: Extract this for every line even if it matches the header PO."
+      "poNumber": "PO number for this specific line. IMPORTANT: Extract this for every line even if it matches the header PO. This must be a 6-digit numerical value."
     }
   ]
 }

@@ -124,6 +124,43 @@ export const DispatchService = {
     return delivery;
   },
 
+  async unassignDriver(orderId: string) {
+    console.time(`Unassignment-${orderId}`);
+
+    const existing = await prisma.delivery.findFirst({
+      where: { orderId }
+    });
+
+    if (existing) {
+      await prisma.deliveryHistory.create({
+        data: {
+          deliveryId: existing.id,
+          status: 'UNASSIGNED',
+          notes: 'Driver unassigned from order'
+        }
+      });
+
+      await prisma.delivery.update({
+        where: { id: existing.id },
+        data: {
+          driverId: null,
+          status: 'UNASSIGNED'
+        }
+      });
+    }
+
+    await prisma.order.update({
+      where: { id: orderId },
+      data: {
+        driverId: null,
+        deliveryStatus: 'NOT_STARTED'
+      }
+    });
+
+    console.timeEnd(`Unassignment-${orderId}`);
+    return { success: true };
+  },
+
   async reorderDeliveries(driverId: string, deliveryIds: string[]) {
     // Update priorities for all deliveries in the list
     const updates = deliveryIds.map((id, index) => {

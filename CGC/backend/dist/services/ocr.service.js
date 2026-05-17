@@ -63,6 +63,7 @@ async function extractWithTextract(localPath) {
         ticketDate: extraction.date,
         material: extraction.material || null,
         quantity: extraction.quantity,
+        unit: extraction.unit || null,
         poNumber: extraction.poNumber,
         ticketNumber: extraction.ticketNumber || null,
         ocrConfidence: averageConfidence,
@@ -78,6 +79,7 @@ function parseTicketData(text) {
         ticketDate: null,
         material: null,
         quantity: null,
+        unit: null,
         poNumber: null,
         ticketNumber: null,
     };

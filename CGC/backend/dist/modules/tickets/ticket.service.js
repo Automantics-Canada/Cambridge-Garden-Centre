@@ -91,6 +91,32 @@ export const TicketService = {
         triggerOcrProcessing(ocrJob.id);
         return { ticket, ocrJob };
     },
+    /**
+     * Ticket uploaded manually by admin: save file, create Ticket, queue OCR.
+     */
+    async ingestManualTicket(params) {
+        const imageUrl = await saveTicketImage(params.buffer, params.originalName);
+        const ticket = await prisma.ticket.create({
+            data: {
+                source: TicketSource.MANUAL,
+                imageUrl,
+                ocrRawText: '',
+                ocrConfidence: 0,
+                status: TicketStatus.UNLINKED,
+                receivedAt: new Date(),
+            },
+        });
+        const ocrJob = await prisma.ocrJob.create({
+            data: {
+                type: OcrJobType.TICKET,
+                provider: OcrProvider.AWS_TEXTRACT,
+                status: OcrJobStatus.PENDING,
+                ticketId: ticket.id,
+            },
+        });
+        triggerOcrProcessing(ocrJob.id);
+        return { ticket, ocrJob };
+    },
     async processTicketOcr(ticketId) {
         const ticket = await prisma.ticket.findUnique({
             where: { id: ticketId },
@@ -108,23 +134,53 @@ export const TicketService = {
         try {
             const extracted = await extractTextFromLocalImage(ticket.imageUrl);
             const finalPoNumber = extracted.poNumber || ticket.poNumber;
+            const isValidPo = !!(finalPoNumber && /^\d{6}$/.test(finalPoNumber));
             let linkedOrderId = null;
             let ticketStatus = TicketStatus.UNLINKED;
             let linkMethod = null;
-            if (finalPoNumber) {
+            if (isValidPo) {
                 // Attempt to find Order by PO number
                 const matchingOrders = await prisma.order.findMany({
                     where: { poNumber: finalPoNumber },
                 });
-                // Link automatically if exactly one match is found
+                // ONLY link automatically if there is exactly ONE order with that PO number
                 if (matchingOrders.length === 1) {
-                    const matchingOrder = matchingOrders[0];
-                    if (matchingOrder) {
-                        linkedOrderId = matchingOrder.id;
-                        ticketStatus = TicketStatus.LINKED;
-                        linkMethod = 'AUTO';
-                    }
+                    const order = matchingOrders[0];
+                    await prisma.ticketOrderMatch.upsert({
+                        where: {
+                            ticketId_orderId: {
+                                ticketId: ticketId,
+                                orderId: order.id,
+                            },
+                        },
+                        update: {},
+                        create: {
+                            ticketId: ticketId,
+                            orderId: order.id,
+                            matchMethod: 'AUTO_PO',
+                        },
+                    });
+                    linkedOrderId = order.id;
+                    ticketStatus = TicketStatus.LINKED;
+                    linkMethod = 'AUTO';
+                    console.log(`[TicketService] Automatically linked ticket ${ticketId} to single matching order ${order.id} (PO: ${finalPoNumber})`);
                 }
+                else if (matchingOrders.length > 1) {
+                    console.log(`[TicketService] Found ${matchingOrders.length} orders for PO ${finalPoNumber}. Cleaning up existing auto-links.`);
+                    // Cleanup any auto-matches that might have been created during incremental import
+                    await prisma.ticketOrderMatch.deleteMany({
+                        where: {
+                            ticketId: ticketId,
+                            matchMethod: { in: ['AUTO_PO', 'AUTO_FALLBACK'] }
+                        }
+                    });
+                    linkedOrderId = null;
+                    ticketStatus = TicketStatus.UNLINKED;
+                    linkMethod = null;
+                }
+            }
+            else if (finalPoNumber) {
+                console.log(`[TicketService] Extracted PO "${finalPoNumber}" is not 6 digits. Skipping auto-link.`);
             }
             // Find supplier if extracted
             let updatedSupplierId = ticket.supplierId;
@@ -144,8 +200,10 @@ export const TicketService = {
                     ocrRawText: extracted.rawText,
                     ocrConfidence: extracted.ocrConfidence,
                     supplierId: updatedSupplierId,
+                    supplierName: extracted.supplierName || ticket.supplierName,
                     material: extracted.material || ticket.material,
                     quantity: extracted.quantity || ticket.quantity,
+                    unit: extracted.unit || ticket.unit,
                     poNumber: finalPoNumber,
                     ticketNumber: extracted.ticketNumber || ticket.ticketNumber,
                     ticketDate: extracted.ticketDate || ticket.ticketDate,
@@ -208,7 +266,14 @@ export const TicketService = {
         return prisma.ticket.findMany({
             where,
             orderBy: { receivedAt: 'desc' },
-            include: { supplier: true, driver: true, linkedOrder: true },
+            include: {
+                supplier: true,
+                driver: true,
+                linkedOrder: true,
+                orderMatches: {
+                    include: { order: true }
+                }
+            },
         });
     },
     async getTicketStats() {
@@ -223,7 +288,15 @@ export const TicketService = {
     async getTicketById(id) {
         return prisma.ticket.findUnique({
             where: { id },
-            include: { supplier: true, driver: true, ocrJobs: true, linkedOrder: true },
+            include: {
+                supplier: true,
+                driver: true,
+                ocrJobs: true,
+                linkedOrder: true,
+                orderMatches: {
+                    include: { order: true }
+                }
+            },
         });
     },
     /**
@@ -244,7 +317,62 @@ export const TicketService = {
             data,
         });
     },
+    async unlinkTicketFromOrder(ticketId, orderId) {
+        // Delete junction record
+        await prisma.ticketOrderMatch.delete({
+            where: {
+                ticketId_orderId: {
+                    ticketId,
+                    orderId,
+                },
+            },
+        });
+        // Check if there are any remaining matches
+        const remainingMatches = await prisma.ticketOrderMatch.findMany({
+            where: { ticketId },
+            orderBy: { matchedAt: 'desc' },
+        });
+        if (remainingMatches.length > 0) {
+            // Update legacy field to the next available match
+            await prisma.ticket.update({
+                where: { id: ticketId },
+                data: {
+                    linkedOrderId: remainingMatches[0]?.orderId || null,
+                },
+            });
+        }
+        else {
+            // No matches left, reset status
+            await prisma.ticket.update({
+                where: { id: ticketId },
+                data: {
+                    linkedOrderId: null,
+                    status: TicketStatus.UNLINKED,
+                    linkMethod: null,
+                },
+            });
+        }
+    },
     async linkTicketToOrder(ticketId, orderId, userId) {
+        // Create junction record
+        await prisma.ticketOrderMatch.upsert({
+            where: {
+                ticketId_orderId: {
+                    ticketId,
+                    orderId,
+                },
+            },
+            update: {
+                matchMethod: 'MANUAL',
+                createdBy: userId || null,
+            },
+            create: {
+                ticketId,
+                orderId,
+                matchMethod: 'MANUAL',
+                createdBy: userId || null,
+            },
+        });
         return prisma.ticket.update({
             where: { id: ticketId },
             data: {

@@ -32,6 +32,7 @@ export declare const OrderService: {
             status: import("@prisma/client").$Enums.TicketStatus;
             ticketNumber: string | null;
             source: import("@prisma/client").$Enums.TicketSource;
+            supplierName: string | null;
             material: string | null;
             rateOnTicket: import("@prisma/client/runtime/library").Decimal | null;
             ticketDate: Date | null;
@@ -44,6 +45,39 @@ export declare const OrderService: {
             receivedAt: Date;
             spruceMatched: boolean;
         }[];
+        ticketMatches: ({
+            ticket: {
+                id: string;
+                poNumber: string | null;
+                quantity: import("@prisma/client/runtime/library").Decimal | null;
+                unit: string | null;
+                supplierId: string | null;
+                deliveryStatus: import("@prisma/client").$Enums.DriverTaskStatus;
+                driverId: string | null;
+                status: import("@prisma/client").$Enums.TicketStatus;
+                ticketNumber: string | null;
+                source: import("@prisma/client").$Enums.TicketSource;
+                supplierName: string | null;
+                material: string | null;
+                rateOnTicket: import("@prisma/client/runtime/library").Decimal | null;
+                ticketDate: Date | null;
+                imageUrl: string;
+                ocrRawText: string;
+                ocrConfidence: number;
+                linkedOrderId: string | null;
+                linkMethod: string | null;
+                linkedById: string | null;
+                receivedAt: Date;
+                spruceMatched: boolean;
+            };
+        } & {
+            id: string;
+            orderId: string;
+            ticketId: string;
+            matchMethod: string;
+            matchedAt: Date;
+            createdBy: string | null;
+        })[];
     } & {
         id: string;
         spruceOrderId: string;

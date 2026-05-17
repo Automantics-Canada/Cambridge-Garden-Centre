@@ -10,6 +10,7 @@ export const startMatchTicketsOrdersJob = () => {
         where: {
           OR: [
             { status: 'UNLINKED' },
+            { linkMethod: 'AUTO' }, // Re-verify auto-links to ensure they remain valid (single order)
             { 
               status: 'LINKED',
               orderMatches: { none: {} }
@@ -29,82 +30,88 @@ export const startMatchTicketsOrdersJob = () => {
         let matchingOrders: any[] = [];
 
         // 1. PO matching (Absolute Priority)
-        if (ticket.poNumber) {
-          matchingOrders = await prisma.order.findMany({
+        // Ensure PO is exactly 6 digits as per requirements
+        if (ticket.poNumber && /^\d{6}$/.test(ticket.poNumber)) {
+          const allMatchingOrders = await prisma.order.findMany({
             where: {
               poNumber: ticket.poNumber,
             },
             orderBy: { orderDate: 'desc' },
           });
+          
+          // If multiple orders found for the same PO, do NOT auto-link
+          // AND cleanup any existing auto-matches (in case they were linked during incremental import)
+          if (allMatchingOrders.length > 1) {
+            console.log(`[Cron] Multiple orders (${allMatchingOrders.length}) found for PO ${ticket.poNumber}. Cleaning up auto-links for Ticket ${ticket.id}.`);
+            
+            await prisma.ticketOrderMatch.deleteMany({
+              where: {
+                ticketId: ticket.id,
+                matchMethod: { in: ['AUTO_PO', 'AUTO_FALLBACK'] }
+              }
+            });
+
+            await prisma.ticket.update({
+              where: { id: ticket.id },
+              data: {
+                status: 'UNLINKED',
+                linkedOrderId: null,
+                linkMethod: null
+              }
+            });
+
+            continue;
+          } else if (allMatchingOrders.length === 1) {
+            matchingOrders = [allMatchingOrders[0]];
+          }
+        } else if (ticket.poNumber) {
+          console.log(`[Cron] Ticket ${ticket.id} has invalid PO format: ${ticket.poNumber}. Skipping PO matching.`);
         }
 
-        // 2. Fallback to Date/Supplier/Material/Quantity matching if no PO match
+        // 2. Fallback matching (only if no PO match found and count is 0)
         if (matchingOrders.length === 0 && ticket.ticketDate && ticket.supplierId && ticket.material && ticket.quantity) {
+          // ... (existing fallback logic remains the same, ensuring length === 1)
           const dateStart = new Date(ticket.ticketDate);
           dateStart.setDate(dateStart.getDate() - 2);
-          
           const dateEnd = new Date(ticket.ticketDate);
           dateEnd.setDate(dateEnd.getDate() + 2);
 
-          const fallbackOrder = await prisma.order.findFirst({
+          const fallbackOrders = await prisma.order.findMany({
             where: {
               supplierId: ticket.supplierId,
-              product: {
-                contains: ticket.material,
-                mode: 'insensitive',
-              },
-              deliveryDate: {
-                gte: dateStart,
-                lte: dateEnd,
-              },
+              product: { contains: ticket.material, mode: 'insensitive' },
+              deliveryDate: { gte: dateStart, lte: dateEnd },
               quantity: ticket.quantity,
             },
             orderBy: { orderDate: 'desc' },
           });
 
-          if (fallbackOrder) {
-            matchingOrders = [fallbackOrder];
+          if (fallbackOrders.length === 1) {
+            matchingOrders = [fallbackOrders[0]];
           }
         }
 
-        if (matchingOrders.length > 0) {
-          console.log(`[Cron] Ticket ${ticket.id} matched with ${matchingOrders.length} orders.`);
+        if (matchingOrders.length === 1) {
+          const order = matchingOrders[0];
+          try {
+            await prisma.ticketOrderMatch.upsert({
+              where: { ticketId_orderId: { ticketId: ticket.id, orderId: order.id } },
+              update: {},
+              create: {
+                ticketId: ticket.id,
+                orderId: order.id,
+                matchMethod: ticket.poNumber === order.poNumber ? 'AUTO_PO' : 'AUTO_FALLBACK',
+              }
+            });
 
-          for (const order of matchingOrders) {
-            // Create junction table entry (deduplicated by @unique constraint or manual check)
-            try {
-              await prisma.ticketOrderMatch.upsert({
-                where: {
-                  ticketId_orderId: {
-                    ticketId: ticket.id,
-                    orderId: order.id,
-                  }
-                },
-                update: {}, // No update needed if exists
-                create: {
-                  ticketId: ticket.id,
-                  orderId: order.id,
-                  matchMethod: ticket.poNumber === order.poNumber ? 'AUTO_PO' : 'AUTO_FALLBACK',
-                }
-              });
-            } catch (err) {
-              console.error(`[Cron] Error creating match for Ticket ${ticket.id} and Order ${order.id}:`, err);
-            }
+            await prisma.ticket.update({
+              where: { id: ticket.id },
+              data: { linkedOrderId: order.id, status: 'LINKED', linkMethod: 'AUTO' },
+            });
+            console.log(`[Cron] Automatically linked Ticket ${ticket.id} to order ${order.id}.`);
+          } catch (err) {
+            console.error(`[Cron] Error linking Ticket ${ticket.id}:`, err);
           }
-
-          // Update ticket status
-          await prisma.ticket.update({
-            where: { id: ticket.id },
-            data: {
-              linkedOrderId: matchingOrders[0].id, // Backward compatibility
-              status: 'LINKED',
-              linkMethod: 'AUTO',
-            },
-          });
-          
-          console.log(`[Cron] Automatically linked Ticket ${ticket.id} to ${matchingOrders.length} orders.`);
-        } else {
-          // No match found
         }
       }
 

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import api from '../../api/axios';
-import { Truck, MapPin, Search, ChevronUp, ChevronDown, Flag, User, GripVertical, Mail, Package2, Image as ImageIcon, Calendar } from 'lucide-react';
-import { motion, Reorder, AnimatePresence } from 'framer-motion';
+import { Truck, MapPin, Search, ChevronUp, ChevronDown, Flag, User, GripVertical, Mail, Package2, Image as ImageIcon, Calendar, Info, RefreshCw } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { toast } from 'react-hot-toast';
 import { DispatchBoardSkeleton } from '../../components/Skeleton';
 import { FadeInUp, StaggerContainer, StaggerItem } from '../../components/Animated';
@@ -12,11 +12,15 @@ import StatusTimeline from '../../components/deliveries/StatusTimeline';
 export default function DispatchBoard() {
   const [board, setBoard] = useState({ unassignedOrders: [], unassignedDeliveries: [], drivers: [] });
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState('unassigned');
   const [expandedDriverId, setExpandedDriverId] = useState(null);
   const [expandedDeliveryId, setExpandedDeliveryId] = useState(null);
+  const [searchQuery, setSearchQuery] = useState('');
   
-  const [confirmModal, setConfirmModal] = useState({ isOpen: false, order: null, driver: null });
+  // Drag states
+  const [draggingOrderId, setDraggingOrderId] = useState(null);
+  const [draggingFromDriverId, setDraggingFromDriverId] = useState(null);
+  const [activeDragTargetDriverId, setActiveDragTargetDriverId] = useState(null);
+  const [isOverUnassignedDropZone, setIsOverUnassignedDropZone] = useState(false);
 
   const fetchBoard = async () => {
     try {
@@ -29,6 +33,7 @@ export default function DispatchBoard() {
       setBoard({ ...res.data, drivers });
     } catch (e) {
       console.error(e);
+      toast.error('Failed to fetch dispatch board');
     } finally {
       setLoading(false);
     }
@@ -37,19 +42,6 @@ export default function DispatchBoard() {
   useEffect(() => {
     fetchBoard();
   }, []);
-
-  const handleAssign = async () => {
-    const { order, driver } = confirmModal;
-    try {
-      await api.post('/api/dispatch/assign', { orderId: order.id, driverId: driver.id });
-      toast.success(`Assigned ${order.spruceOrderId} to ${driver.name}`);
-      setConfirmModal({ isOpen: false, order: null, driver: null });
-      fetchBoard();
-    } catch (e) {
-      console.error('Assign failed', e);
-      toast.error('Assignment failed');
-    }
-  };
 
   const handleResendEmail = async (deliveryId) => {
     try {
@@ -64,30 +56,6 @@ export default function DispatchBoard() {
     }
   };
 
-  const openConfirm = (order, driverId) => {
-    const driver = board.drivers.find(d => d.id === driverId);
-    setConfirmModal({ isOpen: true, order, driver });
-  };
-
-  const handleReorder = async (driverId, newDeliveries) => {
-    // Optimistic update
-    const updatedDrivers = board.drivers.map(d => {
-      if (d.id === driverId) {
-        return { ...d, deliveries: newDeliveries };
-      }
-      return d;
-    });
-    setBoard({ ...board, drivers: updatedDrivers });
-
-    try {
-      const deliveryIds = newDeliveries.map(d => d.id);
-      await api.post('/api/dispatch/reorder', { driverId, deliveryIds });
-    } catch (e) {
-      console.error('Reorder failed', e);
-      toast.error('Failed to save priority');
-    }
-  };
-
   const handleStatusUpdate = async (deliveryId, newStatus) => {
     try {
       await api.patch(`/api/deliveries/${deliveryId}/status`, { status: newStatus });
@@ -99,348 +67,667 @@ export default function DispatchBoard() {
     }
   };
 
+  // Drag and Drop Logic
+  const handleDragStart = (e, orderId, fromDriverId = null) => {
+    setDraggingOrderId(orderId);
+    setDraggingFromDriverId(fromDriverId);
+    e.dataTransfer.setData('text/plain', orderId);
+    e.dataTransfer.effectAllowed = 'move';
+  };
+
+  const handleDragEnd = () => {
+    setDraggingOrderId(null);
+    setDraggingFromDriverId(null);
+    setActiveDragTargetDriverId(null);
+    setIsOverUnassignedDropZone(false);
+  };
+
+  const handleDragOverDriver = (e, driverId) => {
+    e.preventDefault();
+    if (draggingFromDriverId !== driverId) {
+      setActiveDragTargetDriverId(driverId);
+    }
+  };
+
+  const handleDragLeaveDriver = (driverId) => {
+    if (activeDragTargetDriverId === driverId) {
+      setActiveDragTargetDriverId(null);
+    }
+  };
+
+  const handleDropOnDriver = async (e, targetDriverId) => {
+    e.preventDefault();
+    const orderId = draggingOrderId || e.dataTransfer.getData('text/plain');
+    if (!orderId) return;
+
+    if (draggingFromDriverId === targetDriverId) {
+      handleDragEnd();
+      return;
+    }
+
+    const orderObj = findOrder(orderId);
+    const driverObj = board.drivers.find(d => d.id === targetDriverId);
+
+    if (!orderObj || !driverObj) {
+      handleDragEnd();
+      return;
+    }
+
+    try {
+      // Optimistic updates
+      setBoard(prev => {
+        let updatedUnassigned = [...prev.unassignedOrders];
+        let updatedDrivers = prev.drivers.map(d => {
+          let updatedDeliveries = [...d.deliveries];
+          // Remove from source driver if it was assigned
+          if (draggingFromDriverId && d.id === draggingFromDriverId) {
+            updatedDeliveries = updatedDeliveries.filter(del => del.order.id !== orderId);
+          }
+          // Add to target driver optimistically
+          if (d.id === targetDriverId) {
+            const alreadyAssigned = updatedDeliveries.some(del => del.order.id === orderId);
+            if (!alreadyAssigned) {
+              updatedDeliveries.push({
+                id: `temp-${Date.now()}`,
+                orderId,
+                driverId: targetDriverId,
+                status: 'PLACED',
+                priority: updatedDeliveries.length + 1,
+                order: orderObj,
+                history: []
+              });
+            }
+          }
+          return {
+            ...d,
+            deliveries: updatedDeliveries,
+            todayDeliveries: updatedDeliveries.length
+          };
+        });
+
+        if (!draggingFromDriverId) {
+          updatedUnassigned = updatedUnassigned.filter(o => o.id !== orderId);
+        }
+
+        return {
+          ...prev,
+          unassignedOrders: updatedUnassigned,
+          drivers: updatedDrivers
+        };
+      });
+
+      await api.post('/api/dispatch/assign', { orderId, driverId: targetDriverId });
+      toast.success(`Assigned ${orderObj.spruceOrderId} to ${driverObj.name}`);
+    } catch (err) {
+      console.error(err);
+      toast.error('Failed to assign driver');
+      fetchBoard();
+    } finally {
+      handleDragEnd();
+    }
+  };
+
+  const handleDragOverUnassigned = (e) => {
+    e.preventDefault();
+    if (draggingFromDriverId) {
+      setIsOverUnassignedDropZone(true);
+    }
+  };
+
+  const handleDragLeaveUnassigned = () => {
+    setIsOverUnassignedDropZone(false);
+  };
+
+  const handleDropOnUnassigned = async (e) => {
+    e.preventDefault();
+    const orderId = draggingOrderId || e.dataTransfer.getData('text/plain');
+    if (!orderId || !draggingFromDriverId) {
+      handleDragEnd();
+      return;
+    }
+
+    const orderObj = findOrder(orderId);
+    if (!orderObj) {
+      handleDragEnd();
+      return;
+    }
+
+    try {
+      // Optimistic updates
+      setBoard(prev => {
+        let updatedDrivers = prev.drivers.map(d => {
+          let updatedDeliveries = [...d.deliveries];
+          if (d.id === draggingFromDriverId) {
+            updatedDeliveries = updatedDeliveries.filter(del => del.order.id !== orderId);
+          }
+          return {
+            ...d,
+            deliveries: updatedDeliveries,
+            todayDeliveries: updatedDeliveries.length
+          };
+        });
+
+        const alreadyInUnassigned = prev.unassignedOrders.some(o => o.id === orderId);
+        const updatedUnassigned = alreadyInUnassigned 
+          ? prev.unassignedOrders 
+          : [orderObj, ...prev.unassignedOrders];
+
+        return {
+          ...prev,
+          unassignedOrders: updatedUnassigned,
+          drivers: updatedDrivers
+        };
+      });
+
+      await api.post('/api/dispatch/unassign', { orderId });
+      toast.success(`Unassigned order ${orderObj.spruceOrderId}`);
+    } catch (err) {
+      console.error(err);
+      toast.error('Failed to unassign order');
+      fetchBoard();
+    } finally {
+      handleDragEnd();
+    }
+  };
+
+  const findOrder = (orderId) => {
+    const fromUnassigned = board.unassignedOrders.find(o => o.id === orderId);
+    if (fromUnassigned) return fromUnassigned;
+    
+    for (const d of board.drivers) {
+      const del = d.deliveries.find(del => del.order.id === orderId);
+      if (del) return del.order;
+    }
+    return null;
+  };
+
+  // Filtering based on Search Query
+  const filterOrders = (ordersList) => {
+    if (!searchQuery) return ordersList;
+    const query = searchQuery.toLowerCase();
+    return ordersList.filter(o => 
+      o.spruceOrderId.toLowerCase().includes(query) ||
+      o.customerName.toLowerCase().includes(query) ||
+      o.product.toLowerCase().includes(query)
+    );
+  };
+
+  // Compile all assigned orders to display them in the top section
+  const assignedOrders = [];
+  board.drivers.forEach(d => {
+    d.deliveries.forEach(del => {
+      assignedOrders.push({
+        ...del.order,
+        driver: { id: d.id, name: d.name, type: d.type },
+        deliveryId: del.id,
+        deliveryStatus: del.status
+      });
+    });
+  });
+
+  const filteredAssignedOrders = filterOrders(assignedOrders);
+  const filteredUnassignedOrders = filterOrders(board.unassignedOrders);
+
   return (
-    <div className="space-y-6 max-w-7xl mx-auto">
+    <div className="space-y-6 max-w-[1600px] mx-auto pb-12">
+      {/* Header Panel */}
       <FadeInUp>
-        <div className="flex justify-between items-center">
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-white p-6 rounded-2xl border border-gray-200/80 shadow-sm">
           <div>
-            <h1 className="text-2xl font-bold text-gray-900">Dispatch Board</h1>
-            <p className="text-sm text-gray-500">Manage daily assignments and track driver workflows.</p>
+            <h1 className="text-2xl font-bold text-gray-900 tracking-tight flex items-center gap-2">
+              <Truck className="text-[#2D6A4F]" size={28} />
+              Dispatch Board
+            </h1>
+            <p className="text-sm text-gray-500 mt-1">Manage daily assignments and track driver workflows with real-time drag & drop.</p>
           </div>
-          <div className="flex items-center gap-3 bg-white px-4 py-2 rounded-xl border border-gray-200 shadow-sm">
-            <Search size={18} className="text-gray-400" />
-            <input type="text" placeholder="Search orders, customers..." className="outline-none text-sm w-48" />
+          <div className="flex items-center gap-3 w-full md:w-auto">
+            <div className="flex items-center gap-3 bg-gray-50 px-4 py-2.5 rounded-xl border border-gray-200 shadow-inner flex-1 md:flex-initial">
+              <Search size={18} className="text-gray-400" />
+              <input 
+                type="text" 
+                placeholder="Search orders, customers..." 
+                className="bg-transparent outline-none text-sm w-full md:w-64 text-gray-700" 
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+              />
+            </div>
+            <button 
+              onClick={fetchBoard}
+              className="p-2.5 rounded-xl border border-gray-200 text-gray-500 hover:text-gray-900 hover:bg-gray-50 transition-all shadow-sm"
+              title="Refresh Board"
+            >
+              <RefreshCw size={18} className={loading ? "animate-spin" : ""} />
+            </button>
           </div>
         </div>
-      </FadeInUp>
-
-      <FadeInUp delay={0.1} className="flex gap-6 border-b border-gray-200">
-        <button
-          className={`pb-3 font-bold text-sm transition-colors relative ${activeTab === 'unassigned' ? 'text-[#2D6A4F]' : 'text-gray-500 hover:text-gray-700'}`}
-          onClick={() => setActiveTab('unassigned')}
-        >
-          Unassigned Orders
-          <span className="ml-2 bg-gray-100 px-2 py-0.5 rounded-full text-[10px]">{board.unassignedOrders.length}</span>
-          {activeTab === 'unassigned' && <motion.div layoutId="tab" className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#2D6A4F]" />}
-        </button>
-        <button
-          className={`pb-3 font-bold text-sm transition-colors relative ${activeTab === 'assigned' ? 'text-[#2D6A4F]' : 'text-gray-500 hover:text-gray-700'}`}
-          onClick={() => setActiveTab('assigned')}
-        >
-          Assigned Drivers
-          <span className="ml-2 bg-gray-100 px-2 py-0.5 rounded-full text-[10px]">{board.drivers.length}</span>
-          {activeTab === 'assigned' && <motion.div layoutId="tab" className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#2D6A4F]" />}
-        </button>
       </FadeInUp>
 
       {loading && board.drivers.length === 0 ? (
-        <DispatchBoardSkeleton activeTab={activeTab} />
-      ) : activeTab === 'unassigned' ? (
-        <FadeInUp delay={0.2} className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
-          <table className="w-full text-left text-sm">
-            <thead className="bg-gray-50/50 text-gray-500 border-b">
-              <tr>
-                <th className="px-6 py-4 font-bold uppercase tracking-wider text-[10px]">Order ID</th>
-                <th className="px-6 py-4 font-bold uppercase tracking-wider text-[10px]">Customer</th>
-                <th className="px-6 py-4 font-bold uppercase tracking-wider text-[10px]">Details</th>
-                <th className="px-6 py-4 font-bold uppercase tracking-wider text-[10px] text-right">Assign Driver</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {board.unassignedOrders.map(order => (
-                <tr key={order.id} className="hover:bg-gray-50/50 transition-colors">
-                  <td className="px-6 py-4 font-bold text-gray-900">{order.spruceOrderId}</td>
-                  <td className="px-6 py-4 text-gray-700 font-medium">{order.customerName}</td>
-                  <td className="px-6 py-4 text-gray-500">
-                    <span className="bg-blue-50 text-blue-700 px-2 py-0.5 rounded text-[10px] font-bold mr-2 uppercase">{order.product}</span>
-                    {Number(order.quantity)} {order.unit}
-                  </td>
-                  <td className="px-6 py-4 text-right">
-                    <select
-                      className="border border-gray-300 rounded-xl px-4 py-2 text-xs font-bold bg-white focus:ring-2 focus:ring-[#2D6A4F] outline-none cursor-pointer"
-                      onChange={(e) => {
-                        if(e.target.value) openConfirm(order, e.target.value);
-                      }}
-                      defaultValue=""
-                    >
-                      <option value="" disabled>Select Driver...</option>
-                      {board.drivers.map(d => (
-                        <option key={d.id} value={d.id}>{d.name}</option>
-                      ))}
-                    </select>
-                  </td>
-                </tr>
-              ))}
-              {board.unassignedOrders.length === 0 && (
-                <tr><td colSpan="4" className="px-6 py-12 text-center text-gray-400 italic">No unassigned orders found</td></tr>
-              )}
-            </tbody>
-          </table>
-        </FadeInUp>
+        <DispatchBoardSkeleton activeTab="unassigned" />
       ) : (
-        <div className="space-y-4">
-          {board.drivers.map(driver => {
-            const isExpanded = expandedDriverId === driver.id;
-            return (
-              <div key={driver.id} className={`bg-white rounded-2xl border transition-all duration-300 ${isExpanded ? 'border-[#2D6A4F] shadow-lg ring-1 ring-[#2D6A4F]/10' : 'border-gray-200 shadow-sm hover:border-gray-300'}`}>
-                {/* Driver Header */}
-                <button 
-                  onClick={() => setExpandedDriverId(isExpanded ? null : driver.id)}
-                  className="w-full px-6 py-5 flex items-center justify-between text-left group"
-                >
-                  <div className="flex items-center gap-5">
-                    <div className={`w-12 h-12 rounded-2xl flex items-center justify-center font-black text-lg transition-colors ${isExpanded ? 'bg-[#1B4332] text-white' : 'bg-gray-100 text-gray-400 group-hover:bg-gray-200'}`}>
-                      {driver.name.split(' ').map(n => n[0]).join('').toUpperCase()}
-                    </div>
-                    <div>
-                      <h3 className="font-bold text-gray-900 text-lg leading-none">{driver.name}</h3>
-                      <div className="flex items-center gap-3 mt-2 text-xs font-bold uppercase tracking-tight text-gray-400">
-                        <span className="flex items-center gap-1.5"><Truck size={12} /> {driver.type === 'CGC_FLEET' ? 'FLEET' : 'EXTERNAL'}</span>
-                        <span>•</span>
-                        <span className="flex items-center gap-1.5"><Package2 size={12} /> {driver.deliveries.length} ASSIGNMENTS</span>
-                      </div>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-4">
-                     <div className="text-right mr-4 hidden sm:block">
-                       <p className="text-[10px] font-black text-gray-400 uppercase leading-none mb-1">COMPLETED</p>
-                       <p className="text-lg font-black text-gray-900 leading-none">
-                         {driver.deliveries.filter(d => d.status === 'DELIVERED').length} / {driver.deliveries.length}
-                       </p>
-                     </div>
-                     <div className={`p-2 rounded-xl transition-colors ${isExpanded ? 'bg-[#2D6A4F]/10 text-[#2D6A4F]' : 'bg-gray-50 text-gray-400'}`}>
-                       {isExpanded ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
-                     </div>
-                  </div>
-                </button>
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+          
+          {/* LEFT 8 COLUMNS: UNIFIED ORDERS STREAM (ASSIGNED & UNASSIGNED) */}
+          <div className="lg:col-span-8 space-y-6">
+            
+            {/* 1. ASSIGNED ORDERS SECTION */}
+            <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
+              <div className="bg-gray-50/60 px-6 py-4 border-b border-gray-200/80 flex justify-between items-center">
+                <div>
+                  <h3 className="font-bold text-gray-900 text-base flex items-center gap-2">
+                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                    Assigned Orders
+                    <span className="bg-emerald-50 text-[#2D6A4F] text-xs font-black px-2 py-0.5 rounded-full ml-1 border border-emerald-100">
+                      {filteredAssignedOrders.length} Today
+                    </span>
+                  </h3>
+                  <p className="text-xs text-gray-500 mt-0.5">Drag orders to reassign drivers or pull down to unassign.</p>
+                </div>
+                <div className="text-xs font-bold text-gray-400 uppercase tracking-wider hidden sm:block">
+                  At most 10-12 active assignments
+                </div>
+              </div>
 
-                {/* Deliveries List */}
-                <AnimatePresence>
-                  {isExpanded && (
-                    <motion.div 
-                      initial={{ height: 0, opacity: 0 }}
-                      animate={{ height: 'auto', opacity: 1 }}
-                      exit={{ height: 0, opacity: 0 }}
-                      className="overflow-hidden border-t border-gray-100"
-                    >
-                      <div className="p-4 sm:p-6 bg-gray-50/30">
-                        {driver.deliveries.length === 0 ? (
-                          <div className="py-10 text-center text-gray-400 font-medium italic">No deliveries assigned today</div>
-                        ) : (
-                          <Reorder.Group 
-                            axis="y" 
-                            values={driver.deliveries} 
-                            onReorder={(newOrder) => handleReorder(driver.id, newOrder)}
-                            className="space-y-4"
+              <div className="p-6">
+                {filteredAssignedOrders.length === 0 ? (
+                  <div className="py-16 text-center text-gray-400 border border-dashed border-gray-200 rounded-xl bg-gray-50/30">
+                    <Package2 size={40} className="mx-auto text-gray-300 mb-2" />
+                    <p className="font-medium text-sm">No assigned orders</p>
+                    <p className="text-xs text-gray-400 mt-1">Drag an unassigned order below and drop it onto a driver on the right.</p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {filteredAssignedOrders.map(order => (
+                      <motion.div
+                        key={order.id}
+                        layoutId={`order-${order.id}`}
+                        draggable
+                        onDragStart={(e) => handleDragStart(e, order.id, order.driver.id)}
+                        onDragEnd={handleDragEnd}
+                        className={`bg-white rounded-xl border p-4 shadow-sm hover:shadow-md transition-all cursor-grab active:cursor-grabbing select-none group relative overflow-hidden ${
+                          draggingOrderId === order.id ? 'opacity-40 border-[#2D6A4F] border-dashed ring-2 ring-[#2D6A4F]/10' : 'border-gray-200 hover:border-emerald-300'
+                        }`}
+                      >
+                        {/* Drag Handle Accent */}
+                        <div className="absolute left-0 top-0 bottom-0 w-1 bg-[#2D6A4F] opacity-70 group-hover:opacity-100 transition-opacity" />
+
+                        <div className="flex justify-between items-start gap-2 pl-2">
+                          <div className="space-y-1">
+                            <span className="text-xs font-black text-gray-900 tracking-wider flex items-center gap-1.5 uppercase">
+                              <GripVertical size={14} className="text-gray-300 group-hover:text-gray-400 transition-colors" />
+                              {order.spruceOrderId}
+                            </span>
+                            <h4 className="font-bold text-gray-800 text-sm leading-tight truncate max-w-[200px]">{order.customerName}</h4>
+                          </div>
+                          
+                          <StatusBadge status={order.deliveryStatus} />
+                        </div>
+
+                        <div className="mt-3 pl-2 flex flex-wrap gap-1.5 items-center">
+                          <span className="bg-blue-50 text-blue-700 px-2 py-0.5 rounded text-[10px] font-bold uppercase border border-blue-100/50">
+                            {order.product}
+                          </span>
+                          <span className="text-xs text-gray-500 font-medium">
+                            {Number(order.quantity)} {order.unit}
+                          </span>
+                        </div>
+
+                        {/* Driver Assignment Badge */}
+                        <div className="mt-4 pt-3 border-t border-gray-100 flex items-center justify-between pl-2">
+                          <div className="flex items-center gap-2">
+                            <div className="w-6 h-6 rounded-lg bg-emerald-700 text-white flex items-center justify-center font-black text-[10px]">
+                              {order.driver.name.split(' ').map(n => n[0]).join('').toUpperCase()}
+                            </div>
+                            <span className="text-xs font-bold text-gray-700 truncate max-w-[120px]">{order.driver.name}</span>
+                          </div>
+                          <span className="text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-100 flex items-center gap-1">
+                            <Truck size={10} />
+                            {order.driver.type === 'CGC_FLEET' ? 'FLEET' : 'EXTERNAL'}
+                          </span>
+                        </div>
+                      </motion.div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* 2. UNASSIGNED ORDERS STREAM */}
+            <div 
+              onDragOver={handleDragOverUnassigned}
+              onDragLeave={handleDragLeaveUnassigned}
+              onDrop={handleDropOnUnassigned}
+              className={`bg-white rounded-2xl shadow-sm border overflow-hidden transition-all duration-300 ${
+                isOverUnassignedDropZone 
+                  ? 'border-[#2D6A4F] ring-4 ring-[#2D6A4F]/10 bg-emerald-50/20' 
+                  : 'border-gray-200'
+              }`}
+            >
+              <div className="bg-gray-50/60 px-6 py-4 border-b border-gray-200 flex justify-between items-center">
+                <div>
+                  <h3 className="font-bold text-gray-900 text-base flex items-center gap-2">
+                    <span className="w-2.5 h-2.5 rounded-full bg-amber-400"></span>
+                    Unassigned Orders
+                    <span className="bg-amber-50 text-amber-800 text-xs font-black px-2 py-0.5 rounded-full ml-1 border border-amber-100">
+                      {filteredUnassignedOrders.length} Pending
+                    </span>
+                  </h3>
+                  <p className="text-xs text-gray-500 mt-0.5">Drag these orders and drop them on a driver on the right to assign.</p>
+                </div>
+                {isOverUnassignedDropZone && (
+                  <motion.div 
+                    initial={{ scale: 0.9 }}
+                    animate={{ scale: 1 }}
+                    className="text-xs font-extrabold text-[#2D6A4F] bg-[#2D6A4F]/10 px-3 py-1 rounded-lg uppercase tracking-wider animate-bounce"
+                  >
+                    Drop here to Unassign!
+                  </motion.div>
+                )}
+              </div>
+
+              <div className="p-6">
+                {filteredUnassignedOrders.length === 0 ? (
+                  <div className="py-16 text-center text-gray-400 border border-dashed border-gray-200 rounded-xl bg-gray-50/30">
+                    <Package2 size={40} className="mx-auto text-gray-300 mb-2" />
+                    <p className="font-medium text-sm">No unassigned orders</p>
+                    <p className="text-xs text-gray-400 mt-1">All orders are fully dispatched!</p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {filteredUnassignedOrders.map(order => (
+                      <motion.div
+                        key={order.id}
+                        layoutId={`order-${order.id}`}
+                        draggable
+                        onDragStart={(e) => handleDragStart(e, order.id, null)}
+                        onDragEnd={handleDragEnd}
+                        className={`bg-white rounded-xl border p-4 shadow-sm hover:shadow-md transition-all cursor-grab active:cursor-grabbing select-none group relative overflow-hidden ${
+                          draggingOrderId === order.id ? 'opacity-40 border-[#2D6A4F] border-dashed ring-2 ring-[#2D6A4F]/10' : 'border-gray-200 hover:border-amber-300'
+                        }`}
+                      >
+                        {/* Drag Handle Accent */}
+                        <div className="absolute left-0 top-0 bottom-0 w-1 bg-amber-400 opacity-60 group-hover:opacity-100 transition-opacity" />
+
+                        <div className="flex justify-between items-start gap-2 pl-2">
+                          <div className="space-y-1">
+                            <span className="text-xs font-black text-gray-900 tracking-wider flex items-center gap-1.5 uppercase">
+                              <GripVertical size={14} className="text-gray-300 group-hover:text-gray-400 transition-colors" />
+                              {order.spruceOrderId}
+                            </span>
+                            <h4 className="font-bold text-gray-800 text-sm leading-tight truncate max-w-[200px]">{order.customerName}</h4>
+                          </div>
+                          
+                          <span className="text-[10px] font-extrabold uppercase px-2.5 py-1 rounded bg-amber-50 text-amber-700 border border-amber-100">
+                            UNASSIGNED
+                          </span>
+                        </div>
+
+                        <div className="mt-3 pl-2 flex flex-wrap gap-1.5 items-center">
+                          <span className="bg-blue-50 text-blue-700 px-2 py-0.5 rounded text-[10px] font-bold uppercase border border-blue-100/50">
+                            {order.product}
+                          </span>
+                          <span className="text-xs text-gray-500 font-medium">
+                            {Number(order.quantity)} {order.unit}
+                          </span>
+                        </div>
+
+                        <div className="mt-4 pt-3 border-t border-dashed border-gray-100 flex items-center justify-between pl-2">
+                          <span className="text-[10px] font-bold text-gray-400 flex items-center gap-1">
+                            <Info size={12} className="text-amber-500" />
+                            Drag to a driver card
+                          </span>
+                          
+                          {/* Fallback Selector for non-drag devices */}
+                          <select
+                            className="border border-gray-200 rounded-lg px-2 py-1 text-[10px] font-bold bg-white focus:ring-1 focus:ring-[#2D6A4F] outline-none cursor-pointer text-gray-600 hover:border-gray-300 transition-all"
+                            onChange={(e) => {
+                              if(e.target.value) {
+                                const driverObj = board.drivers.find(d => d.id === e.target.value);
+                                if (driverObj) {
+                                  // Call assign driver
+                                  api.post('/api/dispatch/assign', { orderId: order.id, driverId: driverObj.id })
+                                    .then(() => {
+                                      toast.success(`Assigned ${order.spruceOrderId} to ${driverObj.name}`);
+                                      fetchBoard();
+                                    });
+                                }
+                              }
+                            }}
+                            value=""
                           >
-                            {driver.deliveries.map((del, idx) => {
-                              const isDelExpanded = expandedDeliveryId === del.id;
-                              return (
-                                <Reorder.Item 
-                                  value={del} 
-                                  key={del.id}
-                                  className={`bg-white rounded-xl border transition-all duration-300 ${isDelExpanded ? 'border-amber-200 shadow-md ring-1 ring-amber-100' : 'border-gray-200 shadow-sm hover:border-gray-300'}`}
-                                >
-                                  {/* Delivery Header */}
-                                  <div className="px-5 py-4 flex items-center justify-between gap-4">
-                                    <div className="flex items-center gap-4 flex-1">
-                                      <div className="cursor-grab active:cursor-grabbing p-1 text-gray-300 hover:text-gray-500 transition-colors">
-                                        <GripVertical size={20} />
-                                      </div>
-                                      <div className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center text-[10px] font-black text-gray-500">
-                                        {idx + 1}
-                                      </div>
-                                      <div>
-                                        <h4 className="font-bold text-gray-900 leading-none">{del.order.spruceOrderId}</h4>
-                                        <p className="text-[10px] text-gray-500 mt-1 font-bold uppercase truncate max-w-[200px]">{del.order.customerName}</p>
-                                      </div>
-                                    </div>
+                            <option value="" disabled>Or Assign...</option>
+                            {board.drivers.map(d => (
+                              <option key={d.id} value={d.id}>{d.name}</option>
+                            ))}
+                          </select>
+                        </div>
+                      </motion.div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
 
-                                    <div className="hidden md:block flex-1">
-                                       <p className="text-[10px] font-black text-gray-400 uppercase leading-none mb-1">PRIORITY</p>
-                                       <div className="flex items-center gap-1.5 text-gray-900 font-bold text-sm">
-                                         <Flag size={14} className={idx === 0 ? "text-orange-500" : "text-gray-300"} />
-                                         {idx === 0 ? 'Urgent' : `Standard (${idx + 1})`}
-                                       </div>
-                                    </div>
+          </div>
 
-                                    <div className="flex items-center gap-4">
-                                      <StatusBadge status={del.status} />
-                                      <div className="flex items-center gap-2">
-                                        <select 
-                                          className="text-[10px] font-black border border-gray-200 rounded-lg px-2 py-1 outline-none focus:ring-1 focus:ring-[#2D6A4F] bg-white cursor-pointer"
-                                          value={del.status}
-                                          onChange={(e) => handleStatusUpdate(del.id, e.target.value)}
-                                        >
-                                          <option value="PLACED">Placed</option>
-                                          <option value="OUT_FOR_DELIVERY">Out for Delivery</option>
-                                          <option value="IN_TRANSIT">In Transit</option>
-                                          <option value="DELIVERED">Delivered</option>
-                                          <option value="ON_HOLD">On Hold</option>
-                                          <option value="DELAYED">Delayed</option>
-                                          <option value="CANCELLED">Cancelled</option>
-                                        </select>
-                                        <button 
-                                          onClick={(e) => { e.stopPropagation(); handleResendEmail(del.id); }}
-                                          className="p-1.5 rounded-lg hover:bg-gray-100 text-[#2D6A4F] transition-colors"
-                                          title="Resend Link Email"
-                                        >
-                                          <Mail size={16} />
-                                        </button>
-                                        <button 
-                                          onClick={() => setExpandedDeliveryId(isDelExpanded ? null : del.id)}
-                                          className={`p-1.5 rounded-lg transition-colors ${isDelExpanded ? 'bg-amber-100 text-amber-600' : 'hover:bg-gray-100 text-gray-400'}`}
-                                        >
-                                          {isDelExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-                                        </button>
-                                      </div>
-                                    </div>
-                                  </div>
+          {/* RIGHT 4 COLUMNS: ACTIVE DRIVERS (DROP TARGETS) */}
+          <div className="lg:col-span-4 space-y-4 lg:sticky lg:top-4 max-h-[85vh] overflow-y-auto pr-1 custom-scrollbar">
+            <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-5">
+              <h3 className="font-bold text-gray-900 text-base mb-1 flex items-center justify-between">
+                <span>Active Drivers</span>
+                <span className="bg-gray-100 text-gray-700 text-xs font-black px-2.5 py-0.5 rounded-full">
+                  {board.drivers.length}
+                </span>
+              </h3>
+              <p className="text-xs text-gray-500 mb-4">Drop order cards onto any driver below to dispatch instantly.</p>
 
-                                  {/* Delivery Details */}
-                                  <AnimatePresence>
-                                    {isDelExpanded && (
-                                      <motion.div 
-                                        initial={{ height: 0, opacity: 0 }}
-                                        animate={{ height: 'auto', opacity: 1 }}
-                                        exit={{ height: 0, opacity: 0 }}
-                                        className="overflow-hidden border-t border-gray-50"
+              <div className="space-y-3">
+                {board.drivers.map(driver => {
+                  const isExpanded = expandedDriverId === driver.id;
+                  const isDragOverTarget = activeDragTargetDriverId === driver.id;
+                  
+                  return (
+                    <div
+                      key={driver.id}
+                      onDragOver={(e) => handleDragOverDriver(e, driver.id)}
+                      onDragLeave={() => handleDragLeaveDriver(driver.id)}
+                      onDrop={(e) => handleDropOnDriver(e, driver.id)}
+                      className={`bg-white rounded-2xl border transition-all duration-300 relative ${
+                        isDragOverTarget 
+                          ? 'border-[#2D6A4F] ring-4 ring-[#2D6A4F]/15 bg-emerald-50/20 scale-[1.02] shadow-md' 
+                          : isExpanded 
+                            ? 'border-[#2D6A4F] shadow-md ring-1 ring-[#2D6A4F]/10' 
+                            : 'border-gray-200 hover:border-gray-300 shadow-sm'
+                      }`}
+                    >
+                      {/* Drag overlay message */}
+                      {isDragOverTarget && (
+                        <div className="absolute inset-0 bg-emerald-600/5 rounded-2xl border-2 border-dashed border-[#2D6A4F] flex items-center justify-center pointer-events-none z-10">
+                          <span className="bg-emerald-800 text-white font-extrabold text-xs uppercase tracking-wider px-3 py-1.5 rounded-lg shadow-sm">
+                            Drop to Assign!
+                          </span>
+                        </div>
+                      )}
+
+                      {/* Driver Card Header */}
+                      <button 
+                        onClick={() => setExpandedDriverId(isExpanded ? null : driver.id)}
+                        className="w-full px-5 py-4 flex items-center justify-between text-left group"
+                      >
+                        <div className="flex items-center gap-4 flex-1 overflow-hidden">
+                          <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-black text-sm transition-colors flex-shrink-0 ${
+                            isExpanded ? 'bg-[#1B4332] text-white' : 'bg-gray-100 text-gray-500 group-hover:bg-gray-200'
+                          }`}>
+                            {driver.name.split(' ').map(n => n[0]).join('').toUpperCase()}
+                          </div>
+                          <div className="overflow-hidden">
+                            <h3 className="font-bold text-gray-900 text-sm leading-none truncate">{driver.name}</h3>
+                            <div className="flex items-center gap-2 mt-2 text-[10px] font-bold uppercase tracking-tight text-gray-400">
+                              <span className="flex items-center gap-1"><Truck size={10} /> {driver.type === 'CGC_FLEET' ? 'FLEET' : 'EXTERNAL'}</span>
+                              <span>•</span>
+                              <span className="flex items-center gap-1"><Package2 size={10} /> {driver.deliveries.length} Jobs</span>
+                            </div>
+                          </div>
+                        </div>
+                        
+                        <div className="flex items-center gap-3 flex-shrink-0">
+                          <div className="text-right">
+                            <p className="text-[8px] font-black text-gray-400 uppercase leading-none mb-1">COMPLETED</p>
+                            <p className="text-sm font-black text-gray-900 leading-none">
+                              {driver.deliveries.filter(d => d.status === 'DELIVERED').length} / {driver.deliveries.length}
+                            </p>
+                          </div>
+                          <div className={`p-1.5 rounded-lg transition-colors ${isExpanded ? 'bg-[#2D6A4F]/10 text-[#2D6A4F]' : 'bg-gray-50 text-gray-400'}`}>
+                            {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                          </div>
+                        </div>
+                      </button>
+
+                      {/* Driver Deliveries Expansion */}
+                      <AnimatePresence>
+                        {isExpanded && (
+                          <motion.div 
+                            initial={{ height: 0, opacity: 0 }}
+                            animate={{ height: 'auto', opacity: 1 }}
+                            exit={{ height: 0, opacity: 0 }}
+                            className="overflow-hidden border-t border-gray-100 bg-gray-50/20"
+                          >
+                            <div className="p-4 space-y-3">
+                              {driver.deliveries.length === 0 ? (
+                                <div className="py-6 text-center text-gray-400 text-xs font-semibold italic border border-dashed border-gray-200 rounded-xl bg-white">
+                                  No deliveries assigned today
+                                </div>
+                              ) : (
+                                <div className="space-y-3">
+                                  {driver.deliveries.map((del, idx) => {
+                                    const isDelExpanded = expandedDeliveryId === del.id;
+                                    return (
+                                      <div 
+                                        key={del.id}
+                                        className={`bg-white rounded-xl border transition-all duration-300 ${
+                                          isDelExpanded ? 'border-amber-200 shadow-md ring-1 ring-amber-100' : 'border-gray-200 shadow-sm hover:border-gray-300'
+                                        }`}
                                       >
-                                        <div className="p-6 grid grid-cols-1 lg:grid-cols-3 gap-8 bg-gray-50/50">
-                                          {/* Column 1: Order & Customer */}
-                                          <div className="space-y-6">
-                                            <div>
-                                              <label className="text-[10px] font-black text-gray-400 uppercase tracking-wider mb-2 block">Order Info</label>
-                                              <div className="bg-white border border-gray-100 rounded-xl p-4 space-y-3">
-                                                <div className="flex items-center justify-between">
-                                                   <span className="text-xs text-gray-500 font-bold uppercase">Customer</span>
-                                                   <span className="text-xs text-gray-900 font-black">{del.order.customerName}</span>
-                                                </div>
-                                                <div className="flex items-center justify-between">
-                                                   <span className="text-xs text-gray-500 font-bold uppercase">Material</span>
-                                                   <span className="text-xs text-gray-900 font-black">{del.order.product}</span>
-                                                </div>
-                                                <div className="flex items-center justify-between">
-                                                   <span className="text-xs text-gray-500 font-bold uppercase">Quantity</span>
-                                                   <span className="text-xs text-gray-900 font-black">{Number(del.order.quantity)} {del.order.unit}</span>
-                                                </div>
-                                              </div>
+                                        {/* Delivery Title Header */}
+                                        <div className="px-4 py-3 flex items-center justify-between gap-3">
+                                          <div className="flex items-center gap-3 flex-1 overflow-hidden">
+                                            <div className="w-6 h-6 rounded-full bg-gray-50 border border-gray-200 flex items-center justify-center text-[9px] font-black text-gray-500">
+                                              {idx + 1}
                                             </div>
-                                            <div>
-                                              <label className="text-[10px] font-black text-gray-400 uppercase tracking-wider mb-2 block">Timeline Summary</label>
-                                              <div className="flex items-center gap-4 text-[10px] font-black text-gray-500">
-                                                 <div className="flex flex-col">
-                                                   <span className="text-gray-400 uppercase">Started</span>
-                                                   <span className="text-gray-900">{del.startedAt ? new Date(del.startedAt).toLocaleTimeString() : '--:--'}</span>
-                                                 </div>
-                                                 <div className="flex flex-col">
-                                                   <span className="text-gray-400 uppercase">Completed</span>
-                                                   <span className="text-gray-900">{del.completedAt ? new Date(del.completedAt).toLocaleTimeString() : '--:--'}</span>
-                                                 </div>
-                                              </div>
+                                            <div className="overflow-hidden">
+                                              <h4 className="font-bold text-gray-900 text-xs leading-none">{del.order.spruceOrderId}</h4>
+                                              <p className="text-[9px] text-gray-500 mt-1 font-bold uppercase truncate max-w-[120px]">{del.order.customerName}</p>
                                             </div>
                                           </div>
 
-                                          {/* Column 2: Evidence Photos */}
-                                          <div className="space-y-4">
-                                            <label className="text-[10px] font-black text-gray-400 uppercase tracking-wider mb-2 block">Evidence Photos</label>
-                                            <div className="grid grid-cols-2 gap-3">
-                                              <div>
-                                                <p className="text-[9px] font-black text-gray-400 uppercase mb-1">Pickup</p>
-                                                {del.pickupPhotoUrl ? (
-                                                  <img src={del.pickupPhotoUrl} className="w-full h-32 object-cover rounded-xl border border-gray-200" alt="Pickup" />
-                                                ) : (
-                                                  <div className="w-full h-32 bg-white border border-dashed border-gray-200 rounded-xl flex flex-col items-center justify-center text-gray-300">
-                                                    <ImageIcon size={20} />
-                                                    <span className="text-[10px] font-black mt-1">NO PHOTO</span>
-                                                  </div>
-                                                )}
-                                              </div>
-                                              <div>
-                                                <p className="text-[9px] font-black text-gray-400 uppercase mb-1">Delivery</p>
-                                                {del.deliveryPhotoUrl ? (
-                                                  <img src={del.deliveryPhotoUrl} className="w-full h-32 object-cover rounded-xl border border-gray-200" alt="Delivery" />
-                                                ) : (
-                                                  <div className="w-full h-32 bg-white border border-dashed border-gray-200 rounded-xl flex flex-col items-center justify-center text-gray-300">
-                                                    <ImageIcon size={20} />
-                                                    <span className="text-[10px] font-black mt-1">NO PHOTO</span>
-                                                  </div>
-                                                )}
-                                              </div>
-                                            </div>
-                                          </div>
-
-                                          {/* Column 3: Status History */}
-                                          <div className="space-y-4">
-                                            <label className="text-[10px] font-black text-gray-400 uppercase tracking-wider mb-2 block">Update History</label>
-                                            <div className="max-h-[200px] overflow-y-auto pr-2 custom-scrollbar bg-white rounded-xl border border-gray-100 p-4">
-                                              <StatusTimeline history={del.history} />
-                                            </div>
+                                          <div className="flex items-center gap-2 flex-shrink-0">
+                                            <StatusBadge status={del.status} />
+                                            <button 
+                                              onClick={() => setExpandedDeliveryId(isDelExpanded ? null : del.id)}
+                                              className={`p-1 rounded-lg transition-colors ${isDelExpanded ? 'bg-amber-100 text-amber-600' : 'hover:bg-gray-100 text-gray-400'}`}
+                                            >
+                                              {isDelExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                                            </button>
                                           </div>
                                         </div>
-                                      </motion.div>
-                                    )}
-                                  </AnimatePresence>
-                                </Reorder.Item>
-                              );
-                            })}
-                          </Reorder.Group>
+
+                                        {/* Delivery Expanded Panel */}
+                                        <AnimatePresence>
+                                          {isDelExpanded && (
+                                            <motion.div 
+                                              initial={{ height: 0, opacity: 0 }}
+                                              animate={{ height: 'auto', opacity: 1 }}
+                                              exit={{ height: 0, opacity: 0 }}
+                                              className="overflow-hidden border-t border-gray-50 bg-gray-50/40 p-4 space-y-4"
+                                            >
+                                              <div className="space-y-2">
+                                                <div className="flex justify-between items-center text-xs">
+                                                  <span className="text-gray-500 font-bold uppercase">Material</span>
+                                                  <span className="bg-blue-50 text-blue-700 px-2 py-0.5 rounded text-[10px] font-bold border border-blue-100/50 uppercase">{del.order.product}</span>
+                                                </div>
+                                                <div className="flex justify-between items-center text-xs">
+                                                  <span className="text-gray-500 font-bold uppercase">Quantity</span>
+                                                  <span className="text-gray-900 font-black">{Number(del.order.quantity)} {del.order.unit}</span>
+                                                </div>
+                                              </div>
+
+                                              <div className="space-y-2 pt-2 border-t border-gray-100">
+                                                <label className="text-[9px] font-black text-gray-400 uppercase tracking-wider block">Workflow Status</label>
+                                                <div className="flex gap-2">
+                                                  <select 
+                                                    className="text-[10px] font-black border border-gray-200 rounded-lg px-2 py-1.5 outline-none focus:ring-1 focus:ring-[#2D6A4F] bg-white cursor-pointer flex-1"
+                                                    value={del.status}
+                                                    onChange={(e) => handleStatusUpdate(del.id, e.target.value)}
+                                                  >
+                                                    <option value="PLACED">Placed</option>
+                                                    <option value="OUT_FOR_DELIVERY">Out for Delivery</option>
+                                                    <option value="IN_TRANSIT">In Transit</option>
+                                                    <option value="DELIVERED">Delivered</option>
+                                                    <option value="ON_HOLD">On Hold</option>
+                                                    <option value="DELAYED">Delayed</option>
+                                                    <option value="CANCELLED">Cancelled</option>
+                                                  </select>
+                                                  <button 
+                                                    onClick={() => handleResendEmail(del.id)}
+                                                    className="p-1.5 rounded-lg border border-gray-200 hover:bg-white text-[#2D6A4F] transition-colors"
+                                                    title="Resend Link Email"
+                                                  >
+                                                    <Mail size={14} />
+                                                  </button>
+                                                  <button 
+                                                    onClick={() => {
+                                                      api.post('/api/dispatch/unassign', { orderId: del.order.id })
+                                                        .then(() => {
+                                                          toast.success('Unassigned order');
+                                                          fetchBoard();
+                                                        });
+                                                    }}
+                                                    className="px-2 py-1 rounded-lg border border-red-200 text-red-600 hover:bg-red-50 text-[10px] font-black uppercase transition-colors"
+                                                    title="Remove Assignment"
+                                                  >
+                                                    Unassign
+                                                  </button>
+                                                </div>
+                                              </div>
+                                              
+                                              {/* Evidence Photo Section */}
+                                              {(del.pickupPhotoUrl || del.deliveryPhotoUrl) && (
+                                                <div className="grid grid-cols-2 gap-2 pt-2 border-t border-gray-100">
+                                                  {del.pickupPhotoUrl && (
+                                                    <div>
+                                                      <p className="text-[8px] font-black text-gray-400 uppercase mb-1">Pickup</p>
+                                                      <img src={del.pickupPhotoUrl} className="w-full h-16 object-cover rounded-lg border" alt="Pickup" />
+                                                    </div>
+                                                  )}
+                                                  {del.deliveryPhotoUrl && (
+                                                    <div>
+                                                      <p className="text-[8px] font-black text-gray-400 uppercase mb-1">Delivery</p>
+                                                      <img src={del.deliveryPhotoUrl} className="w-full h-16 object-cover rounded-lg border" alt="Delivery" />
+                                                    </div>
+                                                  )}
+                                                </div>
+                                              )}
+                                            </motion.div>
+                                          )}
+                                        </AnimatePresence>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              )}
+                            </div>
+                          </motion.div>
                         )}
-                      </div>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
+                      </AnimatePresence>
+                    </div>
+                  );
+                })}
               </div>
-            );
-          })}
+            </div>
+          </div>
+
         </div>
       )}
-      <Modal 
-        isOpen={confirmModal.isOpen} 
-        onClose={() => setConfirmModal({ isOpen: false, order: null, driver: null })}
-        title="Confirm Assignment"
-      >
-        <div className="space-y-6">
-          <div className="bg-gray-50 rounded-2xl p-6 border border-gray-100">
-            <p className="text-sm text-gray-500 font-bold uppercase tracking-widest mb-4">You are assigning</p>
-            <div className="flex justify-between items-start">
-              <div>
-                <h4 className="text-xl font-black text-gray-900 leading-none">{confirmModal.order?.spruceOrderId}</h4>
-                <p className="text-sm text-gray-500 mt-2 font-bold uppercase truncate max-w-[300px]">{confirmModal.order?.customerName}</p>
-              </div>
-              <div className="text-right">
-                <p className="text-lg font-black text-[#2D6A4F] leading-none">{Number(confirmModal.order?.quantity)} {confirmModal.order?.unit}</p>
-                <p className="text-[10px] text-gray-400 mt-1 font-bold uppercase">{confirmModal.order?.product}</p>
-              </div>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-4 px-2">
-            <div className="w-12 h-12 rounded-2xl bg-[#1B4332] text-white flex items-center justify-center font-black text-lg shadow-sm">
-              {confirmModal.driver?.name?.split(' ').map(n => n[0]).join('').toUpperCase()}
-            </div>
-            <div>
-              <p className="text-xs text-gray-400 font-black uppercase leading-none mb-1">To Driver</p>
-              <h3 className="font-bold text-gray-900 text-lg leading-tight">{confirmModal.driver?.name}</h3>
-            </div>
-          </div>
-
-          <div className="flex gap-3 pt-4 border-t border-gray-100">
-            <button 
-              onClick={() => setConfirmModal({ isOpen: false, order: null, driver: null })}
-              className="flex-1 px-6 py-3 rounded-xl border border-gray-200 font-black text-sm text-gray-500 hover:bg-gray-50 transition-colors"
-            >
-              CANCEL
-            </button>
-            <button 
-              onClick={handleAssign}
-              className="flex-1 px-6 py-3 rounded-xl bg-[#2D6A4F] text-white font-black text-sm hover:bg-[#1B4332] transition-all shadow-lg shadow-[#2D6A4F]/20"
-            >
-              CONFIRM ASSIGNMENT
-            </button>
-          </div>
-        </div>
-      </Modal>
     </div>
   );
 }

@@ -19,6 +19,7 @@ export declare const TicketService: {
             status: import("@prisma/client").$Enums.TicketStatus;
             ticketNumber: string | null;
             source: import("@prisma/client").$Enums.TicketSource;
+            supplierName: string | null;
             material: string | null;
             rateOnTicket: import("@prisma/client/runtime/library").Decimal | null;
             ticketDate: Date | null;
@@ -36,12 +37,12 @@ export declare const TicketService: {
             status: import("@prisma/client").$Enums.OcrJobStatus;
             startedAt: Date | null;
             invoiceId: string | null;
+            ticketId: string | null;
             type: import("@prisma/client").$Enums.OcrJobType;
             errorMessage: string | null;
             provider: import("@prisma/client").$Enums.OcrProvider;
             finishedAt: Date | null;
             rawResponse: import("@prisma/client/runtime/library").JsonValue | null;
-            ticketId: string | null;
         };
     }>;
     /**
@@ -63,6 +64,7 @@ export declare const TicketService: {
             status: import("@prisma/client").$Enums.TicketStatus;
             ticketNumber: string | null;
             source: import("@prisma/client").$Enums.TicketSource;
+            supplierName: string | null;
             material: string | null;
             rateOnTicket: import("@prisma/client/runtime/library").Decimal | null;
             ticketDate: Date | null;
@@ -80,12 +82,56 @@ export declare const TicketService: {
             status: import("@prisma/client").$Enums.OcrJobStatus;
             startedAt: Date | null;
             invoiceId: string | null;
+            ticketId: string | null;
             type: import("@prisma/client").$Enums.OcrJobType;
             errorMessage: string | null;
             provider: import("@prisma/client").$Enums.OcrProvider;
             finishedAt: Date | null;
             rawResponse: import("@prisma/client/runtime/library").JsonValue | null;
+        };
+    }>;
+    /**
+     * Ticket uploaded manually by admin: save file, create Ticket, queue OCR.
+     */
+    ingestManualTicket(params: {
+        buffer: Buffer;
+        originalName: string;
+    }): Promise<{
+        ticket: {
+            id: string;
+            poNumber: string | null;
+            quantity: import("@prisma/client/runtime/library").Decimal | null;
+            unit: string | null;
+            supplierId: string | null;
+            deliveryStatus: import("@prisma/client").$Enums.DriverTaskStatus;
+            driverId: string | null;
+            status: import("@prisma/client").$Enums.TicketStatus;
+            ticketNumber: string | null;
+            source: import("@prisma/client").$Enums.TicketSource;
+            supplierName: string | null;
+            material: string | null;
+            rateOnTicket: import("@prisma/client/runtime/library").Decimal | null;
+            ticketDate: Date | null;
+            imageUrl: string;
+            ocrRawText: string;
+            ocrConfidence: number;
+            linkedOrderId: string | null;
+            linkMethod: string | null;
+            linkedById: string | null;
+            receivedAt: Date;
+            spruceMatched: boolean;
+        };
+        ocrJob: {
+            id: string;
+            status: import("@prisma/client").$Enums.OcrJobStatus;
+            startedAt: Date | null;
+            invoiceId: string | null;
             ticketId: string | null;
+            type: import("@prisma/client").$Enums.OcrJobType;
+            errorMessage: string | null;
+            provider: import("@prisma/client").$Enums.OcrProvider;
+            finishedAt: Date | null;
+            rawResponse: import("@prisma/client/runtime/library").JsonValue | null;
         };
     }>;
     processTicketOcr(ticketId: string): Promise<{
@@ -99,6 +145,7 @@ export declare const TicketService: {
         status: import("@prisma/client").$Enums.TicketStatus;
         ticketNumber: string | null;
         source: import("@prisma/client").$Enums.TicketSource;
+        supplierName: string | null;
         material: string | null;
         rateOnTicket: import("@prisma/client/runtime/library").Decimal | null;
         ticketDate: Date | null;
@@ -128,8 +175,8 @@ export declare const TicketService: {
             createdAt: Date;
             phone: string;
             active: boolean;
-            ratePerDelivery: import("@prisma/client/runtime/library").Decimal;
             email: string | null;
+            ratePerDelivery: import("@prisma/client/runtime/library").Decimal;
             ratePerTrip: import("@prisma/client/runtime/library").Decimal | null;
             type: import("@prisma/client").$Enums.DriverType;
         } | null;
@@ -145,6 +192,34 @@ export declare const TicketService: {
             address: string | null;
             keywords: string[];
         } | null;
+        orderMatches: ({
+            order: {
+                id: string;
+                spruceOrderId: string;
+                poNumber: string | null;
+                customerName: string;
+                buyerType: import("@prisma/client").$Enums.BuyerType;
+                product: string;
+                quantity: import("@prisma/client/runtime/library").Decimal;
+                unit: string;
+                supplierId: string | null;
+                orderDate: Date;
+                deliveryDate: Date | null;
+                hasInvoice: boolean;
+                invoiceNumber: string | null;
+                createdAt: Date;
+                deliveryStatus: import("@prisma/client").$Enums.DriverTaskStatus;
+                driverId: string | null;
+                priority: number;
+            };
+        } & {
+            id: string;
+            orderId: string;
+            ticketId: string;
+            matchMethod: string;
+            matchedAt: Date;
+            createdBy: string | null;
+        })[];
         linkedOrder: {
             id: string;
             spruceOrderId: string;
@@ -175,6 +250,7 @@ export declare const TicketService: {
         status: import("@prisma/client").$Enums.TicketStatus;
         ticketNumber: string | null;
         source: import("@prisma/client").$Enums.TicketSource;
+        supplierName: string | null;
         material: string | null;
         rateOnTicket: import("@prisma/client/runtime/library").Decimal | null;
         ticketDate: Date | null;
@@ -200,8 +276,8 @@ export declare const TicketService: {
             createdAt: Date;
             phone: string;
             active: boolean;
-            ratePerDelivery: import("@prisma/client/runtime/library").Decimal;
             email: string | null;
+            ratePerDelivery: import("@prisma/client/runtime/library").Decimal;
             ratePerTrip: import("@prisma/client/runtime/library").Decimal | null;
             type: import("@prisma/client").$Enums.DriverType;
         } | null;
@@ -222,13 +298,41 @@ export declare const TicketService: {
             status: import("@prisma/client").$Enums.OcrJobStatus;
             startedAt: Date | null;
             invoiceId: string | null;
+            ticketId: string | null;
             type: import("@prisma/client").$Enums.OcrJobType;
             errorMessage: string | null;
             provider: import("@prisma/client").$Enums.OcrProvider;
             finishedAt: Date | null;
             rawResponse: import("@prisma/client/runtime/library").JsonValue | null;
-            ticketId: string | null;
         }[];
+        orderMatches: ({
+            order: {
+                id: string;
+                spruceOrderId: string;
+                poNumber: string | null;
+                customerName: string;
+                buyerType: import("@prisma/client").$Enums.BuyerType;
+                product: string;
+                quantity: import("@prisma/client/runtime/library").Decimal;
+                unit: string;
+                supplierId: string | null;
+                orderDate: Date;
+                deliveryDate: Date | null;
+                hasInvoice: boolean;
+                invoiceNumber: string | null;
+                createdAt: Date;
+                deliveryStatus: import("@prisma/client").$Enums.DriverTaskStatus;
+                driverId: string | null;
+                priority: number;
+            };
+        } & {
+            id: string;
+            orderId: string;
+            ticketId: string;
+            matchMethod: string;
+            matchedAt: Date;
+            createdBy: string | null;
+        })[];
         linkedOrder: {
             id: string;
             spruceOrderId: string;
@@ -259,6 +363,7 @@ export declare const TicketService: {
         status: import("@prisma/client").$Enums.TicketStatus;
         ticketNumber: string | null;
         source: import("@prisma/client").$Enums.TicketSource;
+        supplierName: string | null;
         material: string | null;
         rateOnTicket: import("@prisma/client/runtime/library").Decimal | null;
         ticketDate: Date | null;
@@ -285,6 +390,7 @@ export declare const TicketService: {
         status: import("@prisma/client").$Enums.TicketStatus;
         ticketNumber: string | null;
         source: import("@prisma/client").$Enums.TicketSource;
+        supplierName: string | null;
         material: string | null;
         rateOnTicket: import("@prisma/client/runtime/library").Decimal | null;
         ticketDate: Date | null;
@@ -297,6 +403,7 @@ export declare const TicketService: {
         receivedAt: Date;
         spruceMatched: boolean;
     }>;
+    unlinkTicketFromOrder(ticketId: string, orderId: string): Promise<void>;
     linkTicketToOrder(ticketId: string, orderId: string, userId?: string): Promise<{
         id: string;
         poNumber: string | null;
@@ -308,6 +415,7 @@ export declare const TicketService: {
         status: import("@prisma/client").$Enums.TicketStatus;
         ticketNumber: string | null;
         source: import("@prisma/client").$Enums.TicketSource;
+        supplierName: string | null;
         material: string | null;
         rateOnTicket: import("@prisma/client/runtime/library").Decimal | null;
         ticketDate: Date | null;
@@ -334,6 +442,7 @@ export declare const TicketService: {
         status: import("@prisma/client").$Enums.TicketStatus;
         ticketNumber: string | null;
         source: import("@prisma/client").$Enums.TicketSource;
+        supplierName: string | null;
         material: string | null;
         rateOnTicket: import("@prisma/client/runtime/library").Decimal | null;
         ticketDate: Date | null;

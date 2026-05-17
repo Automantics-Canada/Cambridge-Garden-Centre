@@ -2,16 +2,52 @@ import { prisma } from '../../db/prisma.js';
 import { compareTwoStrings } from 'string-similarity';
 import { saveInvoiceImage } from '../../services/fileStorage.js';
 import { extractExpenseFromLocalImage } from '../../services/invoiceOcr.service.js';
+import fs from 'fs';
+import path from 'path';
 import { InvoiceStatus, SenderType, OcrJobType, OcrProvider, OcrJobStatus, LineItemFlag, AuditEntityType, AuditActionType, } from '@prisma/client';
 async function findSupplierByName(name) {
     if (!name)
         return null;
+    const logPath = path.join(process.cwd(), 'ocr_debug.log');
+    fs.appendFileSync(logPath, `\n[${new Date().toISOString()}] Attempting match for: "${name}"\n`);
     const supplier = await prisma.supplier.findFirst({
+        where: {
+            name: { equals: name, mode: 'insensitive' },
+        },
+    });
+    if (supplier) {
+        fs.appendFileSync(logPath, `Exact match found: ${supplier.name}\n`);
+        return supplier;
+    }
+    // Try contains
+    const containsSupplier = await prisma.supplier.findFirst({
         where: {
             name: { contains: name, mode: 'insensitive' },
         },
     });
-    return supplier;
+    if (containsSupplier) {
+        fs.appendFileSync(logPath, `Contains match found: ${containsSupplier.name}\n`);
+        return containsSupplier;
+    }
+    // Final fallback: Fuzzy match against all suppliers
+    fs.appendFileSync(logPath, `No direct match. Candidates:\n`);
+    const allSuppliers = await prisma.supplier.findMany();
+    let bestMatch = null;
+    let highestSimilarity = 0;
+    for (const s of allSuppliers) {
+        const similarity = compareTwoStrings(name.toLowerCase(), s.name.toLowerCase());
+        fs.appendFileSync(logPath, ` - Candidate: "${s.name}" | Score: ${similarity.toFixed(4)}\n`);
+        if (similarity > highestSimilarity) {
+            highestSimilarity = similarity;
+            bestMatch = s;
+        }
+    }
+    if (bestMatch && highestSimilarity > 0.3) {
+        fs.appendFileSync(logPath, `WINNER: "${bestMatch.name}" (Score: ${highestSimilarity.toFixed(4)})\n`);
+        return bestMatch;
+    }
+    fs.appendFileSync(logPath, `FAILURE: No supplier matched.\n`);
+    return null;
 }
 /**
  * Normalizes product names for fuzzy matching.
@@ -21,7 +57,7 @@ function normalizeString(str) {
     return str
         .toLowerCase()
         .replace(/type\s+/g, '')
-        .replace(/[^a-z0-9\s]/g, '')
+        .replace(/[^a-z0-9\s]/g, ' ') // Replace non-alphanumeric with space instead of deleting (handles hyphens)
         .replace(/\s+/g, ' ')
         .trim();
 }
@@ -46,8 +82,10 @@ export const InvoiceService = {
             supplier = allSuppliers.find(s => params.subject.toLowerCase().includes(s.name.toLowerCase())) || null;
         }
         if (!supplier) {
-            // Fallback to first supplier or a "General" supplier
-            supplier = await prisma.supplier.findFirst();
+            // No supplier matched — use a placeholder. OCR will resolve the correct supplier.
+            // Don't blindly pick the first supplier as that causes wrong assignments.
+            supplier = await prisma.supplier.findFirst({ where: { name: 'Stone Creek Aggregates' } })
+                ?? await prisma.supplier.findFirst();
         }
         if (!supplier)
             throw new Error('No supplier found in the system to link to');
@@ -93,6 +131,7 @@ export const InvoiceService = {
         }
         try {
             const extracted = await extractExpenseFromLocalImage(invoice.fileUrl);
+            const logPath = path.join(process.cwd(), 'ocr_debug.log');
             let updatedSupplierId = invoice.supplierId;
             if (extracted.supplierName) {
                 const found = await findSupplierByName(extracted.supplierName);
@@ -110,12 +149,14 @@ export const InvoiceService = {
                     OcrJobStatus: OcrJobStatus.COMPLETED,
                 },
             });
-            // Clear existing line items
+            console.log(`[InvoiceService] OCR COMPLETE for Invoice ${invoiceId}. Final Supplier: ${updatedSupplierId}. Raw extracted name: "${extracted.supplierName}"`);
             await prisma.invoiceLineItem.deleteMany({ where: { invoiceId } });
+            fs.appendFileSync(logPath, `\nProcessing ${extracted.lineItems.length} line items...\n`);
             for (let i = 0; i < extracted.lineItems.length; i++) {
                 const item = extracted.lineItems[i];
                 if (!item)
                     continue;
+                fs.appendFileSync(logPath, `Line ${i + 1}: "${item.description}" | Unit: "${item.unit}"\n`);
                 let matchedOrderId = null;
                 let matchedTicketIds = [];
                 let negotiatedRateVal = null;
@@ -124,7 +165,7 @@ export const InvoiceService = {
                 let qtyDiscrepancy = null;
                 const linePo = item.poNumber || extracted.poNumber || null;
                 // --- MATCH 1: Invoice Line to Ticket ---
-                // 7.1 Match 1: Primary match: PO number on invoice line === PO number on ticket
+                // Simplified: link all tickets with the same PO to this invoice line
                 if (linePo) {
                     const matchingTickets = await prisma.ticket.findMany({
                         where: { poNumber: linePo, supplierId: updatedSupplierId },
@@ -134,41 +175,15 @@ export const InvoiceService = {
                     }
                 }
                 if (matchedTicketIds.length === 0) {
-                    // Secondary match (if no PO): supplier + date range + material type + quantity within 5% tolerance
-                    const invoiceDate = new Date(updatedInvoice.invoiceDate);
-                    const minDate = new Date(invoiceDate);
-                    minDate.setDate(minDate.getDate() - 3);
-                    const maxDate = new Date(invoiceDate);
-                    maxDate.setDate(maxDate.getDate() + 3);
-                    const potentialTickets = await prisma.ticket.findMany({
-                        where: {
-                            supplierId: updatedSupplierId,
-                            ticketDate: { gte: minDate, lte: maxDate },
-                        }
-                    });
-                    for (const ticket of potentialTickets) {
-                        if (ticket.material && stringsMatchFuzzy(ticket.material, item.description)) {
-                            const ticketQty = Number(ticket.quantity || 0);
-                            const diff = Math.abs(item.quantity - ticketQty);
-                            const tolerance = item.quantity * 0.05;
-                            if (diff <= tolerance) {
-                                matchedTicketIds.push(ticket.id);
-                                // In secondary match, we usually find one primary ticket, 
-                                // but let's allow finding multiple if they hit the tolerance.
-                                // Spec says "One invoice line can match multiple tickets".
-                            }
-                        }
-                    }
-                }
-                if (matchedTicketIds.length === 0) {
                     flags.push(LineItemFlag.NO_TICKET);
                 }
                 // --- MATCH 2: Invoice Line to Order ---
-                // 7.1 Match 2: Match via PO number: invoice line PO === order PO number
+                // Match 2: Match via PO number AND material name (fuzzy)
                 if (linePo) {
-                    const orderMatch = await prisma.order.findFirst({
+                    const potentialOrders = await prisma.order.findMany({
                         where: { poNumber: linePo, supplierId: updatedSupplierId },
                     });
+                    const orderMatch = potentialOrders.find(o => stringsMatchFuzzy(o.product, item.description));
                     if (orderMatch) {
                         matchedOrderId = orderMatch.id;
                         const orderQty = Number(orderMatch.quantity);
@@ -222,6 +237,11 @@ export const InvoiceService = {
                 else if (flags.length === 1) {
                     finalFlag = flags[0];
                 }
+                // --- Calculation ---
+                let approvedTotal = null;
+                if (negotiatedRateVal) {
+                    approvedTotal = item.quantity * negotiatedRateVal;
+                }
                 await prisma.invoiceLineItem.create({
                     data: {
                         invoiceId,
@@ -229,7 +249,7 @@ export const InvoiceService = {
                         description: item.description,
                         poNumber: linePo,
                         quantity: item.quantity,
-                        unit: 'ea', // Should probably extract unit from Bedrock too, but keeping 'ea' for now
+                        unit: item.unit ?? 'ea',
                         unitRate: item.unitPrice,
                         lineTotal: item.totalPrice,
                         matchedOrderId,
@@ -239,7 +259,27 @@ export const InvoiceService = {
                         negotiatedRate: negotiatedRateVal,
                         rateDiscrepancy,
                         qtyDiscrepancy,
+                        approvedTotal,
                         flag: finalFlag,
+                    }
+                });
+            }
+            // --- Total Discrepancy Match ---
+            // Calculate sum of approved line item subtotals
+            const lineItems = await prisma.invoiceLineItem.findMany({ where: { invoiceId } });
+            const totalApprovedSubtotal = lineItems.reduce((sum, item) => {
+                const rate = item.negotiatedRate ? Number(item.negotiatedRate) : 0;
+                return sum + (Number(item.quantity) * rate);
+            }, 0);
+            const totalApprovedWithHst = totalApprovedSubtotal * 1.13;
+            const billedTotal = Number(updatedInvoice.totalAmount);
+            const totalDiscrepancy = Math.abs(totalApprovedWithHst - billedTotal);
+            // Match with final amount - if difference > $0.05, update disputeNote
+            if (totalDiscrepancy > 0.05) {
+                await prisma.invoice.update({
+                    where: { id: invoiceId },
+                    data: {
+                        disputeNote: `Total amount mismatch. Expected pay: $${totalApprovedWithHst.toFixed(2)} (Subtotal: $${totalApprovedSubtotal.toFixed(2)} + 13% HST). Billed: $${billedTotal.toFixed(2)}.`
                     }
                 });
             }

@@ -21,6 +21,7 @@ export interface InvoiceOcrExtractionResult {
     quantity: number;
     unitPrice: number;
     totalPrice: number;
+    unit: string | null;
     poNumber: string | null;
   }>;
   rawResponse: any;
@@ -74,7 +75,42 @@ async function extractInvoiceWithTextract(localPath: string): Promise<InvoiceOcr
   const response = await textractClient.send(command);
   const rawText = getRawTextFromExpenseResponse(response);
 
+  const logPath = path.join(process.cwd(), 'ocr_debug.log');
+  fs.appendFileSync(logPath, `\n--- RAW OCR TEXT ---\n${rawText}\n--------------------\n`);
+
   const extraction = await extractStructuredData(rawText, 'INVOICE');
+
+  // Debug: log what Bedrock returned
+  console.log('[InvoiceOCR] Bedrock extracted supplierName:', extraction.supplierName);
+  console.log('[InvoiceOCR] Bedrock extracted lineItems:', JSON.stringify(
+    (extraction.lineItems || []).map(i => ({ desc: i.description, qty: i.quantity, unit: i.unit })),
+    null, 2
+  ));
+
+  // Helper: extract unit from raw text near a quantity
+  function inferUnit(description: string, rawOcrText: string): string {
+    // Search raw text for a line containing the description and a unit word
+    const unitPattern = /\b(\d+\.?\d*)\s*(tons?|tonnes?|lbs?|pounds?|kg|cy|ea|each|cubic yards?)\b/gi;
+    const lines = rawOcrText.split('\n');
+    const descLower = description.toLowerCase().replace(/[^a-z0-9]/g, '');
+    for (const line of lines) {
+      const lineLower = line.toLowerCase().replace(/[^a-z0-9\s]/g, '');
+      if (lineLower.includes(descLower.substring(0, Math.min(4, descLower.length)))) {
+        const m = line.match(unitPattern);
+        if (m) {
+          const unitMatch = m[0].match(/[a-zA-Z]+$/);
+          if (unitMatch) return unitMatch[0].toLowerCase();
+        }
+      }
+    }
+    // Scan full raw text for unit patterns near quantities
+    const allMatches = rawOcrText.match(unitPattern);
+    if (allMatches && allMatches.length > 0) {
+      const unitMatch = allMatches[0].match(/[a-zA-Z]+$/);
+      if (unitMatch) return unitMatch[0].toLowerCase();
+    }
+    return 'ea';
+  }
 
   return {
     supplierName: extraction.supplierName,
@@ -82,13 +118,20 @@ async function extractInvoiceWithTextract(localPath: string): Promise<InvoiceOcr
     totalAmount: extraction.totalAmount || null,
     invoiceNumber: extraction.invoiceNumber || null,
     poNumber: extraction.poNumber || null,
-    lineItems: (extraction.lineItems || []).map(item => ({
-      description: item.description,
-      quantity: item.quantity,
-      unitPrice: item.unitPrice,
-      totalPrice: item.totalPrice,
-      poNumber: item.poNumber,
-    })),
+    lineItems: (extraction.lineItems || []).map(item => {
+      const resolvedUnit = (item.unit && item.unit.trim().length > 0)
+        ? item.unit.trim()
+        : inferUnit(item.description, rawText);
+      console.log(`[InvoiceOCR] Line "${item.description}": AI unit="${item.unit}" → resolved="${resolvedUnit}"`);
+      return {
+        description: item.description,
+        quantity: item.quantity,
+        unitPrice: item.unitPrice,
+        totalPrice: item.totalPrice,
+        unit: resolvedUnit,
+        poNumber: item.poNumber,
+      };
+    }),
     rawResponse: {
       textract: response,
       bedrock: extraction,

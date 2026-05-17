@@ -4,6 +4,7 @@ export interface OcrExtractionResult {
     ticketDate: Date | null;
     material: string | null;
     quantity: number | null;
+    unit: string | null;
     poNumber: string | null;
     ticketNumber: string | null;
     ocrConfidence: number;

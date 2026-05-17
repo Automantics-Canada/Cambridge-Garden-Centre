@@ -7,11 +7,18 @@ export declare const ingestWhatsappTicket: (req: Request, res: Response) => Prom
  *  - fromEmail: sender email (e.g. "tickets@galtgravel.com")
  */
 export declare const ingestEmailTicket: (req: Request, res: Response) => Promise<Response<any, Record<string, any>>>;
+/**
+ * Manual ticket upload by admin:
+ * multipart/form-data:
+ *  - file: ticket image (JPG/PNG)
+ */
+export declare const uploadManualTicket: (req: Request, res: Response) => Promise<Response<any, Record<string, any>>>;
 export declare const processTicketOcr: (req: Request, res: Response) => Promise<Response<any, Record<string, any>>>;
 export declare const getTickets: (req: Request, res: Response) => Promise<Response<any, Record<string, any>>>;
 export declare const getTicketStats: (req: Request, res: Response) => Promise<Response<any, Record<string, any>>>;
 export declare const getTicketById: (req: Request, res: Response) => Promise<Response<any, Record<string, any>>>;
 export declare const linkTicketToOrder: (req: Request, res: Response) => Promise<Response<any, Record<string, any>>>;
+export declare const unlinkTicketFromOrder: (req: Request, res: Response) => Promise<Response<any, Record<string, any>>>;
 export declare const updateTicket: (req: Request, res: Response) => Promise<Response<any, Record<string, any>>>;
 export declare const deleteTicket: (req: Request, res: Response) => Promise<Response<any, Record<string, any>>>;
 /**

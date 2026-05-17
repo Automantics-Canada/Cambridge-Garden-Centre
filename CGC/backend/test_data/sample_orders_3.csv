@@ -1,7 +1,0 @@
-OrderNumber,CustomerName,BuyerType,Product,Quantity,Unit,PONumber,OrderDate,DeliveryDate,InvoiceNumber,HasInvoice
-ORD-5001,Cambridge Paving Co,CONTRACTOR,3/4 Inch Gravel,120,Tons,PO-CPC-99,2024-05-10,2024-05-12,INV-5001,yes
-ORD-5002,Alice Wonderland,RETAIL,Mixed Flowers,12,Pots,,2024-05-11,,,no
-ORD-5003,Downtown Renovation,CONTRACTOR,Screened Topsoil,45,Cubic Yards,PO-DR-442,2024-05-12,2024-05-13,INV-5002,true
-ORD-5004,Bob Builder,RETAIL,Limestone,2,Tons,,2024-05-12,,,false
-ORD-5005,Skyline Landscaping,CONTRACTOR,Black Mulch,30,Yards,PO-SKY-12,2024-05-13,2024-05-14,,no
-ORD-5006,Garden Variety Inc,CONTRACTOR,Fertilizer,500,lbs,PO-GVI-001,2024-05-14,2024-05-15,INV-5003,1

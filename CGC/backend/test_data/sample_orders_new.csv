@@ -1,6 +1,0 @@
-OrderNumber,CustomerName,BuyerType,Product,Quantity,Unit,PONumber,OrderDate,DeliveryDate,InvoiceNumber,HasInvoice
-ORD-2024-001,Green Valley Landscapes,CONTRACTOR,Premium Soil,15.5,Cubic Yards,PO-GV-101,2024-05-01,2024-05-03,INV-10051,yes
-ORD-2024-002,John Doe,RETAIL,Cedar Mulch,5,Bags,,2024-05-02,,,no
-ORD-2024-003,City Parks Dept,CONTRACTOR,River Stone,25,Tons,PO-CITY-55,2024-05-02,2024-05-05,INV-10052,true
-ORD-2024-004,Sarah Miller,RETAIL,Topsoil,2.5,Yards,,2024-05-04,,,false
-ORD-2024-005,Elite Construction,CONTRACTOR,Screened Sand,50,Tons,PO-EC-789,2024-05-05,2024-05-06,INV-10053,y

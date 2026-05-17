@@ -9,6 +9,7 @@ export interface InvoiceOcrExtractionResult {
         quantity: number;
         unitPrice: number;
         totalPrice: number;
+        unit: string | null;
         poNumber: string | null;
     }>;
     rawResponse: any;

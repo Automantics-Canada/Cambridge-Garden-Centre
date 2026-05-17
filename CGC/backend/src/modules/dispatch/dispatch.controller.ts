@@ -24,6 +24,19 @@ export const assignDriver = async (req: Request, res: Response) => {
   }
 };
 
+export const unassignDriver = async (req: Request, res: Response) => {
+  try {
+    const { orderId } = req.body;
+    if (!orderId) {
+      return res.status(400).json({ error: 'orderId is required' });
+    }
+    const result = await DispatchService.unassignDriver(orderId);
+    res.json(result);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
 export const reorderDeliveries = async (req: Request, res: Response) => {
   try {
     const { driverId, deliveryIds } = req.body;

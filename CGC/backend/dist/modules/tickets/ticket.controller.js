@@ -62,6 +62,34 @@ export const ingestEmailTicket = async (req, res) => {
             .json({ error: error?.message ?? 'Unexpected error' });
     }
 };
+/**
+ * Manual ticket upload by admin:
+ * multipart/form-data:
+ *  - file: ticket image (JPG/PNG)
+ */
+export const uploadManualTicket = async (req, res) => {
+    const file = req.file;
+    if (!file) {
+        return res.status(400).json({ error: 'file is required' });
+    }
+    try {
+        const { ticket, ocrJob } = await TicketService.ingestManualTicket({
+            buffer: file.buffer,
+            originalName: file.originalname,
+        });
+        return res.status(201).json({
+            message: 'Ticket uploaded manually and queued for OCR',
+            ticket,
+            ocrJobId: ocrJob.id,
+        });
+    }
+    catch (error) {
+        console.error('uploadManualTicket error', error);
+        return res
+            .status(500)
+            .json({ error: error?.message ?? 'Unexpected error' });
+    }
+};
 export const processTicketOcr = async (req, res) => {
     try {
         const { id } = req.params;
@@ -125,6 +153,19 @@ export const linkTicketToOrder = async (req, res) => {
         const userId = req.user?.id; // Assuming auth middleware attaches user
         const ticket = await TicketService.linkTicketToOrder(req.params.id, orderId, userId);
         return res.status(200).json(ticket);
+    }
+    catch (error) {
+        return res.status(500).json({ error: error.message || 'Unexpected error' });
+    }
+};
+export const unlinkTicketFromOrder = async (req, res) => {
+    try {
+        const { orderId } = req.body;
+        if (!orderId) {
+            return res.status(400).json({ error: 'orderId is required' });
+        }
+        await TicketService.unlinkTicketFromOrder(req.params.id, orderId);
+        return res.status(204).send();
     }
     catch (error) {
         return res.status(500).json({ error: error.message || 'Unexpected error' });
