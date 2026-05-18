@@ -117,9 +117,9 @@ export const DispatchService = {
     console.timeEnd(`Assignment-${orderId}`);
 
     // Trigger assignment email in background (non-blocking)
-    MailService.sendAssignmentEmail(driverId, delivery.id).catch(err => {
-      console.error('[MAIL] Background assignment email failed:', err);
-    });
+    // MailService.sendAssignmentEmail(driverId, delivery.id).catch(err => {
+    //   console.error('[MAIL] Background assignment email failed:', err);
+    // });
 
     return delivery;
   },
@@ -173,9 +173,9 @@ export const DispatchService = {
     await prisma.$transaction(updates);
 
     // Send priority update email in background
-    MailService.sendPriorityUpdateEmail(driverId).catch(err => {
-      console.error('[MAIL] Background priority update email failed:', err);
-    });
+    // MailService.sendPriorityUpdateEmail(driverId).catch(err => {
+    //   console.error('[MAIL] Background priority update email failed:', err);
+    // });
 
     return { success: true };
   },

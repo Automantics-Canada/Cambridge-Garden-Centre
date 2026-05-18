@@ -7,6 +7,7 @@ export default function AddDriverModal({ isOpen, onClose, onSuccess }) {
     name: '',
     phone: '',
     email: '',
+    password: '',
     type: 'CGC_FLEET',
     ratePerDelivery: '',
     ratePerTrip: ''
@@ -83,6 +84,20 @@ export default function AddDriverModal({ isOpen, onClose, onSuccess }) {
               onChange={(e) => setFormData({ ...formData, email: e.target.value })}
             />
           </div>
+
+          {formData.email && (
+            <div className="space-y-1.5 animate-in fade-in slide-in-from-top-2 duration-200">
+              <label className="text-xs font-bold text-gray-500 uppercase tracking-wider ml-1">Password</label>
+              <input
+                type="password"
+                required={!!formData.email}
+                className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-[#2D6A4F] focus:ring-4 focus:ring-[#2D6A4F]/10 outline-none transition-all placeholder:text-gray-300"
+                placeholder="Set credentials password"
+                value={formData.password}
+                onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+              />
+            </div>
+          )}
 
           <div className="space-y-1.5">
             <label className="text-xs font-bold text-gray-500 uppercase tracking-wider ml-1">Driver Type</label>

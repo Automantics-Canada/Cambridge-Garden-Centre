@@ -18,7 +18,7 @@ export default function RateForm({ supplierId, rate, onClose }) {
     notes: '',
   });
 
-  const unitOptions = ['ton', 'kg', 'lb', 'load', 'yard', 'meter', 'each'];
+  const unitOptions = ['ton', 'kg', 'lb', 'load', 'yard', 'meter', 'each', 'tm'];
 
   const [errors, setErrors] = useState({});
 

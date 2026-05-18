@@ -4,7 +4,7 @@ import { env } from '../config/env.js';
 
 // Matches the UserRole enum in prisma/schema.prisma
 // Once Prisma Client is generated, replace with: import { UserRole } from '@prisma/client';
-export type UserRole = 'AP_USER' | 'OWNER' | 'ADMIN';
+export type UserRole = 'AP_USER' | 'OWNER' | 'ADMIN' | 'DRIVER';
 
 export interface AuthRequest extends Request {
   user?: {
@@ -14,11 +14,37 @@ export interface AuthRequest extends Request {
   };
 }
 
-export function authMiddleware(
+import { prisma } from '../db/prisma.js';
+
+export async function authMiddleware(
   req: AuthRequest,
   res: Response,
   next: NextFunction
 ) {
+  // Support legacy driver URL token access
+  const queryToken = req.query.token as string;
+  if (queryToken) {
+    try {
+      const decoded = Buffer.from(queryToken, 'base64').toString('ascii');
+      const [driverId] = decoded.split(':');
+      if (driverId) {
+        const driver = await prisma.driver.findUnique({
+          where: { id: driverId }
+        });
+        if (driver) {
+          req.user = {
+            id: driver.userId || `legacy-driver-id-${driver.id}`,
+            email: driver.email || 'legacy@example.com',
+            role: 'DRIVER'
+          };
+          return next();
+        }
+      }
+    } catch (e) {
+      console.error('Failed to parse legacy driver token:', e);
+    }
+  }
+
   const authHeader = req.headers.authorization;
   if (!authHeader?.startsWith('Bearer ')) {
     return res.status(401).json({ error: 'Missing or invalid Authorization' });

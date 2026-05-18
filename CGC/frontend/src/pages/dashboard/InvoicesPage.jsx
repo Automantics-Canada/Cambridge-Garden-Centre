@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../../api/axios';
+import { supabase } from '../../supabaseClient';
 import { 
   Search, 
   Eye, 
@@ -69,6 +70,24 @@ export default function InvoicesPage() {
     fetchInvoices();
     fetchSuppliers();
   }, [fetchInvoices, fetchSuppliers]);
+
+  useEffect(() => {
+    const channel = supabase
+      .channel('invoice-changes')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'Invoice' },
+        (payload) => {
+          console.log('[REALTIME] Invoice change received:', payload);
+          fetchInvoices();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [fetchInvoices]);
 
   const handleFileUpload = async (event) => {
     const file = event.target.files?.[0];

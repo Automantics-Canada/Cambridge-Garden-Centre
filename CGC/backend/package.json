@@ -28,6 +28,7 @@
     "@types/string-similarity": "^4.0.2",
     "@types/uuid": "^10.0.0",
     "prisma": "^6.19.2",
+    "supabase": "^2.98.2",
     "ts-node": "^10.9.2",
     "tsx": "^4.21.0",
     "typescript": "^6.0.2"

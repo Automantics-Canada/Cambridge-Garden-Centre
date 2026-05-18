@@ -180,6 +180,7 @@ model User {
   spruceImports    SpruceImportJob[]
   systemSettings   SystemSetting[]
   linkedTickets    Ticket[]
+  driver           Driver?
 }
 
 model Driver {
@@ -196,6 +197,8 @@ model Driver {
   orders          Order[]
   tickets         Ticket[]
   messages        WhatsAppMessage[]
+  userId          String?           @db.Uuid @unique
+  user            User?             @relation(fields: [userId], references: [id])
 }
 
 model Delivery {
@@ -375,6 +378,7 @@ enum UserRole {
   AP_USER
   OWNER
   ADMIN
+  DRIVER
 }
 
 enum OcrJobType {

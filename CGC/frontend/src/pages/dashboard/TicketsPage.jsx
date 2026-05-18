@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import api from '../../api/axios';
+import { supabase } from '../../supabaseClient';
 import { 
   Search, 
   Eye, 
@@ -86,6 +87,25 @@ export default function TicketsPage() {
     fetchTickets();
     fetchStats();
     fetchSuppliers();
+  }, [fetchTickets]);
+
+  useEffect(() => {
+    const channel = supabase
+      .channel('ticket-changes')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'Ticket' },
+        (payload) => {
+          console.log('[REALTIME] Ticket change received:', payload);
+          fetchTickets();
+          fetchStats();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, [fetchTickets]);
 
   const handleUpdateTicket = async (id, data) => {

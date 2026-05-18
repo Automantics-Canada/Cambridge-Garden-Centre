@@ -10,13 +10,17 @@ export default function Login() {
   const dispatch = useDispatch();
   const navigate = useNavigate();
   
-  const { loading, error, isAuthenticated } = useSelector((state) => state.auth);
+  const { loading, error, isAuthenticated, user } = useSelector((state) => state.auth);
 
   useEffect(() => {
-    if (isAuthenticated) {
-      navigate('/dashboard');
+    if (isAuthenticated && user) {
+      if (user.role === 'DRIVER') {
+        navigate('/driver/today');
+      } else {
+        navigate('/dashboard');
+      }
     }
-  }, [isAuthenticated, navigate]);
+  }, [isAuthenticated, user, navigate]);
 
   const handleLogin = (e) => {
     e.preventDefault();

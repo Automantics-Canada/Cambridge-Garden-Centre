@@ -1,11 +1,26 @@
-import type { Request, Response } from 'express';
+import type { Response } from 'express';
+import type { AuthRequest } from '../../middleware/authMiddleware.js';
 import { DeliveriesService } from './deliveries.service.js';
+import { prisma } from '../../db/prisma.js';
 
-export const getDeliveries = async (req: Request, res: Response) => {
+export const getDeliveries = async (req: AuthRequest, res: Response) => {
   try {
     const { driverId, status, priority } = req.query;
     const filters: any = {};
-    if (driverId) filters.driverId = driverId;
+
+    if (req.user?.role === 'DRIVER') {
+      // Securely enforce that drivers can only query their own deliveries
+      const driver = await prisma.driver.findUnique({
+        where: { userId: req.user.id }
+      });
+      if (!driver) {
+        return res.status(404).json({ error: 'Driver profile not linked' });
+      }
+      filters.driverId = driver.id;
+    } else {
+      if (driverId) filters.driverId = driverId;
+    }
+
     if (status) filters.status = status;
     if (priority) filters.priority = Number(priority);
 
@@ -16,7 +31,7 @@ export const getDeliveries = async (req: Request, res: Response) => {
   }
 };
 
-export const updateStatus = async (req: Request, res: Response) => {
+export const updateStatus = async (req: AuthRequest, res: Response) => {
   try {
     const { id } = req.params as { id: string };
     const { status, notes } = req.body;
@@ -27,7 +42,7 @@ export const updateStatus = async (req: Request, res: Response) => {
   }
 };
 
-export const uploadPhoto = async (req: Request, res: Response) => {
+export const uploadPhoto = async (req: AuthRequest, res: Response) => {
   try {
     const { id } = req.params as { id: string };
     const { type } = req.body; // 'pickup' | 'delivery'

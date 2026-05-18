@@ -1,8 +1,19 @@
 import { Router } from 'express';
-import { getDrivers, createDriver, getDriverDeliveries, updateDriver } from './driver.controller.js';
+import { authMiddleware } from '../../middleware/authMiddleware.js';
+import { 
+  getDrivers, 
+  createDriver, 
+  getDriverDeliveries, 
+  updateDriver,
+  getLoggedInDriverProfile 
+} from './driver.controller.js';
 
 const router = Router();
 
+// Protect all driver routes
+router.use(authMiddleware);
+
+router.get('/me', getLoggedInDriverProfile);
 router.get('/', getDrivers);
 router.post('/', createDriver);
 router.patch('/:id', updateDriver);
