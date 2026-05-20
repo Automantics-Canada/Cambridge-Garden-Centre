@@ -1,0 +1,83 @@
+
+--- RAW OCR TEXT ---
+GRO-BORK
+Remit to:
+Gro-Bark Ontario Limited
+PO Box 100,
+Thorold ON L2V 3Y8
+A WALKER COMPANY
+Orders: 888 GRO-BARK
+www.gro-bark.com
+Invoice No
+5838627
+INVOICE
+Invoice Date
+04/29/26
+Customer
+288278
+Order No
+105408
+Page
+1
+Sold To:
+Ship To: S_288278-Shipping
+Cambridge Garden Centre Inc.
+Cambridge Garden Centre Inc.
+1718 Morrison Rd
+Cambridge Garden Centre Inc. (Bill To)
+Helen 519-622-1173
+1718 Morrison Rd
+CAMBRIDGE ON NIR 5S2
+RR #1
+*please back in to site*
+CAMBRIDGE ON N1R 5S2
+P.O Number
+686174
+351787
+Ship Via: Carrier Pick Up
+Reference
+Sales Person
+Brad Walker
+BOL#
+Ref#
+Item
+UOM
+Branch
+Quantity Shipped
+List Price
+Deliver
+Net Price
+Extended
+Description
+Price
+172614
+10512
+127800
+CY
+21
+35.60
+30.972
+650 41
+04/29/26
+GHOR_MFG
+Engineered PG
+Per CY
+Per CY
+Woodchip
+Fuel Surcharge
+EA
+1
+16.26
+16.26
+16.26
+Per EA
+Per EA
+686174
+--------------------
+
+[2026-05-20T12:36:53.709Z] Attempting match for: "Gro-Bark Ontario Limited"
+Exact match found: Gro-Bark Ontario Limited
+
+Processing 2 line items...
+Line 1: "GHOR_MFG Engineered PG Woodchip" | Unit: "CY"
+Line 2: "Fuel Surcharge" | Unit: "EA"

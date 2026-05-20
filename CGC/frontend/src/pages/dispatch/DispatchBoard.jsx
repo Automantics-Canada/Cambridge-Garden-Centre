@@ -152,6 +152,7 @@ export default function DispatchBoard() {
 
     try {
       // Optimistic updates
+      setExpandedDriverId(targetDriverId);
       setBoard(prev => {
         let updatedUnassigned = [...prev.unassignedOrders];
         let updatedDrivers = prev.drivers.map(d => {

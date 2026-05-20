@@ -19,7 +19,7 @@ export default function ProductPage() {
   const [productName, setProductName] = useState('');
   const [productUnit, setProductUnit] = useState('ton');
 
-  const unitOptions = ['ton', 'kg', 'lb', 'load', 'yard', 'meter', 'each', 'tm'];
+  const unitOptions = ['ton', 'kg', 'lb', 'load', 'yard', 'meter', 'each', 'tm', 'cy'];
 
   useEffect(() => {
     dispatch(fetchProducts());
