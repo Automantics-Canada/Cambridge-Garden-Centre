@@ -288,9 +288,83 @@ export const TicketService = {
   },
 
   /**
-   * Get all tickets with optional filtering
+   * Get all tickets with optional filtering and pagination
    */
   async getTickets(filters?: {
+    status?: TicketStatus;
+    supplierId?: string;
+    source?: TicketSource;
+    startDate?: string;
+    endDate?: string;
+    search?: string;
+    page?: number;
+    limit?: number;
+  }) {
+    const where: any = {};
+
+    if (filters?.status) where.status = filters.status;
+    if (filters?.supplierId) where.supplierId = filters.supplierId;
+    if (filters?.source) where.source = filters.source;
+
+    if (filters?.startDate || filters?.endDate) {
+      where.receivedAt = {};
+      if (filters.startDate) where.receivedAt.gte = new Date(filters.startDate);
+      if (filters.endDate) where.receivedAt.lte = new Date(filters.endDate);
+    }
+
+    if (filters?.search) {
+      where.OR = [
+        { ticketNumber: { contains: filters.search, mode: 'insensitive' } },
+        { poNumber: { contains: filters.search, mode: 'insensitive' } },
+        { material: { contains: filters.search, mode: 'insensitive' } },
+      ];
+    }
+
+    const page = filters?.page ? Number(filters.page) : undefined;
+    const limit = filters?.limit ? Number(filters.limit) : undefined;
+    const skip = page && limit ? (page - 1) * limit : undefined;
+    const take = limit ? limit : undefined;
+
+    return prisma.ticket.findMany({
+      where,
+      orderBy: { receivedAt: 'desc' },
+      skip,
+      take,
+      select: {
+        id: true,
+        ticketNumber: true,
+        source: true,
+        supplierId: true,
+        supplierName: true,
+        poNumber: true,
+        material: true,
+        quantity: true,
+        unit: true,
+        rateOnTicket: true,
+        ticketDate: true,
+        imageUrl: true,
+        ocrConfidence: true,
+        linkedOrderId: true,
+        linkMethod: true,
+        linkedById: true,
+        status: true,
+        receivedAt: true,
+        driverId: true,
+        deliveryStatus: true,
+        spruceMatched: true,
+        supplier: true,
+        driver: true,
+        linkedOrder: true,
+        orderMatches: {
+          include: {
+            order: true
+          }
+        }
+      }
+    });
+  },
+
+  async countTickets(filters?: {
     status?: TicketStatus;
     supplierId?: string;
     source?: TicketSource;
@@ -318,19 +392,9 @@ export const TicketService = {
       ];
     }
 
-    return prisma.ticket.findMany({
-      where,
-      orderBy: { receivedAt: 'desc' },
-      include: {
-        supplier: true,
-        driver: true,
-        linkedOrder: true,
-        orderMatches: {
-          include: { order: true }
-        }
-      },
-    });
+    return prisma.ticket.count({ where });
   },
+
 
   async getTicketStats() {
     const unlinkedCount = await prisma.ticket.count({

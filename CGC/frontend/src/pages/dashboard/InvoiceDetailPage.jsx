@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import api from '../../api/axios';
+import { supabase } from '../../supabaseClient';
 import { 
   ArrowLeft, 
   CheckCircle, 
@@ -47,9 +48,18 @@ export default function InvoiceDetailPage() {
   const fetchInvoice = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await api.get(`/api/invoices/${id}`);
-      setInvoice(res.data);
-      if (res.data.disputeNote) setDisputeNote(res.data.disputeNote);
+      const token = localStorage.getItem('token');
+      const headers = token ? { Authorization: `Bearer ${token}` } : {};
+
+      const { data, error } = await supabase.functions.invoke(`fetch-cgc-data?resource=invoice-details&id=${id}`, {
+        method: 'GET',
+        headers
+      });
+
+      if (error) throw error;
+
+      setInvoice(data);
+      if (data?.disputeNote) setDisputeNote(data.disputeNote);
     } catch (err) {
       toast.error('Failed to load invoice details');
       console.error(err);

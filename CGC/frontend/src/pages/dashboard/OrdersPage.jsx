@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import api from '../../api/axios';
+import { supabase } from '../../supabaseClient';
 import { Search, Upload } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { Skeleton } from '../../components/Skeleton';
@@ -27,20 +28,33 @@ export default function OrdersPage() {
   const fetchOrders = useCallback(async () => {
     setLoading(true);
     try {
-      const params = {};
-      if (search) params.search = search;
-      if (startDate) params.startDate = startDate;
-      if (endDate) params.endDate = endDate;
-      if (buyerType) params.buyerType = buyerType;
-      if (supplierId) params.supplierId = supplierId;
-      if (driverId) params.driverId = driverId;
-      if (hasInvoice) params.hasInvoice = hasInvoice === 'yes';
-      if (hasLinkedTickets) params.hasLinkedTickets = hasLinkedTickets === 'yes';
+      const params = new URLSearchParams({
+        resource: 'orders',
+        limit: '1000'
+      });
+      if (search) params.append('search', search);
+      if (startDate) params.append('startDate', startDate);
+      if (endDate) params.append('endDate', endDate);
+      if (buyerType) params.append('buyerType', buyerType);
+      if (supplierId) params.append('supplierId', supplierId);
+      if (driverId) params.append('driverId', driverId);
+      if (hasInvoice) params.append('hasInvoice', String(hasInvoice === 'yes'));
 
-      const res = await api.get('/api/orders', { params });
-      setOrders(Array.isArray(res.data) ? res.data : []);
+      const token = localStorage.getItem('token');
+      const headers = token ? { Authorization: `Bearer ${token}` } : {};
+
+      const { data, error } = await supabase.functions.invoke(`fetch-cgc-data?${params.toString()}`, {
+        method: 'GET',
+        headers
+      });
+
+      if (error) {
+        throw error;
+      }
+
+      setOrders(data && data.data ? data.data : []);
     } catch (err) {
-      console.error('Error fetching orders:', err);
+      console.error('Error fetching orders via Edge Function:', err);
       toast.error('Failed to fetch orders');
     } finally {
       setLoading(false);

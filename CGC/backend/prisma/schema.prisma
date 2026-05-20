@@ -32,7 +32,12 @@ model Order {
   supplier       Supplier?          @relation(fields: [supplierId], references: [id])
   tickets        Ticket[]
   ticketMatches  TicketOrderMatch[]
+
+  @@index([poNumber])
+  @@index([supplierId])
+  @@index([orderDate])
 }
+
 
 model Ticket {
   id                      String             @id @default(uuid()) @db.Uuid
@@ -64,7 +69,13 @@ model Ticket {
   supplier                Supplier?          @relation(fields: [supplierId], references: [id])
   orderMatches            TicketOrderMatch[]
   matchedInvoiceLineItems InvoiceLineItem[]  @relation("InvoiceLineItemToTicket")
+
+  @@index([status])
+  @@index([poNumber])
+  @@index([supplierId])
+  @@index([receivedAt])
 }
+
 
 model TicketOrderMatch {
   id          String   @id @default(uuid()) @db.Uuid
@@ -107,7 +118,12 @@ model Invoice {
   verifiedBy     User?                @relation(fields: [verifiedById], references: [id])
   lineItems      InvoiceLineItem[]
   ocrJobs        OcrJob[]             @relation("InvoiceOcrJobs")
+
+  @@index([status])
+  @@index([supplierId])
+  @@index([receivedAt])
 }
+
 
 model InvoiceLineItem {
   id              String       @id @default(uuid()) @db.Uuid
@@ -130,7 +146,11 @@ model InvoiceLineItem {
   invoice         Invoice      @relation(fields: [invoiceId], references: [id])
   matchedOrder    Order?       @relation(fields: [matchedOrderId], references: [id])
   matchedTickets  Ticket[]     @relation("InvoiceLineItemToTicket")
+
+  @@index([invoiceId])
+  @@index([poNumber])
 }
+
 
 model NegotiatedRate {
   id            String    @id @default(uuid()) @db.Uuid

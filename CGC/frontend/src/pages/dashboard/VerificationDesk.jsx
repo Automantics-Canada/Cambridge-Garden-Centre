@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import api from '../../api/axios';
+import { supabase } from '../../supabaseClient';
 import { 
   FileText, 
   Truck, 
@@ -47,11 +48,20 @@ export default function VerificationDesk() {
   const fetchInvoices = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await api.get('/api/invoices');
-      setInvoices(res.data);
+      const token = localStorage.getItem('token');
+      const headers = token ? { Authorization: `Bearer ${token}` } : {};
+
+      const { data, error } = await supabase.functions.invoke('fetch-cgc-data?resource=invoices&limit=1000', {
+        method: 'GET',
+        headers
+      });
+
+      if (error) throw error;
+
+      setInvoices(data?.data || []);
       // Auto-select and expand first if none selected
-      if (res.data.length > 0 && !selectedInvoice) {
-        const firstId = res.data[0].id;
+      if (data?.data?.length > 0 && !selectedInvoice) {
+        const firstId = data.data[0].id;
         setDetailsLoadingId(firstId);
         await fetchInvoiceDetails(firstId);
       }
@@ -65,9 +75,18 @@ export default function VerificationDesk() {
 
   const fetchInvoiceDetails = async (id) => {
     try {
-      const res = await api.get(`/api/invoices/${id}`);
-      setSelectedInvoice(res.data);
-      setDisputeNote(res.data.disputeNote || '');
+      const token = localStorage.getItem('token');
+      const headers = token ? { Authorization: `Bearer ${token}` } : {};
+
+      const { data, error } = await supabase.functions.invoke(`fetch-cgc-data?resource=invoice-details&id=${id}`, {
+        method: 'GET',
+        headers
+      });
+
+      if (error) throw error;
+
+      setSelectedInvoice(data);
+      setDisputeNote(data?.disputeNote || '');
       setShowDisputeInput(false);
     } catch (err) {
       toast.error('Failed to load invoice details');

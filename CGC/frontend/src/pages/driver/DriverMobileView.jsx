@@ -26,27 +26,41 @@ export default function DriverMobileView() {
     try {
       setLoading(true);
       
-      let driverRes, delRes;
+      let driverInfoData, deliveriesData;
       if (token) {
         // Legacy URL token access
-        [driverRes, delRes] = await Promise.all([
+        const [driverRes, delRes] = await Promise.all([
           api.get(`/api/drivers/me?token=${token}`),
           api.get(`/api/deliveries?token=${token}`)
         ]);
+        driverInfoData = driverRes.data;
+        deliveriesData = delRes.data;
       } else if (isAuthenticated) {
         // Standard session authenticated access
-        [driverRes, delRes] = await Promise.all([
-          api.get('/api/drivers/me'),
-          api.get('/api/deliveries')
-        ]);
+        const userToken = localStorage.getItem('token');
+        const headers = userToken ? { Authorization: `Bearer ${userToken}` } : {};
+
+        const { data: meData, error: meError } = await supabase.functions.invoke('fetch-cgc-data?resource=drivers-me', {
+          method: 'GET',
+          headers
+        });
+        if (meError) throw meError;
+        driverInfoData = meData;
+
+        const { data: delData, error: delError } = await supabase.functions.invoke(`fetch-cgc-data?resource=deliveries&driverId=${meData.id}&limit=1000`, {
+          method: 'GET',
+          headers
+        });
+        if (delError) throw delError;
+        deliveriesData = delData?.data || [];
       } else {
         throw new Error("Missing session or access link");
       }
 
-      setDriverInfo(driverRes.data);
+      setDriverInfo(driverInfoData);
       
       // Sort by priority and filter active
-      const active = delRes.data
+      const active = (deliveriesData || [])
         .filter(d => d.status !== 'DELIVERED' && d.status !== 'CANCELLED')
         .sort((a, b) => (a.priority || 0) - (b.priority || 0));
       

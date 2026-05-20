@@ -21,12 +21,21 @@ export default function DispatchBoard() {
   const fetchBoard = async () => {
     try {
       setLoading(true);
-      const res = await api.get('/api/dispatch');
-      const drivers = res.data.drivers.map(d => ({
+      const token = localStorage.getItem('token');
+      const headers = token ? { Authorization: `Bearer ${token}` } : {};
+
+      const { data, error } = await supabase.functions.invoke('fetch-cgc-data?resource=dispatch-board', {
+        method: 'GET',
+        headers
+      });
+
+      if (error) throw error;
+
+      const drivers = (data?.drivers || []).map(d => ({
         ...d,
         deliveries: [...(d.deliveries || [])].sort((a, b) => (a.priority || 0) - (b.priority || 0))
       }));
-      setBoard({ ...res.data, drivers });
+      setBoard({ ...data, drivers });
     } catch (e) {
       console.error(e);
       toast.error('Failed to fetch dispatch board');

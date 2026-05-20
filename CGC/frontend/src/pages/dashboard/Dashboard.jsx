@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useSelector } from 'react-redux';
 import { useNavigate } from 'react-router-dom';
 import api from '../../api/axios';
+import { supabase } from '../../supabaseClient';
 import { 
   FileCheck, 
   AlertCircle, 
@@ -36,14 +37,26 @@ export default function Dashboard() {
   const fetchDashboardData = useCallback(async () => {
     setLoading(true);
     try {
+      const token = localStorage.getItem('token');
+      const headers = token ? { Authorization: `Bearer ${token}` } : {};
+
       const [resInvoices, resSuppliers] = await Promise.all([
-        api.get('/api/invoices'), 
-        api.get('/api/suppliers')
+        supabase.functions.invoke('fetch-cgc-data?resource=invoices&limit=1000', {
+          method: 'GET',
+          headers
+        }),
+        supabase.functions.invoke('fetch-cgc-data?resource=suppliers&limit=1000', {
+          method: 'GET',
+          headers
+        })
       ]);
+
+      if (resInvoices.error) throw resInvoices.error;
+      if (resSuppliers.error) throw resSuppliers.error;
       
-      const invoices = resInvoices.data;
+      const invoices = resInvoices.data?.data || [];
       setRecentInvoices(invoices.slice(0, 5));
-      setSuppliers(resSuppliers.data);
+      setSuppliers(resSuppliers.data?.data || []);
 
       // In real scenario, backend should return these stats. Calculating here for v1.
       const now = new Date();

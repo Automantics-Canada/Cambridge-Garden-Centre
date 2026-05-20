@@ -44,13 +44,27 @@ export default function InvoicesPage() {
   const fetchInvoices = useCallback(async () => {
     setLoading(true);
     try {
-      const params = {
-        status: activeTab === 'ALL' ? undefined : activeTab,
-      };
-      const res = await api.get('/api/invoices', { params });
-      setInvoices(res.data);
+      const params = new URLSearchParams({
+        resource: 'invoices',
+        limit: '1000'
+      });
+      if (activeTab !== 'ALL') params.append('status', activeTab);
+
+      const token = localStorage.getItem('token');
+      const headers = token ? { Authorization: `Bearer ${token}` } : {};
+
+      const { data, error } = await supabase.functions.invoke(`fetch-cgc-data?${params.toString()}`, {
+        method: 'GET',
+        headers
+      });
+
+      if (error) {
+        throw error;
+      }
+
+      setInvoices(data && data.data ? data.data : []);
     } catch (err) {
-      console.error('Error fetching invoices:', err);
+      console.error('Error fetching invoices via Edge Function:', err);
       toast.error('Failed to load invoices');
     } finally {
       setLoading(false);
@@ -59,8 +73,16 @@ export default function InvoicesPage() {
 
   const fetchSuppliers = useCallback(async () => {
     try {
-      const res = await api.get('/api/suppliers');
-      setSuppliers(res.data);
+      const token = localStorage.getItem('token');
+      const headers = token ? { Authorization: `Bearer ${token}` } : {};
+
+      const { data, error } = await supabase.functions.invoke('fetch-cgc-data?resource=suppliers&limit=1000', {
+        method: 'GET',
+        headers
+      });
+
+      if (error) throw error;
+      setSuppliers(data?.data || []);
     } catch (err) {
       console.error('Error fetching suppliers:', err);
     }
@@ -68,8 +90,11 @@ export default function InvoicesPage() {
 
   useEffect(() => {
     fetchInvoices();
+  }, [fetchInvoices]);
+
+  useEffect(() => {
     fetchSuppliers();
-  }, [fetchInvoices, fetchSuppliers]);
+  }, [fetchSuppliers]);
 
   useEffect(() => {
     const channel = supabase

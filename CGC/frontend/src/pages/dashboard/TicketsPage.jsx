@@ -39,55 +39,102 @@ export default function TicketsPage() {
   const [endDate, setEndDate] = useState('');
   const [suppliers, setSuppliers] = useState([]);
 
+  // Pagination
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+
   // Linking
   const [orderSearch, setOrderSearch] = useState('');
   const [orderResults, setOrderResults] = useState([]);
   const [searchingOrders, setSearchingOrders] = useState(false);
 
-  const fetchSuppliers = async () => {
+  const fetchSuppliers = useCallback(async () => {
     try {
-      const res = await api.get('/api/suppliers');
-      setSuppliers(res.data);
+      const token = localStorage.getItem('token');
+      const headers = token ? { Authorization: `Bearer ${token}` } : {};
+      const { data, error } = await supabase.functions.invoke('fetch-cgc-data?resource=suppliers&limit=1000', {
+        method: 'GET',
+        headers
+      });
+      if (error) throw error;
+      setSuppliers(data?.data || []);
     } catch (err) {
       console.error('Error fetching suppliers:', err);
     }
-  };
+  }, []);
 
-  const fetchStats = async () => {
+  const fetchStats = useCallback(async () => {
     try {
-      const res = await api.get('/api/tickets/stats');
-      setStats(res.data);
+      const { count, error } = await supabase
+        .from('Ticket')
+        .select('*', { count: 'exact', head: true })
+        .eq('status', 'UNLINKED');
+      if (error) throw error;
+      setStats({ unlinkedCount: count || 0 });
     } catch (err) {
       console.error('Error fetching ticket stats:', err);
     }
-  };
+  }, []);
 
   const fetchTickets = useCallback(async () => {
     setLoading(true);
     try {
-      const params = {
-        status: activeTab === 'ALL' ? undefined : activeTab,
-        search,
-        supplierId,
-        source,
-        startDate,
-        endDate
-      };
-      const res = await api.get('/api/tickets', { params });
-      setTickets(res.data);
+      const params = new URLSearchParams({
+        resource: 'tickets',
+        page: String(page),
+        limit: '25'
+      });
+      if (activeTab !== 'ALL') params.append('status', activeTab);
+      if (search) params.append('search', search);
+      if (supplierId) params.append('supplierId', supplierId);
+      if (source) params.append('source', source);
+      if (startDate) params.append('startDate', startDate);
+      if (endDate) params.append('endDate', endDate);
+
+      const token = localStorage.getItem('token');
+      const headers = token ? { Authorization: `Bearer ${token}` } : {};
+
+      const { data, error } = await supabase.functions.invoke(`fetch-cgc-data?${params.toString()}`, {
+        method: 'GET',
+        headers
+      });
+
+      if (error) {
+        throw error;
+      }
+      
+      if (data && data.data) {
+        setTickets(data.data);
+        setTotalPages(data.pagination.totalPages || 1);
+      } else {
+        setTickets([]);
+        setTotalPages(1);
+      }
     } catch (err) {
-      console.error('Error fetching tickets:', err);
+      console.error('Error fetching tickets via Edge Function:', err);
       toast.error('Failed to load tickets');
     } finally {
       setLoading(false);
     }
+  }, [activeTab, search, supplierId, source, startDate, endDate, page]);
+
+  // Reset to page 1 on filter changes
+  useEffect(() => {
+    setPage(1);
   }, [activeTab, search, supplierId, source, startDate, endDate]);
 
   useEffect(() => {
     fetchTickets();
-    fetchStats();
-    fetchSuppliers();
   }, [fetchTickets]);
+
+  useEffect(() => {
+    fetchStats();
+  }, [fetchStats]);
+
+  useEffect(() => {
+    fetchSuppliers();
+  }, [fetchSuppliers]);
+
 
   useEffect(() => {
     const channel = supabase
@@ -191,8 +238,13 @@ export default function TicketsPage() {
     }
     setSearchingOrders(true);
     try {
-      const res = await api.get('/api/orders', { params: { search: query } });
-      setOrderResults(res.data);
+      const { data, error } = await supabase
+        .from('Order')
+        .select('id, spruceOrderId, poNumber, customerName, product, quantity, unit')
+        .or(`spruceOrderId.ilike.%${query}%,customerName.ilike.%${query}%,product.ilike.%${query}%`)
+        .limit(10);
+      if (error) throw error;
+      setOrderResults(data || []);
     } catch (err) {
       console.error('Order search error:', err);
     } finally {
@@ -422,6 +474,54 @@ export default function TicketsPage() {
               )}
             </tbody>
           </table>
+        </div>
+
+        {/* Pagination Controls */}
+        <div className="bg-white px-4 py-3 flex items-center justify-between border-t border-gray-200 sm:px-6">
+          <div className="flex-1 flex justify-between sm:hidden">
+            <button
+              onClick={() => setPage(p => Math.max(p - 1, 1))}
+              disabled={page === 1}
+              className="relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50 transition-all"
+            >
+              Previous
+            </button>
+            <button
+              onClick={() => setPage(p => Math.min(p + 1, totalPages))}
+              disabled={page === totalPages}
+              className="ml-3 relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50 transition-all"
+            >
+              Next
+            </button>
+          </div>
+          <div className="hidden sm:flex-1 sm:flex sm:items-center sm:justify-between">
+            <div>
+              <p className="text-sm text-gray-700">
+                Showing page <span className="font-medium">{page}</span> of{' '}
+                <span className="font-medium">{totalPages}</span>
+              </p>
+            </div>
+            <div>
+              <nav className="relative z-0 inline-flex rounded-md shadow-sm -space-x-px" aria-label="Pagination">
+                <button
+                  onClick={() => setPage(p => Math.max(p - 1, 1))}
+                  disabled={page === 1}
+                  className="relative inline-flex items-center px-2 py-2 rounded-l-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50 disabled:opacity-50 transition-all"
+                >
+                  <span className="sr-only">Previous</span>
+                  <ChevronLeft className="h-5 w-5" aria-hidden="true" />
+                </button>
+                <button
+                  onClick={() => setPage(p => Math.min(p + 1, totalPages))}
+                  disabled={page === totalPages}
+                  className="relative inline-flex items-center px-2 py-2 rounded-r-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50 disabled:opacity-50 transition-all"
+                >
+                  <span className="sr-only">Next</span>
+                  <ChevronRight className="h-5 w-5" aria-hidden="true" />
+                </button>
+              </nav>
+            </div>
+          </div>
         </div>
       </div>
 

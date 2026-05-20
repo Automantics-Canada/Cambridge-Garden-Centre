@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import api from '../../api/axios';
+import { supabase } from '../../supabaseClient';
 import { 
   Plus, 
   Search, 
@@ -38,15 +39,31 @@ export default function RatesPage() {
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
+      const token = localStorage.getItem('token');
+      const headers = token ? { Authorization: `Bearer ${token}` } : {};
+
       const [resSuppliers, resProducts] = await Promise.all([
-        api.get('/api/suppliers'),
-        api.get('/api/products')
+        supabase.functions.invoke('fetch-cgc-data?resource=suppliers&limit=1000', {
+          method: 'GET',
+          headers
+        }),
+        supabase.functions.invoke('fetch-cgc-data?resource=products&limit=1000', {
+          method: 'GET',
+          headers
+        })
       ]);
-      setSuppliers(resSuppliers.data);
-      setProducts(resProducts.data);
+
+      if (resSuppliers.error) throw resSuppliers.error;
+      if (resProducts.error) throw resProducts.error;
+
+      const suppliersData = resSuppliers.data?.data || [];
+      const productsData = resProducts.data?.data || [];
+
+      setSuppliers(suppliersData);
+      setProducts(productsData);
       
       // Extract all rates from all suppliers
-      const allRates = resSuppliers.data.flatMap(s => 
+      const allRates = suppliersData.flatMap(s => 
         (s.negotiatedRates || []).map(r => ({ ...r, supplierName: s.name }))
       );
       setRates(allRates);

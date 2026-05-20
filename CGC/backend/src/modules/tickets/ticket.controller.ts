@@ -118,7 +118,7 @@ export const processTicketOcr = async (req: Request, res: Response) => {
 
 export const getTickets = async (req: Request, res: Response) => {
   try {
-    const { status, supplierId, source, startDate, endDate, search } = req.query;
+    const { status, supplierId, source, startDate, endDate, search, page, limit } = req.query;
     const filters: any = {};
     if (status) filters.status = status as any;
     if (supplierId) filters.supplierId = supplierId as string;
@@ -127,7 +127,29 @@ export const getTickets = async (req: Request, res: Response) => {
     if (endDate) filters.endDate = endDate as string;
     if (search) filters.search = search as string;
 
+    const pageNum = page ? parseInt(page as string) : undefined;
+    const limitNum = limit ? parseInt(limit as string) : undefined;
+
+    if (pageNum && limitNum) {
+      filters.page = pageNum;
+      filters.limit = limitNum;
+    }
+
     const tickets = await TicketService.getTickets(filters);
+
+    if (pageNum && limitNum) {
+      const totalCount = await TicketService.countTickets(filters);
+      return res.status(200).json({
+        data: tickets,
+        pagination: {
+          page: pageNum,
+          limit: limitNum,
+          totalPages: Math.ceil(totalCount / limitNum),
+          totalCount,
+        }
+      });
+    }
+
     return res.status(200).json(tickets);
   } catch (error: any) {
     return res.status(500).json({ error: error.message || 'Unexpected error' });

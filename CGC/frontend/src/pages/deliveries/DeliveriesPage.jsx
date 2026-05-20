@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import api from '../../api/axios';
+import { supabase } from '../../supabaseClient';
 import { Truck, Search, MapPin, ExternalLink, Calendar, ChevronDown, ChevronUp, User, Clock, Image as ImageIcon, History, MoreVertical, Flag, Package2, GripVertical, X, Filter } from 'lucide-react';
 import { DeliveryTableSkeleton } from '../../components/Skeleton';
 import { FadeInUp, StaggerContainer, StaggerItem } from '../../components/Animated';
@@ -27,12 +28,25 @@ export default function DeliveriesPage() {
   const fetchData = async () => {
     try {
       setLoading(true);
+      const token = localStorage.getItem('token');
+      const headers = token ? { Authorization: `Bearer ${token}` } : {};
+
       const [delRes, driverRes] = await Promise.all([
-        api.get('/api/deliveries'),
-        api.get('/api/drivers')
+        supabase.functions.invoke('fetch-cgc-data?resource=deliveries&limit=1000', {
+          method: 'GET',
+          headers
+        }),
+        supabase.functions.invoke('fetch-cgc-data?resource=drivers&limit=1000', {
+          method: 'GET',
+          headers
+        })
       ]);
-      setDeliveries(delRes.data);
-      setDrivers(driverRes.data);
+
+      if (delRes.error) throw delRes.error;
+      if (driverRes.error) throw driverRes.error;
+
+      setDeliveries(delRes.data?.data || []);
+      setDrivers(driverRes.data?.data || []);
       
       if (driverIdParam) {
         setExpandedDriverId(driverIdParam);

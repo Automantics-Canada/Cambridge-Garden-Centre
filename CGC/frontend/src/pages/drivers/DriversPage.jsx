@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Plus, Truck } from 'lucide-react';
 import api from '../../api/axios';
+import { supabase } from '../../supabaseClient';
 import DriverCard from '../../components/drivers/DriverCard';
 import AddDriverModal from '../../components/drivers/AddDriverModal';
 import { DriverCardSkeleton } from '../../components/Skeleton';
@@ -14,8 +15,16 @@ export default function DriversPage() {
   const fetchDrivers = async () => {
     try {
       setLoading(true);
-      const response = await api.get('/api/drivers');
-      setDrivers(Array.isArray(response.data) ? response.data : []);
+      const token = localStorage.getItem('token');
+      const headers = token ? { Authorization: `Bearer ${token}` } : {};
+      
+      const { data, error } = await supabase.functions.invoke('fetch-cgc-data?resource=drivers&limit=1000', {
+        method: 'GET',
+        headers
+      });
+
+      if (error) throw error;
+      setDrivers(data && data.data ? data.data : []);
     } catch (error) {
       console.error('Error fetching drivers:', error);
     } finally {
