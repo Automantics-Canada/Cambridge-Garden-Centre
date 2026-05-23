@@ -57,9 +57,51 @@ export const deleteProduct = createAsyncThunk(
   }
 );
 
+export const fetchUnits = createAsyncThunk(
+  'products/fetchUnits',
+  async (_, { rejectWithValue }) => {
+    try {
+      const response = await api.get('/api/products/units');
+      return response.data;
+    } catch (error) {
+      return rejectWithValue(error.response?.data?.error || 'Failed to fetch units');
+    }
+  }
+);
+
+export const createCustomUnit = createAsyncThunk(
+  'products/createCustomUnit',
+  async (unitData, { rejectWithValue }) => {
+    try {
+      const response = await api.post('/api/products/units', unitData);
+      return response.data;
+    } catch (error) {
+      return rejectWithValue(error.response?.data?.error || 'Failed to create unit');
+    }
+  }
+);
+
+export const deleteCustomUnit = createAsyncThunk(
+  'products/deleteCustomUnit',
+  async (id, { rejectWithValue }) => {
+    try {
+      await api.delete(`/api/products/units/${id}`);
+      return id;
+    } catch (error) {
+      return rejectWithValue(error.response?.data?.error || 'Failed to delete unit');
+    }
+  }
+);
+
 const initialState = {
   products: [],
+  units: {
+    defaultUnits: [],
+    customUnits: [],
+    allUnits: ['ton', 'kg', 'lb', 'load', 'yard', 'meter', 'each', 'tm', 'cy'],
+  },
   loading: false,
+  unitsLoading: false,
   error: null,
   success: false,
   successMessage: '',
@@ -144,6 +186,65 @@ const productSlice = createSlice({
       })
       .addCase(deleteProduct.rejected, (state, action) => {
         state.loading = false;
+        state.error = action.payload;
+      });
+
+    // Fetch units
+    builder
+      .addCase(fetchUnits.pending, (state) => {
+        state.unitsLoading = true;
+        state.error = null;
+      })
+      .addCase(fetchUnits.fulfilled, (state, action) => {
+        state.unitsLoading = false;
+        state.units = action.payload;
+      })
+      .addCase(fetchUnits.rejected, (state, action) => {
+        state.unitsLoading = false;
+        state.error = action.payload;
+      });
+
+    // Create unit
+    builder
+      .addCase(createCustomUnit.pending, (state) => {
+        state.unitsLoading = true;
+        state.error = null;
+      })
+      .addCase(createCustomUnit.fulfilled, (state, action) => {
+        state.unitsLoading = false;
+        state.units.customUnits.push(action.payload);
+        const nameLower = action.payload.name.toLowerCase();
+        if (!state.units.allUnits.includes(nameLower)) {
+          state.units.allUnits.push(nameLower);
+          state.units.allUnits.sort();
+        }
+        state.success = true;
+        state.successMessage = 'Unit created successfully';
+      })
+      .addCase(createCustomUnit.rejected, (state, action) => {
+        state.unitsLoading = false;
+        state.error = action.payload;
+      });
+
+    // Delete unit
+    builder
+      .addCase(deleteCustomUnit.pending, (state) => {
+        state.unitsLoading = true;
+        state.error = null;
+      })
+      .addCase(deleteCustomUnit.fulfilled, (state, action) => {
+        state.unitsLoading = false;
+        const deletedUnit = state.units.customUnits.find(u => u.id === action.payload);
+        state.units.customUnits = state.units.customUnits.filter(u => u.id !== action.payload);
+        if (deletedUnit) {
+          const nameLower = deletedUnit.name.toLowerCase();
+          state.units.allUnits = state.units.allUnits.filter(u => u !== nameLower);
+        }
+        state.success = true;
+        state.successMessage = 'Unit deleted successfully';
+      })
+      .addCase(deleteCustomUnit.rejected, (state, action) => {
+        state.unitsLoading = false;
         state.error = action.payload;
       });
   },

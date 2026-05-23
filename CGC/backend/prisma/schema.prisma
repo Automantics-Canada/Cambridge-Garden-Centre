@@ -213,6 +213,7 @@ model Driver {
   ratePerDelivery Decimal           @default(0) @db.Decimal
   ratePerTrip     Decimal?          @db.Decimal
   type            DriverType        @default(CGC_FLEET)
+  companyName     String?
   deliveries      Delivery[]
   orders          Order[]
   tickets         Ticket[]
@@ -334,6 +335,12 @@ model Product {
   name      String   @unique
   createdAt DateTime @default(now())
   unit      String   @default("ton")
+}
+
+model Unit {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String   @unique
+  createdAt DateTime @default(now())
 }
 
 model DeliveryHistory {

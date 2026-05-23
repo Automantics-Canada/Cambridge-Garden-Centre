@@ -122,7 +122,7 @@ serve(async (req) => {
       const { data: driver, error } = await supabaseClient
         .from('Driver')
         .select(`
-          id, name, type, phone, email, active, ratePerDelivery, ratePerTrip, userId,
+          id, name, type, phone, email, active, ratePerDelivery, ratePerTrip, userId, companyName,
           deliveries:Delivery(
             id, status, createdAt,
             order:Order(id, spruceOrderId, customerName, product, quantity, unit)
@@ -160,6 +160,7 @@ serve(async (req) => {
         ratePerDelivery: driver.ratePerDelivery ? Number(driver.ratePerDelivery) : 0,
         ratePerTrip: driver.ratePerTrip ? Number(driver.ratePerTrip) : 0,
         userId: driver.userId,
+        companyName: driver.companyName,
         stats: {
           totalToday: todayDeliveries.length,
           completedToday: completedDeliveries.length,
@@ -179,7 +180,7 @@ serve(async (req) => {
       const { data: drivers, error: err1 } = await supabaseClient
         .from('Driver')
         .select(`
-          id, name, type, phone, email, active, ratePerDelivery, ratePerTrip, userId,
+          id, name, type, phone, email, active, ratePerDelivery, ratePerTrip, userId, companyName,
           deliveries:Delivery(
             id, orderId, driverId, status, priority, startedAt, completedAt, pickupPhotoUrl, deliveryPhotoUrl, createdAt,
             order:Order(id, spruceOrderId, customerName, product, quantity, unit, orderDate, deliveryStatus, priority),
@@ -291,7 +292,7 @@ serve(async (req) => {
       const { data, count, error } = await supabaseClient
         .from('Driver')
         .select(`
-          id, name, type, phone, email, active, ratePerDelivery, ratePerTrip, userId,
+          id, name, type, phone, email, active, ratePerDelivery, ratePerTrip, userId, companyName,
           deliveries:Delivery(
             id, status, createdAt,
             order:Order(id, spruceOrderId, customerName)
@@ -327,6 +328,7 @@ serve(async (req) => {
           ratePerDelivery: driver.ratePerDelivery ? Number(driver.ratePerDelivery) : 0,
           ratePerTrip: driver.ratePerTrip ? Number(driver.ratePerTrip) : 0,
           userId: driver.userId,
+          companyName: driver.companyName,
           stats: {
             totalToday: todayDeliveries.length,
             completedToday: completedDeliveries.length,

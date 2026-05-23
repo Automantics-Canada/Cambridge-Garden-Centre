@@ -1,28 +1,29 @@
 import React, { useEffect, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { motion as Motion, AnimatePresence } from 'framer-motion';
-import { Plus, Edit, Trash2, AlertCircle, Package } from 'lucide-react';
+import { Plus, Edit, Trash2, AlertCircle, Package, Settings } from 'lucide-react';
 import clsx from 'clsx';
 import toast from 'react-hot-toast';
-import { fetchProducts, createProduct, updateProduct, deleteProduct, clearSuccess, clearError } from '../../store/productSlice';
+import { fetchProducts, createProduct, updateProduct, deleteProduct, fetchUnits, createCustomUnit, deleteCustomUnit, clearSuccess, clearError } from '../../store/productSlice';
 import Modal from '../../components/Modal';
 import { Skeleton } from '../../components/Skeleton';
 import Loader from '../../components/Loader';
 
 export default function ProductPage() {
   const dispatch = useDispatch();
-  const { products, loading, error, success, successMessage } = useSelector((state) => state.products);
+  const { products, units, loading, error, success, successMessage } = useSelector((state) => state.products);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isUnitsModalOpen, setIsUnitsModalOpen] = useState(false);
+  const [newUnitName, setNewUnitName] = useState('');
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [deleteConfirm, setDeleteConfirm] = useState(null);
   const [productName, setProductName] = useState('');
   const [productUnit, setProductUnit] = useState('ton');
 
-  const unitOptions = ['ton', 'kg', 'lb', 'load', 'yard', 'meter', 'each', 'tm', 'cy'];
-
   useEffect(() => {
     dispatch(fetchProducts());
+    dispatch(fetchUnits());
   }, [dispatch]);
 
   useEffect(() => {
@@ -86,6 +87,28 @@ export default function ProductPage() {
     }
   };
 
+  const handleCreateUnit = async (e) => {
+    e.preventDefault();
+    if (!newUnitName.trim()) {
+      toast.error('Unit name is required');
+      return;
+    }
+    try {
+      await dispatch(createCustomUnit({ name: newUnitName.trim() })).unwrap();
+      setNewUnitName('');
+    } catch (err) {
+      toast.error(err || 'Failed to create unit');
+    }
+  };
+
+  const handleDeleteUnit = async (id) => {
+    try {
+      await dispatch(deleteCustomUnit(id)).unwrap();
+    } catch (err) {
+      toast.error(err || 'Failed to delete unit');
+    }
+  };
+
   const filteredProducts = products.filter(product => 
     product.name.toLowerCase().includes(searchQuery.toLowerCase())
   );
@@ -126,15 +149,27 @@ export default function ProductPage() {
           />
         </div>
 
-        <Motion.button
-          onClick={handleCreateNew}
-          whileHover={{ scale: 1.05 }}
-          whileTap={{ scale: 0.95 }}
-          className="bg-green-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-green-700 transition-colors flex items-center gap-2 whitespace-nowrap"
-        >
-          <Plus size={20} />
-          Add Product
-        </Motion.button>
+        <div className="flex gap-3 w-full sm:w-auto">
+          <Motion.button
+            onClick={() => setIsUnitsModalOpen(true)}
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
+            className="border border-gray-300 text-gray-700 px-4 py-2 rounded-lg font-medium hover:bg-gray-50 transition-colors flex items-center gap-2 whitespace-nowrap bg-white"
+          >
+            <Settings size={20} />
+            Manage Units
+          </Motion.button>
+
+          <Motion.button
+            onClick={handleCreateNew}
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
+            className="bg-green-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-green-700 transition-colors flex items-center gap-2 whitespace-nowrap"
+          >
+            <Plus size={20} />
+            Add Product
+          </Motion.button>
+        </div>
       </Motion.div>
 
       <Motion.div variants={itemVariants} className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
@@ -247,7 +282,7 @@ export default function ProductPage() {
               onChange={(e) => setProductUnit(e.target.value)}
               className="w-full border border-gray-200 rounded-xl p-2.5 text-sm outline-none focus:ring-2 focus:ring-green-100 transition-all"
             >
-              {unitOptions.map(unit => (
+              {units.allUnits.map(unit => (
                 <option key={unit} value={unit}>{unit.toUpperCase()}</option>
               ))}
             </select>
@@ -270,6 +305,71 @@ export default function ProductPage() {
             </button>
           </div>
         </form>
+      </Modal>
+
+      {/* Manage Units Modal */}
+      <Modal
+        isOpen={isUnitsModalOpen}
+        onClose={() => setIsUnitsModalOpen(false)}
+        title="Manage Custom Units"
+      >
+        <div className="space-y-6">
+          {/* Add Unit Form */}
+          <form onSubmit={handleCreateUnit} className="flex gap-2">
+            <input
+              type="text"
+              value={newUnitName}
+              onChange={(e) => setNewUnitName(e.target.value)}
+              placeholder="e.g. box, bag, pack"
+              className="flex-1 border border-gray-200 rounded-xl p-2.5 text-sm outline-none focus:ring-2 focus:ring-green-100 transition-all"
+            />
+            <button
+              type="submit"
+              className="bg-green-600 text-white px-4 py-2.5 rounded-xl font-medium hover:bg-green-700 transition-colors whitespace-nowrap text-sm flex items-center gap-1.5"
+            >
+              <Plus size={16} />
+              Add Unit
+            </button>
+          </form>
+
+          {/* Custom Units List */}
+          <div className="space-y-2">
+            <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider">
+              Your Custom Units
+            </h4>
+            {units?.customUnits?.length === 0 ? (
+              <p className="text-gray-500 text-sm italic py-2">No custom units added yet.</p>
+            ) : (
+              <div className="max-h-60 overflow-y-auto border border-gray-100 rounded-xl divide-y divide-gray-100">
+                {units?.customUnits?.map((unit) => (
+                  <div key={unit.id} className="flex items-center justify-between p-3 bg-gray-50/50 hover:bg-gray-50 transition-colors">
+                    <span className="font-semibold text-gray-700 uppercase text-sm tracking-wide">
+                      {unit.name}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteUnit(unit.id)}
+                      className="p-1.5 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                      title="Delete Unit"
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="pt-2 border-t border-gray-100">
+            <button
+              type="button"
+              onClick={() => setIsUnitsModalOpen(false)}
+              className="w-full py-2.5 text-sm font-bold text-gray-500 hover:bg-gray-100 rounded-xl transition-all"
+            >
+              Close
+            </button>
+          </div>
+        </div>
       </Modal>
 
       {/* Delete Confirmation Modal */}

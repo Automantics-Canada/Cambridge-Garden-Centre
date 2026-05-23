@@ -9,6 +9,7 @@ export default function AddDriverModal({ isOpen, onClose, onSuccess }) {
     email: '',
     password: '',
     type: 'CGC_FLEET',
+    companyName: '',
     ratePerDelivery: '',
     ratePerTrip: ''
   });
@@ -21,7 +22,11 @@ export default function AddDriverModal({ isOpen, onClose, onSuccess }) {
     setError('');
     
     try {
-      await api.post('/api/drivers', formData);
+      const payload = { ...formData };
+      if (payload.type !== 'INDEPENDENT') {
+        payload.companyName = undefined;
+      }
+      await api.post('/api/drivers', payload);
       onSuccess();
       onClose();
     } catch (err) {
@@ -110,6 +115,19 @@ export default function AddDriverModal({ isOpen, onClose, onSuccess }) {
               <option value="INDEPENDENT">Independent</option>
             </select>
           </div>
+
+          {formData.type === 'INDEPENDENT' && (
+            <div className="space-y-1.5 animate-in fade-in slide-in-from-top-2 duration-200">
+              <label className="text-xs font-bold text-gray-500 uppercase tracking-wider ml-1">Company Name</label>
+              <input
+                type="text"
+                className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-[#2D6A4F] focus:ring-4 focus:ring-[#2D6A4F]/10 outline-none transition-all placeholder:text-gray-300"
+                placeholder="e.g. Mitchell Trucking"
+                value={formData.companyName}
+                onChange={(e) => setFormData({ ...formData, companyName: e.target.value })}
+              />
+            </div>
+          )}
 
           <div className="space-y-1.5">
             <label className="text-xs font-bold text-gray-500 uppercase tracking-wider ml-1">Rate per Trip ($)</label>

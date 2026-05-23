@@ -469,7 +469,12 @@ export default function DispatchBoard() {
                              <div className="p-2 bg-gray-100 rounded-lg group-hover:bg-green-100 transition-colors flex-shrink-0">
                                 <Truck className="w-5 h-5 text-gray-400 group-hover:text-green-600" />
                              </div>
-                             <div className="text-sm font-bold text-gray-900 select-none truncate max-w-[180px]">{driver.name}</div>
+                             <div>
+                                <div className="text-sm font-bold text-gray-900 select-none truncate max-w-[180px]">{driver.name}</div>
+                                {driver.type === 'INDEPENDENT' && driver.companyName && (
+                                  <div className="text-[10px] text-gray-500 font-medium select-none truncate max-w-[180px]">{driver.companyName}</div>
+                                )}
+                             </div>
                           </div>
                         </td>
 
@@ -831,7 +836,9 @@ export default function DispatchBoard() {
                       >
                         <option value="" disabled>Quick Assign...</option>
                         {board.drivers.map(d => (
-                          <option key={d.id} value={d.id}>{d.name}</option>
+                          <option key={d.id} value={d.id}>
+                            {d.name} {d.type === 'INDEPENDENT' && d.companyName ? `(${d.companyName})` : ''}
+                          </option>
                         ))}
                       </select>
                     </td>

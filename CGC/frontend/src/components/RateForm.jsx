@@ -3,27 +3,26 @@ import { useDispatch, useSelector } from 'react-redux';
 import { motion as Motion } from 'framer-motion';
 import toast from 'react-hot-toast';
 import { addSupplierRate, updateSupplierRate } from '../store/supplierSlice';
-import { fetchProducts } from '../store/productSlice';
+import { fetchProducts, fetchUnits } from '../store/productSlice';
 
 export default function RateForm({ supplierId, rate, onClose }) {
   const dispatch = useDispatch();
   const { loading } = useSelector((state) => state.suppliers);
-  const { products } = useSelector((state) => state.products);
+  const { products, units } = useSelector((state) => state.products);
 
   const [formData, setFormData] = useState({
     productName: '',
     rate: '',
-    unit: 'tonne',
+    unit: 'ton',
     effectiveFrom: new Date().toISOString().split('T')[0],
     notes: '',
   });
-
-  const unitOptions = ['ton', 'kg', 'lb', 'load', 'yard', 'meter', 'each', 'tm', 'cy'];
 
   const [errors, setErrors] = useState({});
 
   useEffect(() => {
     dispatch(fetchProducts());
+    dispatch(fetchUnits());
   }, [dispatch]);
 
   useEffect(() => {
@@ -178,7 +177,7 @@ export default function RateForm({ supplierId, rate, onClose }) {
               errors.unit ? 'border-red-500' : 'border-gray-200'
             }`}
           >
-            {unitOptions.map(unit => (
+            {units?.allUnits?.map(unit => (
               <option key={unit} value={unit}>{unit.toUpperCase()}</option>
             ))}
           </select>

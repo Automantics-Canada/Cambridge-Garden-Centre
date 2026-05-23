@@ -56,6 +56,7 @@ export const DriverService = {
     email?: string; 
     password?: string;
     type?: DriverType; 
+    companyName?: string;
     ratePerDelivery?: number; 
     ratePerTrip?: number; 
     active?: boolean 
@@ -138,12 +139,13 @@ export const DriverService = {
         data: {
           name: data.name,
           phone: phoneNormalized,
-          email: emailNormalized,
+          email: emailNormalized || null,
           type: data.type || 'CGC_FLEET',
+          companyName: data.companyName || null,
           ratePerDelivery: data.ratePerDelivery || 0,
           ratePerTrip: data.ratePerTrip || data.ratePerDelivery || 0,
           active: data.active !== undefined ? data.active : true,
-          userId: userId
+          userId: userId || null
         }
       });
 

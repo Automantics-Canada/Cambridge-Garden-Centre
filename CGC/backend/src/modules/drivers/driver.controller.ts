@@ -64,12 +64,12 @@ const fallbackNodemailer = async (email: string, name: string, password: string,
 
 export const createDriver = async (req: AuthRequest, res: Response) => {
   try {
-    const { name, phone, email, password, type, ratePerDelivery, ratePerTrip, active } = req.body;
+    const { name, phone, email, password, type, companyName, ratePerDelivery, ratePerTrip, active } = req.body;
     if (!name || !phone) {
       return res.status(400).json({ error: 'Name and phone are required' });
     }
     const driver = await DriverService.createDriver({ 
-      name, phone, email, password, type, 
+      name, phone, email, password, type, companyName,
       ratePerDelivery: Number(ratePerDelivery || 0), 
       ratePerTrip: Number(ratePerTrip || ratePerDelivery || 0),
       active 
