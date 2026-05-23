@@ -228,6 +228,16 @@ export default function TicketsPage() {
     }
   };
 
+  const handleOpenReviewModal = async (ticket) => {
+    setSelectedTicket(ticket);
+    try {
+      const res = await api.get(`/api/tickets/${ticket.id}`);
+      setSelectedTicket(res.data);
+    } catch (err) {
+      console.error('Failed to load full ticket details:', err);
+    }
+  };
+
   const handleLinkToOrder = async (ticketId, orderId) => {
     try {
       await api.post(`/api/tickets/${ticketId}/link`, { orderId });
@@ -444,7 +454,7 @@ export default function TicketsPage() {
                 tickets.map((ticket) => (
                   <tr key={ticket.id} className="hover:bg-gray-50 transition-colors group">
                     <td className="px-6 py-4 whitespace-nowrap w-20">
-                      <div className="w-12 h-12 bg-gray-100 rounded-lg overflow-hidden border border-gray-200 cursor-zoom-in" onClick={() => setSelectedTicket(ticket)}>
+                      <div className="w-12 h-12 bg-gray-100 rounded-lg overflow-hidden border border-gray-200 cursor-zoom-in" onClick={() => handleOpenReviewModal(ticket)}>
                         {ticket.imageUrl ? (
                           <img 
                             src={ticket.imageUrl.startsWith('http') ? ticket.imageUrl : `https://cambridge-garden-centre-1.onrender.com${ticket.imageUrl}`} 
@@ -492,7 +502,7 @@ export default function TicketsPage() {
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                       <button 
-                        onClick={() => setSelectedTicket(ticket)}
+                        onClick={() => handleOpenReviewModal(ticket)}
                         className="text-green-600 hover:text-green-900 bg-green-50 hover:bg-green-100 px-3 py-1.5 rounded-lg transition-colors inline-flex items-center gap-2"
                       >
                         <Eye className="w-4 h-4" /> Review
