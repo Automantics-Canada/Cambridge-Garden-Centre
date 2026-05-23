@@ -41,8 +41,8 @@ export default function InvoicesPage() {
     dateEnd: ''
   });
 
-  const fetchInvoices = useCallback(async () => {
-    setLoading(true);
+  const fetchInvoices = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
     try {
       const params = new URLSearchParams({
         resource: 'invoices',
@@ -67,7 +67,7 @@ export default function InvoicesPage() {
       console.error('Error fetching invoices via Edge Function:', err);
       toast.error('Failed to load invoices');
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [activeTab]);
 
@@ -96,6 +96,31 @@ export default function InvoicesPage() {
     fetchSuppliers();
   }, [fetchSuppliers]);
 
+  // Stable references for realtime debounced updates to prevent channel recreation
+  const fetchInvoicesRef = useRef(fetchInvoices);
+  const debounceTimeoutRef = useRef(null);
+
+  useEffect(() => {
+    fetchInvoicesRef.current = fetchInvoices;
+  }, [fetchInvoices]);
+
+  useEffect(() => {
+    return () => {
+      if (debounceTimeoutRef.current) {
+        clearTimeout(debounceTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  const fetchInvoicesDebounced = useCallback((silent = false) => {
+    if (debounceTimeoutRef.current) {
+      clearTimeout(debounceTimeoutRef.current);
+    }
+    debounceTimeoutRef.current = setTimeout(() => {
+      fetchInvoicesRef.current(silent);
+    }, 500);
+  }, []);
+
   useEffect(() => {
     const channel = supabase
       .channel('invoice-changes')
@@ -104,7 +129,7 @@ export default function InvoicesPage() {
         { event: '*', schema: 'public', table: 'Invoice' },
         (payload) => {
           console.log('[REALTIME] Invoice change received:', payload);
-          fetchInvoices();
+          fetchInvoicesDebounced(true); // Silent reload in background
         }
       )
       .subscribe();
@@ -112,7 +137,7 @@ export default function InvoicesPage() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [fetchInvoices]);
+  }, [fetchInvoicesDebounced]);
 
   const handleFileUpload = async (event) => {
     const file = event.target.files?.[0];

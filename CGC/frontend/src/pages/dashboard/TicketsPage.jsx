@@ -76,8 +76,8 @@ export default function TicketsPage() {
     }
   }, []);
 
-  const fetchTickets = useCallback(async () => {
-    setLoading(true);
+  const fetchTickets = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
     try {
       const params = new URLSearchParams({
         resource: 'tickets',
@@ -114,7 +114,7 @@ export default function TicketsPage() {
       console.error('Error fetching tickets via Edge Function:', err);
       toast.error('Failed to load tickets');
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [activeTab, search, supplierId, source, startDate, endDate, page]);
 
@@ -135,6 +135,36 @@ export default function TicketsPage() {
     fetchSuppliers();
   }, [fetchSuppliers]);
 
+  // Stable references for realtime debounced updates to prevent channel recreation
+  const fetchTicketsRef = useRef(fetchTickets);
+  const fetchStatsRef = useRef(fetchStats);
+  const debounceTimeoutRef = useRef(null);
+
+  useEffect(() => {
+    fetchTicketsRef.current = fetchTickets;
+  }, [fetchTickets]);
+
+  useEffect(() => {
+    fetchStatsRef.current = fetchStats;
+  }, [fetchStats]);
+
+  useEffect(() => {
+    return () => {
+      if (debounceTimeoutRef.current) {
+        clearTimeout(debounceTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  const fetchTicketsDebounced = useCallback((silent = false) => {
+    if (debounceTimeoutRef.current) {
+      clearTimeout(debounceTimeoutRef.current);
+    }
+    debounceTimeoutRef.current = setTimeout(() => {
+      fetchTicketsRef.current(silent);
+      fetchStatsRef.current();
+    }, 500);
+  }, []);
 
   useEffect(() => {
     const channel = supabase
@@ -144,8 +174,7 @@ export default function TicketsPage() {
         { event: '*', schema: 'public', table: 'Ticket' },
         (payload) => {
           console.log('[REALTIME] Ticket change received:', payload);
-          fetchTickets();
-          fetchStats();
+          fetchTicketsDebounced(true); // Silent reload in background
         }
       )
       .subscribe();
@@ -153,7 +182,7 @@ export default function TicketsPage() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [fetchTickets]);
+  }, [fetchTicketsDebounced]);
 
   const handleUpdateTicket = async (id, data) => {
     try {

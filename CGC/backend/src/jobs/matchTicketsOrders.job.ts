@@ -42,23 +42,25 @@ export const startMatchTicketsOrdersJob = () => {
           // If multiple orders found for the same PO, do NOT auto-link
           // AND cleanup any existing auto-matches (in case they were linked during incremental import)
           if (allMatchingOrders.length > 1) {
-            console.log(`[Cron] Multiple orders (${allMatchingOrders.length}) found for PO ${ticket.poNumber}. Cleaning up auto-links for Ticket ${ticket.id}.`);
-            
-            await prisma.ticketOrderMatch.deleteMany({
-              where: {
-                ticketId: ticket.id,
-                matchMethod: { in: ['AUTO_PO', 'AUTO_FALLBACK'] }
-              }
-            });
+            if (ticket.status !== 'UNLINKED' || ticket.linkedOrderId !== null || ticket.linkMethod !== null) {
+              console.log(`[Cron] Multiple orders (${allMatchingOrders.length}) found for PO ${ticket.poNumber}. Cleaning up auto-links for Ticket ${ticket.id}.`);
+              
+              await prisma.ticketOrderMatch.deleteMany({
+                where: {
+                  ticketId: ticket.id,
+                  matchMethod: { in: ['AUTO_PO', 'AUTO_FALLBACK'] }
+                }
+              });
 
-            await prisma.ticket.update({
-              where: { id: ticket.id },
-              data: {
-                status: 'UNLINKED',
-                linkedOrderId: null,
-                linkMethod: null
-              }
-            });
+              await prisma.ticket.update({
+                where: { id: ticket.id },
+                data: {
+                  status: 'UNLINKED',
+                  linkedOrderId: null,
+                  linkMethod: null
+                }
+              });
+            }
 
             continue;
           } else if (allMatchingOrders.length === 1) {
@@ -93,6 +95,12 @@ export const startMatchTicketsOrdersJob = () => {
 
         if (matchingOrders.length === 1) {
           const order = matchingOrders[0];
+          
+          // Skip if already correctly linked to avoid redundant updates that trigger realtime loops
+          if (ticket.linkedOrderId === order.id && ticket.status === 'LINKED' && ticket.linkMethod === 'AUTO') {
+            continue;
+          }
+
           try {
             await prisma.ticketOrderMatch.upsert({
               where: { ticketId_orderId: { ticketId: ticket.id, orderId: order.id } },
