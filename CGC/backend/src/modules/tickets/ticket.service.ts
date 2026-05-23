@@ -325,11 +325,9 @@ export const TicketService = {
     const skip = page && limit ? (page - 1) * limit : undefined;
     const take = limit ? limit : undefined;
 
-    return prisma.ticket.findMany({
+    const queryOptions: any = {
       where,
       orderBy: { receivedAt: 'desc' },
-      skip,
-      take,
       select: {
         id: true,
         ticketNumber: true,
@@ -361,7 +359,12 @@ export const TicketService = {
           }
         }
       }
-    });
+    };
+
+    if (skip !== undefined) queryOptions.skip = skip;
+    if (take !== undefined) queryOptions.take = take;
+
+    return prisma.ticket.findMany(queryOptions);
   },
 
   async countTickets(filters?: {

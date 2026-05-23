@@ -105,7 +105,7 @@ function parseTicketData(text) {
     if (poMatch && poMatch[1]) {
         result.poNumber = poMatch[1];
     }
-    const qtyRegex = /([\d.,]+)\s*(tons?|tonnes?|lbs?|kg|t)/i;
+    const qtyRegex = /([\d.,]+)\s*(tons?|tonnes?|lbs?|kg|t|tm)/i;
     const qtyMatch = text.match(qtyRegex);
     if (qtyMatch && qtyMatch[1]) {
         const qtyVal = parseFloat(qtyMatch[1].replace(/,/g, ''));

@@ -103,7 +103,7 @@ export const processTicketOcr = async (req, res) => {
 };
 export const getTickets = async (req, res) => {
     try {
-        const { status, supplierId, source, startDate, endDate, search } = req.query;
+        const { status, supplierId, source, startDate, endDate, search, page, limit } = req.query;
         const filters = {};
         if (status)
             filters.status = status;
@@ -117,7 +117,25 @@ export const getTickets = async (req, res) => {
             filters.endDate = endDate;
         if (search)
             filters.search = search;
+        const pageNum = page ? parseInt(page) : undefined;
+        const limitNum = limit ? parseInt(limit) : undefined;
+        if (pageNum && limitNum) {
+            filters.page = pageNum;
+            filters.limit = limitNum;
+        }
         const tickets = await TicketService.getTickets(filters);
+        if (pageNum && limitNum) {
+            const totalCount = await TicketService.countTickets(filters);
+            return res.status(200).json({
+                data: tickets,
+                pagination: {
+                    page: pageNum,
+                    limit: limitNum,
+                    totalPages: Math.ceil(totalCount / limitNum),
+                    totalCount,
+                }
+            });
+        }
         return res.status(200).json(tickets);
     }
     catch (error) {

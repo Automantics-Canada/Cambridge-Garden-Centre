@@ -40,8 +40,8 @@ export declare const TicketService: {
             ticketId: string | null;
             type: import("@prisma/client").$Enums.OcrJobType;
             errorMessage: string | null;
-            provider: import("@prisma/client").$Enums.OcrProvider;
             finishedAt: Date | null;
+            provider: import("@prisma/client").$Enums.OcrProvider;
             rawResponse: import("@prisma/client/runtime/library").JsonValue | null;
         };
     }>;
@@ -85,8 +85,8 @@ export declare const TicketService: {
             ticketId: string | null;
             type: import("@prisma/client").$Enums.OcrJobType;
             errorMessage: string | null;
-            provider: import("@prisma/client").$Enums.OcrProvider;
             finishedAt: Date | null;
+            provider: import("@prisma/client").$Enums.OcrProvider;
             rawResponse: import("@prisma/client/runtime/library").JsonValue | null;
         };
     }>;
@@ -129,8 +129,8 @@ export declare const TicketService: {
             ticketId: string | null;
             type: import("@prisma/client").$Enums.OcrJobType;
             errorMessage: string | null;
-            provider: import("@prisma/client").$Enums.OcrProvider;
             finishedAt: Date | null;
+            provider: import("@prisma/client").$Enums.OcrProvider;
             rawResponse: import("@prisma/client/runtime/library").JsonValue | null;
         };
     }>;
@@ -159,7 +159,7 @@ export declare const TicketService: {
         spruceMatched: boolean;
     }>;
     /**
-     * Get all tickets with optional filtering
+     * Get all tickets with optional filtering and pagination
      */
     getTickets(filters?: {
         status?: TicketStatus;
@@ -168,78 +168,9 @@ export declare const TicketService: {
         startDate?: string;
         endDate?: string;
         search?: string;
-    }): Promise<({
-        driver: {
-            name: string;
-            id: string;
-            createdAt: Date;
-            phone: string;
-            active: boolean;
-            email: string | null;
-            ratePerDelivery: import("@prisma/client/runtime/library").Decimal;
-            ratePerTrip: import("@prisma/client/runtime/library").Decimal | null;
-            type: import("@prisma/client").$Enums.DriverType;
-        } | null;
-        supplier: {
-            name: string;
-            id: string;
-            phone: string | null;
-            active: boolean;
-            type: import("@prisma/client").$Enums.SupplierType;
-            emailDomains: string[];
-            contactName: string | null;
-            contactEmail: string | null;
-            address: string | null;
-            keywords: string[];
-        } | null;
-        orderMatches: ({
-            order: {
-                id: string;
-                spruceOrderId: string;
-                poNumber: string | null;
-                customerName: string;
-                buyerType: import("@prisma/client").$Enums.BuyerType;
-                product: string;
-                quantity: import("@prisma/client/runtime/library").Decimal;
-                unit: string;
-                supplierId: string | null;
-                orderDate: Date;
-                deliveryDate: Date | null;
-                hasInvoice: boolean;
-                invoiceNumber: string | null;
-                createdAt: Date;
-                deliveryStatus: import("@prisma/client").$Enums.DriverTaskStatus;
-                driverId: string | null;
-                priority: number;
-            };
-        } & {
-            id: string;
-            orderId: string;
-            ticketId: string;
-            matchMethod: string;
-            matchedAt: Date;
-            createdBy: string | null;
-        })[];
-        linkedOrder: {
-            id: string;
-            spruceOrderId: string;
-            poNumber: string | null;
-            customerName: string;
-            buyerType: import("@prisma/client").$Enums.BuyerType;
-            product: string;
-            quantity: import("@prisma/client/runtime/library").Decimal;
-            unit: string;
-            supplierId: string | null;
-            orderDate: Date;
-            deliveryDate: Date | null;
-            hasInvoice: boolean;
-            invoiceNumber: string | null;
-            createdAt: Date;
-            deliveryStatus: import("@prisma/client").$Enums.DriverTaskStatus;
-            driverId: string | null;
-            priority: number;
-        } | null;
-    } & {
+        page?: number;
+        limit?: number;
+    }): Promise<{
         id: string;
         poNumber: string | null;
         quantity: import("@prisma/client/runtime/library").Decimal | null;
@@ -262,7 +193,15 @@ export declare const TicketService: {
         linkedById: string | null;
         receivedAt: Date;
         spruceMatched: boolean;
-    })[]>;
+    }[]>;
+    countTickets(filters?: {
+        status?: TicketStatus;
+        supplierId?: string;
+        source?: TicketSource;
+        startDate?: string;
+        endDate?: string;
+        search?: string;
+    }): Promise<number>;
     getTicketStats(): Promise<{
         unlinkedCount: number;
     }>;
@@ -280,6 +219,8 @@ export declare const TicketService: {
             ratePerDelivery: import("@prisma/client/runtime/library").Decimal;
             ratePerTrip: import("@prisma/client/runtime/library").Decimal | null;
             type: import("@prisma/client").$Enums.DriverType;
+            companyName: string | null;
+            userId: string | null;
         } | null;
         supplier: {
             name: string;
@@ -301,8 +242,8 @@ export declare const TicketService: {
             ticketId: string | null;
             type: import("@prisma/client").$Enums.OcrJobType;
             errorMessage: string | null;
-            provider: import("@prisma/client").$Enums.OcrProvider;
             finishedAt: Date | null;
+            provider: import("@prisma/client").$Enums.OcrProvider;
             rawResponse: import("@prisma/client/runtime/library").JsonValue | null;
         }[];
         orderMatches: ({

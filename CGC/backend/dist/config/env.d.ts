@@ -12,5 +12,6 @@ export declare const env: {
     gmailClientId: string;
     gmailClientSecret: string;
     gmailRefreshToken: string;
+    internalSharedSecret: string;
 };
 //# sourceMappingURL=env.d.ts.map

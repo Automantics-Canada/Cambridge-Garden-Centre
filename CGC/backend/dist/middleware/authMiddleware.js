@@ -1,6 +1,31 @@
 import jwt from 'jsonwebtoken';
 import { env } from '../config/env.js';
-export function authMiddleware(req, res, next) {
+import { prisma } from '../db/prisma.js';
+export async function authMiddleware(req, res, next) {
+    // Support legacy driver URL token access
+    const queryToken = req.query.token;
+    if (queryToken) {
+        try {
+            const decoded = Buffer.from(queryToken, 'base64').toString('ascii');
+            const [driverId] = decoded.split(':');
+            if (driverId) {
+                const driver = await prisma.driver.findUnique({
+                    where: { id: driverId }
+                });
+                if (driver) {
+                    req.user = {
+                        id: driver.userId || `legacy-driver-id-${driver.id}`,
+                        email: driver.email || 'legacy@example.com',
+                        role: 'DRIVER'
+                    };
+                    return next();
+                }
+            }
+        }
+        catch (e) {
+            console.error('Failed to parse legacy driver token:', e);
+        }
+    }
     const authHeader = req.headers.authorization;
     if (!authHeader?.startsWith('Bearer ')) {
         return res.status(401).json({ error: 'Missing or invalid Authorization' });

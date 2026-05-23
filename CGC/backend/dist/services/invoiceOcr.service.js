@@ -57,7 +57,7 @@ async function extractInvoiceWithTextract(localPath) {
     // Helper: extract unit from raw text near a quantity
     function inferUnit(description, rawOcrText) {
         // Search raw text for a line containing the description and a unit word
-        const unitPattern = /\b(\d+\.?\d*)\s*(tons?|tonnes?|lbs?|pounds?|kg|cy|ea|each|cubic yards?)\b/gi;
+        const unitPattern = /\b(\d+\.?\d*)\s*(tons?|tonnes?|lbs?|pounds?|kg|cy|ea|each|cubic yards?|tm)\b/gi;
         const lines = rawOcrText.split('\n');
         const descLower = description.toLowerCase().replace(/[^a-z0-9]/g, '');
         for (const line of lines) {

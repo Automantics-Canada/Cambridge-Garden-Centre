@@ -29,5 +29,6 @@ export const env = {
     gmailClientId: process.env.GMAIL_CLIENT_ID || '',
     gmailClientSecret: process.env.GMAIL_CLIENT_SECRET || '',
     gmailRefreshToken: process.env.GMAIL_REFRESH_TOKEN || '',
+    internalSharedSecret: process.env.INTERNAL_SHARED_SECRET || process.env.JWT_SECRET,
 };
 //# sourceMappingURL=env.js.map

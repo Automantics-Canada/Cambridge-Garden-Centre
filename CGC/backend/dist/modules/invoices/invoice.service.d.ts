@@ -14,7 +14,6 @@ export declare const InvoiceService: {
             status: import("@prisma/client").$Enums.InvoiceStatus;
             ocrRawText: string | null;
             receivedAt: Date;
-            gmailMessageId: string;
             senderType: import("@prisma/client").$Enums.SenderType;
             invoiceDate: Date;
             dueDate: Date | null;
@@ -23,6 +22,7 @@ export declare const InvoiceService: {
             fileUrl: string;
             emailFrom: string;
             emailSubject: string;
+            gmailMessageId: string;
             verifiedById: string | null;
             verifiedAt: Date | null;
             disputeNote: string | null;
@@ -36,8 +36,8 @@ export declare const InvoiceService: {
             ticketId: string | null;
             type: import("@prisma/client").$Enums.OcrJobType;
             errorMessage: string | null;
-            provider: import("@prisma/client").$Enums.OcrProvider;
             finishedAt: Date | null;
+            provider: import("@prisma/client").$Enums.OcrProvider;
             rawResponse: import("@prisma/client/runtime/library").JsonValue | null;
         };
     }>;
@@ -48,7 +48,6 @@ export declare const InvoiceService: {
         status: import("@prisma/client").$Enums.InvoiceStatus;
         ocrRawText: string | null;
         receivedAt: Date;
-        gmailMessageId: string;
         senderType: import("@prisma/client").$Enums.SenderType;
         invoiceDate: Date;
         dueDate: Date | null;
@@ -57,6 +56,7 @@ export declare const InvoiceService: {
         fileUrl: string;
         emailFrom: string;
         emailSubject: string;
+        gmailMessageId: string;
         verifiedById: string | null;
         verifiedAt: Date | null;
         disputeNote: string | null;
@@ -114,7 +114,6 @@ export declare const InvoiceService: {
         status: import("@prisma/client").$Enums.InvoiceStatus;
         ocrRawText: string | null;
         receivedAt: Date;
-        gmailMessageId: string;
         senderType: import("@prisma/client").$Enums.SenderType;
         invoiceDate: Date;
         dueDate: Date | null;
@@ -123,6 +122,7 @@ export declare const InvoiceService: {
         fileUrl: string;
         emailFrom: string;
         emailSubject: string;
+        gmailMessageId: string;
         verifiedById: string | null;
         verifiedAt: Date | null;
         disputeNote: string | null;
@@ -178,6 +178,8 @@ export declare const InvoiceService: {
                         ratePerDelivery: import("@prisma/client/runtime/library").Decimal;
                         ratePerTrip: import("@prisma/client/runtime/library").Decimal | null;
                         type: import("@prisma/client").$Enums.DriverType;
+                        companyName: string | null;
+                        userId: string | null;
                     } | null;
                 } & {
                     id: string;
@@ -248,8 +250,8 @@ export declare const InvoiceService: {
             ticketId: string | null;
             type: import("@prisma/client").$Enums.OcrJobType;
             errorMessage: string | null;
-            provider: import("@prisma/client").$Enums.OcrProvider;
             finishedAt: Date | null;
+            provider: import("@prisma/client").$Enums.OcrProvider;
             rawResponse: import("@prisma/client/runtime/library").JsonValue | null;
         }[];
     } & {
@@ -259,7 +261,6 @@ export declare const InvoiceService: {
         status: import("@prisma/client").$Enums.InvoiceStatus;
         ocrRawText: string | null;
         receivedAt: Date;
-        gmailMessageId: string;
         senderType: import("@prisma/client").$Enums.SenderType;
         invoiceDate: Date;
         dueDate: Date | null;
@@ -268,6 +269,7 @@ export declare const InvoiceService: {
         fileUrl: string;
         emailFrom: string;
         emailSubject: string;
+        gmailMessageId: string;
         verifiedById: string | null;
         verifiedAt: Date | null;
         disputeNote: string | null;
@@ -280,7 +282,6 @@ export declare const InvoiceService: {
         status: import("@prisma/client").$Enums.InvoiceStatus;
         ocrRawText: string | null;
         receivedAt: Date;
-        gmailMessageId: string;
         senderType: import("@prisma/client").$Enums.SenderType;
         invoiceDate: Date;
         dueDate: Date | null;
@@ -289,6 +290,7 @@ export declare const InvoiceService: {
         fileUrl: string;
         emailFrom: string;
         emailSubject: string;
+        gmailMessageId: string;
         verifiedById: string | null;
         verifiedAt: Date | null;
         disputeNote: string | null;
@@ -301,7 +303,6 @@ export declare const InvoiceService: {
         status: import("@prisma/client").$Enums.InvoiceStatus;
         ocrRawText: string | null;
         receivedAt: Date;
-        gmailMessageId: string;
         senderType: import("@prisma/client").$Enums.SenderType;
         invoiceDate: Date;
         dueDate: Date | null;
@@ -310,6 +311,7 @@ export declare const InvoiceService: {
         fileUrl: string;
         emailFrom: string;
         emailSubject: string;
+        gmailMessageId: string;
         verifiedById: string | null;
         verifiedAt: Date | null;
         disputeNote: string | null;
@@ -322,7 +324,6 @@ export declare const InvoiceService: {
         status: import("@prisma/client").$Enums.InvoiceStatus;
         ocrRawText: string | null;
         receivedAt: Date;
-        gmailMessageId: string;
         senderType: import("@prisma/client").$Enums.SenderType;
         invoiceDate: Date;
         dueDate: Date | null;
@@ -331,6 +332,7 @@ export declare const InvoiceService: {
         fileUrl: string;
         emailFrom: string;
         emailSubject: string;
+        gmailMessageId: string;
         verifiedById: string | null;
         verifiedAt: Date | null;
         disputeNote: string | null;
@@ -344,7 +346,6 @@ export declare const InvoiceService: {
             status: import("@prisma/client").$Enums.InvoiceStatus;
             ocrRawText: string | null;
             receivedAt: Date;
-            gmailMessageId: string;
             senderType: import("@prisma/client").$Enums.SenderType;
             invoiceDate: Date;
             dueDate: Date | null;
@@ -353,6 +354,7 @@ export declare const InvoiceService: {
             fileUrl: string;
             emailFrom: string;
             emailSubject: string;
+            gmailMessageId: string;
             verifiedById: string | null;
             verifiedAt: Date | null;
             disputeNote: string | null;
@@ -385,7 +387,6 @@ export declare const InvoiceService: {
             status: import("@prisma/client").$Enums.InvoiceStatus;
             ocrRawText: string | null;
             receivedAt: Date;
-            gmailMessageId: string;
             senderType: import("@prisma/client").$Enums.SenderType;
             invoiceDate: Date;
             dueDate: Date | null;
@@ -394,6 +395,7 @@ export declare const InvoiceService: {
             fileUrl: string;
             emailFrom: string;
             emailSubject: string;
+            gmailMessageId: string;
             verifiedById: string | null;
             verifiedAt: Date | null;
             disputeNote: string | null;
