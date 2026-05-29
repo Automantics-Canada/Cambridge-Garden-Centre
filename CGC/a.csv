@@ -1,8 +1,0 @@
-OrderNumber,CustomerName,BuyerType,Product,Quantity,Unit,PONumber,OrderDate,DeliveryDate,InvoiceNumber,HasInvoice
-2604-7387-1,Hesmer Transport 937302 Ontario Inc,CONTRACTOR,6% Fuel Surcharge,1.0000,each,851370,3/13/2026,3/19/2026,7387,true
-2604-7387-2,Hesmer Transport 937302 Ontario Inc,CONTRACTOR,Delivery,1.0000,each,851370,3/16/2026,3/19/2026,7387,true
-2604-53385-1,HK United Trucks Ltd.,CONTRACTOR,Aggregate Haul,36.94,ton,351709,3/31/2026,3/31/2026,53385,true
-2604-53385-2,HK United Trucks Ltd.,CONTRACTOR,Aggregate Haul,32.85,ton,351709,3/31/2026,3/31/2026,53385,true
-2604-5838627-1,Gro-Bark Ontario Limited,CONTRACTOR,Engineered PG Woodchip,21.0000,cy,351787,4/29/2026,4/29/2026,5838627,true
-2604-5838627-2,Gro-Bark Ontario Limited,CONTRACTOR,Fuel Surcharge,1.0000,each,351787,4/29/2026,4/29/2026,5838627,true
-2604-11817,LK Bros Transport,CONTRACTOR,Freight Delivery,1.0000,each,351460,4/16/2026,4/16/2026,11817,true

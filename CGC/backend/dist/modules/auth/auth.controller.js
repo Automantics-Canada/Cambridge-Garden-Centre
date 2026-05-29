@@ -20,4 +20,5 @@ export const login = async (req, res) => {
     const data = await AuthService.login(email, password);
     res.json(data);
 };
+//
 //# sourceMappingURL=auth.controller.js.map

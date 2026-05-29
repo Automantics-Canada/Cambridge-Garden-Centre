@@ -58,6 +58,6 @@
     "pdf-to-png-converter": "^4.0.0",
     "pdf2json": "^4.0.3",
     "string-similarity": "^4.0.4",
-    "uuid": "^9.0.1"
+    "uuid": "^11.1.1"
   }
 }
