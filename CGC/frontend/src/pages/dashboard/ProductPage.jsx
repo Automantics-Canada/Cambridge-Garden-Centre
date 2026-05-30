@@ -150,7 +150,7 @@ export default function ProductPage() {
         </div>
 
         <div className="flex gap-3 w-full sm:w-auto">
-          {/* <Motion.button
+          <Motion.button
             onClick={() => setIsUnitsModalOpen(true)}
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
@@ -158,7 +158,7 @@ export default function ProductPage() {
           >
             <Settings size={20} />
             Manage Units
-          </Motion.button> */}
+          </Motion.button>
 
           <Motion.button
             onClick={handleCreateNew}
