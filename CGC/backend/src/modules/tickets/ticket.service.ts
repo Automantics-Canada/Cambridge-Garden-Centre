@@ -177,11 +177,11 @@ export const TicketService = {
       const finalPoNumber = extracted.poNumber || ticket.poNumber;
       const isValidPo = !!(finalPoNumber && /^\d{6}$/.test(finalPoNumber));
 
-      let linkedOrderId: string | null = null;
-      let ticketStatus: TicketStatus = TicketStatus.UNLINKED;
-      let linkMethod: string | null = null;
+      let linkedOrderId: string | null = ticket.linkedOrderId;
+      let ticketStatus: TicketStatus = ticket.status;
+      let linkMethod: string | null = ticket.linkMethod;
 
-      if (isValidPo) {
+      if (ticketStatus === TicketStatus.UNLINKED && isValidPo) {
         // Attempt to find Order by PO number
         const matchingOrders = await prisma.order.findMany({
           where: { poNumber: finalPoNumber as string },

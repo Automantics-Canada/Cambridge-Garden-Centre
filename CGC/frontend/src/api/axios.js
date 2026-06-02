@@ -1,7 +1,7 @@
 import axios from 'axios';
 
 const api = axios.create({
-  baseURL: 'https://cambridge-garden-centre-production-65ef.up.railway.app',
+  baseURL: 'http://localhost:4000',
 });
 
 api.interceptors.request.use(

@@ -580,6 +580,11 @@ export default function TicketsPage() {
                   <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${selectedTicket.status === 'LINKED' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'}`}>
                     {selectedTicket.status}
                   </span>
+                  {selectedTicket.driver?.name && (
+                    <span className="bg-blue-50 border border-blue-200 text-blue-700 px-2.5 py-0.5 rounded-full text-xs font-semibold" title="Uploaded by Driver">
+                      Driver: {selectedTicket.driver.name}
+                    </span>
+                  )}
                   {selectedTicket.ocrConfidence > 0 && (
                     <div className="flex items-center gap-1 ml-4" title="OCR Confidence">
                        <div className="w-24 h-1.5 bg-gray-200 rounded-full overflow-hidden">

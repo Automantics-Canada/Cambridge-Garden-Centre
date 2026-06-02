@@ -125,7 +125,7 @@ serve(async (req) => {
           id, name, type, phone, email, active, ratePerDelivery, ratePerTrip, userId, companyName,
           deliveries:Delivery(
             id, status, createdAt,
-            order:Order(id, spruceOrderId, customerName, product, quantity, unit)
+            order:Order(id, spruceOrderId, customerName, product, quantity, unit, tickets:Ticket(id, ticketNumber, imageUrl, status, driverId))
           )
         `)
         .eq('userId', userId)
@@ -381,7 +381,7 @@ serve(async (req) => {
         .from('Delivery')
         .select(`
           id, orderId, driverId, status, priority, startedAt, completedAt, pickupPhotoUrl, deliveryPhotoUrl, createdAt,
-          order:Order(id, spruceOrderId, customerName, product, quantity, unit, createdAt),
+          order:Order(id, spruceOrderId, customerName, product, quantity, unit, createdAt, tickets:Ticket(id, ticketNumber, imageUrl, status, driverId)),
           driver:Driver(id, name),
           history:DeliveryHistory(id, status, notes, createdAt)
         `, { count: 'exact' })

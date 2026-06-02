@@ -132,7 +132,7 @@ export default function DriverMobileView() {
         ? `/api/deliveries/${id}/photos?token=${token}` 
         : `/api/deliveries/${id}/photos`;
       await api.post(url, formData);
-      toast.success(`${type === 'pickup' ? 'Pickup' : 'Delivery'} photo uploaded!`);
+      toast.success(`${type === 'pickup' ? 'Pickup' : type === 'delivery' ? 'Delivery' : 'Ticket'} photo uploaded!`);
       fetchMobileData();
     } catch (e) {
       toast.error(`Failed to upload photo`);
@@ -269,44 +269,64 @@ export default function DriverMobileView() {
                       {currentDelivery.status === 'IN_TRANSIT' && (
                         <>
                           {/* Photo Uploads */}
-                          <div className="grid grid-cols-2 gap-3">
-                            {!currentDelivery.pickupPhotoUrl ? (
-                              <label className={`flex flex-col items-center justify-center gap-2 py-4 rounded-xl font-semibold text-[10px] tracking-widest uppercase cursor-pointer border transition-all active:scale-[0.98] ${
-                                driverInfo?.type === 'INDEPENDENT'
-                                  ? 'bg-orange-50 border-orange-200 text-orange-700'
-                                  : 'bg-slate-50 border-slate-200 text-slate-600'
-                              }`}>
-                                <Camera size={18} strokeWidth={2} />
-                                PICKUP PHOTO
-                                <input
-                                  type="file"
-                                  className="hidden"
-                                  accept="image/*"
-                                  capture="environment"
-                                  onChange={(e) => handlePhotoUpload(currentDelivery.id, 'pickup', e.target.files?.[0])}
-                                />
-                              </label>
-                            ) : (
-                              <div className="flex flex-col items-center justify-center gap-2 bg-green-50 border border-green-200 text-green-700 py-4 rounded-xl text-[10px] font-semibold uppercase">
-                                <CheckCircle2 size={18} strokeWidth={2} /> PICKUP OK
-                              </div>
-                            )}
+                          <div className="space-y-3">
+                            <div className="grid grid-cols-2 gap-3">
+                              {!currentDelivery.pickupPhotoUrl ? (
+                                <label className={`flex flex-col items-center justify-center gap-2 py-4 rounded-xl font-semibold text-[10px] tracking-widest uppercase cursor-pointer border transition-all active:scale-[0.98] ${
+                                  driverInfo?.type === 'INDEPENDENT'
+                                    ? 'bg-orange-50 border-orange-200 text-orange-700'
+                                    : 'bg-slate-50 border-slate-200 text-slate-600'
+                                }`}>
+                                  <Camera size={18} strokeWidth={2} />
+                                  PICKUP PHOTO
+                                  <input
+                                    type="file"
+                                    className="hidden"
+                                    accept="image/*"
+                                    capture="environment"
+                                    onChange={(e) => handlePhotoUpload(currentDelivery.id, 'pickup', e.target.files?.[0])}
+                                  />
+                                </label>
+                              ) : (
+                                <div className="flex flex-col items-center justify-center gap-2 bg-green-50 border border-green-200 text-green-700 py-4 rounded-xl text-[10px] font-semibold uppercase">
+                                  <CheckCircle2 size={18} strokeWidth={2} /> PICKUP OK
+                                </div>
+                              )}
 
-                            {!currentDelivery.deliveryPhotoUrl ? (
-                              <label className="flex flex-col items-center justify-center gap-2 bg-indigo-50 border border-indigo-200 text-indigo-700 py-4 rounded-xl font-semibold text-[10px] tracking-widest uppercase cursor-pointer transition-all active:scale-[0.98]">
+                              {!currentDelivery.deliveryPhotoUrl ? (
+                                <label className="flex flex-col items-center justify-center gap-2 bg-indigo-50 border border-indigo-200 text-indigo-700 py-4 rounded-xl font-semibold text-[10px] tracking-widest uppercase cursor-pointer transition-all active:scale-[0.98]">
+                                  <Camera size={18} strokeWidth={2} />
+                                  DELIVERY PHOTO
+                                  <input
+                                    type="file"
+                                    className="hidden"
+                                    accept="image/*"
+                                    capture="environment"
+                                    onChange={(e) => handlePhotoUpload(currentDelivery.id, 'delivery', e.target.files?.[0])}
+                                  />
+                                </label>
+                              ) : (
+                                <div className="flex flex-col items-center justify-center gap-2 bg-indigo-50 border border-indigo-200 text-indigo-700 py-4 rounded-xl text-[10px] font-semibold uppercase">
+                                  <CheckCircle2 size={18} strokeWidth={2} /> PROOF OK
+                                </div>
+                              )}
+                            </div>
+
+                            {!(currentDelivery.order?.tickets?.length > 0) ? (
+                              <label className="flex flex-col items-center justify-center gap-2 py-4 rounded-xl font-semibold text-[10px] tracking-widest uppercase cursor-pointer border transition-all active:scale-[0.98] bg-teal-50 border-teal-200 text-teal-700 w-full">
                                 <Camera size={18} strokeWidth={2} />
-                                DELIVERY PHOTO
+                                UPLOAD TICKET
                                 <input
                                   type="file"
                                   className="hidden"
                                   accept="image/*"
                                   capture="environment"
-                                  onChange={(e) => handlePhotoUpload(currentDelivery.id, 'delivery', e.target.files?.[0])}
+                                  onChange={(e) => handlePhotoUpload(currentDelivery.id, 'ticket', e.target.files?.[0])}
                                 />
                               </label>
                             ) : (
-                              <div className="flex flex-col items-center justify-center gap-2 bg-indigo-50 border border-indigo-200 text-indigo-700 py-4 rounded-xl text-[10px] font-semibold uppercase">
-                                <CheckCircle2 size={18} strokeWidth={2} /> PROOF OK
+                              <div className="flex flex-col items-center justify-center gap-2 bg-teal-50 border border-teal-200 text-teal-700 py-4 rounded-xl text-[10px] font-semibold uppercase w-full">
+                                <CheckCircle2 size={18} strokeWidth={2} /> TICKET OK
                               </div>
                             )}
                           </div>

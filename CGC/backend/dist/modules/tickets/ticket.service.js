@@ -135,10 +135,10 @@ export const TicketService = {
             const extracted = await extractTextFromLocalImage(ticket.imageUrl);
             const finalPoNumber = extracted.poNumber || ticket.poNumber;
             const isValidPo = !!(finalPoNumber && /^\d{6}$/.test(finalPoNumber));
-            let linkedOrderId = null;
-            let ticketStatus = TicketStatus.UNLINKED;
-            let linkMethod = null;
-            if (isValidPo) {
+            let linkedOrderId = ticket.linkedOrderId;
+            let ticketStatus = ticket.status;
+            let linkMethod = ticket.linkMethod;
+            if (ticketStatus === TicketStatus.UNLINKED && isValidPo) {
                 // Attempt to find Order by PO number
                 const matchingOrders = await prisma.order.findMany({
                     where: { poNumber: finalPoNumber },

@@ -45,13 +45,13 @@ export const updateStatus = async (req: AuthRequest, res: Response) => {
 export const uploadPhoto = async (req: AuthRequest, res: Response) => {
   try {
     const { id } = req.params as { id: string };
-    const { type } = req.body; // 'pickup' | 'delivery'
+    const { type } = req.body; // 'pickup' | 'delivery' | 'ticket'
     
     if (!req.file) {
       return res.status(400).json({ error: 'File is required' });
     }
-    if (!type || (type !== 'pickup' && type !== 'delivery')) {
-      return res.status(400).json({ error: 'Valid type (pickup or delivery) is required' });
+    if (!type || (type !== 'pickup' && type !== 'delivery' && type !== 'ticket')) {
+      return res.status(400).json({ error: 'Valid type (pickup, delivery, or ticket) is required' });
     }
 
     const delivery = await DeliveriesService.uploadPhoto(id, type, req.file.buffer, req.file.originalname);
