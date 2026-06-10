@@ -32,7 +32,8 @@ export default function TicketsPage() {
   // Filters
   const [search, setSearch] = useState('');
   const [isUploading, setIsUploading] = useState(false);
-  const fileInputRef = useRef(null);
+  const imageInputRef = useRef(null);
+  const pdfInputRef = useRef(null);
   const [supplierId, setSupplierId] = useState('');
   const [source, setSource] = useState('');
   const [startDate, setStartDate] = useState('');
@@ -200,12 +201,16 @@ export default function TicketsPage() {
     }
   };
 
-  const handleFileUpload = async (event) => {
+  const handleFileUpload = async (event, uploadType) => {
     const file = event.target.files?.[0];
     if (!file) return;
 
-    if (!file.name.match(/\.(jpg|jpeg|png)$/i)) {
-      toast.error('Please upload a valid JPG or PNG file');
+    const isImage = uploadType === 'IMAGE';
+    const allowedRegex = isImage ? /\.(jpg|jpeg|png)$/i : /\.pdf$/i;
+    const allowedMsg = isImage ? 'Please upload a valid JPG or PNG image' : 'Please upload a valid PDF file';
+
+    if (!file.name.match(allowedRegex)) {
+      toast.error(allowedMsg);
       return;
     }
 
@@ -214,17 +219,19 @@ export default function TicketsPage() {
 
     setIsUploading(true);
     try {
-      await api.post('/api/tickets/upload', formData, {
+      const endpoint = isImage ? '/api/tickets/upload' : '/api/tickets/upload-pdf';
+      await api.post(endpoint, formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
       });
-      toast.success('Ticket uploaded and processing!');
+      toast.success(isImage ? 'Ticket uploaded and processing!' : 'PDF split and tickets queued for OCR!');
       fetchTickets();
       fetchStats();
     } catch (err) {
       toast.error('Upload failed');
     } finally {
       setIsUploading(false);
-      if (fileInputRef.current) fileInputRef.current.value = '';
+      if (imageInputRef.current) imageInputRef.current.value = '';
+      if (pdfInputRef.current) pdfInputRef.current.value = '';
     }
   };
 
@@ -305,17 +312,32 @@ export default function TicketsPage() {
           <input 
             type="file" 
             accept=".jpg,.jpeg,.png" 
-            ref={fileInputRef} 
-            onChange={handleFileUpload} 
+            ref={imageInputRef} 
+            onChange={(e) => handleFileUpload(e, 'IMAGE')} 
+            className="hidden" 
+          />
+          <input 
+            type="file" 
+            accept=".pdf" 
+            ref={pdfInputRef} 
+            onChange={(e) => handleFileUpload(e, 'PDF')} 
             className="hidden" 
           />
           <button
-            onClick={() => fileInputRef.current?.click()}
+            onClick={() => imageInputRef.current?.click()}
             disabled={isUploading}
             className="flex items-center gap-2 bg-[#1B4332] hover:bg-black text-white px-4 py-2 rounded-lg font-medium text-xs transition-all shadow-md disabled:opacity-50"
           >
             {isUploading ? <Loader className="w-4 h-4" /> : <Upload className="w-4 h-4" />}
-            {isUploading ? 'Processing...' : 'Upload Ticket Manually'}
+            {isUploading ? 'Processing...' : 'Upload Ticket Image'}
+          </button>
+          <button
+            onClick={() => pdfInputRef.current?.click()}
+            disabled={isUploading}
+            className="flex items-center gap-2 bg-[#028090] hover:bg-[#006e7a] text-white px-4 py-2 rounded-lg font-medium text-xs transition-all shadow-md disabled:opacity-50"
+          >
+            {isUploading ? <Loader className="w-4 h-4" /> : <Upload className="w-4 h-4" />}
+            {isUploading ? 'Processing...' : 'Upload Multi-ticket PDF'}
           </button>
 
           <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 flex items-center gap-3">

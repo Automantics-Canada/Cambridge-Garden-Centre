@@ -16,6 +16,26 @@ export interface UploadResult {
 }
 
 /**
+ * Returns the proper content type/mime type for a given file extension
+ */
+function getContentType(fileExtension: string): string {
+  const ext = fileExtension.toLowerCase();
+  if (ext === 'pdf') {
+    return 'application/pdf';
+  }
+  if (ext === 'png') {
+    return 'image/png';
+  }
+  if (ext === 'webp') {
+    return 'image/webp';
+  }
+  if (ext === 'gif') {
+    return 'image/gif';
+  }
+  return 'image/jpeg';
+}
+
+/**
  * Upload ticket image to Supabase Storage
  */
 export async function uploadTicketImage(
@@ -34,7 +54,7 @@ export async function uploadTicketImage(
       .upload(path, buffer, {
         cacheControl: '3600',
         upsert: false,
-        contentType: `image/${fileExtension === 'pdf' ? 'pdf' : 'jpeg'}`,
+        contentType: getContentType(fileExtension),
       });
 
     if (error) {
@@ -78,7 +98,7 @@ export async function uploadInvoiceImage(
       .upload(path, buffer, {
         cacheControl: '3600',
         upsert: false,
-        contentType: `image/${fileExtension === 'pdf' ? 'pdf' : 'jpeg'}`,
+        contentType: getContentType(fileExtension),
       });
 
     if (error) {

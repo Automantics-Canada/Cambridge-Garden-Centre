@@ -92,7 +92,7 @@ async function extractWithTextract(localPath: string): Promise<OcrExtractionResu
     unit: extraction.unit || null,
     poNumber: extraction.poNumber,
     ticketNumber: extraction.ticketNumber || null,
-    ocrConfidence: averageConfidence,
+    ocrConfidence: averageConfidence / 100,
   };
 }
 

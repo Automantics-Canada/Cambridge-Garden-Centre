@@ -40,3 +40,5 @@ app.use('/api/internal', internalRoutes);
 app.use(errorHandler);
 
 export default app;
+
+// trigger watch reload

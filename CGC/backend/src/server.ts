@@ -23,12 +23,12 @@ async function main() {
       console.log(`Server is running in ${env.nodeEnv} mode on port ${env.port}`);
 
       // Initialize Gmail Poll Worker (1 minute interval)
-      // const GMAIL_POLL_INTERVAL = 60 * 1000;
-      // console.log(`📧 Gmail Sync active every ${GMAIL_POLL_INTERVAL/1000} seconds.`);
-      // setInterval(() => {
-      //   GmailService.pollInvoices();
-      // }, GMAIL_POLL_INTERVAL);
-      // GmailService.pollInvoices(); // Initial run
+      const GMAIL_POLL_INTERVAL = 60 * 1000;
+      console.log(`📧 Gmail Sync active every ${GMAIL_POLL_INTERVAL/1000} seconds.`);
+      setInterval(() => {
+        GmailService.pollInvoices();
+      }, GMAIL_POLL_INTERVAL);
+      GmailService.pollInvoices(); // Initial run
 
       // Initialize OCR Job Worker (2 minute interval)
       const OCR_POLL_INTERVAL = 2 * 60 * 1000;

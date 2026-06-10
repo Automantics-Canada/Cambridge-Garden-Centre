@@ -174,6 +174,51 @@ export const TicketService = {
     try {
       const extracted = await extractTextFromLocalImage(ticket.imageUrl);
 
+      // Sanitize extracted values
+      let sanitizedMaterial: string | null = null;
+      if (extracted.material) {
+        if (Array.isArray(extracted.material)) {
+          sanitizedMaterial = extracted.material.map((m: any) => {
+            if (typeof m === 'object' && m !== null) {
+              return m.name || m.description || JSON.stringify(m);
+            }
+            return String(m);
+          }).join(', ');
+        } else if (typeof extracted.material === 'object') {
+          const mObj = extracted.material as any;
+          sanitizedMaterial = mObj.name || mObj.description || JSON.stringify(mObj);
+        } else {
+          sanitizedMaterial = String(extracted.material);
+        }
+      }
+
+      let sanitizedQuantity: number | null = null;
+      if (extracted.quantity !== undefined && extracted.quantity !== null) {
+        if (Array.isArray(extracted.quantity)) {
+          const nums = extracted.quantity.map((q: any) => parseFloat(String(q))).filter((n: any) => !isNaN(n));
+          sanitizedQuantity = nums.length > 0 ? nums.reduce((a: number, b: number) => a + b, 0) : null;
+        } else if (typeof extracted.quantity === 'object') {
+          const qObj = extracted.quantity as any;
+          const val = parseFloat(String(qObj.value || qObj.amount || qObj.quantity));
+          sanitizedQuantity = isNaN(val) ? null : val;
+        } else {
+          const val = parseFloat(String(extracted.quantity));
+          sanitizedQuantity = isNaN(val) ? null : val;
+        }
+      }
+
+      let sanitizedUnit: string | null = null;
+      if (extracted.unit) {
+        if (Array.isArray(extracted.unit)) {
+          sanitizedUnit = extracted.unit.map((u: any) => typeof u === 'object' ? (u.name || JSON.stringify(u)) : String(u)).join(', ');
+        } else if (typeof extracted.unit === 'object') {
+          const uObj = extracted.unit as any;
+          sanitizedUnit = uObj.name || uObj.unit || JSON.stringify(uObj);
+        } else {
+          sanitizedUnit = String(extracted.unit);
+        }
+      }
+
       const finalPoNumber = extracted.poNumber || ticket.poNumber;
       const isValidPo = !!(finalPoNumber && /^\d{6}$/.test(finalPoNumber));
 
@@ -228,14 +273,11 @@ export const TicketService = {
         console.log(`[TicketService] Extracted PO "${finalPoNumber}" is not 6 digits. Skipping auto-link.`);
       }
 
-      // Find supplier if extracted
+      // Find or create supplier if extracted
       let updatedSupplierId = ticket.supplierId;
       if (extracted.supplierName) {
-        const foundSupplier = await prisma.supplier.findFirst({
-          where: {
-            name: { contains: extracted.supplierName, mode: 'insensitive' },
-          },
-        });
+        const { SupplierService } = await import('../supplier/supplier.service.js');
+        const foundSupplier = await SupplierService.findOrCreateSupplier(extracted.supplierName);
         if (foundSupplier) {
           updatedSupplierId = foundSupplier.id;
         }
@@ -248,9 +290,9 @@ export const TicketService = {
           ocrConfidence: extracted.ocrConfidence,
           supplierId: updatedSupplierId,
           supplierName: extracted.supplierName || ticket.supplierName,
-          material: extracted.material || ticket.material,
-          quantity: extracted.quantity || ticket.quantity,
-          unit: extracted.unit || ticket.unit,
+          material: sanitizedMaterial || ticket.material,
+          quantity: sanitizedQuantity !== null ? sanitizedQuantity : ticket.quantity,
+          unit: sanitizedUnit || ticket.unit,
           poNumber: finalPoNumber,
           ticketNumber: extracted.ticketNumber || ticket.ticketNumber,
           ticketDate: extracted.ticketDate || ticket.ticketDate,

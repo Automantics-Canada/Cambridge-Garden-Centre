@@ -143,8 +143,8 @@ export default function InvoicesPage() {
     const file = event.target.files?.[0];
     if (!file) return;
 
-    if (!file.name.match(/\.(jpg|jpeg|png)$/i)) {
-      toast.error('Please upload a valid JPG or PNG file');
+    if (!file.name.match(/\.(jpg|jpeg|png|pdf)$/i)) {
+      toast.error('Please upload a valid JPG, PNG, or PDF file');
       return;
     }
 
@@ -205,7 +205,7 @@ export default function InvoicesPage() {
         <div className="mt-4 sm:ml-16 sm:mt-0 sm:flex-none">
           <input 
             type="file" 
-            accept=".jpg,.jpeg,.png" 
+            accept=".jpg,.jpeg,.png,.pdf" 
             ref={fileInputRef} 
             onChange={handleFileUpload} 
             className="hidden" 

@@ -93,7 +93,6 @@ export async function processPendingOcrJobs(): Promise<number> {
     const pendingJobs = await prisma.ocrJob.findMany({
       where: {
         status: OcrJobStatus.PENDING,
-        type: OcrJobType.TICKET,
       },
     });
 
