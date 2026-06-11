@@ -304,9 +304,9 @@ export default function TicketsPage() {
       <div className="sm:flex sm:items-center justify-between bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
         <div className="sm:flex-auto">
           <h1 className="text-2xl font-semibold text-gray-900">Delivery Tickets</h1>
-          <p className="mt-2 text-sm text-gray-700">
+          {/* <p className="mt-2 text-sm text-gray-700">
             Process and link supplier delivery tickets received via WhatsApp and Email.
-          </p>
+          </p> */}
         </div>
         <div className="mt-4 sm:mt-0 flex gap-4 items-center">
           <input 
@@ -337,7 +337,7 @@ export default function TicketsPage() {
             className="flex items-center gap-2 bg-[#028090] hover:bg-[#006e7a] text-white px-4 py-2 rounded-lg font-medium text-xs transition-all shadow-md disabled:opacity-50"
           >
             {isUploading ? <Loader className="w-4 h-4" /> : <Upload className="w-4 h-4" />}
-            {isUploading ? 'Processing...' : 'Upload Multi-ticket PDF'}
+            {isUploading ? 'Processing...' : 'Upload ticket PDF'}
           </button>
 
           <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 flex items-center gap-3">
