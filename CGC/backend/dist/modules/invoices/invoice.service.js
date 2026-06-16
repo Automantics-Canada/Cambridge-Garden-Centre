@@ -5,50 +5,6 @@ import { extractExpenseFromLocalImage } from '../../services/invoiceOcr.service.
 import fs from 'fs';
 import path from 'path';
 import { InvoiceStatus, SenderType, OcrJobType, OcrProvider, OcrJobStatus, LineItemFlag, AuditEntityType, AuditActionType, } from '@prisma/client';
-async function findSupplierByName(name) {
-    if (!name)
-        return null;
-    const logPath = path.join(process.cwd(), 'ocr_debug.log');
-    fs.appendFileSync(logPath, `\n[${new Date().toISOString()}] Attempting match for: "${name}"\n`);
-    const supplier = await prisma.supplier.findFirst({
-        where: {
-            name: { equals: name, mode: 'insensitive' },
-        },
-    });
-    if (supplier) {
-        fs.appendFileSync(logPath, `Exact match found: ${supplier.name}\n`);
-        return supplier;
-    }
-    // Try contains
-    const containsSupplier = await prisma.supplier.findFirst({
-        where: {
-            name: { contains: name, mode: 'insensitive' },
-        },
-    });
-    if (containsSupplier) {
-        fs.appendFileSync(logPath, `Contains match found: ${containsSupplier.name}\n`);
-        return containsSupplier;
-    }
-    // Final fallback: Fuzzy match against all suppliers
-    fs.appendFileSync(logPath, `No direct match. Candidates:\n`);
-    const allSuppliers = await prisma.supplier.findMany();
-    let bestMatch = null;
-    let highestSimilarity = 0;
-    for (const s of allSuppliers) {
-        const similarity = compareTwoStrings(name.toLowerCase(), s.name.toLowerCase());
-        fs.appendFileSync(logPath, ` - Candidate: "${s.name}" | Score: ${similarity.toFixed(4)}\n`);
-        if (similarity > highestSimilarity) {
-            highestSimilarity = similarity;
-            bestMatch = s;
-        }
-    }
-    if (bestMatch && highestSimilarity > 0.3) {
-        fs.appendFileSync(logPath, `WINNER: "${bestMatch.name}" (Score: ${highestSimilarity.toFixed(4)})\n`);
-        return bestMatch;
-    }
-    fs.appendFileSync(logPath, `FAILURE: No supplier matched.\n`);
-    return null;
-}
 /**
  * Normalizes product names for fuzzy matching.
  * e.g., "Type A Gravel" -> "a gravel"
@@ -134,7 +90,8 @@ export const InvoiceService = {
             const logPath = path.join(process.cwd(), 'ocr_debug.log');
             let updatedSupplierId = invoice.supplierId;
             if (extracted.supplierName) {
-                const found = await findSupplierByName(extracted.supplierName);
+                const { SupplierService } = await import('../supplier/supplier.service.js');
+                const found = await SupplierService.findOrCreateSupplier(extracted.supplierName);
                 if (found)
                     updatedSupplierId = found.id;
             }
@@ -156,7 +113,13 @@ export const InvoiceService = {
                 const item = extracted.lineItems[i];
                 if (!item)
                     continue;
-                fs.appendFileSync(logPath, `Line ${i + 1}: "${item.description}" | Unit: "${item.unit}"\n`);
+                // Normalize values to avoid null crashes on required DB fields
+                const description = item.description || 'Unknown Item';
+                const quantity = Number(item.quantity) || 0;
+                const unitRate = Number(item.unitPrice) || 0;
+                const lineTotal = Number(item.totalPrice) || (quantity * unitRate);
+                const unit = item.unit ? item.unit.trim() : 'ea';
+                fs.appendFileSync(logPath, `Line ${i + 1}: "${description}" | Unit: "${unit}"\n`);
                 let matchedOrderId = null;
                 let matchedTicketIds = [];
                 let negotiatedRateVal = null;
@@ -183,11 +146,11 @@ export const InvoiceService = {
                     const potentialOrders = await prisma.order.findMany({
                         where: { poNumber: linePo, supplierId: updatedSupplierId },
                     });
-                    const orderMatch = potentialOrders.find(o => stringsMatchFuzzy(o.product, item.description));
+                    const orderMatch = potentialOrders.find(o => stringsMatchFuzzy(o.product, description));
                     if (orderMatch) {
                         matchedOrderId = orderMatch.id;
                         const orderQty = Number(orderMatch.quantity);
-                        const diff = item.quantity - orderQty;
+                        const diff = quantity - orderQty;
                         const tolerance = orderQty * 0.02; // 2% tolerance
                         if (diff > tolerance) {
                             flags.push(LineItemFlag.QTY_MISMATCH);
@@ -213,10 +176,10 @@ export const InvoiceService = {
                         ]
                     },
                 });
-                const rateMatch = allRates.find(r => stringsMatchFuzzy(r.productName, item.description));
+                const rateMatch = allRates.find(r => stringsMatchFuzzy(r.productName, description));
                 if (rateMatch) {
                     negotiatedRateVal = Number(rateMatch.rate);
-                    const diff = item.unitPrice - negotiatedRateVal;
+                    const diff = unitRate - negotiatedRateVal;
                     if (diff > 0.01) {
                         flags.push(LineItemFlag.RATE_MISMATCH);
                         rateDiscrepancy = diff;
@@ -240,18 +203,18 @@ export const InvoiceService = {
                 // --- Calculation ---
                 let approvedTotal = null;
                 if (negotiatedRateVal) {
-                    approvedTotal = item.quantity * negotiatedRateVal;
+                    approvedTotal = quantity * negotiatedRateVal;
                 }
                 await prisma.invoiceLineItem.create({
                     data: {
                         invoiceId,
                         lineNumber: i + 1,
-                        description: item.description,
+                        description,
                         poNumber: linePo,
-                        quantity: item.quantity,
-                        unit: item.unit ?? 'ea',
-                        unitRate: item.unitPrice,
-                        lineTotal: item.totalPrice,
+                        quantity,
+                        unit,
+                        unitRate,
+                        lineTotal,
                         matchedOrderId,
                         matchedTickets: {
                             connect: matchedTicketIds.map(id => ({ id }))

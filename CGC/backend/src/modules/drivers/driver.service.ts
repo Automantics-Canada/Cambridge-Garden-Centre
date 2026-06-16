@@ -154,9 +154,140 @@ export const DriverService = {
   },
 
   async updateDriver(id: string, data: any) {
-    return prisma.driver.update({
-      where: { id },
-      data
+    const { name, phone, email, password, type, companyName, ratePerDelivery, ratePerTrip, active } = data;
+
+    return prisma.$transaction(async (tx) => {
+      // 1. Get the existing driver
+      const existingDriver = await tx.driver.findUnique({
+        where: { id },
+        include: { user: true }
+      });
+      if (!existingDriver) {
+        throw new Error(`Driver with ID ${id} not found`);
+      }
+
+      const driverUpdateData: any = {};
+      if (name !== undefined) driverUpdateData.name = name;
+      
+      if (phone !== undefined) {
+        const phoneNormalized = phone.trim();
+        // Check if phone number already exists in Driver table for another driver
+        const existingDriverPhone = await tx.driver.findFirst({
+          where: { phone: phoneNormalized, id: { not: id } }
+        });
+        if (existingDriverPhone) {
+          throw new Error(`Phone number ${phoneNormalized} is already registered to another driver account.`);
+        }
+        driverUpdateData.phone = phoneNormalized;
+      }
+      
+      if (type !== undefined) driverUpdateData.type = type;
+      if (companyName !== undefined) driverUpdateData.companyName = type === 'INDEPENDENT' ? companyName : null;
+      if (ratePerDelivery !== undefined) driverUpdateData.ratePerDelivery = ratePerDelivery;
+      if (ratePerTrip !== undefined) driverUpdateData.ratePerTrip = ratePerTrip;
+      if (active !== undefined) driverUpdateData.active = active;
+
+      const emailNormalized = email !== undefined && email !== null ? email.toLowerCase().trim() : undefined;
+      
+      if (emailNormalized !== undefined) {
+        if (emailNormalized === '') {
+          driverUpdateData.email = null;
+          driverUpdateData.userId = null;
+        } else {
+          // Check if email already exists in Driver table for another driver
+          const existingDriverEmail = await tx.driver.findFirst({
+            where: { email: { equals: emailNormalized, mode: 'insensitive' }, id: { not: id } }
+          });
+          if (existingDriverEmail) {
+            throw new Error(`Email ${emailNormalized} is already registered to another driver account.`);
+          }
+          driverUpdateData.email = emailNormalized;
+        }
+      }
+
+      let userId = existingDriver.userId;
+
+      // Handle User table sync
+      if (emailNormalized && emailNormalized !== '') {
+        const hash = password ? await bcrypt.hash(password, 10) : undefined;
+
+        if (userId) {
+          // Update existing User
+          const userUpdateData: any = {};
+          if (name !== undefined) userUpdateData.name = name;
+          if (phone !== undefined) userUpdateData.phone = phone.trim();
+          userUpdateData.email = emailNormalized;
+          if (hash) userUpdateData.passwordHash = hash;
+          if (active !== undefined) userUpdateData.active = active;
+
+          // Check if email exists on another User to avoid conflicts
+          const existingUserWithEmail = await tx.user.findFirst({
+            where: { email: { equals: emailNormalized, mode: 'insensitive' }, id: { not: userId } }
+          });
+          if (existingUserWithEmail) {
+            throw new Error(`Email ${emailNormalized} is already registered to another user account.`);
+          }
+
+          await tx.user.update({
+            where: { id: userId },
+            data: userUpdateData
+          });
+        } else {
+          // Create new User since driver didn't have a userId yet (but now has email)
+          const existingUserWithEmail = await tx.user.findFirst({
+            where: { email: { equals: emailNormalized, mode: 'insensitive' } }
+          });
+          if (existingUserWithEmail) {
+            // Self-heal/link if dangling user with role DRIVER
+            if (existingUserWithEmail.role === 'DRIVER') {
+              const checkDriver = await tx.driver.findUnique({ where: { userId: existingUserWithEmail.id } });
+              if (checkDriver) {
+                throw new Error(`Email ${emailNormalized} is already registered and linked to another driver.`);
+              }
+              userId = existingUserWithEmail.id;
+              
+              const userUpdateData: any = {
+                name: name !== undefined ? name : existingDriver.name,
+                phone: phone !== undefined ? phone.trim() : existingDriver.phone,
+                active: active !== undefined ? active : existingDriver.active
+              };
+              if (hash) userUpdateData.passwordHash = hash;
+              await tx.user.update({
+                where: { id: userId },
+                data: userUpdateData
+              });
+            } else {
+              throw new Error(`Email ${emailNormalized} is already registered with role ${existingUserWithEmail.role}.`);
+            }
+          } else {
+            const newUser = await tx.user.create({
+              data: {
+                email: emailNormalized,
+                name: name !== undefined ? name : existingDriver.name,
+                phone: phone !== undefined ? phone.trim() : existingDriver.phone,
+                role: 'DRIVER',
+                active: active !== undefined ? active : existingDriver.active,
+                passwordHash: hash || await bcrypt.hash('CgcDriver123!', 10)
+              }
+            });
+            userId = newUser.id;
+          }
+          driverUpdateData.userId = userId;
+        }
+      } else if (userId && password) {
+        // If email was not updated, but password was provided and userId exists
+        const hash = await bcrypt.hash(password, 10);
+        await tx.user.update({
+          where: { id: userId },
+          data: { passwordHash: hash }
+        });
+      }
+
+      // 3. Update the Driver table
+      return tx.driver.update({
+        where: { id },
+        data: driverUpdateData
+      });
     });
   },
 

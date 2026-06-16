@@ -55,7 +55,7 @@ export default function SupplierForm({ supplier = null, onClose }) {
     }
 
     if (formData.phone && !isValidPhone(formData.phone)) {
-      errors.phone = 'Invalid phone number';
+      errors.phone = 'Phone number must be exactly 6 digits';
     }
 
     setValidationErrors(errors);
@@ -67,7 +67,7 @@ export default function SupplierForm({ supplier = null, onClose }) {
   };
 
   const isValidPhone = (phone) => {
-    return /^[\d\s\-+()]+$/.test(phone) && phone.replace(/\D/g, '').length >= 10;
+    return /^[\d\s\-+()]+$/.test(phone) && phone.replace(/\D/g, '').length === 6;
   };
 
   const isValidDomain = (domain) => {

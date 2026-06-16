@@ -17,13 +17,13 @@ export default function OrdersPage() {
   const pdfInputRef = useRef(null);
 
   const [search, setSearch] = useState('');
-  const [startDate, setStartDate] = useState('');
-  const [endDate, setEndDate] = useState('');
   const [buyerType, setBuyerType] = useState('');
   const [supplierId, setSupplierId] = useState('');
   const [driverId, setDriverId] = useState(searchParams.get('driverId') || '');
   const [hasInvoice, setHasInvoice] = useState('');
   const [hasLinkedTickets, setHasLinkedTickets] = useState('');
+  const [uploadFilter, setUploadFilter] = useState('today'); // 'today' | 'yesterday' | 'select'
+  const [selectedUploadDate, setSelectedUploadDate] = useState(''); // 'YYYY-MM-DD'
 
   const fetchOrders = useCallback(async () => {
     setLoading(true);
@@ -33,8 +33,6 @@ export default function OrdersPage() {
         limit: '1000'
       });
       if (search) params.append('search', search);
-      if (startDate) params.append('startDate', startDate);
-      if (endDate) params.append('endDate', endDate);
       if (buyerType) params.append('buyerType', buyerType);
       if (supplierId) params.append('supplierId', supplierId);
       if (driverId) params.append('driverId', driverId);
@@ -59,7 +57,7 @@ export default function OrdersPage() {
     } finally {
       setLoading(false);
     }
-  }, [search, startDate, endDate, buyerType, supplierId, driverId, hasInvoice, hasLinkedTickets]);
+  }, [search, buyerType, supplierId, driverId, hasInvoice, hasLinkedTickets]);
 
   const handleFileUpload = async (event) => {
     const file = event.target.files?.[0];
@@ -105,6 +103,67 @@ export default function OrdersPage() {
 
     return () => clearTimeout(timer);
   }, [fetchOrders]);
+
+  const getLocalDateString = (dateInput) => {
+    if (!dateInput) return '';
+    const d = new Date(dateInput);
+    if (isNaN(d.getTime())) return '';
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+
+  const filteredOrders = orders.filter((order) => {
+    // 1. Upload date filter
+    const uploadDateStr = getLocalDateString(order.createdAt);
+    if (uploadFilter === 'today') {
+      const todayStr = getLocalDateString(new Date());
+      if (uploadDateStr !== todayStr) return false;
+    } else if (uploadFilter === 'yesterday') {
+      const yesterday = new Date();
+      yesterday.setDate(yesterday.getDate() - 1);
+      const yesterdayStr = getLocalDateString(yesterday);
+      if (uploadDateStr !== yesterdayStr) return false;
+    } else if (uploadFilter === 'select') {
+      if (selectedUploadDate && uploadDateStr !== selectedUploadDate) {
+        return false;
+      }
+    }
+
+    // Compose with other filters client-side
+    // 2. Search Text
+    if (search) {
+      const s = search.toLowerCase();
+      const matchSearch =
+        order.spruceOrderId?.toLowerCase().includes(s) ||
+        order.poNumber?.toLowerCase().includes(s) ||
+        order.customerName?.toLowerCase().includes(s) ||
+        order.product?.toLowerCase().includes(s);
+      if (!matchSearch) return false;
+    }
+
+    // 3. Buyer Type
+    if (buyerType && order.buyerType !== buyerType) return false;
+
+    // 4. Has Invoice
+    if (hasInvoice) {
+      const wantInvoice = hasInvoice === 'yes';
+      if (order.hasInvoice !== wantInvoice) return false;
+    }
+
+    // 5. Has Linked Tickets
+    if (hasLinkedTickets) {
+      const wantTickets = hasLinkedTickets === 'yes';
+      const hasTickets = order.ticketMatches && order.ticketMatches.length > 0;
+      if (hasTickets !== wantTickets) return false;
+    }
+
+    // 6. Supplier ID
+    if (supplierId && order.supplierId !== supplierId) return false;
+
+    return true;
+  });
 
   return (
     <div className="flex flex-col h-full space-y-4">
@@ -179,23 +238,55 @@ export default function OrdersPage() {
           </div>
 
           <div>
-            <label className="block text-xs font-medium text-gray-700 mb-1">Date Range</label>
-            <div className="flex items-center gap-2">
-              <input
-                type="date"
-                className="border-gray-300 rounded-md sm:text-sm p-2 border"
-                value={startDate}
-                onChange={(e) => setStartDate(e.target.value)}
-              />
-              <span className="text-gray-500">-</span>
-              <input
-                type="date"
-                className="border-gray-300 rounded-md sm:text-sm p-2 border"
-                value={endDate}
-                onChange={(e) => setEndDate(e.target.value)}
-              />
+            <label className="block text-xs font-medium text-gray-700 mb-1">Upload Date</label>
+            <div className="flex items-center gap-1 bg-gray-100 p-1 rounded-lg border border-gray-200">
+              <button
+                type="button"
+                onClick={() => setUploadFilter('today')}
+                className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-all ${
+                  uploadFilter === 'today'
+                    ? 'bg-white text-green-700 shadow-sm border border-gray-200/50'
+                    : 'text-gray-600 hover:text-gray-950 hover:bg-gray-200/50'
+                }`}
+              >
+                Today
+              </button>
+              <button
+                type="button"
+                onClick={() => setUploadFilter('yesterday')}
+                className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-all ${
+                  uploadFilter === 'yesterday'
+                    ? 'bg-white text-green-700 shadow-sm border border-gray-200/50'
+                    : 'text-gray-600 hover:text-gray-950 hover:bg-gray-200/50'
+                }`}
+              >
+                Yesterday
+              </button>
+              <button
+                type="button"
+                onClick={() => setUploadFilter('select')}
+                className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-all ${
+                  uploadFilter === 'select'
+                    ? 'bg-white text-green-700 shadow-sm border border-gray-200/50'
+                    : 'text-gray-600 hover:text-gray-950 hover:bg-gray-200/50'
+                }`}
+              >
+                Select Date
+              </button>
             </div>
           </div>
+
+          {uploadFilter === 'select' && (
+            <div className="transition-all duration-300">
+              <label className="block text-xs font-medium text-gray-700 mb-1">Choose Date</label>
+              <input
+                type="date"
+                className="border border-gray-300 rounded-md sm:text-sm p-2 bg-white text-gray-900 focus:border-green-500 focus:ring-green-500"
+                value={selectedUploadDate}
+                onChange={(e) => setSelectedUploadDate(e.target.value)}
+              />
+            </div>
+          )}
 
           <div>
             <label className="block text-xs font-medium text-gray-700 mb-1">Buyer Type</label>
@@ -293,14 +384,27 @@ export default function OrdersPage() {
                 </tr>
               ) : loading ? (
                 <OrdersTableSkeleton />
-              ) : orders.length === 0 ? (
+              ) : filteredOrders.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="py-12 text-center text-sm text-gray-500">
-                    No orders found matching criteria.
+                  <td colSpan={9} className="py-16 text-center text-sm text-gray-500">
+                    <div className="flex flex-col items-center justify-center space-y-2">
+                      <p className="text-base font-semibold text-gray-700">
+                        {uploadFilter === 'today'
+                          ? 'No orders uploaded today'
+                          : uploadFilter === 'yesterday'
+                          ? 'No orders uploaded yesterday'
+                          : selectedUploadDate
+                          ? `No orders uploaded on ${new Date(selectedUploadDate + 'T00:00:00').toLocaleDateString(undefined, { dateStyle: 'long' })}`
+                          : 'No orders uploaded on this date'}
+                      </p>
+                      <p className="text-xs text-gray-400">
+                        Try importing an order PDF/CSV or changing your date selection.
+                      </p>
+                    </div>
                   </td>
                 </tr>
               ) : (
-                orders.map((order) => {
+                filteredOrders.map((order) => {
                   const hasGaps = !order.poNumber && (!order.ticketMatches || order.ticketMatches.length === 0);
 
                   return (

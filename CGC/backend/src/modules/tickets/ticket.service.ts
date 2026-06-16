@@ -226,51 +226,70 @@ export const TicketService = {
       let ticketStatus: TicketStatus = ticket.status;
       let linkMethod: string | null = ticket.linkMethod;
 
-      if (ticketStatus === TicketStatus.UNLINKED && isValidPo) {
-        // Attempt to find Order by PO number
-        const matchingOrders = await prisma.order.findMany({
-          where: { poNumber: finalPoNumber as string },
-        });
+      // ONLY automatically link if the ticket is uploaded by a driver (has driverId)
+      if (ticketStatus === TicketStatus.UNLINKED && ticket.driverId) {
+        let matchedOrder = null;
+        let matchMethod = 'AUTO_PO';
 
-        // ONLY link automatically if there is exactly ONE order with that PO number
-        if (matchingOrders.length === 1) {
-          const order = matchingOrders[0]!;
+        if (isValidPo) {
+          // 1. Try to find the order by PO number that was assigned to this driver
+          const matchingOrders = await prisma.order.findMany({
+            where: {
+              poNumber: finalPoNumber as string,
+              driverId: ticket.driverId,
+            },
+          });
+
+          if (matchingOrders.length === 1) {
+            matchedOrder = matchingOrders[0];
+            matchMethod = 'AUTO_PO';
+          }
+        }
+
+        // 2. Fallback: If no PO match, look for an active delivery order assigned to this driver
+        if (!matchedOrder) {
+          const activeDeliveries = await prisma.delivery.findMany({
+            where: {
+              driverId: ticket.driverId,
+              status: { notIn: ['DELIVERED', 'CANCELLED'] },
+            },
+            orderBy: { priority: 'asc' },
+            include: { order: true },
+          });
+
+          if (activeDeliveries.length > 0) {
+            matchedOrder = activeDeliveries[0]!.order;
+            matchMethod = 'AUTO_DRIVER_ASSIGNED';
+          }
+        }
+
+        if (matchedOrder) {
           await prisma.ticketOrderMatch.upsert({
             where: {
               ticketId_orderId: {
                 ticketId: ticketId,
-                orderId: order.id,
+                orderId: matchedOrder.id,
               },
             },
             update: {},
             create: {
               ticketId: ticketId,
-              orderId: order.id,
-              matchMethod: 'AUTO_PO',
+              orderId: matchedOrder.id,
+              matchMethod: matchMethod,
             },
           });
-          
-          linkedOrderId = order.id;
+
+          linkedOrderId = matchedOrder.id;
           ticketStatus = TicketStatus.LINKED;
           linkMethod = 'AUTO';
-          console.log(`[TicketService] Automatically linked ticket ${ticketId} to single matching order ${order.id} (PO: ${finalPoNumber})`);
-        } else if (matchingOrders.length > 1) {
-          console.log(`[TicketService] Found ${matchingOrders.length} orders for PO ${finalPoNumber}. Cleaning up existing auto-links.`);
-          
-          // Cleanup any auto-matches that might have been created during incremental import
-          await prisma.ticketOrderMatch.deleteMany({
-            where: {
-              ticketId: ticketId,
-              matchMethod: { in: ['AUTO_PO', 'AUTO_FALLBACK'] }
-            }
-          });
-          
-          linkedOrderId = null;
-          ticketStatus = TicketStatus.UNLINKED;
-          linkMethod = null;
+          console.log(`[TicketService] Automatically linked driver ticket ${ticketId} to assigned order ${matchedOrder.id} (method: ${matchMethod})`);
         }
-      } else if (finalPoNumber) {
-        console.log(`[TicketService] Extracted PO "${finalPoNumber}" is not 6 digits. Skipping auto-link.`);
+      } else {
+        if (!ticket.driverId) {
+          console.log(`[TicketService] Ticket ${ticketId} was not uploaded by a driver. Skipping auto-linking.`);
+        } else if (ticketStatus !== TicketStatus.UNLINKED) {
+          console.log(`[TicketService] Ticket ${ticketId} is already linked. Skipping auto-linking.`);
+        }
       }
 
       // Find or create supplier if extracted

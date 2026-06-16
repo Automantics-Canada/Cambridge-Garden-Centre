@@ -1,5 +1,9 @@
 import { SupplierType } from '@prisma/client';
 export declare const SupplierService: {
+    findOrCreateSupplier(name: string | null): Promise<{
+        id: string;
+        name: string;
+    } | null>;
     list(): Promise<({
         negotiatedRates: {
             id: string;

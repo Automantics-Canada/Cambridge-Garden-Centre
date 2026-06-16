@@ -1,7 +1,8 @@
 import { motion } from 'framer-motion';
 import { Link } from 'react-router-dom';
+import { Pencil } from 'lucide-react';
 
-export default function DriverCard({ driver }) {
+export default function DriverCard({ driver, onEdit }) {
   const { name, phone, email, ratePerTrip, type, stats, currentTask } = driver;
   
   const initials = name.split(' ').map(n => n[0]).join('').toUpperCase();
@@ -30,6 +31,15 @@ export default function DriverCard({ driver }) {
               </div>
             </div>
           </div>
+          {onEdit && (
+            <button
+              onClick={() => onEdit(driver)}
+              className="text-gray-400 hover:text-[#2D6A4F] p-1.5 rounded-lg hover:bg-gray-50 transition-colors"
+              title="Edit Driver Details"
+            >
+              <Pencil size={16} />
+            </button>
+          )}
         </div>
 
         <div className="space-y-3 mb-6">

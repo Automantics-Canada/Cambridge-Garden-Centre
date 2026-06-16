@@ -66,7 +66,7 @@ async function extractWithTextract(localPath) {
         unit: extraction.unit || null,
         poNumber: extraction.poNumber,
         ticketNumber: extraction.ticketNumber || null,
-        ocrConfidence: averageConfidence,
+        ocrConfidence: averageConfidence / 100,
     };
 }
 /**

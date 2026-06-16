@@ -1,0 +1,230 @@
+import React, { useState, useEffect } from 'react';
+import { X, Eye, EyeOff } from 'lucide-react';
+import api from '../../api/axios';
+
+export default function EditDriverModal({ isOpen, onClose, onSuccess, driver }) {
+  const [formData, setFormData] = useState({
+    name: '',
+    phone: '',
+    email: '',
+    password: '',
+    type: 'CGC_FLEET',
+    companyName: '',
+    ratePerDelivery: '',
+    ratePerTrip: '',
+    active: true
+  });
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+
+  useEffect(() => {
+    if (driver) {
+      setFormData({
+        name: driver.name || '',
+        phone: driver.phone || '',
+        email: driver.email || '',
+        password: '', // blank by default, only updated if entered
+        type: driver.type || 'CGC_FLEET',
+        companyName: driver.companyName || '',
+        ratePerDelivery: driver.ratePerDelivery || '',
+        ratePerTrip: driver.ratePerTrip || '',
+        active: driver.active !== undefined ? driver.active : true
+      });
+      setError('');
+    }
+  }, [driver]);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+    setError('');
+
+    // Phone Number Validation: must be exactly 6 digits
+    const digitsOnly = formData.phone.replace(/\D/g, '');
+    if (digitsOnly.length !== 6) {
+      setError('Phone number must be exactly 6 digits for Canadian format.');
+      setLoading(false);
+      return;
+    }
+    
+    try {
+      const payload = { 
+        name: formData.name,
+        phone: formData.phone,
+        email: formData.email || null,
+        type: formData.type,
+        companyName: formData.type === 'INDEPENDENT' ? formData.companyName : null,
+        ratePerDelivery: Number(formData.ratePerDelivery || 0),
+        ratePerTrip: Number(formData.ratePerTrip || 0),
+        active: formData.active
+      };
+
+      if (formData.password) {
+        payload.password = formData.password;
+      }
+
+      await api.patch(`/api/drivers/${driver.id}`, payload);
+      onSuccess();
+      onClose();
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to update driver');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (!isOpen || !driver) return null;
+
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 backdrop-blur-[2px] transition-all">
+      <div className="bg-white rounded-2xl w-full max-w-md overflow-hidden shadow-2xl animate-in fade-in zoom-in duration-200">
+        <div className="flex justify-between items-center p-6 border-b border-gray-100 bg-gray-50/50">
+          <h2 className="text-xl font-bold text-gray-900">Edit Driver Details</h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 transition-colors p-1 hover:bg-gray-100 rounded-full">
+            <X size={20} />
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit} className="p-6 space-y-5 h-[70vh] overflow-y-auto">
+          {error && (
+            <div className="bg-red-50 border border-red-100 text-red-600 p-3 rounded-xl text-sm font-medium">
+              {error}
+            </div>
+          )}
+          
+          <div className="space-y-1.5">
+            <label className="text-xs font-bold text-gray-500 uppercase tracking-wider ml-1">Full Name</label>
+            <input
+              type="text"
+              required
+              className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-[#2D6A4F] focus:ring-4 focus:ring-[#2D6A4F]/10 outline-none transition-all placeholder:text-gray-300"
+              placeholder="e.g. Dave Mitchell"
+              value={formData.name}
+              onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+            />
+          </div>
+
+          <div className="space-y-1.5">
+            <label className="text-xs font-bold text-gray-500 uppercase tracking-wider ml-1">Phone Number (6 Digits)</label>
+            <input
+              type="tel"
+              required
+              className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-[#2D6A4F] focus:ring-4 focus:ring-[#2D6A4F]/10 outline-none transition-all placeholder:text-gray-300"
+              placeholder="e.g. 555012"
+              value={formData.phone}
+              onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
+            />
+          </div>
+
+          <div className="space-y-1.5">
+            <label className="text-xs font-bold text-gray-500 uppercase tracking-wider ml-1">Email</label>
+            <input
+              type="email"
+              className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-[#2D6A4F] focus:ring-4 focus:ring-[#2D6A4F]/10 outline-none transition-all placeholder:text-gray-300"
+              placeholder="e.g. dave@example.com"
+              value={formData.email}
+              onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+            />
+          </div>
+
+          <div className="space-y-1.5">
+            <label className="text-xs font-bold text-gray-500 uppercase tracking-wider ml-1 block">
+              Change Password <span className="text-[10px] text-gray-400 normal-case">(Leave blank to keep current)</span>
+            </label>
+            <div className="relative">
+              <input
+                type={showPassword ? "text" : "password"}
+                className="w-full pl-4 pr-10 py-3 rounded-xl border border-gray-200 focus:border-[#2D6A4F] focus:ring-4 focus:ring-[#2D6A4F]/10 outline-none transition-all placeholder:text-gray-300"
+                placeholder="Enter new password"
+                value={formData.password}
+                onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 focus:outline-none"
+              >
+                {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+              </button>
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <label className="text-xs font-bold text-gray-500 uppercase tracking-wider ml-1">Driver Type</label>
+            <select
+              className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-[#2D6A4F] focus:ring-4 focus:ring-[#2D6A4F]/10 outline-none transition-all bg-white"
+              value={formData.type}
+              onChange={(e) => setFormData({ ...formData, type: e.target.value })}
+            >
+              <option value="CGC_FLEET">CGC Fleet</option>
+              <option value="INDEPENDENT">Independent</option>
+            </select>
+          </div>
+
+          {formData.type === 'INDEPENDENT' && (
+            <div className="space-y-1.5 animate-in fade-in slide-in-from-top-2 duration-200">
+              <label className="text-xs font-bold text-gray-500 uppercase tracking-wider ml-1">Company Name</label>
+              <input
+                type="text"
+                className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-[#2D6A4F] focus:ring-4 focus:ring-[#2D6A4F]/10 outline-none transition-all placeholder:text-gray-300"
+                placeholder="e.g. Mitchell Trucking"
+                value={formData.companyName}
+                onChange={(e) => setFormData({ ...formData, companyName: e.target.value })}
+              />
+            </div>
+          )}
+
+          <div className="space-y-1.5">
+            <label className="text-xs font-bold text-gray-500 uppercase tracking-wider ml-1">Rate per Trip ($)</label>
+            <div className="relative">
+              <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 font-medium">$</span>
+              <input
+                type="number"
+                step="0.01"
+                required
+                className="w-full pl-8 pr-4 py-3 rounded-xl border border-gray-200 focus:border-[#2D6A4F] focus:ring-4 focus:ring-[#2D6A4F]/10 outline-none transition-all placeholder:text-gray-300"
+                placeholder="0.00"
+                value={formData.ratePerTrip}
+                onChange={(e) => setFormData({ ...formData, ratePerTrip: e.target.value })}
+              />
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <label className="text-xs font-bold text-gray-500 uppercase tracking-wider ml-1">Status</label>
+            <div className="flex items-center gap-3 bg-gray-50 border border-gray-100 rounded-xl p-3">
+              <input
+                type="checkbox"
+                id="active-status"
+                className="w-5 h-5 rounded border-gray-300 text-[#2D6A4F] focus:ring-[#2D6A4F]/20 cursor-pointer"
+                checked={formData.active}
+                onChange={(e) => setFormData({ ...formData, active: e.target.checked })}
+              />
+              <label htmlFor="active-status" className="text-sm font-semibold text-gray-700 cursor-pointer select-none">
+                Active (Driver is visible & available for dispatch)
+              </label>
+            </div>
+          </div>
+
+          <div className="pt-4 flex gap-3">
+            <button
+              type="button"
+              onClick={onClose}
+              className="flex-1 px-4 py-3 rounded-xl border border-gray-200 text-gray-700 font-bold hover:bg-gray-50 transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={loading}
+              className="flex-1 px-4 py-3 rounded-xl bg-[#2D6A4F] text-white font-bold hover:bg-[#1B4332] transition-colors shadow-lg shadow-[#2D6A4F]/20 disabled:opacity-50"
+            >
+              {loading ? 'Saving...' : 'Save Changes'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}

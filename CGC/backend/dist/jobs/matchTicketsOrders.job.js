@@ -23,25 +23,46 @@ export const startMatchTicketsOrdersJob = () => {
             }
             console.log(`[Cron] Processing ${unlinkedTickets.length} unlinked tickets...`);
             for (const ticket of unlinkedTickets) {
+                if (!ticket.driverId) {
+                    // Cleanup any existing auto-matches for non-driver tickets
+                    if (ticket.status === 'LINKED' && ticket.linkMethod === 'AUTO') {
+                        console.log(`[Cron] Unlinking Ticket ${ticket.id} because it has no driverId and was auto-linked.`);
+                        await prisma.ticketOrderMatch.deleteMany({
+                            where: {
+                                ticketId: ticket.id,
+                                matchMethod: { in: ['AUTO_PO', 'AUTO_FALLBACK', 'AUTO_DRIVER_ASSIGNED'] }
+                            }
+                        });
+                        await prisma.ticket.update({
+                            where: { id: ticket.id },
+                            data: {
+                                status: 'UNLINKED',
+                                linkedOrderId: null,
+                                linkMethod: null
+                            }
+                        });
+                    }
+                    continue;
+                }
                 let matchingOrders = [];
-                // 1. PO matching (Absolute Priority)
+                let matchMethod = 'AUTO_PO';
+                // 1. PO matching (Absolute Priority) - restrict to orders assigned to this driver
                 // Ensure PO is exactly 6 digits as per requirements
                 if (ticket.poNumber && /^\d{6}$/.test(ticket.poNumber)) {
                     const allMatchingOrders = await prisma.order.findMany({
                         where: {
                             poNumber: ticket.poNumber,
+                            driverId: ticket.driverId, // MUST be assigned to this driver
                         },
                         orderBy: { orderDate: 'desc' },
                     });
-                    // If multiple orders found for the same PO, do NOT auto-link
-                    // AND cleanup any existing auto-matches (in case they were linked during incremental import)
                     if (allMatchingOrders.length > 1) {
                         if (ticket.status !== 'UNLINKED' || ticket.linkedOrderId !== null || ticket.linkMethod !== null) {
-                            console.log(`[Cron] Multiple orders (${allMatchingOrders.length}) found for PO ${ticket.poNumber}. Cleaning up auto-links for Ticket ${ticket.id}.`);
+                            console.log(`[Cron] Multiple orders (${allMatchingOrders.length}) found for PO ${ticket.poNumber} assigned to driver ${ticket.driverId}. Cleaning up auto-links for Ticket ${ticket.id}.`);
                             await prisma.ticketOrderMatch.deleteMany({
                                 where: {
                                     ticketId: ticket.id,
-                                    matchMethod: { in: ['AUTO_PO', 'AUTO_FALLBACK'] }
+                                    matchMethod: { in: ['AUTO_PO', 'AUTO_DRIVER_ASSIGNED'] }
                                 }
                             });
                             await prisma.ticket.update({
@@ -57,29 +78,25 @@ export const startMatchTicketsOrdersJob = () => {
                     }
                     else if (allMatchingOrders.length === 1) {
                         matchingOrders = [allMatchingOrders[0]];
+                        matchMethod = 'AUTO_PO';
                     }
                 }
                 else if (ticket.poNumber) {
                     console.log(`[Cron] Ticket ${ticket.id} has invalid PO format: ${ticket.poNumber}. Skipping PO matching.`);
                 }
-                // 2. Fallback matching (only if no PO match found and count is 0)
-                if (matchingOrders.length === 0 && ticket.ticketDate && ticket.supplierId && ticket.material && ticket.quantity) {
-                    // ... (existing fallback logic remains the same, ensuring length === 1)
-                    const dateStart = new Date(ticket.ticketDate);
-                    dateStart.setDate(dateStart.getDate() - 2);
-                    const dateEnd = new Date(ticket.ticketDate);
-                    dateEnd.setDate(dateEnd.getDate() + 2);
-                    const fallbackOrders = await prisma.order.findMany({
+                // 2. Fallback matching - match to driver's current active delivery order
+                if (matchingOrders.length === 0) {
+                    const activeDeliveries = await prisma.delivery.findMany({
                         where: {
-                            supplierId: ticket.supplierId,
-                            product: { contains: ticket.material, mode: 'insensitive' },
-                            deliveryDate: { gte: dateStart, lte: dateEnd },
-                            quantity: ticket.quantity,
+                            driverId: ticket.driverId,
+                            status: { notIn: ['DELIVERED', 'CANCELLED'] },
                         },
-                        orderBy: { orderDate: 'desc' },
+                        orderBy: { priority: 'asc' },
+                        include: { order: true },
                     });
-                    if (fallbackOrders.length === 1) {
-                        matchingOrders = [fallbackOrders[0]];
+                    if (activeDeliveries.length > 0) {
+                        matchingOrders = [activeDeliveries[0].order];
+                        matchMethod = 'AUTO_DRIVER_ASSIGNED';
                     }
                 }
                 if (matchingOrders.length === 1) {
@@ -95,14 +112,14 @@ export const startMatchTicketsOrdersJob = () => {
                             create: {
                                 ticketId: ticket.id,
                                 orderId: order.id,
-                                matchMethod: ticket.poNumber === order.poNumber ? 'AUTO_PO' : 'AUTO_FALLBACK',
+                                matchMethod: matchMethod,
                             }
                         });
                         await prisma.ticket.update({
                             where: { id: ticket.id },
                             data: { linkedOrderId: order.id, status: 'LINKED', linkMethod: 'AUTO' },
                         });
-                        console.log(`[Cron] Automatically linked Ticket ${ticket.id} to order ${order.id}.`);
+                        console.log(`[Cron] Automatically linked Ticket ${ticket.id} to driver-assigned order ${order.id} (method: ${matchMethod}).`);
                     }
                     catch (err) {
                         console.error(`[Cron] Error linking Ticket ${ticket.id}:`, err);

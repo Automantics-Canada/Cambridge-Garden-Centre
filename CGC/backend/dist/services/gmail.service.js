@@ -83,7 +83,7 @@ export class GmailService {
                     messageId: messageId,
                     id: attachmentId,
                 });
-                const buffer = Buffer.from(attachRes.data.data, 'base64');
+                const buffer = Buffer.from(attachRes.data.data, 'base64url');
                 // Trigger Ingestion Pipeline
                 console.log(`Ingesting attachment: ${attachment.filename}`);
                 const result = await InvoiceService.ingestEmailInvoice({

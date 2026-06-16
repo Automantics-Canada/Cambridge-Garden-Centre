@@ -21,10 +21,14 @@ export default function DriverMobileView() {
   const [error, setError] = useState(null);
   const [driverInfo, setDriverInfo] = useState(null);
   const [activeTab, setActiveTab] = useState('orders'); // 'orders' | 'profile'
+  const [uploadingType, setUploadingType] = useState(null); // 'pickup' | 'delivery' | 'ticket'
+  const [updatingStatus, setUpdatingStatus] = useState(false);
 
-  const fetchMobileData = async () => {
+  const fetchMobileData = async (silent = false) => {
     try {
-      setLoading(true);
+      if (!silent) {
+        setLoading(true);
+      }
       
       let driverInfoData, deliveriesData;
       if (token) {
@@ -95,8 +99,8 @@ export default function DriverMobileView() {
         },
         (payload) => {
           console.log('[REALTIME] Delivery update detected:', payload);
-          // Refetch active deliveries instantly
-          fetchMobileData();
+          // Refetch active deliveries instantly without full-screen loading skeleton
+          fetchMobileData(true);
         }
       )
       .subscribe((status) => {
@@ -110,20 +114,24 @@ export default function DriverMobileView() {
 
   const handleStatusChange = async (id, newStatus, notes) => {
     try {
+      setUpdatingStatus(true);
       const url = token 
         ? `/api/deliveries/${id}/status?token=${token}` 
         : `/api/deliveries/${id}/status`;
       await api.patch(url, { status: newStatus, notes });
       toast.success(`Status: ${newStatus.replace(/_/g, ' ')}`);
-      fetchMobileData();
+      await fetchMobileData(true);
     } catch (e) {
       toast.error("Failed to update status");
+    } finally {
+      setUpdatingStatus(false);
     }
   };
 
   const handlePhotoUpload = async (id, type, file) => {
     if (!file) return;
     try {
+      setUploadingType(type);
       const formData = new FormData();
       formData.append('file', file);
       formData.append('type', type);
@@ -133,17 +141,17 @@ export default function DriverMobileView() {
         : `/api/deliveries/${id}/photos`;
       await api.post(url, formData);
       toast.success(`${type === 'pickup' ? 'Pickup' : type === 'delivery' ? 'Delivery' : 'Ticket'} photo uploaded!`);
-      fetchMobileData();
+      await fetchMobileData(true);
     } catch (e) {
       toast.error(`Failed to upload photo`);
+    } finally {
+      setUploadingType(null);
     }
   };
 
   const handleLogout = () => {
     dispatch(logout());
   };
-
-  if (loading) return <MobileDriverSkeleton />;
 
   if (error) {
     return (
@@ -193,7 +201,9 @@ export default function DriverMobileView() {
           </div>
 
           <div className="p-4 space-y-6">
-            {activeTab === 'orders' ? (
+            {loading ? (
+              <MobileDriverSkeleton />
+            ) : activeTab === 'orders' ? (
               // Active Tasks view
               !currentDelivery ? (
                 <div className="text-center py-20 px-8 bg-white rounded-[2.5rem] border border-slate-100 mt-10">
@@ -260,9 +270,10 @@ export default function DriverMobileView() {
                       {currentDelivery.status === 'PLACED' && (
                         <button 
                           onClick={() => handleStatusChange(currentDelivery.id, 'IN_TRANSIT', 'Driver confirmed and started delivery')}
-                          className="w-full py-4 rounded-xl font-semibold bg-[#2D6A4F] hover:bg-[#1B4332] text-white transition-all active:scale-[0.98] text-xs tracking-widest uppercase shadow-lg shadow-[#2D6A4F]/20"
+                          disabled={uploadingType !== null || updatingStatus}
+                          className="w-full py-4 rounded-xl font-semibold bg-[#2D6A4F] hover:bg-[#1B4332] text-white transition-all active:scale-[0.98] text-xs tracking-widest uppercase shadow-lg shadow-[#2D6A4F]/20 disabled:opacity-50 disabled:cursor-not-allowed"
                         >
-                          CONFIRM & START
+                          {updatingStatus ? 'CONFIRMING...' : 'CONFIRM & START'}
                         </button>
                       )}
 
@@ -273,17 +284,20 @@ export default function DriverMobileView() {
                             <div className="grid grid-cols-2 gap-3">
                               {!currentDelivery.pickupPhotoUrl ? (
                                 <label className={`flex flex-col items-center justify-center gap-2 py-4 rounded-xl font-semibold text-[10px] tracking-widest uppercase cursor-pointer border transition-all active:scale-[0.98] ${
-                                  driverInfo?.type === 'INDEPENDENT'
+                                  uploadingType === 'pickup'
+                                    ? 'bg-slate-100 border-slate-200 text-slate-400 cursor-not-allowed'
+                                    : driverInfo?.type === 'INDEPENDENT'
                                     ? 'bg-orange-50 border-orange-200 text-orange-700'
                                     : 'bg-slate-50 border-slate-200 text-slate-600'
                                 }`}>
-                                  <Camera size={18} strokeWidth={2} />
-                                  PICKUP PHOTO
+                                  <Camera size={18} strokeWidth={2} className={uploadingType === 'pickup' ? 'animate-spin' : ''} />
+                                  {uploadingType === 'pickup' ? 'UPLOADING...' : 'PICKUP PHOTO'}
                                   <input
                                     type="file"
                                     className="hidden"
                                     accept="image/*"
                                     capture="environment"
+                                    disabled={uploadingType !== null || updatingStatus}
                                     onChange={(e) => handlePhotoUpload(currentDelivery.id, 'pickup', e.target.files?.[0])}
                                   />
                                 </label>
@@ -294,14 +308,19 @@ export default function DriverMobileView() {
                               )}
 
                               {!currentDelivery.deliveryPhotoUrl ? (
-                                <label className="flex flex-col items-center justify-center gap-2 bg-indigo-50 border border-indigo-200 text-indigo-700 py-4 rounded-xl font-semibold text-[10px] tracking-widest uppercase cursor-pointer transition-all active:scale-[0.98]">
-                                  <Camera size={18} strokeWidth={2} />
-                                  DELIVERY PHOTO
+                                <label className={`flex flex-col items-center justify-center gap-2 py-4 rounded-xl font-semibold text-[10px] tracking-widest uppercase cursor-pointer border transition-all active:scale-[0.98] ${
+                                  uploadingType === 'delivery'
+                                    ? 'bg-slate-100 border-slate-200 text-slate-400 cursor-not-allowed'
+                                    : 'bg-indigo-50 border-indigo-200 text-indigo-700'
+                                }`}>
+                                  <Camera size={18} strokeWidth={2} className={uploadingType === 'delivery' ? 'animate-spin' : ''} />
+                                  {uploadingType === 'delivery' ? 'UPLOADING...' : 'DELIVERY PHOTO'}
                                   <input
                                     type="file"
                                     className="hidden"
                                     accept="image/*"
                                     capture="environment"
+                                    disabled={uploadingType !== null || updatingStatus}
                                     onChange={(e) => handlePhotoUpload(currentDelivery.id, 'delivery', e.target.files?.[0])}
                                   />
                                 </label>
@@ -313,14 +332,19 @@ export default function DriverMobileView() {
                             </div>
 
                             {!(currentDelivery.order?.tickets?.length > 0) ? (
-                              <label className="flex flex-col items-center justify-center gap-2 py-4 rounded-xl font-semibold text-[10px] tracking-widest uppercase cursor-pointer border transition-all active:scale-[0.98] bg-teal-50 border-teal-200 text-teal-700 w-full">
-                                <Camera size={18} strokeWidth={2} />
-                                UPLOAD TICKET
+                              <label className={`flex flex-col items-center justify-center gap-2 py-4 rounded-xl font-semibold text-[10px] tracking-widest uppercase cursor-pointer border transition-all active:scale-[0.98] w-full ${
+                                uploadingType === 'ticket'
+                                  ? 'bg-slate-100 border-slate-200 text-slate-400 cursor-not-allowed'
+                                  : 'bg-teal-50 border-teal-200 text-teal-700'
+                              }`}>
+                                <Camera size={18} strokeWidth={2} className={uploadingType === 'ticket' ? 'animate-spin' : ''} />
+                                {uploadingType === 'ticket' ? 'UPLOADING...' : 'UPLOAD TICKET'}
                                 <input
                                   type="file"
                                   className="hidden"
                                   accept="image/*"
                                   capture="environment"
+                                  disabled={uploadingType !== null || updatingStatus}
                                   onChange={(e) => handlePhotoUpload(currentDelivery.id, 'ticket', e.target.files?.[0])}
                                 />
                               </label>
@@ -334,9 +358,10 @@ export default function DriverMobileView() {
                           {/* MARK AS DELIVERED */}
                           <button 
                             onClick={() => handleStatusChange(currentDelivery.id, 'DELIVERED', 'Delivered by driver')}
-                            className="w-full py-4 rounded-xl font-semibold bg-[#1B4332] hover:bg-[#0D2119] text-white transition-all active:scale-[0.98] text-xs tracking-widest uppercase shadow-lg shadow-green-900/20"
+                            disabled={uploadingType !== null || updatingStatus}
+                            className="w-full py-4 rounded-xl font-semibold bg-[#1B4332] hover:bg-[#0D2119] text-[#FFF] transition-all active:scale-[0.98] text-xs tracking-widest uppercase shadow-lg shadow-green-900/20 disabled:opacity-50 disabled:cursor-not-allowed"
                           >
-                            COMPLETE DELIVERY
+                            {updatingStatus ? 'COMPLETING...' : 'COMPLETE DELIVERY'}
                           </button>
                         </>
                       )}

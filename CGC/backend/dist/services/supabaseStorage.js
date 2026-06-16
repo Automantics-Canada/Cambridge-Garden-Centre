@@ -6,6 +6,25 @@ import { createClient } from '@supabase/supabase-js';
 import { env } from '../config/env.js';
 const supabase = createClient(env.supabaseUrl, env.supabaseServiceRoleKey);
 /**
+ * Returns the proper content type/mime type for a given file extension
+ */
+function getContentType(fileExtension) {
+    const ext = fileExtension.toLowerCase();
+    if (ext === 'pdf') {
+        return 'application/pdf';
+    }
+    if (ext === 'png') {
+        return 'image/png';
+    }
+    if (ext === 'webp') {
+        return 'image/webp';
+    }
+    if (ext === 'gif') {
+        return 'image/gif';
+    }
+    return 'image/jpeg';
+}
+/**
  * Upload ticket image to Supabase Storage
  */
 export async function uploadTicketImage(buffer, ticketId, originalFilename) {
@@ -19,7 +38,7 @@ export async function uploadTicketImage(buffer, ticketId, originalFilename) {
             .upload(path, buffer, {
             cacheControl: '3600',
             upsert: false,
-            contentType: `image/${fileExtension === 'pdf' ? 'pdf' : 'jpeg'}`,
+            contentType: getContentType(fileExtension),
         });
         if (error) {
             throw new Error(`Supabase upload error: ${error.message}`);
@@ -55,7 +74,7 @@ export async function uploadInvoiceImage(buffer, invoiceId, originalFilename) {
             .upload(path, buffer, {
             cacheControl: '3600',
             upsert: false,
-            contentType: `image/${fileExtension === 'pdf' ? 'pdf' : 'jpeg'}`,
+            contentType: getContentType(fileExtension),
         });
         if (error) {
             throw new Error(`Supabase upload error: ${error.message}`);

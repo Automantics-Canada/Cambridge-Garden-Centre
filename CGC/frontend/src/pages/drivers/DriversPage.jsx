@@ -4,6 +4,7 @@ import api from '../../api/axios';
 import { supabase } from '../../supabaseClient';
 import DriverCard from '../../components/drivers/DriverCard';
 import AddDriverModal from '../../components/drivers/AddDriverModal';
+import EditDriverModal from '../../components/drivers/EditDriverModal';
 import { DriverCardSkeleton } from '../../components/Skeleton';
 import { FadeInUp, StaggerContainer, StaggerItem } from '../../components/Animated';
 
@@ -11,6 +12,7 @@ export default function DriversPage() {
   const [drivers, setDrivers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [editingDriver, setEditingDriver] = useState(null);
 
   const fetchDrivers = async () => {
     try {
@@ -69,7 +71,7 @@ export default function DriversPage() {
           {drivers.length > 0 ? (
             drivers.map((driver) => (
               <StaggerItem key={driver.id}>
-                <DriverCard driver={driver} />
+                <DriverCard driver={driver} onEdit={(d) => setEditingDriver(d)} />
               </StaggerItem>
             ))
           ) : (
@@ -90,6 +92,15 @@ export default function DriversPage() {
         <AddDriverModal
           isOpen={isModalOpen}
           onClose={() => setIsModalOpen(false)}
+          onSuccess={fetchDrivers}
+        />
+      )}
+
+      {editingDriver && (
+        <EditDriverModal
+          isOpen={!!editingDriver}
+          driver={editingDriver}
+          onClose={() => setEditingDriver(null)}
           onSuccess={fetchDrivers}
         />
       )}

@@ -12,7 +12,6 @@ export default function DispatchBoard() {
   const [expandedDriverId, setExpandedDriverId] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
   
-  // Drag states
   const [draggingOrderId, setDraggingOrderId] = useState(null);
   const [draggingFromDriverId, setDraggingFromDriverId] = useState(null);
   const [activeDragTargetDriverId, setActiveDragTargetDriverId] = useState(null);

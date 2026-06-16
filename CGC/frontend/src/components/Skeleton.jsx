@@ -194,28 +194,45 @@ export function DeliveryTableSkeleton() {
 }
 export function MobileDriverSkeleton() {
   return (
-    <div className="min-h-screen bg-gray-950 p-4 space-y-4">
-      <div className="bg-gray-900/80 rounded-2xl p-4 border border-gray-800 space-y-2">
-        <Skeleton className="bg-gray-800" variant="text" width="40%" height="24px" />
-        <Skeleton className="bg-gray-800" variant="text" width="60%" height="16px" />
+    <div className="space-y-6 animate-pulse">
+      {/* Driver Info Header Skeleton */}
+      <div className="bg-white rounded-2xl p-4 border border-slate-100 space-y-3 shadow-sm">
+        <Skeleton variant="text" width="40%" height="20px" />
+        <Skeleton variant="text" width="60%" height="14px" />
       </div>
-      <div className="space-y-4 pt-4">
-        {[...Array(3)].map((_, i) => (
-          <div key={i} className="bg-gray-900 rounded-2xl border border-gray-800 p-5 space-y-4">
-            <div className="flex justify-between items-start">
-              <div className="space-y-2 flex-1">
-                <Skeleton className="bg-gray-800" variant="text" width="50%" height="20px" />
-                <Skeleton className="bg-gray-800" variant="text" width="70%" height="14px" />
-              </div>
-              <Skeleton className="bg-gray-800" variant="rectangle" width="80px" height="24px" className="rounded" />
+      
+      {/* Active Card Skeleton */}
+      <div className="space-y-6">
+        <div className="bg-white rounded-[2rem] border border-slate-100 p-6 space-y-6 shadow-xl shadow-[#2D6A4F]/5 ring-1 ring-[#2D6A4F]/10">
+          <div className="flex justify-between items-start">
+            <div className="space-y-2 flex-1">
+              <Skeleton variant="text" width="50%" height="20px" />
+              <Skeleton variant="text" width="75%" height="14px" />
             </div>
-            <Skeleton className="bg-gray-800" variant="rectangle" height="60px" className="rounded-xl" />
-            <div className="space-y-3">
-              <Skeleton className="bg-gray-800" variant="rectangle" height="48px" className="rounded-xl" />
-              <Skeleton className="bg-gray-800" variant="rectangle" height="48px" className="rounded-xl" />
+            <Skeleton variant="rectangle" width="80px" height="24px" className="rounded-full" />
+          </div>
+          
+          <div className="bg-[#F9FBF9] rounded-2xl p-5 border border-slate-200/50 space-y-4">
+            <div className="flex items-center gap-3">
+              <Skeleton variant="circular" width="28px" height="28px" />
+              <div className="flex-1 space-y-2">
+                <Skeleton variant="text" width="40%" height="14px" />
+                <Skeleton variant="text" width="30%" height="10px" />
+              </div>
+            </div>
+            <div className="flex items-center gap-3 pt-4 border-t border-slate-200/40">
+              <Skeleton variant="circular" width="28px" height="28px" />
+              <div className="flex-1 space-y-2">
+                <Skeleton variant="text" width="80%" height="12px" />
+              </div>
             </div>
           </div>
-        ))}
+          
+          <div className="space-y-3">
+            <Skeleton variant="rectangle" height="48px" className="rounded-xl" />
+            <Skeleton variant="rectangle" height="48px" className="rounded-xl" />
+          </div>
+        </div>
       </div>
     </div>
   );

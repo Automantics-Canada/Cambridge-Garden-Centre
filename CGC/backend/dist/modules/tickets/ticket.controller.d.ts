@@ -13,6 +13,13 @@ export declare const ingestEmailTicket: (req: Request, res: Response) => Promise
  *  - file: ticket image (JPG/PNG)
  */
 export declare const uploadManualTicket: (req: Request, res: Response) => Promise<Response<any, Record<string, any>>>;
+/**
+ * Manual multi-ticket PDF upload by admin:
+ * 1. Splits the PDF into individual pages
+ * 2. Converts each page to a PNG buffer
+ * 3. Ingests each page individually as a separate ticket
+ */
+export declare const uploadManualPdfTickets: (req: Request, res: Response) => Promise<Response<any, Record<string, any>>>;
 export declare const processTicketOcr: (req: Request, res: Response) => Promise<Response<any, Record<string, any>>>;
 export declare const getTickets: (req: Request, res: Response) => Promise<Response<any, Record<string, any>>>;
 export declare const getTicketStats: (req: Request, res: Response) => Promise<Response<any, Record<string, any>>>;

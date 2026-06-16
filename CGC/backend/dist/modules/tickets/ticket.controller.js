@@ -1,5 +1,9 @@
 import { TicketService } from './ticket.service.js';
 import { processPendingOcrJobs } from '../../services/ocrJobProcessor.js';
+import { PDFDocument } from 'pdf-lib';
+import { pdfToPng } from 'pdf-to-png-converter';
+import path from 'node:path';
+import fs from 'node:fs';
 export const ingestWhatsappTicket = async (req, res) => {
     const file = req.file;
     const { fromPhone } = req.body;
@@ -88,6 +92,87 @@ export const uploadManualTicket = async (req, res) => {
         return res
             .status(500)
             .json({ error: error?.message ?? 'Unexpected error' });
+    }
+};
+/**
+ * Manual multi-ticket PDF upload by admin:
+ * 1. Splits the PDF into individual pages
+ * 2. Converts each page to a PNG buffer
+ * 3. Ingests each page individually as a separate ticket
+ */
+export const uploadManualPdfTickets = async (req, res) => {
+    const file = req.file;
+    console.log('[UploadPDF] Received request. File details:', {
+        exists: !!file,
+        originalname: file?.originalname,
+        mimetype: file?.mimetype,
+        size: file?.size,
+        bufferExists: !!file?.buffer,
+        bufferLength: file?.buffer?.length,
+        bufferType: file?.buffer ? typeof file.buffer : 'undefined',
+    });
+    if (!file) {
+        return res.status(400).json({ error: 'file is required' });
+    }
+    try {
+        console.log(`[UploadPDF] Parsing PDF file: ${file.originalname}`);
+        const pdfDoc = await PDFDocument.load(file.buffer);
+        const pageCount = pdfDoc.getPageCount();
+        console.log(`[UploadPDF] Found ${pageCount} pages in PDF`);
+        if (pageCount === 0) {
+            return res.status(400).json({ error: 'PDF file is empty' });
+        }
+        const createdTickets = [];
+        const createdOcrJobs = [];
+        for (let i = 0; i < pageCount; i++) {
+            const pageNum = i + 1;
+            console.log(`[UploadPDF] Rendering page ${pageNum}/${pageCount} directly to PNG`);
+            let pngBuffer;
+            try {
+                const pngPages = await pdfToPng(file.buffer, {
+                    viewportScale: 2.0,
+                    pagesToProcess: [pageNum],
+                    disableFontFace: false,
+                    useSystemFonts: true,
+                    enableXfa: true,
+                });
+                if (!pngPages || pngPages.length === 0 || !pngPages[0]?.content) {
+                    throw new Error(`No content rendered for page ${pageNum}`);
+                }
+                pngBuffer = pngPages[0].content;
+            }
+            catch (err) {
+                console.error(`[UploadPDF] Direct render failed for page ${pageNum}:`, err.message);
+                throw new Error(`Failed to render page ${pageNum} to image: ${err.message}`);
+            }
+            const baseName = file.originalname.substring(0, file.originalname.lastIndexOf('.')) || file.originalname;
+            const pageName = `${baseName}-page-${pageNum}.png`;
+            // 3. Ingest Individually: save record and trigger independent OCR job
+            const { ticket, ocrJob } = await TicketService.ingestManualTicket({
+                buffer: pngBuffer,
+                originalName: pageName,
+            });
+            createdTickets.push(ticket);
+            createdOcrJobs.push(ocrJob);
+        }
+        return res.status(201).json({
+            message: `Successfully split PDF and queued ${pageCount} tickets for OCR`,
+            tickets: createdTickets,
+            ocrJobIds: createdOcrJobs.map(job => job.id),
+        });
+    }
+    catch (error) {
+        console.error('uploadManualPdfTickets error', error);
+        try {
+            const logFile = path.join(process.cwd(), 'debug_upload.log');
+            fs.writeFileSync(logFile, `Error: ${error?.message}\nStack: ${error?.stack}\n`);
+        }
+        catch (logErr) {
+            console.error('Failed to write debug log:', logErr);
+        }
+        return res
+            .status(500)
+            .json({ error: error?.message ?? 'Unexpected error during PDF upload and processing' });
     }
 };
 export const processTicketOcr = async (req, res) => {
