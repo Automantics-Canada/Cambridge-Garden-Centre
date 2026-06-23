@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.38.0"
 
@@ -354,7 +355,7 @@ serve(async (req) => {
       query = supabaseClient
         .from('Supplier')
         .select(`
-          id, name, contactEmail, phone, address,
+          id, name, type, contactName, contactEmail, phone, address, emailDomains, keywords, active,
           negotiatedRates:NegotiatedRate(
             id,
             supplierId,

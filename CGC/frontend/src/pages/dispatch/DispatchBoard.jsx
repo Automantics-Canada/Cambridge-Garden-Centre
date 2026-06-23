@@ -17,9 +17,9 @@ export default function DispatchBoard() {
   const [activeDragTargetDriverId, setActiveDragTargetDriverId] = useState(null);
   const [isOverUnassignedDropZone, setIsOverUnassignedDropZone] = useState(false);
 
-  const fetchBoard = async () => {
+  const fetchBoard = async (isBackgroundSync = false) => {
     try {
-      setLoading(true);
+      if (!isBackgroundSync) setLoading(true);
       const token = localStorage.getItem('token');
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
 
@@ -56,7 +56,7 @@ export default function DispatchBoard() {
         { event: '*', schema: 'public', table: 'Order' },
         (payload) => {
           console.log('[REALTIME] Order change received:', payload);
-          fetchBoard();
+          fetchBoard(true);
         }
       )
       .subscribe();
@@ -68,7 +68,7 @@ export default function DispatchBoard() {
         { event: '*', schema: 'public', table: 'Delivery' },
         (payload) => {
           console.log('[REALTIME] Delivery change received:', payload);
-          fetchBoard();
+          fetchBoard(true);
         }
       )
       .subscribe();
@@ -93,17 +93,47 @@ export default function DispatchBoard() {
   };
 
   const handleStatusUpdate = async (deliveryId, newStatus) => {
+    // Optimistic UI update
+    setBoard(prev => {
+      let updatedDrivers = prev.drivers.map(d => ({
+        ...d,
+        deliveries: d.deliveries.map(del => 
+          del.id === deliveryId ? { ...del, status: newStatus } : del
+        )
+      }));
+      return { ...prev, drivers: updatedDrivers };
+    });
+
     try {
-      await api.patch(`/api/deliveries/${deliveryId}/status`, { status: newStatus });
-      toast.success(`Status updated to ${newStatus}`);
-      fetchBoard();
+      api.patch(`/api/deliveries/${deliveryId}/status`, { status: newStatus })
+        .then(() => {
+          toast.success(`Status updated to ${newStatus}`);
+        })
+        .catch((e) => {
+          console.error(e);
+          toast.error('Failed to update status');
+          fetchBoard(); // Revert optimistic update
+        });
     } catch (e) {
       console.error(e);
       toast.error('Failed to update status');
+      fetchBoard();
     }
   };
 
   // Drag and Drop Logic
+  const handleAutoScroll = (e) => {
+    if (!draggingOrderId) return;
+    const scrollThreshold = 100;
+    const scrollAmount = 20;
+    
+    if (e.clientY < scrollThreshold) {
+      window.scrollBy(0, -scrollAmount);
+    } else if (window.innerHeight - e.clientY < scrollThreshold) {
+      window.scrollBy(0, scrollAmount);
+    }
+  };
+
   const handleDragStart = (e, orderId, fromDriverId = null) => {
     setDraggingOrderId(orderId);
     setDraggingFromDriverId(fromDriverId);
@@ -204,6 +234,56 @@ export default function DispatchBoard() {
     }
   };
 
+  const handleDropOnDelivery = async (e, targetDriverId, targetOrderId) => {
+    e.preventDefault();
+    e.stopPropagation(); // prevent driver drop handler from catching this
+    const orderId = draggingOrderId || e.dataTransfer.getData('text/plain');
+    if (!orderId) return;
+
+    if (orderId === targetOrderId) {
+      handleDragEnd();
+      return;
+    }
+
+    if (draggingFromDriverId !== targetDriverId) {
+      // It's a cross-driver assignment but dropped exactly on a row
+      // We can just fallback to the normal driver assignment
+      return handleDropOnDriver(e, targetDriverId);
+    }
+
+    try {
+      const driver = board.drivers.find(d => d.id === targetDriverId);
+      if (!driver) return;
+      const deliveriesCopy = [...driver.deliveries];
+      const draggedIndex = deliveriesCopy.findIndex(d => d.order.id === orderId);
+      const targetIndex = deliveriesCopy.findIndex(d => d.order.id === targetOrderId);
+
+      if (draggedIndex === -1 || targetIndex === -1) return;
+
+      const [draggedItem] = deliveriesCopy.splice(draggedIndex, 1);
+      deliveriesCopy.splice(targetIndex, 0, draggedItem);
+
+      // Optimistic update
+      setBoard(prev => ({
+        ...prev,
+        drivers: prev.drivers.map(d => d.id === targetDriverId ? { ...d, deliveries: deliveriesCopy } : d)
+      }));
+
+      // Call API
+      await api.post('/api/dispatch/reorder', {
+        driverId: targetDriverId,
+        deliveryIds: deliveriesCopy.map(d => d.id)
+      });
+      toast.success('Orders reordered');
+    } catch (err) {
+      console.error(err);
+      toast.error('Failed to reorder deliveries');
+      fetchBoard();
+    } finally {
+      handleDragEnd();
+    }
+  };
+
   const handleDragOverUnassigned = (e) => {
     e.preventDefault();
     if (draggingFromDriverId) {
@@ -282,12 +362,8 @@ export default function DispatchBoard() {
   const getStatusColor = (status) => {
     switch (status) {
       case 'PLACED': return '#3b82f6'; // blue-500
-      case 'OUT_FOR_DELIVERY': return '#f59e0b'; // amber-500
       case 'IN_TRANSIT': return '#8b5cf6'; // violet-500
       case 'DELIVERED': return '#10b981'; // emerald-500
-      case 'ON_HOLD': return '#6b7280'; // gray-500
-      case 'DELAYED': return '#ef4444'; // red-500
-      case 'CANCELLED': return '#b91c1c'; // red-700
       default: return '#9ca3af'; // gray-400
     }
   };
@@ -384,7 +460,10 @@ export default function DispatchBoard() {
   }
 
   return (
-    <div className="flex flex-col h-full space-y-4 max-w-[1600px] mx-auto pb-12">
+    <div 
+      className="flex flex-col h-full space-y-4 max-w-[1600px] mx-auto pb-12"
+      onDragOver={handleAutoScroll}
+    >
       {/* Header section styled 100% identically to Invoices Page */}
       <FadeInUp>
         <div className="sm:flex sm:items-center justify-between bg-white p-4 rounded-xl border border-gray-200 shadow-sm select-none">
@@ -572,6 +651,8 @@ export default function DispatchBoard() {
                                               onDragStart={(e) => {
                                                 handleDragStart(e, del.order.id, driver.id);
                                               }}
+                                              onDragOver={(e) => e.preventDefault()}
+                                              onDrop={(e) => handleDropOnDelivery(e, driver.id, del.order.id)}
                                               onDragEnd={handleDragEnd}
                                               className={`hover:bg-gray-50/50 transition-colors cursor-grab active:cursor-grabbing group/item relative ${
                                                 draggingOrderId === del.order.id ? 'opacity-40 bg-gray-50' : ''
@@ -630,12 +711,8 @@ export default function DispatchBoard() {
                                                     onClick={(e) => e.stopPropagation()} // prevent row drag trigger on click
                                                   >
                                                     <option value="PLACED">Placed</option>
-                                                    <option value="OUT_FOR_DELIVERY">Out for Delivery</option>
                                                     <option value="IN_TRANSIT">In Transit</option>
                                                     <option value="DELIVERED">Delivered</option>
-                                                    <option value="ON_HOLD">On Hold</option>
-                                                    <option value="DELAYED">Delayed</option>
-                                                    <option value="CANCELLED">Cancelled</option>
                                                   </select>
 
                                                   <button 

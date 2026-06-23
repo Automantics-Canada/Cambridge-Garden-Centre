@@ -268,12 +268,8 @@ export default function DeliveriesPage() {
                         onChange={(e) => handleStatusUpdate(del.id, e.target.value)}
                       >
                         <option value="PLACED">Placed</option>
-                        <option value="OUT_FOR_DELIVERY">Out for Delivery</option>
                         <option value="IN_TRANSIT">In Transit</option>
                         <option value="DELIVERED">Delivered</option>
-                        <option value="ON_HOLD">On Hold</option>
-                        <option value="DELAYED">Delayed</option>
-                        <option value="CANCELLED">Cancelled</option>
                       </select>
                       <button 
                         onClick={() => setExpandedDeliveryId(isDelExpanded ? null : del.id)}
