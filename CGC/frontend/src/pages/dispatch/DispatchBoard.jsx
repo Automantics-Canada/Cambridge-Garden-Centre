@@ -11,7 +11,7 @@ export default function DispatchBoard() {
   const [loading, setLoading] = useState(true);
   const [expandedDriverId, setExpandedDriverId] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
-  
+
   const [draggingOrderId, setDraggingOrderId] = useState(null);
   const [draggingFromDriverId, setDraggingFromDriverId] = useState(null);
   const [activeDragTargetDriverId, setActiveDragTargetDriverId] = useState(null);
@@ -97,7 +97,7 @@ export default function DispatchBoard() {
     setBoard(prev => {
       let updatedDrivers = prev.drivers.map(d => ({
         ...d,
-        deliveries: d.deliveries.map(del => 
+        deliveries: d.deliveries.map(del =>
           del.id === deliveryId ? { ...del, status: newStatus } : del
         )
       }));
@@ -126,7 +126,7 @@ export default function DispatchBoard() {
     if (!draggingOrderId) return;
     const scrollThreshold = 100;
     const scrollAmount = 20;
-    
+
     if (e.clientY < scrollThreshold) {
       window.scrollBy(0, -scrollAmount);
     } else if (window.innerHeight - e.clientY < scrollThreshold) {
@@ -325,8 +325,8 @@ export default function DispatchBoard() {
         });
 
         const alreadyInUnassigned = prev.unassignedOrders.some(o => o.id === orderId);
-        const updatedUnassigned = alreadyInUnassigned 
-          ? prev.unassignedOrders 
+        const updatedUnassigned = alreadyInUnassigned
+          ? prev.unassignedOrders
           : [orderObj, ...prev.unassignedOrders];
 
         return {
@@ -350,7 +350,7 @@ export default function DispatchBoard() {
   const findOrder = (orderId) => {
     const fromUnassigned = board.unassignedOrders.find(o => o.id === orderId);
     if (fromUnassigned) return fromUnassigned;
-    
+
     for (const d of board.drivers) {
       const del = d.deliveries.find(del => del.order.id === orderId);
       if (del) return del.order;
@@ -372,7 +372,7 @@ export default function DispatchBoard() {
   const filterOrders = (ordersList) => {
     if (!searchQuery) return ordersList;
     const query = searchQuery.toLowerCase();
-    return ordersList.filter(o => 
+    return ordersList.filter(o =>
       o.spruceOrderId.toLowerCase().includes(query) ||
       o.customerName.toLowerCase().includes(query) ||
       o.product.toLowerCase().includes(query)
@@ -382,7 +382,7 @@ export default function DispatchBoard() {
   const filterDeliveries = (deliveriesList) => {
     if (!searchQuery) return deliveriesList;
     const query = searchQuery.toLowerCase();
-    return deliveriesList.filter(del => 
+    return deliveriesList.filter(del =>
       del.order.spruceOrderId.toLowerCase().includes(query) ||
       del.order.customerName.toLowerCase().includes(query) ||
       del.order.product.toLowerCase().includes(query)
@@ -460,7 +460,7 @@ export default function DispatchBoard() {
   }
 
   return (
-    <div 
+    <div
       className="flex flex-col h-full space-y-4 max-w-[1600px] mx-auto pb-12"
       onDragOver={handleAutoScroll}
     >
@@ -476,15 +476,15 @@ export default function DispatchBoard() {
           <div className="mt-4 sm:ml-16 sm:mt-0 sm:flex-none flex items-center gap-3">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-              <input 
-                type="text" 
-                placeholder="Search orders, customers..." 
-                className="pl-10 pr-4 py-2 border rounded-xl text-sm outline-none focus:ring-2 focus:ring-green-100 transition-all border-gray-200 w-64 bg-white" 
+              <input
+                type="text"
+                placeholder="Search orders, customers..."
+                className="pl-10 pr-4 py-2 border rounded-xl text-sm outline-none focus:ring-2 focus:ring-green-100 transition-all border-gray-200 w-64 bg-white"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
               />
             </div>
-            <button 
+            <button
               onClick={fetchBoard}
               className="p-2 border border-gray-200 rounded-xl text-gray-500 hover:text-gray-900 hover:bg-gray-50 transition-all shadow-sm bg-white"
               title="Refresh Board"
@@ -530,29 +530,28 @@ export default function DispatchBoard() {
                   const filteredDeliveries = filterDeliveries(driver.deliveries);
                   const completedJobs = driver.deliveries.filter(d => d.status === 'DELIVERED').length;
                   const totalJobs = driver.deliveries.length;
-                  
+
                   return (
                     <React.Fragment key={driver.id}>
-                      <tr 
+                      <tr
                         onDragOver={(e) => handleDragOverDriver(e, driver.id)}
                         onDragLeave={() => handleDragLeaveDriver(driver.id)}
                         onDrop={(e) => handleDropOnDriver(e, driver.id)}
-                        className={`hover:bg-gray-50/50 transition-colors group relative ${
-                          isDragOverTarget ? 'bg-green-50/30' : ''
-                        } ${isExpanded ? 'bg-gray-50/30' : ''}`}
+                        className={`hover:bg-gray-50/50 transition-colors group relative ${isDragOverTarget ? 'bg-green-50/30' : ''
+                          } ${isExpanded ? 'bg-gray-50/30' : ''}`}
                       >
                         {/* Driver Column */}
                         <td className="px-6 py-4 whitespace-nowrap">
                           <div className="flex items-center gap-3">
-                             <div className="p-2 bg-gray-100 rounded-lg group-hover:bg-green-100 transition-colors flex-shrink-0">
-                                <Truck className="w-5 h-5 text-gray-400 group-hover:text-green-600" />
-                             </div>
-                             <div>
-                                <div className="text-sm font-bold text-gray-900 select-none truncate max-w-[180px]">{driver.name}</div>
-                                {driver.type === 'INDEPENDENT' && driver.companyName && (
-                                  <div className="text-[10px] text-gray-500 font-medium select-none truncate max-w-[180px]">{driver.companyName}</div>
-                                )}
-                             </div>
+                            <div className="p-2 bg-gray-100 rounded-lg group-hover:bg-green-100 transition-colors flex-shrink-0">
+                              <Truck className="w-5 h-5 text-gray-400 group-hover:text-green-600" />
+                            </div>
+                            <div>
+                              <div className="text-sm font-bold text-gray-900 select-none truncate max-w-[180px]">{driver.name}</div>
+                              {driver.type === 'INDEPENDENT' && driver.companyName && (
+                                <div className="text-[10px] text-gray-500 font-medium select-none truncate max-w-[180px]">{driver.companyName}</div>
+                              )}
+                            </div>
                           </div>
                         </td>
 
@@ -584,11 +583,10 @@ export default function DispatchBoard() {
 
                         {/* Status Column */}
                         <td className="px-6 py-4 whitespace-nowrap">
-                          <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider ${
-                            driver.deliveries.length > 0 
-                              ? 'bg-green-100 text-green-800 border border-green-200' 
+                          <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider ${driver.deliveries.length > 0
+                              ? 'bg-green-100 text-green-800 border border-green-200'
                               : 'bg-gray-100 text-gray-800 border border-gray-200'
-                          }`}>
+                            }`}>
                             {driver.deliveries.length > 0 ? 'Active' : 'Idle'}
                           </span>
                         </td>
@@ -604,15 +602,13 @@ export default function DispatchBoard() {
                                 toast.error('No assignments assigned to this driver');
                               }
                             }}
-                            className={`transition-all p-2 rounded-lg ${
-                              isExpanded 
-                                ? 'bg-green-50 text-green-600' 
+                            className={`transition-all p-2 rounded-lg ${isExpanded
+                                ? 'bg-green-50 text-green-600'
                                 : 'text-gray-400 hover:text-green-600 hover:bg-green-50'
-                            }`}
+                              }`}
                           >
-                             <ChevronRight className={`w-5 h-5 transition-transform duration-200 ${
-                               isExpanded ? 'rotate-90 text-green-600 font-extrabold' : 'text-green-500'
-                             }`} />
+                            <ChevronRight className={`w-5 h-5 transition-transform duration-200 ${isExpanded ? 'rotate-90 text-green-600 font-extrabold' : 'text-green-500'
+                              }`} />
                           </button>
                         </td>
                       </tr>
@@ -654,9 +650,8 @@ export default function DispatchBoard() {
                                               onDragOver={(e) => e.preventDefault()}
                                               onDrop={(e) => handleDropOnDelivery(e, driver.id, del.order.id)}
                                               onDragEnd={handleDragEnd}
-                                              className={`hover:bg-gray-50/50 transition-colors cursor-grab active:cursor-grabbing group/item relative ${
-                                                draggingOrderId === del.order.id ? 'opacity-40 bg-gray-50' : ''
-                                              }`}
+                                              className={`hover:bg-gray-50/50 transition-colors cursor-grab active:cursor-grabbing group/item relative ${draggingOrderId === del.order.id ? 'opacity-40 bg-gray-50' : ''
+                                                }`}
                                             >
                                               {/* Order ID Column */}
                                               <td className="px-6 py-4 whitespace-nowrap w-48">
@@ -690,11 +685,10 @@ export default function DispatchBoard() {
 
                                               {/* Status Badge Column */}
                                               <td className="px-6 py-4 whitespace-nowrap w-48">
-                                                <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-[9px] font-black uppercase tracking-wider ${
-                                                  del.status === 'DELIVERED' 
-                                                    ? 'bg-green-100 text-green-800 border border-green-200' 
+                                                <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-[9px] font-black uppercase tracking-wider ${del.status === 'DELIVERED'
+                                                    ? 'bg-green-100 text-green-800 border border-green-200'
                                                     : 'bg-yellow-100 text-yellow-800 border border-yellow-200'
-                                                }`}>
+                                                  }`}>
                                                   {del.status.replace('_', ' ')}
                                                 </span>
                                               </td>
@@ -702,7 +696,7 @@ export default function DispatchBoard() {
                                               {/* Actions Inline Column */}
                                               <td className="px-6 py-4 whitespace-nowrap text-right text-xs font-bold w-64">
                                                 <div className="flex items-center justify-end gap-2">
-                                                  <select 
+                                                  <select
                                                     className="text-[10px] font-black border border-gray-200 rounded-lg px-2 py-1 outline-none focus:ring-1 focus:ring-green-500 bg-white cursor-pointer text-gray-700"
                                                     value={del.status}
                                                     onChange={(e) => {
@@ -715,7 +709,7 @@ export default function DispatchBoard() {
                                                     <option value="DELIVERED">Delivered</option>
                                                   </select>
 
-                                                  <button 
+                                                  <button
                                                     onClick={(e) => {
                                                       e.stopPropagation();
                                                       handleResendEmail(del.id);
@@ -726,7 +720,7 @@ export default function DispatchBoard() {
                                                     <Mail size={12} />
                                                   </button>
 
-                                                  <button 
+                                                  <button
                                                     onClick={(e) => {
                                                       e.stopPropagation();
                                                       api.post('/api/dispatch/unassign', { orderId: del.order.id })
@@ -786,15 +780,14 @@ export default function DispatchBoard() {
       </div>
 
       {/* BOTTOM SECTION: UNASSIGNED ORDERS POOL */}
-      <div 
+      <div
         onDragOver={handleDragOverUnassigned}
         onDragLeave={handleDragLeaveUnassigned}
         onDrop={handleDropOnUnassigned}
-        className={`bg-white rounded-xl border shadow-sm overflow-hidden flex flex-col transition-all duration-300 ${
-          isOverUnassignedDropZone 
-            ? 'border-green-600 ring-4 ring-green-600/10 bg-green-50/5' 
+        className={`bg-white rounded-xl border shadow-sm overflow-hidden flex flex-col transition-all duration-300 ${isOverUnassignedDropZone
+            ? 'border-green-600 ring-4 ring-green-600/10 bg-green-50/5'
             : 'border-gray-200'
-        }`}
+          }`}
       >
         <div className="bg-gray-50/50 px-6 py-4 border-b border-gray-200 flex justify-between items-center select-none">
           <div>
@@ -804,7 +797,7 @@ export default function DispatchBoard() {
             </h3>
           </div>
           {isOverUnassignedDropZone && (
-            <motion.div 
+            <motion.div
               initial={{ scale: 0.9 }}
               animate={{ scale: 1 }}
               className="text-xs font-extrabold text-green-600 bg-green-600/10 px-3 py-1 rounded-lg uppercase tracking-wider animate-bounce"
@@ -840,25 +833,24 @@ export default function DispatchBoard() {
                 </tr>
               ) : (
                 filteredUnassignedOrders.map(order => (
-                  <tr 
+                  <tr
                     key={order.id}
                     draggable
                     onDragStart={(e) => handleDragStart(e, order.id, null)}
                     onDragEnd={handleDragEnd}
-                    className={`hover:bg-gray-50/50 transition-colors cursor-grab active:cursor-grabbing group relative ${
-                      draggingOrderId === order.id ? 'opacity-40 bg-gray-50' : ''
-                    }`}
+                    className={`hover:bg-gray-50/50 transition-colors cursor-grab active:cursor-grabbing group relative ${draggingOrderId === order.id ? 'opacity-40 bg-gray-50' : ''
+                      }`}
                   >
                     {/* Order Column */}
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="flex items-center gap-3">
-                         <div className="p-2 bg-gray-100 rounded-lg group-hover:bg-green-100 transition-colors flex-shrink-0">
-                            <Package2 className="w-5 h-5 text-gray-400 group-hover:text-green-600" />
-                         </div>
-                         <div className="text-sm font-bold text-gray-900 tracking-wider flex items-center gap-1.5 uppercase select-none">
-                           <GripVertical size={14} className="text-gray-300 group-hover:text-gray-400 transition-colors flex-shrink-0" />
-                           {order.spruceOrderId}
-                         </div>
+                        <div className="p-2 bg-gray-100 rounded-lg group-hover:bg-green-100 transition-colors flex-shrink-0">
+                          <Package2 className="w-5 h-5 text-gray-400 group-hover:text-green-600" />
+                        </div>
+                        <div className="text-sm font-bold text-gray-900 tracking-wider flex items-center gap-1.5 uppercase select-none">
+                          <GripVertical size={14} className="text-gray-300 group-hover:text-gray-400 transition-colors flex-shrink-0" />
+                          {order.spruceOrderId}
+                        </div>
                       </div>
                     </td>
 
@@ -896,7 +888,7 @@ export default function DispatchBoard() {
                       <select
                         className="border border-gray-200 rounded-lg px-2 py-1 text-[10px] font-bold bg-white focus:ring-1 focus:ring-green-500 outline-none cursor-pointer text-gray-600 hover:border-gray-300 transition-all"
                         onChange={(e) => {
-                          if(e.target.value) {
+                          if (e.target.value) {
                             const driverObj = board.drivers.find(d => d.id === e.target.value);
                             if (driverObj) {
                               api.post('/api/dispatch/assign', { orderId: order.id, driverId: driverObj.id })

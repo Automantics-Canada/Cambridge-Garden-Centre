@@ -65,13 +65,24 @@ export default function DeliveriesPage() {
   }, []);
 
   const handleStatusUpdate = async (deliveryId, newStatus) => {
+    // Optimistic Update
+    const originalDeliveries = [...deliveries];
+    setDeliveries(prev => prev.map(del => del.id === deliveryId ? { ...del, status: newStatus } : del));
+
     try {
-      await api.patch(`/api/deliveries/${deliveryId}/status`, { status: newStatus });
-      toast.success(`Status updated to ${newStatus}`);
-      fetchData();
+      api.patch(`/api/deliveries/${deliveryId}/status`, { status: newStatus })
+        .then(() => {
+          toast.success(`Status updated to ${newStatus}`);
+        })
+        .catch((e) => {
+          console.error(e);
+          toast.error('Failed to update status');
+          setDeliveries(originalDeliveries); // Revert on failure
+        });
     } catch (e) {
       console.error(e);
       toast.error('Failed to update status');
+      setDeliveries(originalDeliveries);
     }
   };
 
