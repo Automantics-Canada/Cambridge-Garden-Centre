@@ -1,14 +1,10 @@
 import React from 'react';
-import { CheckCircle2, Circle, Clock, AlertTriangle, Truck, Package, XCircle } from 'lucide-react';
+import { CheckCircle2, Circle, Clock, Package } from 'lucide-react';
 
 const icons = {
   PLACED: <Package size={14} className="text-blue-500" />,
-  OUT_FOR_DELIVERY: <Truck size={14} className="text-indigo-500" />,
-  IN_TRANSIT: <Clock size={14} className="text-amber-500" />,
-  DELIVERED: <CheckCircle2 size={14} className="text-green-500" />,
-  ON_HOLD: <AlertTriangle size={14} className="text-orange-500" />,
-  DELAYED: <AlertTriangle size={14} className="text-red-500" />,
-  CANCELLED: <XCircle size={14} className="text-gray-500" />,
+  IN_TRANSIT: <Clock size={14} className="text-violet-500" />,
+  DELIVERED: <CheckCircle2 size={14} className="text-emerald-500" />
 };
 
 export default function StatusTimeline({ history }) {

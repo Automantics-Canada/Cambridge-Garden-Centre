@@ -11,9 +11,11 @@ import Loader from '../../components/Loader';
 
 export default function ProductPage() {
   const dispatch = useDispatch();
-  const { products, units, loading, error, success, successMessage } = useSelector((state) => state.products);
+  const { products, units, loading, unitsLoading, error, success, successMessage } = useSelector((state) => state.products);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isUnitsModalOpen, setIsUnitsModalOpen] = useState(false);
+  const [isAddingUnit, setIsAddingUnit] = useState(false);
+  const [deletingUnitId, setDeletingUnitId] = useState(null);
   const [newUnitName, setNewUnitName] = useState('');
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -93,19 +95,25 @@ export default function ProductPage() {
       toast.error('Unit name is required');
       return;
     }
+    setIsAddingUnit(true);
     try {
       await dispatch(createCustomUnit({ name: newUnitName.trim() })).unwrap();
       setNewUnitName('');
     } catch (err) {
       toast.error(err || 'Failed to create unit');
+    } finally {
+      setIsAddingUnit(false);
     }
   };
 
   const handleDeleteUnit = async (id) => {
+    setDeletingUnitId(id);
     try {
       await dispatch(deleteCustomUnit(id)).unwrap();
     } catch (err) {
       toast.error(err || 'Failed to delete unit');
+    } finally {
+      setDeletingUnitId(null);
     }
   };
 
@@ -325,10 +333,11 @@ export default function ProductPage() {
             />
             <button
               type="submit"
-              className="bg-green-600 text-white px-4 py-2.5 rounded-xl font-medium hover:bg-green-700 transition-colors whitespace-nowrap text-sm flex items-center gap-1.5"
+              disabled={isAddingUnit || unitsLoading}
+              className="bg-green-600 text-white px-4 py-2.5 rounded-xl font-medium hover:bg-green-700 transition-colors whitespace-nowrap text-sm flex items-center gap-1.5 disabled:opacity-50"
             >
-              <Plus size={16} />
-              Add Unit
+              {isAddingUnit ? <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> : <Plus size={16} />}
+              {isAddingUnit ? 'Adding...' : 'Add Unit'}
             </button>
           </form>
 
@@ -349,10 +358,15 @@ export default function ProductPage() {
                     <button
                       type="button"
                       onClick={() => handleDeleteUnit(unit.id)}
-                      className="p-1.5 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                      disabled={deletingUnitId === unit.id || unitsLoading}
+                      className="p-1.5 text-red-600 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-50 flex items-center justify-center"
                       title="Delete Unit"
                     >
-                      <Trash2 size={16} />
+                      {deletingUnitId === unit.id ? (
+                        <div className="w-4 h-4 border-2 border-red-600 border-t-transparent rounded-full animate-spin" />
+                      ) : (
+                        <Trash2 size={16} />
+                      )}
                     </button>
                   </div>
                 ))}

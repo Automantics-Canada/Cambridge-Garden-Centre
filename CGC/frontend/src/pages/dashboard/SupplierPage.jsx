@@ -4,12 +4,17 @@ import { motion as Motion, AnimatePresence } from 'framer-motion';
 import { Plus, Edit, Trash2, AlertCircle, ChevronDown, Check, FileText, PlusCircle } from 'lucide-react';
 import clsx from 'clsx';
 import toast from 'react-hot-toast';
-import { fetchSuppliers, deleteSupplier, clearSuccess, clearError } from '../../store/supplierSlice';
+import { fetchSuppliers, deleteSupplier, deleteSupplierRate, clearSuccess, clearError } from '../../store/supplierSlice';
 import Modal from '../../components/Modal';
 import SupplierForm from '../../components/SupplierForm';
 import RateForm from '../../components/RateForm';
 import { Skeleton } from '../../components/Skeleton';
 import Loader from '../../components/Loader';
+
+const formatTypeLabel = (str) => {
+  if (!str) return '';
+  return str.split('_').map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()).join(' ');
+};
 
 export default function SupplierPage() {
   const dispatch = useDispatch();
@@ -143,7 +148,7 @@ export default function SupplierPage() {
           >
             <option value="">All Types</option>
             {supplierTypes.map(type => (
-              <option key={type} value={type}>{type}</option>
+              <option key={type} value={type}>{formatTypeLabel(type)}</option>
             ))}
           </select>
         </div>
@@ -226,7 +231,7 @@ export default function SupplierPage() {
                       </td>
                       <td className="px-6 py-4">
                         <span className="inline-block px-3 py-1 bg-blue-100 text-blue-800 text-xs font-medium rounded-full">
-                          {supplier.type}
+                          {formatTypeLabel(supplier.type)}
                         </span>
                       </td>
                       <td className="px-6 py-4">

@@ -6,6 +6,11 @@ import { createSupplier, updateSupplier, clearError } from '../store/supplierSli
 
 const SUPPLIER_TYPES = ['SUPPLIER', 'TRUCKING_COMPANY'];
 
+const formatTypeLabel = (str) => {
+  if (!str) return '';
+  return str.split('_').map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()).join(' ');
+};
+
 export default function SupplierForm({ supplier = null, onClose }) {
   const dispatch = useDispatch();
   const { loading, error } = useSelector((state) => state.suppliers);
@@ -55,7 +60,7 @@ export default function SupplierForm({ supplier = null, onClose }) {
     }
 
     if (formData.phone && !isValidPhone(formData.phone)) {
-      errors.phone = 'Phone number must be exactly 6 digits';
+      errors.phone = 'Phone number must be exactly 10 digits';
     }
 
     setValidationErrors(errors);
@@ -67,7 +72,7 @@ export default function SupplierForm({ supplier = null, onClose }) {
   };
 
   const isValidPhone = (phone) => {
-    return /^[\d\s\-+()]+$/.test(phone) && phone.replace(/\D/g, '').length === 6;
+    return /^[\d\s\-+()]+$/.test(phone) && phone.replace(/\D/g, '').length === 10;
   };
 
   const isValidDomain = (domain) => {
@@ -175,7 +180,7 @@ export default function SupplierForm({ supplier = null, onClose }) {
           }`}
         >
           {SUPPLIER_TYPES.map(type => (
-            <option key={type} value={type}>{type}</option>
+            <option key={type} value={type}>{formatTypeLabel(type)}</option>
           ))}
         </select>
         {validationErrors.type && (

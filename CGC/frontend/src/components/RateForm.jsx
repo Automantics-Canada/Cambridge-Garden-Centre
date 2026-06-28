@@ -34,6 +34,14 @@ export default function RateForm({ supplierId, rate, onClose }) {
         effectiveFrom: rate.effectiveFrom ? new Date(rate.effectiveFrom).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
         notes: rate.notes || '',
       });
+    } else {
+      setFormData({
+        productName: '',
+        rate: '',
+        unit: 'ton',
+        effectiveFrom: new Date().toISOString().split('T')[0],
+        notes: '',
+      });
     }
   }, [rate]);
 
@@ -134,6 +142,9 @@ export default function RateForm({ supplierId, rate, onClose }) {
           }`}
         >
           <option value="">Select a product</option>
+          {rate && rate.productName && !products.find(p => p.name === rate.productName) && (
+            <option value={rate.productName}>{rate.productName}</option>
+          )}
           {products.map(p => (
             <option key={p.id} value={p.name}>{p.name}</option>
           ))}

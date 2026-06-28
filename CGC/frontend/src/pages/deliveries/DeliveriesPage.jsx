@@ -65,13 +65,24 @@ export default function DeliveriesPage() {
   }, []);
 
   const handleStatusUpdate = async (deliveryId, newStatus) => {
+    // Optimistic Update
+    const originalDeliveries = [...deliveries];
+    setDeliveries(prev => prev.map(del => del.id === deliveryId ? { ...del, status: newStatus } : del));
+
     try {
-      await api.patch(`/api/deliveries/${deliveryId}/status`, { status: newStatus });
-      toast.success(`Status updated to ${newStatus}`);
-      fetchData();
+      api.patch(`/api/deliveries/${deliveryId}/status`, { status: newStatus })
+        .then(() => {
+          toast.success(`Status updated to ${newStatus}`);
+        })
+        .catch((e) => {
+          console.error(e);
+          toast.error('Failed to update status');
+          setDeliveries(originalDeliveries); // Revert on failure
+        });
     } catch (e) {
       console.error(e);
       toast.error('Failed to update status');
+      setDeliveries(originalDeliveries);
     }
   };
 
@@ -268,12 +279,8 @@ export default function DeliveriesPage() {
                         onChange={(e) => handleStatusUpdate(del.id, e.target.value)}
                       >
                         <option value="PLACED">Placed</option>
-                        <option value="OUT_FOR_DELIVERY">Out for Delivery</option>
                         <option value="IN_TRANSIT">In Transit</option>
                         <option value="DELIVERED">Delivered</option>
-                        <option value="ON_HOLD">On Hold</option>
-                        <option value="DELAYED">Delayed</option>
-                        <option value="CANCELLED">Cancelled</option>
                       </select>
                       <button 
                         onClick={() => setExpandedDeliveryId(isDelExpanded ? null : del.id)}
