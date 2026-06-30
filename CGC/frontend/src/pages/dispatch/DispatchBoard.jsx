@@ -194,15 +194,20 @@ export default function DispatchBoard() {
           if (d.id === targetDriverId) {
             const alreadyAssigned = updatedDeliveries.some(del => del.order.id === orderId);
             if (!alreadyAssigned) {
+              const minPriority = updatedDeliveries.length > 0 
+                ? Math.min(...updatedDeliveries.map(d => d.priority || 0)) 
+                : 0;
+              
               updatedDeliveries.push({
                 id: `temp-${Date.now()}`,
                 orderId,
                 driverId: targetDriverId,
                 status: 'PLACED',
-                priority: updatedDeliveries.length + 1,
+                priority: minPriority - 1,
                 order: orderObj,
                 history: []
               });
+              updatedDeliveries.sort((a, b) => (a.priority || 0) - (b.priority || 0));
             }
           }
           return {
@@ -709,16 +714,6 @@ export default function DispatchBoard() {
                                                     <option value="DELIVERED">Delivered</option>
                                                   </select>
 
-                                                  <button
-                                                    onClick={(e) => {
-                                                      e.stopPropagation();
-                                                      handleResendEmail(del.id);
-                                                    }}
-                                                    className="p-1.5 rounded-lg border border-gray-205 hover:bg-gray-50 text-green-600 transition-colors bg-white"
-                                                    title="Resend Link Email"
-                                                  >
-                                                    <Mail size={12} />
-                                                  </button>
 
                                                   <button
                                                     onClick={(e) => {

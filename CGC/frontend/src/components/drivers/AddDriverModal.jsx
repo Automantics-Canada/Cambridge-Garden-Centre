@@ -24,10 +24,10 @@ export default function AddDriverModal({ isOpen, onClose, onSuccess }) {
     setLoading(true);
     setError('');
 
-    // Phone Number Validation: must be exactly 6 digits
+    // Phone Number Validation: must be exactly 10 digits
     const digitsOnly = formData.phone.replace(/\D/g, '');
-    if (digitsOnly.length !== 6) {
-      setError('Phone number must be exactly 6 digits for Canadian format.');
+    if (digitsOnly.length !== 10) {
+      setError('Phone number must be exactly 10 digits.');
       setLoading(false);
       return;
     }
@@ -168,14 +168,17 @@ export default function AddDriverModal({ isOpen, onClose, onSuccess }) {
               </div>
 
               <div className="space-y-1.5">
-                <label className="text-xs font-bold text-gray-500 uppercase tracking-wider ml-1">Phone Number (6 Digits)</label>
+                <label className="text-xs font-bold text-gray-500 uppercase tracking-wider ml-1">Phone Number (10 Digits)</label>
                 <input
                   type="tel"
                   required
                   className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-[#2D6A4F] focus:ring-4 focus:ring-[#2D6A4F]/10 outline-none transition-all placeholder:text-gray-300"
-                  placeholder="e.g. 555012"
+                  placeholder="e.g. 5551234567"
                   value={formData.phone}
-                  onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
+                  onChange={(e) => {
+                    const val = e.target.value.replace(/\D/g, '');
+                    setFormData({ ...formData, phone: val });
+                  }}
                 />
               </div>
 
