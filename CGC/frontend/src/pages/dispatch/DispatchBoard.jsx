@@ -194,15 +194,20 @@ export default function DispatchBoard() {
           if (d.id === targetDriverId) {
             const alreadyAssigned = updatedDeliveries.some(del => del.order.id === orderId);
             if (!alreadyAssigned) {
+              const minPriority = updatedDeliveries.length > 0 
+                ? Math.min(...updatedDeliveries.map(d => d.priority || 0)) 
+                : 0;
+              
               updatedDeliveries.push({
                 id: `temp-${Date.now()}`,
                 orderId,
                 driverId: targetDriverId,
                 status: 'PLACED',
-                priority: updatedDeliveries.length + 1,
+                priority: minPriority - 1,
                 order: orderObj,
                 history: []
               });
+              updatedDeliveries.sort((a, b) => (a.priority || 0) - (b.priority || 0));
             }
           }
           return {

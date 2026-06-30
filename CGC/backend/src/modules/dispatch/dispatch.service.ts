@@ -18,6 +18,7 @@ export const DispatchService = {
       where: { active: true },
       include: {
         deliveries: {
+          orderBy: { priority: 'asc' },
           where: {
             OR: [
               { status: { notIn: ['DELIVERED', 'CANCELLED'] } },
@@ -63,19 +64,19 @@ export const DispatchService = {
       where: { orderId }
     });
 
-    let priorityToUse = priority;
-    if (!existing) {
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const lastDelivery = await prisma.delivery.findFirst({
-        where: { 
-          driverId,
-          createdAt: { gte: today }
-        },
-        orderBy: { priority: 'desc' }
-      });
-      priorityToUse = (lastDelivery?.priority || 0) + 1;
-    }
+    // Find the current lowest priority for this driver today to put this at the top
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const firstDelivery = await prisma.delivery.findFirst({
+      where: { 
+        driverId,
+        createdAt: { gte: today }
+      },
+      orderBy: { priority: 'asc' }
+    });
+    
+    // Assign a priority lower than the current lowest to place it at the top
+    const priorityToUse = (firstDelivery?.priority || 0) - 1;
 
     let delivery;
     if (existing) {
