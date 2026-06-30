@@ -81,9 +81,15 @@ export default function SupplierForm({ supplier = null, onClose }) {
 
   const handleChange = (e) => {
     const { name, value } = e.target;
+    
+    let finalValue = value;
+    if (name === 'phone') {
+      finalValue = value.replace(/\D/g, '');
+    }
+
     setFormData(prev => ({
       ...prev,
-      [name]: value,
+      [name]: finalValue,
     }));
     if (validationErrors[name]) {
       setValidationErrors(prev => ({

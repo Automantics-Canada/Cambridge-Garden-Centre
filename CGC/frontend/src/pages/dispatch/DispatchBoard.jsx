@@ -709,16 +709,6 @@ export default function DispatchBoard() {
                                                     <option value="DELIVERED">Delivered</option>
                                                   </select>
 
-                                                  <button
-                                                    onClick={(e) => {
-                                                      e.stopPropagation();
-                                                      handleResendEmail(del.id);
-                                                    }}
-                                                    className="p-1.5 rounded-lg border border-gray-205 hover:bg-gray-50 text-green-600 transition-colors bg-white"
-                                                    title="Resend Link Email"
-                                                  >
-                                                    <Mail size={12} />
-                                                  </button>
 
                                                   <button
                                                     onClick={(e) => {
