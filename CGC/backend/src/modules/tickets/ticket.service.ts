@@ -471,6 +471,9 @@ export const TicketService = {
    * Get a single ticket by ID
    */
   async getTicketById(id: string) {
+    if (!id || id === 'undefined' || id.length < 36) {
+      throw new Error('Invalid ticket ID');
+    }
     return prisma.ticket.findUnique({
       where: { id },
       include: {

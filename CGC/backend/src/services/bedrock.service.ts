@@ -100,7 +100,7 @@ function craftPrompt(rawText: string, docType: 'TICKET' | 'INVOICE'): string {
   if (docType === 'TICKET') {
     return `
 You are an expert logistics clerk. Extract structured data from this raw OCR text of a delivery ticket (scale ticket).
-Return ONLY a JSON object.
+Return ONLY a valid JSON object. Do not include any conversational text or explanations. If you cannot find a value, use null.
 
 Raw Text:
 """
@@ -109,7 +109,7 @@ ${rawText}
 
 Expected JSON Schema:
 {
-  "supplierName": "Full name of the supplier",
+  "supplierName": "The name of the Vendor/Supplier issuing the ticket. IMPORTANT: Ignore 'Cambridge Garden Centre' as it is the Bill To customer. Look at the top of the page for the company issuing the ticket (e.g., 'ABC Aggregate Suppliers', 'Dufferin Aggregates').",
   "date": "YYYY-MM-DD",
   "ticketNumber": "The ticket or reference number",
   "poNumber": "The Purchase Order number. IMPORTANT: This is always exactly a 6-digit numerical value (e.g., 123456).",
@@ -121,7 +121,7 @@ Expected JSON Schema:
   } else {
     return `
 You are an expert Accounts Payable clerk. Extract structured data from this raw OCR text of an invoice.
-Return ONLY a JSON object.
+Return ONLY a valid JSON object. Do not include any conversational text or explanations. If you cannot find a value, use null.
 
 Raw Text:
 """

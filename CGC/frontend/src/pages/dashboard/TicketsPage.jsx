@@ -628,11 +628,19 @@ export default function TicketsPage() {
                 {/* Image Side */}
                 <div className="flex-[1.2] bg-gray-900 p-4 flex items-center justify-center overflow-hidden border-r relative group">
                   {selectedTicket.imageUrl ? (
-                    <img 
-                      src={selectedTicket.imageUrl.startsWith('http') ? selectedTicket.imageUrl : `https://cambridge-garden-centre-1.onrender.com${selectedTicket.imageUrl}`} 
-                      className="max-w-full max-h-full object-contain shadow-2xl transition-transform duration-300 group-hover:scale-[1.02]"
-                      alt="Full ticket"
-                    />
+                    selectedTicket.imageUrl.toLowerCase().endsWith('.pdf') ? (
+                      <iframe
+                        src={selectedTicket.imageUrl.startsWith('http') ? selectedTicket.imageUrl : `${import.meta.env.VITE_API_URL || 'http://localhost:4000'}${selectedTicket.imageUrl}`}
+                        className="w-full h-full border-0 bg-white"
+                        title="PDF Ticket"
+                      />
+                    ) : (
+                      <img 
+                        src={selectedTicket.imageUrl.startsWith('http') ? selectedTicket.imageUrl : `${import.meta.env.VITE_API_URL || 'http://localhost:4000'}${selectedTicket.imageUrl}`} 
+                        className="max-w-full max-h-full object-contain shadow-2xl transition-transform duration-300 group-hover:scale-[1.02]"
+                        alt="Full ticket"
+                      />
+                    )
                   ) : (
                     <div className="text-gray-500 flex flex-col items-center">
                        <FileText className="w-16 h-16 mb-2 opacity-20" />

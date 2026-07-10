@@ -6,9 +6,12 @@ import type {
   EmailTicketPayload,
 } from './ticket.types.js';
 import { PDFDocument } from 'pdf-lib';
-import { pdfToPng } from 'pdf-to-png-converter';
 import path from 'node:path';
 import fs from 'node:fs';
+import os from 'node:os';
+import crypto from 'node:crypto';
+// @ts-ignore
+import pdfPoppler from 'pdf-poppler';
 
 export const ingestWhatsappTicket = async (req: Request, res: Response) => {
   const file = (req as any).file as Express.Multer.File | undefined;
@@ -133,58 +136,53 @@ export const uploadManualPdfTickets = async (req: Request, res: Response) => {
   }
 
   try {
-    console.log(`[UploadPDF] Parsing PDF file: ${file.originalname}`);
-    const pdfDoc = await PDFDocument.load(file.buffer);
-    const pageCount = pdfDoc.getPageCount();
-    console.log(`[UploadPDF] Found ${pageCount} pages in PDF`);
+    const tempId = crypto.randomUUID();
+    const tempDir = os.tmpdir();
+    const pdfPath = path.join(tempDir, `${tempId}.pdf`);
+    
+    // Write the PDF buffer to a temporary file
+    fs.writeFileSync(pdfPath, file.buffer);
 
-    if (pageCount === 0) {
-      return res.status(400).json({ error: 'PDF file is empty' });
+    console.log(`[UploadPDF] Converting PDF to image: ${pdfPath}`);
+    const opts = {
+      format: 'jpeg',
+      out_dir: tempDir,
+      out_prefix: tempId,
+      page: 1
+    };
+    
+    await pdfPoppler.convert(pdfPath, opts);
+    
+    const jpgPath = path.join(tempDir, `${tempId}-1.jpg`);
+    
+    if (!fs.existsSync(jpgPath)) {
+      throw new Error('Failed to convert PDF to image using pdf-poppler');
     }
 
-    const createdTickets = [];
-    const createdOcrJobs = [];
+    console.log(`[UploadPDF] Successfully converted PDF to image: ${jpgPath}`);
+    const imageBuffer = fs.readFileSync(jpgPath);
+    
+    const baseName = file.originalname.substring(0, file.originalname.lastIndexOf('.')) || file.originalname;
+    const imageName = `${baseName}.jpg`;
 
-    for (let i = 0; i < pageCount; i++) {
-      const pageNum = i + 1;
-      console.log(`[UploadPDF] Rendering page ${pageNum}/${pageCount} directly to PNG`);
+    // Ingest the image buffer instead of the PDF
+    const { ticket, ocrJob } = await TicketService.ingestManualTicket({
+      buffer: imageBuffer,
+      originalName: imageName,
+    });
 
-      let pngBuffer: Buffer;
-      try {
-        const pngPages = await pdfToPng(file.buffer, {
-          viewportScale: 2.0,
-          pagesToProcess: [pageNum],
-          disableFontFace: false,
-          useSystemFonts: true,
-          enableXfa: true,
-        });
-
-        if (!pngPages || pngPages.length === 0 || !pngPages[0]?.content) {
-          throw new Error(`No content rendered for page ${pageNum}`);
-        }
-        pngBuffer = pngPages[0].content;
-      } catch (err: any) {
-        console.error(`[UploadPDF] Direct render failed for page ${pageNum}:`, err.message);
-        throw new Error(`Failed to render page ${pageNum} to image: ${err.message}`);
-      }
-
-      const baseName = file.originalname.substring(0, file.originalname.lastIndexOf('.')) || file.originalname;
-      const pageName = `${baseName}-page-${pageNum}.png`;
-
-      // 3. Ingest Individually: save record and trigger independent OCR job
-      const { ticket, ocrJob } = await TicketService.ingestManualTicket({
-        buffer: pngBuffer,
-        originalName: pageName,
-      });
-
-      createdTickets.push(ticket);
-      createdOcrJobs.push(ocrJob);
+    // Cleanup temp files
+    try {
+      fs.unlinkSync(pdfPath);
+      fs.unlinkSync(jpgPath);
+    } catch (cleanupErr) {
+      console.error('[UploadPDF] Failed to clean up temp files:', cleanupErr);
     }
 
     return res.status(201).json({
-      message: `Successfully split PDF and queued ${pageCount} tickets for OCR`,
-      tickets: createdTickets,
-      ocrJobIds: createdOcrJobs.map(job => job.id),
+      message: 'Successfully converted PDF and queued ticket for OCR',
+      tickets: [ticket],
+      ocrJobIds: [ocrJob.id],
     });
   } catch (error: any) {
     console.error('uploadManualPdfTickets error', error);

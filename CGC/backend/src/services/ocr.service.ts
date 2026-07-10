@@ -6,6 +6,8 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { downloadFileToTemp, cleanupTempFile, isSupabaseUrl, getFilenameFromUrl } from './urlHandler.js';
 import { extractStructuredData } from './bedrock.service.js';
+// @ts-ignore
+import pdfPoppler from 'pdf-poppler';
 
 const textractClient = new TextractClient(); // Relies on standard AWS credential provider chain
 
@@ -27,6 +29,7 @@ export interface OcrExtractionResult {
 export async function extractTextFromLocalImage(imageUrl: string): Promise<OcrExtractionResult> {
   let localPath = imageUrl;
   let tempFile: string | null = null;
+  let generatedImagePath: string | null = null;
 
   try {
     // Handle Supabase URLs
@@ -44,9 +47,41 @@ export async function extractTextFromLocalImage(imageUrl: string): Promise<OcrEx
       throw new Error(`Local file not found for OCR: ${localPath}`);
     }
 
+    const ext = path.extname(localPath).toLowerCase();
+    let imagePathForOcr = localPath;
+
+    if (ext === '.pdf') {
+      console.log(`[OCR] Converting PDF to image: ${localPath}`);
+      const opts = {
+        format: 'jpeg',
+        out_dir: path.dirname(localPath),
+        out_prefix: path.basename(localPath, ext),
+        page: 1
+      };
+      
+      await pdfPoppler.convert(localPath, opts);
+      
+      generatedImagePath = path.join(opts.out_dir, `${opts.out_prefix}-1.jpg`);
+      
+      if (fs.existsSync(generatedImagePath)) {
+        console.log(`[OCR] Successfully converted PDF to image: ${generatedImagePath}`);
+        imagePathForOcr = generatedImagePath;
+      } else {
+        throw new Error(`Failed to convert PDF to image: ${localPath}`);
+      }
+    }
+
     // Extract text using AWS Textract
-    return await extractWithTextract(localPath);
+    return await extractWithTextract(imagePathForOcr);
   } finally {
+    if (generatedImagePath && fs.existsSync(generatedImagePath)) {
+      try {
+        fs.unlinkSync(generatedImagePath);
+        console.log(`[OCR] Cleaned up converted image: ${generatedImagePath}`);
+      } catch (e) {
+        console.error(`[OCR] Failed to clean up converted image: ${e}`);
+      }
+    }
     // Clean up temporary file if it was downloaded
     if (tempFile) {
       await cleanupTempFile(tempFile);
