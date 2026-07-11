@@ -816,29 +816,25 @@ export default function VerificationDesk() {
 
       {/* 4. Fullscreen Zoom Image Lightbox */}
       {zoomedImage && (
-        <div className="fixed inset-0 bg-black/95 z-[200] flex flex-col p-12 overflow-hidden animate-in fade-in duration-300" onClick={() => setZoomedImage(null)}>
-          <button className="absolute top-8 right-8 p-4 bg-white/10 hover:bg-white/20 rounded-full text-white transition-all backdrop-blur-md">
-            <X className="w-8 h-8" />
+        <div className="fixed inset-0 bg-black/95 z-[200] flex flex-col pt-12 pb-6 px-4 sm:px-12 animate-in fade-in duration-300" onClick={() => setZoomedImage(null)}>
+          <button className="absolute top-4 right-4 sm:top-8 sm:right-8 z-10 p-3 sm:p-4 bg-white/10 hover:bg-white/20 rounded-full text-white transition-all backdrop-blur-md">
+            <X className="w-6 h-6 sm:w-8 sm:h-8" />
           </button>
-          <div className="flex-1 flex items-center justify-center">
+          <div className="flex-1 overflow-y-auto overflow-x-hidden flex justify-center custom-scrollbar rounded-lg">
             <img 
               src={zoomedImage} 
-              className="max-w-full max-h-full object-contain shadow-2xl rounded-lg animate-in zoom-in-95 duration-500" 
+              className="w-full max-w-5xl h-auto shadow-2xl rounded-lg animate-in zoom-in-95 duration-500 my-auto" 
               onClick={e => e.stopPropagation()} 
               alt="Expanded Preview"
             />
           </div>
-          <div className="h-20 flex items-center justify-center gap-8">
-            <button className="flex items-center gap-2 text-white/60 hover:text-white font-medium text-xs uppercase tracking-wider transition-colors">
-              <Search className="w-4 h-4" /> Zoom In
-            </button>
-            <div className="w-px h-6 bg-white/10" />
+          <div className="h-16 sm:h-20 flex-shrink-0 flex items-center justify-center gap-8 mt-4">
             <a 
               href={zoomedImage} 
               target="_blank" 
               rel="noreferrer"
               onClick={e => e.stopPropagation()}
-              className="flex items-center gap-2 text-white/60 hover:text-white font-medium text-xs uppercase tracking-wider transition-colors"
+              className="flex items-center gap-2 text-white/60 hover:text-white font-medium text-xs uppercase tracking-wider transition-colors bg-white/5 hover:bg-white/10 px-4 py-2 rounded-lg"
             >
               <ExternalLink className="w-4 h-4" /> Open in New Tab
             </a>

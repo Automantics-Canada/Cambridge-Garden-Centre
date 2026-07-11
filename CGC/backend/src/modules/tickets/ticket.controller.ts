@@ -153,28 +153,30 @@ export const uploadManualPdfTickets = async (req: Request, res: Response) => {
     
     await pdfPoppler.convert(pdfPath, opts);
     
-    const jpgPath = path.join(tempDir, `${tempId}-1.jpg`);
+    const files = fs.readdirSync(tempDir);
+    const jpgFile = files.find(f => f.startsWith(tempId) && f.endsWith('.jpg'));
     
-    if (!fs.existsSync(jpgPath)) {
+    if (!jpgFile) {
       throw new Error('Failed to convert PDF to image using pdf-poppler');
     }
 
+    const jpgPath = path.join(tempDir, jpgFile);
     console.log(`[UploadPDF] Successfully converted PDF to image: ${jpgPath}`);
     const imageBuffer = fs.readFileSync(jpgPath);
     
     const baseName = file.originalname.substring(0, file.originalname.lastIndexOf('.')) || file.originalname;
     const imageName = `${baseName}.jpg`;
 
-    // Ingest the image buffer instead of the PDF
+    // Ingest the image buffer instead of the PDF and wait for OCR
     const { ticket, ocrJob } = await TicketService.ingestManualTicket({
       buffer: imageBuffer,
       originalName: imageName,
-    });
+    }, true);
 
     // Cleanup temp files
     try {
-      fs.unlinkSync(pdfPath);
-      fs.unlinkSync(jpgPath);
+      if (fs.existsSync(pdfPath)) fs.unlinkSync(pdfPath);
+      if (fs.existsSync(jpgPath)) fs.unlinkSync(jpgPath);
     } catch (cleanupErr) {
       console.error('[UploadPDF] Failed to clean up temp files:', cleanupErr);
     }

@@ -284,13 +284,8 @@ export default function TicketsPage() {
     }
     setSearchingOrders(true);
     try {
-      const { data, error } = await supabase
-        .from('Order')
-        .select('id, spruceOrderId, poNumber, customerName, product, quantity, unit')
-        .or(`spruceOrderId.ilike.%${query}%,customerName.ilike.%${query}%,product.ilike.%${query}%`)
-        .limit(10);
-      if (error) throw error;
-      setOrderResults(data || []);
+      const res = await api.get('/api/orders', { params: { search: query } });
+      setOrderResults(res.data || []);
     } catch (err) {
       console.error('Order search error:', err);
     } finally {

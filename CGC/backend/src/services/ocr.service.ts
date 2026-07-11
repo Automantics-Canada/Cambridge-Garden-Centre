@@ -116,6 +116,20 @@ async function extractWithTextract(localPath: string): Promise<OcrExtractionResu
   const totalConfidence = lineBlocks.reduce((acc: number, block: any) => acc + (block.Confidence || 0), 0);
   const averageConfidence = lineBlocks.length > 0 ? totalConfidence / lineBlocks.length : 0;
 
+  if (!rawText.trim()) {
+    return {
+      rawText,
+      supplierName: null,
+      ticketDate: null,
+      material: null,
+      quantity: null,
+      unit: null,
+      poNumber: null,
+      ticketNumber: null,
+      ocrConfidence: averageConfidence / 100,
+    };
+  }
+
   const extraction = await extractStructuredData(rawText, 'TICKET');
   
   return {
