@@ -13,7 +13,7 @@ export interface ImportSummary {
 
 export const OrderService = {
   async getOrders(filters: any) {
-    const { startDate, endDate, buyerType, supplierId, driverId, hasInvoice, hasLinkedTickets, search, page = 1, limit = 1000 } = filters;
+    const { startDate, endDate, uploadStartDate, uploadEndDate, buyerType, supplierId, driverId, hasInvoice, hasLinkedTickets, search, page = 1, limit = 1000 } = filters;
     
     let where: any = {};
 
@@ -24,7 +24,21 @@ export const OrderService = {
     if (startDate || endDate) {
       where.orderDate = {};
       if (startDate) where.orderDate.gte = new Date(startDate);
-      if (endDate) where.orderDate.lte = new Date(endDate);
+      if (endDate) {
+        const end = new Date(endDate);
+        end.setUTCHours(23, 59, 59, 999);
+        where.orderDate.lte = end;
+      }
+    }
+
+    if (uploadStartDate || uploadEndDate) {
+      where.createdAt = {};
+      if (uploadStartDate) where.createdAt.gte = new Date(uploadStartDate);
+      if (uploadEndDate) {
+        const end = new Date(uploadEndDate);
+        end.setUTCHours(23, 59, 59, 999);
+        where.createdAt.lte = end;
+      }
     }
 
     if (buyerType) {
@@ -65,7 +79,7 @@ export const OrderService = {
         where,
         take,
         skip,
-        orderBy: { orderDate: 'desc' },
+        orderBy: { createdAt: 'desc' },
         include: {
           supplier: true,
           tickets: true,

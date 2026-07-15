@@ -9,5 +9,9 @@ export declare class GmailService {
     private static processMessage;
     private static getAttachments;
     private static markAsRead;
+    /**
+     * Send an email using the connected Gmail account
+     */
+    static sendEmail(to: string, subject: string, htmlBody: string): Promise<void>;
 }
 //# sourceMappingURL=gmail.service.d.ts.map

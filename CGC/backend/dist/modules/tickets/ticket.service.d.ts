@@ -96,7 +96,7 @@ export declare const TicketService: {
     ingestManualTicket(params: {
         buffer: Buffer;
         originalName: string;
-    }): Promise<{
+    }, waitOcr?: boolean): Promise<{
         ticket: {
             id: string;
             poNumber: string | null;
@@ -246,18 +246,37 @@ export declare const TicketService: {
             provider: import("@prisma/client").$Enums.OcrProvider;
             rawResponse: import("@prisma/client/runtime/library").JsonValue | null;
         }[];
+        linkedOrder: {
+            id: string;
+            spruceOrderId: string;
+            poNumber: string | null;
+            customerName: string | null;
+            buyerType: import("@prisma/client").$Enums.BuyerType | null;
+            product: string | null;
+            quantity: import("@prisma/client/runtime/library").Decimal | null;
+            unit: string | null;
+            supplierId: string | null;
+            orderDate: Date | null;
+            deliveryDate: Date | null;
+            hasInvoice: boolean;
+            invoiceNumber: string | null;
+            createdAt: Date;
+            deliveryStatus: import("@prisma/client").$Enums.DriverTaskStatus;
+            driverId: string | null;
+            priority: number;
+        } | null;
         orderMatches: ({
             order: {
                 id: string;
                 spruceOrderId: string;
                 poNumber: string | null;
-                customerName: string;
-                buyerType: import("@prisma/client").$Enums.BuyerType;
-                product: string;
-                quantity: import("@prisma/client/runtime/library").Decimal;
-                unit: string;
+                customerName: string | null;
+                buyerType: import("@prisma/client").$Enums.BuyerType | null;
+                product: string | null;
+                quantity: import("@prisma/client/runtime/library").Decimal | null;
+                unit: string | null;
                 supplierId: string | null;
-                orderDate: Date;
+                orderDate: Date | null;
                 deliveryDate: Date | null;
                 hasInvoice: boolean;
                 invoiceNumber: string | null;
@@ -274,25 +293,6 @@ export declare const TicketService: {
             matchedAt: Date;
             createdBy: string | null;
         })[];
-        linkedOrder: {
-            id: string;
-            spruceOrderId: string;
-            poNumber: string | null;
-            customerName: string;
-            buyerType: import("@prisma/client").$Enums.BuyerType;
-            product: string;
-            quantity: import("@prisma/client/runtime/library").Decimal;
-            unit: string;
-            supplierId: string | null;
-            orderDate: Date;
-            deliveryDate: Date | null;
-            hasInvoice: boolean;
-            invoiceNumber: string | null;
-            createdAt: Date;
-            deliveryStatus: import("@prisma/client").$Enums.DriverTaskStatus;
-            driverId: string | null;
-            priority: number;
-        } | null;
     } & {
         id: string;
         poNumber: string | null;

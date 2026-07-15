@@ -1,9 +1,11 @@
 import { TicketService } from './ticket.service.js';
 import { processPendingOcrJobs } from '../../services/ocrJobProcessor.js';
 import { PDFDocument } from 'pdf-lib';
-import { pdfToPng } from 'pdf-to-png-converter';
 import path from 'node:path';
 import fs from 'node:fs';
+import os from 'node:os';
+import crypto from 'node:crypto';
+import { pdf } from 'pdf-to-img';
 export const ingestWhatsappTicket = async (req, res) => {
     const file = req.file;
     const { fromPhone } = req.body;
@@ -115,50 +117,27 @@ export const uploadManualPdfTickets = async (req, res) => {
         return res.status(400).json({ error: 'file is required' });
     }
     try {
-        console.log(`[UploadPDF] Parsing PDF file: ${file.originalname}`);
-        const pdfDoc = await PDFDocument.load(file.buffer);
-        const pageCount = pdfDoc.getPageCount();
-        console.log(`[UploadPDF] Found ${pageCount} pages in PDF`);
-        if (pageCount === 0) {
-            return res.status(400).json({ error: 'PDF file is empty' });
+        console.log(`[UploadPDF] Converting PDF buffer to image using pdf-to-img...`);
+        let imageBuffer;
+        try {
+            const document = await pdf(file.buffer, { scale: 3 });
+            imageBuffer = await document.getPage(1);
         }
-        const createdTickets = [];
-        const createdOcrJobs = [];
-        for (let i = 0; i < pageCount; i++) {
-            const pageNum = i + 1;
-            console.log(`[UploadPDF] Rendering page ${pageNum}/${pageCount} directly to PNG`);
-            let pngBuffer;
-            try {
-                const pngPages = await pdfToPng(file.buffer, {
-                    viewportScale: 2.0,
-                    pagesToProcess: [pageNum],
-                    disableFontFace: false,
-                    useSystemFonts: true,
-                    enableXfa: true,
-                });
-                if (!pngPages || pngPages.length === 0 || !pngPages[0]?.content) {
-                    throw new Error(`No content rendered for page ${pageNum}`);
-                }
-                pngBuffer = pngPages[0].content;
-            }
-            catch (err) {
-                console.error(`[UploadPDF] Direct render failed for page ${pageNum}:`, err.message);
-                throw new Error(`Failed to render page ${pageNum} to image: ${err.message}`);
-            }
-            const baseName = file.originalname.substring(0, file.originalname.lastIndexOf('.')) || file.originalname;
-            const pageName = `${baseName}-page-${pageNum}.png`;
-            // 3. Ingest Individually: save record and trigger independent OCR job
-            const { ticket, ocrJob } = await TicketService.ingestManualTicket({
-                buffer: pngBuffer,
-                originalName: pageName,
-            });
-            createdTickets.push(ticket);
-            createdOcrJobs.push(ocrJob);
+        catch (err) {
+            console.error('[UploadPDF] Error converting PDF to image:', err);
+            throw new Error('Failed to convert PDF to image using pdf-to-img');
         }
+        const baseName = file.originalname.substring(0, file.originalname.lastIndexOf('.')) || file.originalname;
+        const imageName = `${baseName}.png`;
+        // Ingest the image buffer instead of the PDF and wait for OCR
+        const { ticket, ocrJob } = await TicketService.ingestManualTicket({
+            buffer: imageBuffer,
+            originalName: imageName,
+        }, true);
         return res.status(201).json({
-            message: `Successfully split PDF and queued ${pageCount} tickets for OCR`,
-            tickets: createdTickets,
-            ocrJobIds: createdOcrJobs.map(job => job.id),
+            message: 'Successfully converted PDF and queued ticket for OCR',
+            tickets: [ticket],
+            ocrJobIds: [ocrJob.id],
         });
     }
     catch (error) {

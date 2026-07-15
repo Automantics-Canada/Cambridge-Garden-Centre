@@ -4,7 +4,10 @@
  */
 import { v4 as uuidv4 } from 'uuid';
 import { uploadTicketImage, uploadInvoiceImage, uploadCsvFile } from './supabaseStorage.js';
-import { pdfToPng } from 'pdf-to-png-converter';
+import fs from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
+import { pdf } from 'pdf-to-img';
 /**
  * Helper to convert PDF ticket buffer to PNG buffer if necessary using in-process converter
  */
@@ -12,26 +15,19 @@ async function convertPdfToPngIfNecessary(buffer, originalName) {
     const isPdf = originalName.toLowerCase().endsWith('.pdf') ||
         (buffer.length > 4 && buffer.toString('ascii', 0, 4) === '%PDF');
     if (isPdf) {
-        console.log(`[FileStorage] Converting PDF "${originalName}" to PNG directly...`);
+        console.log(`[FileStorage] Converting PDF "${originalName}" to PNG using pdf-to-img...`);
         try {
-            const pngPages = await pdfToPng(buffer, {
-                viewportScale: 2.0,
-                pagesToProcess: [1],
-                disableFontFace: false,
-                useSystemFonts: true,
-                enableXfa: true,
-            });
-            if (pngPages && pngPages.length > 0 && pngPages[0]?.content) {
-                const baseName = originalName.substring(0, originalName.lastIndexOf('.')) || originalName;
-                console.log(`[FileStorage] Successfully converted PDF "${originalName}" to PNG directly`);
-                return {
-                    buffer: pngPages[0].content,
-                    name: `${baseName}.png`,
-                };
-            }
+            const document = await pdf(buffer, { scale: 3 });
+            const imageBuffer = await document.getPage(1);
+            const baseName = originalName.substring(0, originalName.lastIndexOf('.')) || originalName;
+            console.log(`[FileStorage] Successfully converted PDF "${originalName}" to PNG`);
+            return {
+                buffer: imageBuffer,
+                name: `${baseName}.png`,
+            };
         }
         catch (error) {
-            console.error(`[FileStorage] PDF to PNG direct conversion failed:`, error);
+            console.error(`[FileStorage] PDF to PNG conversion failed:`, error);
         }
     }
     return { buffer, name: originalName };

@@ -2,6 +2,7 @@ import { TextractClient, AnalyzeDocumentCommand } from '@aws-sdk/client-textract
 import { PDFDocument } from 'pdf-lib';
 import { PDFParse } from 'pdf-parse';
 import { prisma } from '../../db/prisma.js';
+import { orderEventEmitter, OrderEvents } from './order.events.js';
 const textractClient = new TextractClient({
     region: process.env.AWS_REGION || 'us-east-1',
     credentials: {
@@ -10,7 +11,7 @@ const textractClient = new TextractClient({
     },
 });
 export const OrderPdfImportService = {
-    async importFromPdf(buffer) {
+    async importFromPdf(buffer, jobId) {
         let created = 0;
         let updated = 0;
         let skipped = 0;
@@ -20,6 +21,11 @@ export const OrderPdfImportService = {
             const pdfDoc = await PDFDocument.load(buffer);
             const pageCount = pdfDoc.getPageCount();
             console.log(`[OrderPdfImport] Processing ${pageCount} pages...`);
+            let lastOrderId = undefined;
+            let lastCustomerName = undefined;
+            let lastEntryDateRaw = undefined;
+            let lastDeliveryDateRaw = undefined;
+            let lastPoNumber = null;
             for (let pageIdx = 0; pageIdx < pageCount; pageIdx++) {
                 console.log(`[OrderPdfImport] Sending page ${pageIdx + 1} to Textract...`);
                 // Create a new PDF containing only this page
@@ -111,21 +117,49 @@ export const OrderPdfImportService = {
                             }
                             return undefined;
                         };
-                        const spruceOrderId = findField(['document', 'doc#', 'doc', 'order#', 'orderid', 'id', 'docno', 'documentno']);
-                        const customerName = findField(['customername', 'customer', 'client', 'billto', 'name']);
-                        const itemDesc = findField(['itemdesc', 'description', 'item', 'product', 'material', 'itemname', 'desc']);
-                        if (!spruceOrderId || !customerName || !itemDesc) {
+                        let spruceOrderId = findField(['document', 'doc#', 'doc', 'order#', 'orderid', 'id', 'docno', 'documentno']);
+                        let customerName = findField(['customername', 'customer', 'client', 'billto', 'name']);
+                        let itemDesc = findField(['itemdesc', 'description', 'item', 'product', 'material', 'itemname', 'desc']);
+                        let deliveryDateRaw = findField(['deliverydate', 'delivery', 'deldate', 'shipdate', 'requireddate']);
+                        let entryDateRaw = findField(['entrydate', 'entry', 'orderdate', 'date', 'created']);
+                        const qtyRaw = findField(['qty', 'quantity', 'ordered', 'qtyordered', 'units']);
+                        const poRaw = findField(['podocument', 'ponumber', 'po#', 'po', 'purchaseorder', 'ponum']);
+                        const notesRaw = findField(['ordernotes', 'notes', 'memo', 'reference']);
+                        let poNumber = poRaw || notesRaw?.match(/PO[:\s]*([A-Za-z0-9\-\.]+)/i)?.[1] || null;
+                        if (spruceOrderId)
+                            lastOrderId = spruceOrderId;
+                        else
+                            spruceOrderId = lastOrderId;
+                        if (customerName) {
+                            customerName = customerName.replace(/^\d{1,4}[-/]\d{1,2}[-/]\d{1,4}\s+/, '').trim();
+                            lastCustomerName = customerName;
+                        }
+                        else {
+                            customerName = lastCustomerName;
+                        }
+                        if (entryDateRaw)
+                            lastEntryDateRaw = entryDateRaw;
+                        else
+                            entryDateRaw = lastEntryDateRaw;
+                        if (deliveryDateRaw)
+                            lastDeliveryDateRaw = deliveryDateRaw;
+                        else
+                            deliveryDateRaw = lastDeliveryDateRaw;
+                        if (poNumber)
+                            lastPoNumber = poNumber;
+                        else
+                            poNumber = lastPoNumber;
+                        // If itemDesc is missing, it's a blank or total row, skip without logging an error unless we have nothing
+                        if (!itemDesc) {
+                            skipped++;
+                            continue;
+                        }
+                        if (!spruceOrderId || !customerName) {
                             console.log(`[OrderPdfImport] Skipping row ${rowIndex}: Missing required fields`, { spruceOrderId, customerName, itemDesc });
                             skipped++;
                             errors.push({ rowNumber: rowIndex, error: `Page ${pageIdx + 1}, Row ${rowIndex}: Missing spruceOrderId="${spruceOrderId}", customerName="${customerName}", itemDesc="${itemDesc}"` });
                             continue;
                         }
-                        const deliveryDateRaw = findField(['deliverydate', 'delivery', 'deldate', 'shipdate', 'requireddate']);
-                        const entryDateRaw = findField(['entrydate', 'entry', 'orderdate', 'date', 'created']);
-                        const qtyRaw = findField(['qty', 'quantity', 'ordered', 'qtyordered', 'units']);
-                        const poRaw = findField(['podocument', 'ponumber', 'po#', 'po', 'purchaseorder', 'ponum']);
-                        const notesRaw = findField(['ordernotes', 'notes', 'memo', 'reference']);
-                        const poNumber = poRaw || notesRaw?.match(/PO[:\s]*([A-Za-z0-9\-\.]+)/i)?.[1] || null;
                         let orderDate = new Date();
                         if (entryDateRaw) {
                             const parsedDate = new Date(entryDateRaw);
@@ -175,12 +209,14 @@ export const OrderPdfImportService = {
                                 where: { spruceOrderId: data.spruceOrderId },
                             });
                             if (existing) {
-                                await prisma.order.update({ where: { spruceOrderId: data.spruceOrderId }, data });
+                                const updatedObj = await prisma.order.update({ where: { spruceOrderId: data.spruceOrderId }, data });
                                 updated++;
+                                orderEventEmitter.emit(OrderEvents.PDF_IMPORT_PROGRESS, { jobId, action: 'updated', order: updatedObj });
                             }
                             else {
-                                await prisma.order.create({ data });
+                                const createdObj = await prisma.order.create({ data });
                                 created++;
+                                orderEventEmitter.emit(OrderEvents.PDF_IMPORT_PROGRESS, { jobId, action: 'created', order: createdObj });
                             }
                         }
                         catch (e) {
@@ -197,14 +233,18 @@ export const OrderPdfImportService = {
         catch (err) {
             console.error('[OrderPdfImport] Critical error:', err);
             errors.push({ rowNumber: 0, error: `Critical error: ${err.message}` });
+            orderEventEmitter.emit(OrderEvents.PDF_IMPORT_ERROR, { jobId, error: err.message });
+            return { created, updated, skipped, errors };
         }
-        return { created, updated, skipped, errors };
+        const summary = { created, updated, skipped, errors };
+        orderEventEmitter.emit(OrderEvents.PDF_IMPORT_DONE, { jobId, summary });
+        return summary;
     },
     /**
      * Fallback method for when Textract/PNG conversion fails.
      * Extracts text directly from PDF using PDFParse class.
      */
-    async importViaTextExtraction(buffer) {
+    async importViaTextExtraction(buffer, jobId) {
         let created = 0;
         let updated = 0;
         let skipped = 0;
@@ -277,12 +317,14 @@ export const OrderPdfImportService = {
                                 where: { spruceOrderId: data.spruceOrderId },
                             });
                             if (existing) {
-                                await prisma.order.update({ where: { spruceOrderId: data.spruceOrderId }, data });
+                                const updatedObj = await prisma.order.update({ where: { spruceOrderId: data.spruceOrderId }, data });
                                 updated++;
+                                orderEventEmitter.emit(OrderEvents.PDF_IMPORT_PROGRESS, { jobId, action: 'updated', order: updatedObj });
                             }
                             else {
-                                await prisma.order.create({ data });
+                                const createdObj = await prisma.order.create({ data });
                                 created++;
+                                orderEventEmitter.emit(OrderEvents.PDF_IMPORT_PROGRESS, { jobId, action: 'created', order: createdObj });
                             }
                         }
                         catch (e) {
@@ -296,8 +338,12 @@ export const OrderPdfImportService = {
         catch (err) {
             console.error('[OrderPdfImport] Text extraction error:', err);
             errors.push({ rowNumber: 0, error: `Text extraction error: ${err.message}` });
+            orderEventEmitter.emit(OrderEvents.PDF_IMPORT_ERROR, { jobId, error: err.message });
+            return { created, updated, skipped, errors };
         }
-        return { created, updated, skipped, errors };
+        const summary = { created, updated, skipped, errors };
+        orderEventEmitter.emit(OrderEvents.PDF_IMPORT_DONE, { jobId, summary });
+        return summary;
     }
 };
 //# sourceMappingURL=orderPdfImport.service.js.map

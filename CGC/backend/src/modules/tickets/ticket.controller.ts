@@ -10,8 +10,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
 import crypto from 'node:crypto';
-// @ts-ignore
-import pdfPoppler from 'pdf-poppler';
+import { pdf } from 'pdf-to-img';
 
 export const ingestWhatsappTicket = async (req: Request, res: Response) => {
   const file = (req as any).file as Express.Multer.File | undefined;
@@ -136,50 +135,24 @@ export const uploadManualPdfTickets = async (req: Request, res: Response) => {
   }
 
   try {
-    const tempId = crypto.randomUUID();
-    const tempDir = os.tmpdir();
-    const pdfPath = path.join(tempDir, `${tempId}.pdf`);
-    
-    // Write the PDF buffer to a temporary file
-    fs.writeFileSync(pdfPath, file.buffer);
-
-    console.log(`[UploadPDF] Converting PDF to image: ${pdfPath}`);
-    const opts = {
-      format: 'jpeg',
-      out_dir: tempDir,
-      out_prefix: tempId,
-      page: 1
-    };
-    
-    await pdfPoppler.convert(pdfPath, opts);
-    
-    const files = fs.readdirSync(tempDir);
-    const jpgFile = files.find(f => f.startsWith(tempId) && f.endsWith('.jpg'));
-    
-    if (!jpgFile) {
-      throw new Error('Failed to convert PDF to image using pdf-poppler');
+    console.log(`[UploadPDF] Converting PDF buffer to image using pdf-to-img...`);
+    let imageBuffer: Buffer;
+    try {
+      const document = await pdf(file.buffer, { scale: 3 });
+      imageBuffer = await document.getPage(1);
+    } catch (err) {
+      console.error('[UploadPDF] Error converting PDF to image:', err);
+      throw new Error('Failed to convert PDF to image using pdf-to-img');
     }
 
-    const jpgPath = path.join(tempDir, jpgFile);
-    console.log(`[UploadPDF] Successfully converted PDF to image: ${jpgPath}`);
-    const imageBuffer = fs.readFileSync(jpgPath);
-    
     const baseName = file.originalname.substring(0, file.originalname.lastIndexOf('.')) || file.originalname;
-    const imageName = `${baseName}.jpg`;
+    const imageName = `${baseName}.png`;
 
     // Ingest the image buffer instead of the PDF and wait for OCR
     const { ticket, ocrJob } = await TicketService.ingestManualTicket({
       buffer: imageBuffer,
       originalName: imageName,
     }, true);
-
-    // Cleanup temp files
-    try {
-      if (fs.existsSync(pdfPath)) fs.unlinkSync(pdfPath);
-      if (fs.existsSync(jpgPath)) fs.unlinkSync(jpgPath);
-    } catch (cleanupErr) {
-      console.error('[UploadPDF] Failed to clean up temp files:', cleanupErr);
-    }
 
     return res.status(201).json({
       message: 'Successfully converted PDF and queued ticket for OCR',

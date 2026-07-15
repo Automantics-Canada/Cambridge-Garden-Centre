@@ -3,6 +3,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { downloadFileToTemp, cleanupTempFile, isSupabaseUrl, getFilenameFromUrl } from './urlHandler.js';
 import { extractStructuredData } from './bedrock.service.js';
+import { pdf } from 'pdf-to-img';
 const textractClient = new TextractClient(); // Relies on standard AWS credential provider chain
 /**
  * Extract text from local image using AWS Textract
@@ -10,6 +11,7 @@ const textractClient = new TextractClient(); // Relies on standard AWS credentia
 export async function extractTextFromLocalImage(imageUrl) {
     let localPath = imageUrl;
     let tempFile = null;
+    let generatedImagePath = null;
     try {
         // Handle Supabase URLs
         if (isSupabaseUrl(imageUrl)) {
@@ -25,10 +27,30 @@ export async function extractTextFromLocalImage(imageUrl) {
         if (!fs.existsSync(localPath)) {
             throw new Error(`Local file not found for OCR: ${localPath}`);
         }
+        const ext = path.extname(localPath).toLowerCase();
+        let imagePathForOcr = localPath;
+        if (ext === '.pdf') {
+            console.log(`[OCR] Converting PDF to image: ${localPath}`);
+            const document = await pdf(localPath, { scale: 3 });
+            const imageBuffer = await document.getPage(1);
+            generatedImagePath = path.join(path.dirname(localPath), `${path.basename(localPath, ext)}-1.png`);
+            fs.writeFileSync(generatedImagePath, imageBuffer);
+            console.log(`[OCR] Successfully converted PDF to image: ${generatedImagePath}`);
+            imagePathForOcr = generatedImagePath;
+        }
         // Extract text using AWS Textract
-        return await extractWithTextract(localPath);
+        return await extractWithTextract(imagePathForOcr);
     }
     finally {
+        if (generatedImagePath && fs.existsSync(generatedImagePath)) {
+            try {
+                fs.unlinkSync(generatedImagePath);
+                console.log(`[OCR] Cleaned up converted image: ${generatedImagePath}`);
+            }
+            catch (e) {
+                console.error(`[OCR] Failed to clean up converted image: ${e}`);
+            }
+        }
         // Clean up temporary file if it was downloaded
         if (tempFile) {
             await cleanupTempFile(tempFile);
@@ -56,6 +78,19 @@ async function extractWithTextract(localPath) {
     // Calculate average confidence
     const totalConfidence = lineBlocks.reduce((acc, block) => acc + (block.Confidence || 0), 0);
     const averageConfidence = lineBlocks.length > 0 ? totalConfidence / lineBlocks.length : 0;
+    if (!rawText.trim()) {
+        return {
+            rawText,
+            supplierName: null,
+            ticketDate: null,
+            material: null,
+            quantity: null,
+            unit: null,
+            poNumber: null,
+            ticketNumber: null,
+            ocrConfidence: averageConfidence / 100,
+        };
+    }
     const extraction = await extractStructuredData(rawText, 'TICKET');
     return {
         rawText,

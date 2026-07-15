@@ -8,11 +8,11 @@ export interface ImportSummary {
     }>;
 }
 export declare const OrderPdfImportService: {
-    importFromPdf(buffer: Buffer): Promise<ImportSummary>;
+    importFromPdf(buffer: Buffer, jobId: string): Promise<ImportSummary>;
     /**
      * Fallback method for when Textract/PNG conversion fails.
      * Extracts text directly from PDF using PDFParse class.
      */
-    importViaTextExtraction(buffer: Buffer): Promise<ImportSummary>;
+    importViaTextExtraction(buffer: Buffer, jobId: string): Promise<ImportSummary>;
 };
 //# sourceMappingURL=orderPdfImport.service.d.ts.map

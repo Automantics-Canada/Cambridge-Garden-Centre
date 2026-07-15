@@ -17,15 +17,21 @@ function parseDate(value) {
     return d;
 }
 export function mapCsvRowToOrder(row) {
-    const orderNumber = row['OrderNumber']?.trim();
-    const customerName = row['CustomerName']?.trim();
-    const buyerTypeRaw = row['BuyerType']?.trim().toUpperCase();
-    const product = row['Product']?.trim();
-    const quantityRaw = row['Quantity']?.trim();
-    const unit = row['Unit']?.trim();
-    const poNumber = row['PONumber']?.trim() || null;
-    const orderDateRaw = row['OrderDate']?.trim();
-    const deliveryDateRaw = row['DeliveryDate']?.trim();
+    const orderNumber = row['OrderNumber']?.trim() || row['Document']?.trim();
+    // Handle the merged Entry Date / Customer Name column
+    const entryDateRaw = row['Entry Date']?.trim() || '';
+    const entryDateParts = entryDateRaw.split(' ');
+    const extractedOrderDate = entryDateParts.length > 0 ? entryDateParts[0] : '';
+    const extractedCustomerName = entryDateParts.length > 1 ? entryDateParts.slice(1).join(' ') : '';
+    const customerName = row['CustomerName']?.trim() || row['Customer Name']?.trim() || extractedCustomerName;
+    const buyerTypeRaw = row['BuyerType']?.trim().toUpperCase() || 'RETAIL';
+    const product = row['Product']?.trim() || row['Item Desc']?.trim() || row['Item Number']?.trim();
+    const rawQty = row['Quantity']?.trim() || row['Qty']?.trim() || '';
+    const quantityRaw = rawQty.match(/[\d.]+/)?.[0] || '';
+    const unit = row['Unit']?.trim() || 'each';
+    const poNumber = row['PONumber']?.trim() || row['PO Document']?.trim() || null;
+    const orderDateRaw = row['OrderDate']?.trim() || extractedOrderDate;
+    const deliveryDateRaw = row['DeliveryDate']?.trim() || row['Delivery Date']?.trim();
     const invoiceNumber = row['InvoiceNumber']?.trim() || null;
     const hasInvoiceRaw = row['HasInvoice']?.trim();
     if (!orderNumber) {

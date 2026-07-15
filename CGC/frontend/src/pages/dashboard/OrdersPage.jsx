@@ -15,6 +15,7 @@ export default function OrdersPage() {
   const [totalPages, setTotalPages] = useState(1);
   const [loading, setLoading] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  const [uploadProgressText, setUploadProgressText] = useState('');
   const fileInputRef = useRef(null);
   const pdfInputRef = useRef(null);
 
@@ -30,30 +31,34 @@ export default function OrdersPage() {
   const fetchOrders = useCallback(async () => {
     setLoading(true);
     try {
-      const params = new URLSearchParams({
-        resource: 'orders',
-        limit: '1000'
-      });
-      if (search) params.append('search', search);
-      if (buyerType) params.append('buyerType', buyerType);
-      if (supplierId) params.append('supplierId', supplierId);
-      if (driverId) params.append('driverId', driverId);
-      if (hasInvoice) params.append('hasInvoice', String(hasInvoice === 'yes'));
+      const apiParams = {
+        search,
+        buyerType,
+        supplierId,
+        driverId,
+        hasInvoice: hasInvoice === 'yes' ? 'true' : hasInvoice === 'no' ? 'false' : undefined,
+        hasLinkedTickets: hasLinkedTickets === 'yes' ? 'true' : hasLinkedTickets === 'no' ? 'false' : undefined,
+        limit: 30,
+        page
+      };
 
-      const token = localStorage.getItem('token');
-      const headers = token ? { Authorization: `Bearer ${token}` } : {};
+      if (uploadFilter === 'today') {
+        const today = new Date();
+        const dateStr = today.toISOString().split('T')[0];
+        apiParams.uploadStartDate = dateStr;
+        apiParams.uploadEndDate = dateStr;
+      } else if (uploadFilter === 'yesterday') {
+        const yesterday = new Date();
+        yesterday.setDate(yesterday.getDate() - 1);
+        const dateStr = yesterday.toISOString().split('T')[0];
+        apiParams.uploadStartDate = dateStr;
+        apiParams.uploadEndDate = dateStr;
+      } else if (uploadFilter === 'select' && selectedUploadDate) {
+        apiParams.uploadStartDate = selectedUploadDate;
+        apiParams.uploadEndDate = selectedUploadDate;
+      }
 
-      const res = await api.get('/api/orders', {
-        params: {
-          search,
-          buyerType,
-          supplierId,
-          driverId,
-          hasInvoice: hasInvoice === 'yes' ? 'true' : undefined,
-          limit: 30,
-          page
-        }
-      });
+      const res = await api.get('/api/orders', { params: apiParams });
 
       setOrders(res.data?.data || []);
       setTotalPages(res.data?.pagination?.totalPages || 1);
@@ -63,7 +68,7 @@ export default function OrdersPage() {
     } finally {
       setLoading(false);
     }
-  }, [search, buyerType, supplierId, driverId, hasInvoice, hasLinkedTickets, page]);
+  }, [search, buyerType, supplierId, driverId, hasInvoice, hasLinkedTickets, uploadFilter, selectedUploadDate, page]);
 
   const handleFileUpload = async (event) => {
     const file = event.target.files?.[0];
@@ -88,19 +93,106 @@ export default function OrdersPage() {
         headers: { 'Content-Type': 'multipart/form-data' },
       });
 
-      toast.success(
-        `Import complete! ${res.data?.created ?? 0} created, ${res.data?.updated ?? 0} updated.`
-      );
-      fetchOrders();
+      if (isPdf) {
+        const { jobId } = res.data;
+        const baseUrl = import.meta.env.VITE_API_URL || 'http://localhost:4000';
+        const token = localStorage.getItem('token');
+        const eventSource = new EventSource(`${baseUrl}/api/orders/import/stream?jobId=${jobId}&token=${token}`);
+        
+        let localCreated = 0;
+        let localUpdated = 0;
+        setUploadProgressText('Connecting to stream...');
+
+        let orderBuffer = [];
+
+        eventSource.onmessage = (e) => {
+          const data = JSON.parse(e.data);
+          
+          if (data.type === 'progress') {
+            if (data.action === 'created') localCreated++;
+            if (data.action === 'updated') localUpdated++;
+            setUploadProgressText(`Importing... ${localCreated + localUpdated} orders processed`);
+            
+            orderBuffer.push(data);
+            
+            // Batch UI updates every 10 items for smoother rendering
+            if (orderBuffer.length >= 10) {
+              const currentBatch = [...orderBuffer];
+              orderBuffer = [];
+              
+              setOrders(prev => {
+                let next = [...prev];
+                currentBatch.forEach(bData => {
+                  const exists = next.find(o => o.spruceOrderId === bData.order.spruceOrderId);
+                  if (exists) {
+                    next = next.map(o => o.spruceOrderId === bData.order.spruceOrderId ? bData.order : o);
+                  } else if (page === 1) {
+                    next = [bData.order, ...next];
+                  }
+                });
+                return page === 1 ? next.slice(0, 30) : next;
+              });
+            }
+            
+          } else if (data.type === 'done') {
+            // Flush remaining buffer
+            if (orderBuffer.length > 0) {
+              setOrders(prev => {
+                let next = [...prev];
+                orderBuffer.forEach(bData => {
+                  const exists = next.find(o => o.spruceOrderId === bData.order.spruceOrderId);
+                  if (exists) {
+                    next = next.map(o => o.spruceOrderId === bData.order.spruceOrderId ? bData.order : o);
+                  } else if (page === 1) {
+                    next = [bData.order, ...next];
+                  }
+                });
+                return page === 1 ? next.slice(0, 30) : next;
+              });
+              orderBuffer = [];
+            }
+            
+            eventSource.close();
+            toast.success(`PDF Import complete! ${data.summary.created} created, ${data.summary.updated} updated.`);
+            setIsUploading(false);
+            setUploadProgressText('');
+            if (page !== 1) setPage(1); // Reset to see new items
+          } else if (data.type === 'error') {
+            eventSource.close();
+            toast.error(`Import error: ${data.error}`);
+            setIsUploading(false);
+            setUploadProgressText('');
+          }
+        };
+
+        eventSource.onerror = (e) => {
+          console.error('EventSource error:', e);
+          eventSource.close();
+          toast.error('Lost connection to import stream.');
+          setIsUploading(false);
+          setUploadProgressText('');
+        };
+      } else {
+        toast.success(
+          `Import complete! ${res.data?.created ?? 0} created, ${res.data?.updated ?? 0} updated.`
+        );
+        setIsUploading(false);
+        fetchOrders();
+      }
     } catch (err) {
       toast.error(err.response?.data?.error || 'Failed to import file');
       console.error('Import error:', err);
-    } finally {
       setIsUploading(false);
+      setUploadProgressText('');
+    } finally {
       if (fileInputRef.current) fileInputRef.current.value = '';
       if (pdfInputRef.current) pdfInputRef.current.value = '';
     }
   };
+
+  useEffect(() => {
+    setPage(1);
+  }, [search, buyerType, supplierId, driverId, hasInvoice, hasLinkedTickets, uploadFilter, selectedUploadDate]);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -110,66 +202,7 @@ export default function OrdersPage() {
     return () => clearTimeout(timer);
   }, [fetchOrders]);
 
-  const getLocalDateString = (dateInput) => {
-    if (!dateInput) return '';
-    const d = new Date(dateInput);
-    if (isNaN(d.getTime())) return '';
-    const year = d.getFullYear();
-    const month = String(d.getMonth() + 1).padStart(2, '0');
-    const day = String(d.getDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`;
-  };
-
-  const filteredOrders = orders.filter((order) => {
-    // 1. Upload date filter
-    const uploadDateStr = getLocalDateString(order.createdAt);
-    if (uploadFilter === 'today') {
-      const todayStr = getLocalDateString(new Date());
-      if (uploadDateStr !== todayStr) return false;
-    } else if (uploadFilter === 'yesterday') {
-      const yesterday = new Date();
-      yesterday.setDate(yesterday.getDate() - 1);
-      const yesterdayStr = getLocalDateString(yesterday);
-      if (uploadDateStr !== yesterdayStr) return false;
-    } else if (uploadFilter === 'select') {
-      if (selectedUploadDate && uploadDateStr !== selectedUploadDate) {
-        return false;
-      }
-    }
-
-    // Compose with other filters client-side
-    // 2. Search Text
-    if (search) {
-      const s = search.toLowerCase();
-      const matchSearch =
-        order.spruceOrderId?.toLowerCase().includes(s) ||
-        order.poNumber?.toLowerCase().includes(s) ||
-        order.customerName?.toLowerCase().includes(s) ||
-        order.product?.toLowerCase().includes(s);
-      if (!matchSearch) return false;
-    }
-
-    // 3. Buyer Type
-    if (buyerType && order.buyerType !== buyerType) return false;
-
-    // 4. Has Invoice
-    if (hasInvoice) {
-      const wantInvoice = hasInvoice === 'yes';
-      if (order.hasInvoice !== wantInvoice) return false;
-    }
-
-    // 5. Has Linked Tickets
-    if (hasLinkedTickets) {
-      const wantTickets = hasLinkedTickets === 'yes';
-      const hasTickets = order.ticketMatches && order.ticketMatches.length > 0;
-      if (hasTickets !== wantTickets) return false;
-    }
-
-    // 6. Supplier ID
-    if (supplierId && order.supplierId !== supplierId) return false;
-
-    return true;
-  });
+  const filteredOrders = orders;
 
   return (
     <div className="flex flex-col h-full space-y-4">
@@ -382,13 +415,7 @@ export default function OrdersPage() {
             </thead>
 
             <StaggerContainer component="tbody" className="divide-y divide-gray-200 bg-white">
-              {isUploading ? (
-                <tr>
-                  <td colSpan={9}>
-                    <Loader message="Importing CSV... Please wait." />
-                  </td>
-                </tr>
-              ) : loading ? (
+              {loading ? (
                 <OrdersTableSkeleton />
               ) : filteredOrders.length === 0 ? (
                 <tr>
