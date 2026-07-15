@@ -146,7 +146,7 @@ export const InvoiceService = {
                     const potentialOrders = await prisma.order.findMany({
                         where: { poNumber: linePo, supplierId: updatedSupplierId },
                     });
-                    const orderMatch = potentialOrders.find(o => stringsMatchFuzzy(o.product, description));
+                    const orderMatch = potentialOrders.find(o => stringsMatchFuzzy(o.product ?? '', description ?? ''));
                     if (orderMatch) {
                         matchedOrderId = orderMatch.id;
                         const orderQty = Number(orderMatch.quantity);

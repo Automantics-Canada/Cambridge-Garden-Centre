@@ -6,8 +6,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { downloadFileToTemp, cleanupTempFile, isSupabaseUrl, getFilenameFromUrl } from './urlHandler.js';
 import { extractStructuredData } from './bedrock.service.js';
-// @ts-ignore
-import pdfPoppler from 'pdf-poppler';
+import { pdf } from 'pdf-to-img';
 
 const textractClient = new TextractClient(); // Relies on standard AWS credential provider chain
 
@@ -52,23 +51,14 @@ export async function extractTextFromLocalImage(imageUrl: string): Promise<OcrEx
 
     if (ext === '.pdf') {
       console.log(`[OCR] Converting PDF to image: ${localPath}`);
-      const opts = {
-        format: 'jpeg',
-        out_dir: path.dirname(localPath),
-        out_prefix: path.basename(localPath, ext),
-        page: 1
-      };
+      const document = await pdf(localPath, { scale: 3 });
+      const imageBuffer = await document.getPage(1);
       
-      await pdfPoppler.convert(localPath, opts);
+      generatedImagePath = path.join(path.dirname(localPath), `${path.basename(localPath, ext)}-1.png`);
+      fs.writeFileSync(generatedImagePath, imageBuffer);
       
-      generatedImagePath = path.join(opts.out_dir, `${opts.out_prefix}-1.jpg`);
-      
-      if (fs.existsSync(generatedImagePath)) {
-        console.log(`[OCR] Successfully converted PDF to image: ${generatedImagePath}`);
-        imagePathForOcr = generatedImagePath;
-      } else {
-        throw new Error(`Failed to convert PDF to image: ${localPath}`);
-      }
+      console.log(`[OCR] Successfully converted PDF to image: ${generatedImagePath}`);
+      imagePathForOcr = generatedImagePath;
     }
 
     // Extract text using AWS Textract

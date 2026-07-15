@@ -3,7 +3,7 @@ import { env } from '../config/env.js';
 import { InvoiceService } from '../modules/invoices/invoice.service.js';
 import { prisma } from '../db/prisma.js';
 import { triggerOcrProcessing } from './ocrJobProcessor.js';
-const SCOPES = ['https://www.googleapis.com/auth/gmail.readonly', 'https://www.googleapis.com/auth/gmail.modify'];
+const SCOPES = ['https://www.googleapis.com/auth/gmail.readonly', 'https://www.googleapis.com/auth/gmail.modify', 'https://www.googleapis.com/auth/gmail.send'];
 export class GmailService {
     static auth = new google.auth.OAuth2(env.gmailClientId, env.gmailClientSecret, 'https://developers.google.com/oauthplayground');
     static {
@@ -134,6 +134,43 @@ export class GmailService {
         }
         catch (error) {
             console.error(`Failed to mark message ${messageId} as read:`, error);
+        }
+    }
+    /**
+     * Send an email using the connected Gmail account
+     */
+    static async sendEmail(to, subject, htmlBody) {
+        if (!env.gmailClientId || !env.gmailRefreshToken) {
+            console.warn('⚠️ Gmail API credentials not fully configured. Cannot send email.');
+            return;
+        }
+        try {
+            const utf8Subject = `=?utf-8?B?${Buffer.from(subject).toString('base64')}?=`;
+            const messageParts = [
+                `To: ${to}`,
+                `Subject: ${utf8Subject}`,
+                'MIME-Version: 1.0',
+                'Content-Type: text/html; charset=utf-8',
+                '',
+                htmlBody,
+            ];
+            const message = messageParts.join('\r\n');
+            const encodedMessage = Buffer.from(message)
+                .toString('base64')
+                .replace(/\+/g, '-')
+                .replace(/\//g, '_')
+                .replace(/=+$/, '');
+            await this.gmail.users.messages.send({
+                userId: 'me',
+                requestBody: {
+                    raw: encodedMessage,
+                },
+            });
+            console.log(`Email sent successfully to ${to}`);
+        }
+        catch (error) {
+            console.error(`❌ Error sending email to ${to}:`, error);
+            throw error;
         }
     }
 }

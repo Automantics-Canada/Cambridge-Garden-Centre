@@ -1,6 +1,7 @@
 import { prisma } from '../../db/prisma.js';
 import { DriverType } from '@prisma/client';
 import bcrypt from 'bcryptjs';
+import { GmailService } from '../../services/gmail.service.js';
 export const DriverService = {
     async getDrivers() {
         const today = new Date();
@@ -46,7 +47,11 @@ export const DriverService = {
     async createDriver(data) {
         const emailNormalized = data.email ? data.email.toLowerCase().trim() : undefined;
         const phoneNormalized = data.phone.trim();
-        return prisma.$transaction(async (tx) => {
+        let plainPassword = data.password;
+        if (emailNormalized && !plainPassword) {
+            plainPassword = Math.random().toString(36).slice(-8) + 'A1!';
+        }
+        const driver = await prisma.$transaction(async (tx) => {
             let userId = undefined;
             // 1. Check if phone number already exists in Driver table
             const existingDriverPhone = await tx.driver.findUnique({
@@ -81,8 +86,8 @@ export const DriverService = {
                         role: 'DRIVER',
                         active: data.active !== undefined ? data.active : true
                     };
-                    if (data.password) {
-                        updateData.passwordHash = await bcrypt.hash(data.password, 10);
+                    if (plainPassword) {
+                        updateData.passwordHash = await bcrypt.hash(plainPassword, 10);
                     }
                     await tx.user.update({
                         where: { id: existingUser.id },
@@ -92,8 +97,8 @@ export const DriverService = {
                 }
                 else {
                     // Normal flow: User does not exist, so we create a new User
-                    if (data.password) {
-                        const hashed = await bcrypt.hash(data.password, 10);
+                    if (plainPassword) {
+                        const hashed = await bcrypt.hash(plainPassword, 10);
                         const user = await tx.user.create({
                             data: {
                                 email: emailNormalized,
@@ -108,7 +113,7 @@ export const DriverService = {
                     }
                 }
             }
-            const driver = await tx.driver.create({
+            const newDriver = await tx.driver.create({
                 data: {
                     name: data.name,
                     phone: phoneNormalized,
@@ -121,8 +126,52 @@ export const DriverService = {
                     userId: userId || null
                 }
             });
-            return driver;
+            return newDriver;
         });
+        if (emailNormalized && plainPassword) {
+            try {
+                const html = `
+          <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; text-align: center; color: #333;">
+            <div style="background-color: #2b704d; color: white; display: inline-block; padding: 10px 20px; border-radius: 8px; font-weight: bold; font-size: 16px; letter-spacing: 1px; margin-bottom: 30px;">
+              CGC LOGISTICS
+            </div>
+            
+            <h1 style="font-size: 28px; margin-bottom: 20px;">Welcome, ${driver.name}!</h1>
+            
+            <p style="color: #666; font-size: 16px; line-height: 1.5; margin-bottom: 30px;">
+              Your driver account has been created successfully. Below are your login credentials<br/>
+              to access the CGC Driver Portal.
+            </p>
+            
+            <div style="background-color: #f7f9fa; border-radius: 16px; padding: 30px; text-align: left; border: 1px solid #eaeaea;">
+              <div style="margin-bottom: 20px;">
+                <div style="font-size: 11px; font-weight: bold; color: #8e9bae; margin-bottom: 5px; text-transform: uppercase; letter-spacing: 0.5px;">LOGIN LINK</div>
+                <a href="https://cambridge-garden.vercel.app/login" style="color: #2b704d; font-size: 16px; font-weight: bold; text-decoration: none;">https://cambridge-garden.vercel.app/login</a>
+              </div>
+              
+              <div style="border-top: 1px solid #eaeaea; margin: 20px 0;"></div>
+              
+              <div style="margin-bottom: 20px;">
+                <div style="font-size: 11px; font-weight: bold; color: #8e9bae; margin-bottom: 5px; text-transform: uppercase; letter-spacing: 0.5px;">USERNAME / EMAIL</div>
+                <a href="mailto:${emailNormalized}" style="color: #1a56db; font-size: 16px; font-weight: bold; text-decoration: underline;">${emailNormalized}</a>
+              </div>
+              
+              <div>
+                <div style="font-size: 11px; font-weight: bold; color: #8e9bae; margin-bottom: 5px; text-transform: uppercase; letter-spacing: 0.5px;">PASSWORD</div>
+                <div style="background-color: #e4e9f2; display: inline-block; padding: 8px 16px; border-radius: 6px; font-size: 16px; font-weight: bold; color: #333;">
+                  ${plainPassword}
+                </div>
+              </div>
+            </div>
+          </div>
+        `;
+                await GmailService.sendEmail(emailNormalized, 'Welcome to CGC Driver Fleet', html);
+            }
+            catch (err) {
+                console.error('Failed to send welcome email:', err);
+            }
+        }
+        return driver;
     },
     async updateDriver(id, data) {
         const { name, phone, email, password, type, companyName, ratePerDelivery, ratePerTrip, active } = data;

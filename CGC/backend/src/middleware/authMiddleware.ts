@@ -21,8 +21,23 @@ export async function authMiddleware(
   res: Response,
   next: NextFunction
 ) {
-  // Support legacy driver URL token access
+  // Support JWT via query parameter (e.g. for Server-Sent Events / EventSource)
   const queryToken = req.query.token as string;
+  if (queryToken && queryToken.split('.').length === 3) {
+    try {
+      const decoded = jwt.verify(queryToken, env.jwtSecret) as unknown as {
+        id: string;
+        email: string;
+        role: UserRole;
+      };
+      req.user = decoded;
+      return next();
+    } catch {
+      // Let it fall through or fail
+    }
+  }
+
+  // Support legacy driver URL token access
   if (queryToken) {
     try {
       const decoded = Buffer.from(queryToken, 'base64').toString('ascii');

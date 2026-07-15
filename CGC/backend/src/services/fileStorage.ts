@@ -8,8 +8,7 @@ import { uploadTicketImage, uploadInvoiceImage, uploadCsvFile } from './supabase
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-// @ts-ignore
-import pdfPoppler from 'pdf-poppler';
+import { pdf } from 'pdf-to-img';
 
 /**
  * Helper to convert PDF ticket buffer to PNG buffer if necessary using in-process converter
@@ -22,46 +21,19 @@ async function convertPdfToPngIfNecessary(
     (buffer.length > 4 && buffer.toString('ascii', 0, 4) === '%PDF');
 
   if (isPdf) {
-    console.log(`[FileStorage] Converting PDF "${originalName}" to JPG using pdf-poppler...`);
-    const tempId = uuidv4();
-    const tempDir = os.tmpdir();
-    const pdfPath = path.join(tempDir, `${tempId}.pdf`);
-    const jpgPath = path.join(tempDir, `${tempId}-1.jpg`);
-
+    console.log(`[FileStorage] Converting PDF "${originalName}" to PNG using pdf-to-img...`);
     try {
-      fs.writeFileSync(pdfPath, buffer);
+      const document = await pdf(buffer, { scale: 3 });
+      const imageBuffer = await document.getPage(1);
+      const baseName = originalName.substring(0, originalName.lastIndexOf('.')) || originalName;
+      console.log(`[FileStorage] Successfully converted PDF "${originalName}" to PNG`);
 
-      const opts = {
-        format: 'jpeg',
-        out_dir: tempDir,
-        out_prefix: tempId,
-        page: 1
+      return {
+        buffer: imageBuffer,
+        name: `${baseName}.png`,
       };
-
-      await pdfPoppler.convert(pdfPath, opts);
-
-      if (fs.existsSync(jpgPath)) {
-        const imageBuffer = fs.readFileSync(jpgPath);
-        const baseName = originalName.substring(0, originalName.lastIndexOf('.')) || originalName;
-        console.log(`[FileStorage] Successfully converted PDF "${originalName}" to JPG`);
-        
-        // Clean up temp files
-        fs.unlinkSync(pdfPath);
-        fs.unlinkSync(jpgPath);
-
-        return {
-          buffer: imageBuffer,
-          name: `${baseName}.jpg`,
-        };
-      }
     } catch (error) {
-      console.error(`[FileStorage] PDF to JPG conversion failed:`, error);
-      try {
-        if (fs.existsSync(pdfPath)) fs.unlinkSync(pdfPath);
-        if (fs.existsSync(jpgPath)) fs.unlinkSync(jpgPath);
-      } catch (cleanupErr) {
-        // ignore
-      }
+      console.error(`[FileStorage] PDF to PNG conversion failed:`, error);
     }
   }
   return { buffer, name: originalName };

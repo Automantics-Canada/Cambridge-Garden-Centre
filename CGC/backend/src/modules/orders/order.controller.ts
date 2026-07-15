@@ -2,6 +2,8 @@ import type { Response } from 'express';
 import type { AuthRequest } from '../../middleware/authMiddleware.js';
 import { OrderImportService, OrderService } from './order.service.js';
 import { OrderPdfImportService } from './orderPdfImport.service.js';
+import { v4 as uuidv4 } from 'uuid';
+import { orderEventEmitter, OrderEvents } from './order.events.js';
 export const importOrdersFromCsv = async (req: AuthRequest, res: Response) => {
   const file = req.file;
 
@@ -31,19 +33,67 @@ export const importOrdersFromPdf = async (req: AuthRequest, res: Response) => {
     return res.status(400).json({ error: 'PDF file is required (field name: file)' });
   }
 
-  try {
-    const summary = await OrderPdfImportService.importFromPdf(file.buffer);
+  const jobId = uuidv4();
 
-    return res.status(200).json({
-      message: 'PDF Import completed',
-      ...summary,
-    });
-  } catch (err: any) {
-    console.error('Order PDF import error', err);
-    return res
-      .status(500)
-      .json({ error: err?.message || 'Unexpected error during PDF import' });
+  // Start processing in the background (fire and forget)
+  // Make sure to copy the buffer since req.file.buffer might be freed
+  const fileBuffer = Buffer.from(file.buffer);
+  
+  OrderPdfImportService.importFromPdf(fileBuffer, jobId).catch(err => {
+    console.error('Background PDF import failed catastrophically', err);
+  });
+
+  return res.status(202).json({
+    message: 'PDF Import started',
+    jobId,
+  });
+};
+
+export const streamPdfImport = async (req: AuthRequest, res: Response) => {
+  const { jobId } = req.query;
+
+  if (!jobId || typeof jobId !== 'string') {
+    return res.status(400).json({ error: 'jobId is required' });
   }
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
+
+  const onProgress = (data: any) => {
+    if (data.jobId === jobId) {
+      res.write(`data: ${JSON.stringify({ type: 'progress', ...data })}\n\n`);
+    }
+  };
+
+  const onDone = (data: any) => {
+    if (data.jobId === jobId) {
+      res.write(`data: ${JSON.stringify({ type: 'done', ...data })}\n\n`);
+      cleanup();
+      res.end();
+    }
+  };
+
+  const onError = (data: any) => {
+    if (data.jobId === jobId) {
+      res.write(`data: ${JSON.stringify({ type: 'error', ...data })}\n\n`);
+      cleanup();
+      res.end();
+    }
+  };
+
+  orderEventEmitter.on(OrderEvents.PDF_IMPORT_PROGRESS, onProgress);
+  orderEventEmitter.on(OrderEvents.PDF_IMPORT_DONE, onDone);
+  orderEventEmitter.on(OrderEvents.PDF_IMPORT_ERROR, onError);
+
+  const cleanup = () => {
+    orderEventEmitter.off(OrderEvents.PDF_IMPORT_PROGRESS, onProgress);
+    orderEventEmitter.off(OrderEvents.PDF_IMPORT_DONE, onDone);
+    orderEventEmitter.off(OrderEvents.PDF_IMPORT_ERROR, onError);
+  };
+
+  req.on('close', cleanup);
 };
 
 export const getOrders = async (req: AuthRequest, res: Response) => {
