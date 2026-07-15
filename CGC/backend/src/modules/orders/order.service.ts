@@ -13,7 +13,7 @@ export interface ImportSummary {
 
 export const OrderService = {
   async getOrders(filters: any) {
-    const { startDate, endDate, buyerType, supplierId, driverId, hasInvoice, hasLinkedTickets, search } = filters;
+    const { startDate, endDate, buyerType, supplierId, driverId, hasInvoice, hasLinkedTickets, search, page = 1, limit = 1000 } = filters;
     
     let where: any = {};
 
@@ -57,19 +57,35 @@ export const OrderService = {
       ];
     }
 
-    const orders = await prisma.order.findMany({
-      where,
-      orderBy: { orderDate: 'desc' },
-      include: {
-        supplier: true,
-        tickets: true,
-        ticketMatches: {
-          include: { ticket: true }
+    const take = parseInt(limit, 10) || 1000;
+    const skip = (parseInt(page, 10) - 1 || 0) * take;
+
+    const [orders, total] = await Promise.all([
+      prisma.order.findMany({
+        where,
+        take,
+        skip,
+        orderBy: { orderDate: 'desc' },
+        include: {
+          supplier: true,
+          tickets: true,
+          ticketMatches: {
+            include: { ticket: true }
+          }
         }
-      }
-    });
+      }),
+      prisma.order.count({ where })
+    ]);
     
-    return orders;
+    return {
+      data: orders,
+      pagination: {
+        total,
+        page: parseInt(page, 10) || 1,
+        limit: take,
+        totalPages: Math.ceil(total / take)
+      }
+    };
   }
 };
 
@@ -84,13 +100,24 @@ export const OrderImportService = {
       console.error('[OrderImport] Failed to save CSV to storage, continuing with processing...', error);
     }
 
-    const csvText = buffer.toString('utf-8');
+    let csvText = buffer.toString('utf-8');
+    
+    // Auto-detect if there are garbage metadata rows at the top
+    const lines = csvText.split(/\r?\n/);
+    const headerIndex = lines.findIndex(line => line.includes('Document,') || line.includes('OrderNumber,'));
+    if (headerIndex > 0) {
+      csvText = lines.slice(headerIndex).join('\n');
+    }
 
     const records = parse(csvText, {
+      bom: true,
       columns: true,         
       skip_empty_lines: true,
       trim: true,
     }) as RawOrderCsvRow[];
+
+    console.log("[OrderImport] First record keys:", Object.keys(records[0] || {}));
+    console.log("[OrderImport] First record:", records[0]);
 
     let created = 0;
     let updated = 0;
@@ -99,14 +126,16 @@ export const OrderImportService = {
 
     for (let i = 0; i < records.length; i++) {
       const rowNumber = i + 2; 
-
       const row = records[i];
       if (!row) continue;
+      
       const { data, error } = mapCsvRowToOrder(row);
 
       if (error || !data) {
         skipped++;
-        errors.push({ rowNumber, error: error ?? 'Unknown mapping error' });
+        // Include the actual keys we found so we can debug!
+        const foundKeys = Object.keys(row).join(', ');
+        errors.push({ rowNumber, error: `${error} (Found headers: ${foundKeys})` });
         continue;
       }
 
@@ -120,12 +149,12 @@ export const OrderImportService = {
             where: { spruceOrderId: data.spruceOrderId },
             data: {
               poNumber: data.poNumber ?? null,
-              customerName: data.customerName,
-              buyerType: data.buyerType,
-              product: data.product,
-              quantity: data.quantity,
-              unit: data.unit,
-              orderDate: data.orderDate,
+              customerName: data.customerName ?? null,
+              buyerType: data.buyerType ?? null,
+              product: data.product ?? null,
+              quantity: data.quantity ?? null,
+              unit: data.unit ?? null,
+              orderDate: data.orderDate ?? null,
               deliveryDate: data.deliveryDate ?? null,
               hasInvoice: data.hasInvoice ?? false,
               invoiceNumber: data.invoiceNumber ?? null,

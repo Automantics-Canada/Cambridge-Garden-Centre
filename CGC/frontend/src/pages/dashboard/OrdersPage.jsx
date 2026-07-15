@@ -11,6 +11,8 @@ import { FadeInUp, StaggerContainer, StaggerItem } from '../../components/Animat
 export default function OrdersPage() {
   const [searchParams] = useSearchParams();
   const [orders, setOrders] = useState([]);
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
   const [loading, setLoading] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef(null);
@@ -41,23 +43,27 @@ export default function OrdersPage() {
       const token = localStorage.getItem('token');
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
 
-      const { data, error } = await supabase.functions.invoke(`fetch-cgc-data?${params.toString()}`, {
-        method: 'GET',
-        headers
+      const res = await api.get('/api/orders', {
+        params: {
+          search,
+          buyerType,
+          supplierId,
+          driverId,
+          hasInvoice: hasInvoice === 'yes' ? 'true' : undefined,
+          limit: 30,
+          page
+        }
       });
 
-      if (error) {
-        throw error;
-      }
-
-      setOrders(data && data.data ? data.data : []);
+      setOrders(res.data?.data || []);
+      setTotalPages(res.data?.pagination?.totalPages || 1);
     } catch (err) {
-      console.error('Error fetching orders via Edge Function:', err);
+      console.error('Error fetching orders:', err);
       toast.error('Failed to fetch orders');
     } finally {
       setLoading(false);
     }
-  }, [search, buyerType, supplierId, driverId, hasInvoice, hasLinkedTickets]);
+  }, [search, buyerType, supplierId, driverId, hasInvoice, hasLinkedTickets, page]);
 
   const handleFileUpload = async (event) => {
     const file = event.target.files?.[0];
@@ -83,7 +89,7 @@ export default function OrdersPage() {
       });
 
       toast.success(
-        `Import complete! ${res.data?.createdCount ?? 0} created, ${res.data?.updatedCount ?? 0} updated.`
+        `Import complete! ${res.data?.created ?? 0} created, ${res.data?.updated ?? 0} updated.`
       );
       fetchOrders();
     } catch (err) {
@@ -232,7 +238,7 @@ export default function OrdersPage() {
                 className="block w-full rounded-md border-gray-300 pl-10 focus:border-green-500 focus:ring-green-500 sm:text-sm p-2 border"
                 placeholder="Order ID, PO, Customer, Product..."
                 value={search}
-                onChange={(e) => setSearch(e.target.value)}
+                onChange={(e) => { setSearch(e.target.value); setPage(1); }}
               />
             </div>
           </div>
@@ -293,7 +299,7 @@ export default function OrdersPage() {
             <select
               className="border-gray-300 rounded-md sm:text-sm p-2 pr-8 border"
               value={buyerType}
-              onChange={(e) => setBuyerType(e.target.value)}
+              onChange={(e) => { setBuyerType(e.target.value); setPage(1); }}
             >
               <option value="">All Types</option>
               <option value="RETAIL">Retail</option>
@@ -509,6 +515,51 @@ export default function OrdersPage() {
               )}
             </StaggerContainer>
           </table>
+        </div>
+      </div>
+
+      {/* Pagination Controls */}
+      <div className="flex items-center justify-between bg-white px-4 py-3 sm:px-6 rounded-xl border border-gray-200 shadow-sm">
+        <div className="flex flex-1 justify-between sm:hidden">
+          <button
+            onClick={() => setPage(p => Math.max(1, p - 1))}
+            disabled={page === 1}
+            className="relative inline-flex items-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+          >
+            Previous
+          </button>
+          <button
+            onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+            disabled={page >= totalPages}
+            className="relative ml-3 inline-flex items-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+          >
+            Next
+          </button>
+        </div>
+        <div className="hidden sm:flex sm:flex-1 sm:items-center sm:justify-between">
+          <div>
+            <p className="text-sm text-gray-700">
+              Showing page <span className="font-medium">{page}</span> <span className="font-medium"></span>
+            </p>
+          </div>
+          <div>
+            <nav className="isolate inline-flex -space-x-px rounded-md shadow-sm" aria-label="Pagination">
+              <button
+                onClick={() => setPage(p => Math.max(1, p - 1))}
+                disabled={page === 1}
+                className="relative inline-flex items-center rounded-l-md px-3 py-2 text-gray-400 ring-1 ring-inset ring-gray-300 hover:bg-gray-50 focus:z-20 focus:outline-offset-0 disabled:opacity-50"
+              >
+                Previous
+              </button>
+              <button
+                onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                disabled={page >= totalPages}
+                className="relative inline-flex items-center rounded-r-md px-3 py-2 text-gray-400 ring-1 ring-inset ring-gray-300 hover:bg-gray-50 focus:z-20 focus:outline-offset-0 disabled:opacity-50"
+              >
+                Next
+              </button>
+            </nav>
+          </div>
         </div>
       </div>
     </div>

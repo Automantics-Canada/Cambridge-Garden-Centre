@@ -128,10 +128,10 @@ export const TicketService = {
   async ingestManualTicket(params: {
     buffer: Buffer;
     originalName: string;
-  }) {
+  }, waitOcr: boolean = false) {
     const imageUrl = await saveTicketImage(params.buffer, params.originalName);
 
-    const ticket = await prisma.ticket.create({
+    let ticket = await prisma.ticket.create({
       data: {
         source: TicketSource.MANUAL,
         imageUrl,
@@ -151,7 +151,11 @@ export const TicketService = {
       },
     });
 
-    triggerOcrProcessing(ocrJob.id);
+    if (waitOcr) {
+      ticket = await TicketService.processTicketOcr(ticket.id);
+    } else {
+      triggerOcrProcessing(ocrJob.id);
+    }
 
     return { ticket, ocrJob };
   },
@@ -471,6 +475,9 @@ export const TicketService = {
    * Get a single ticket by ID
    */
   async getTicketById(id: string) {
+    if (!id || id === 'undefined' || id.length < 36) {
+      throw new Error('Invalid ticket ID');
+    }
     return prisma.ticket.findUnique({
       where: { id },
       include: {

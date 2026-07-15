@@ -9,7 +9,14 @@ api.interceptors.request.use(
   (config) => { 
     const token = localStorage.getItem('token');
     if (token) {
-      config.headers.Authorization = `Bearer ${token}`;
+      if (config.headers && typeof config.headers.set === 'function') {
+        config.headers.set('Authorization', `Bearer ${token}`);
+      } else {
+        config.headers = {
+          ...config.headers,
+          Authorization: `Bearer ${token}`
+        };
+      }
     }
     return config;
   },
