@@ -204,7 +204,7 @@ export default function VerificationDesk() {
     try {
       const endpoint = linkingLineItem.type === 'order' ? '/api/orders' : '/api/tickets';
       const res = await api.get(endpoint, { params: { search: query } });
-      setSearchResults(res.data);
+      setSearchResults(res.data?.data || res.data || []);
     } catch (err) {
       console.error('Search error', err);
     } finally {

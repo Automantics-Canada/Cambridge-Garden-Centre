@@ -285,7 +285,7 @@ export default function TicketsPage() {
     setSearchingOrders(true);
     try {
       const res = await api.get('/api/orders', { params: { search: query } });
-      setOrderResults(res.data || []);
+      setOrderResults(res.data?.data || res.data || []);
     } catch (err) {
       console.error('Order search error:', err);
     } finally {
