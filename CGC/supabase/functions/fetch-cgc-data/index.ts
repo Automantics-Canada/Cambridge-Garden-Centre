@@ -257,6 +257,12 @@ serve(async (req) => {
       );
     }
 
+    const search = url.searchParams.get('search');
+    const supplierId = url.searchParams.get('supplierId');
+    const source = url.searchParams.get('source');
+    const startDate = url.searchParams.get('startDate');
+    const endDate = url.searchParams.get('endDate');
+
     let query: any;
     if (resource === 'tickets') {
       query = supabaseClient
@@ -267,6 +273,26 @@ serve(async (req) => {
           driver:Driver(id, name)
         `, { count: 'exact' })
         .order('receivedAt', { ascending: false });
+
+      if (status) {
+        query = query.eq('status', status);
+      }
+      if (supplierId) {
+        query = query.eq('supplierId', supplierId);
+      }
+      if (source) {
+        query = query.eq('source', source);
+      }
+      if (startDate) {
+        query = query.gte('receivedAt', `${startDate}T00:00:00.000Z`);
+      }
+      if (endDate) {
+        query = query.lte('receivedAt', `${endDate}T23:59:59.999Z`);
+      }
+      if (search && search.trim()) {
+        const s = search.trim();
+        query = query.or(`ticketNumber.ilike.%${s}%,poNumber.ilike.%${s}%,material.ilike.%${s}%`);
+      }
     } else if (resource === 'orders') {
       query = supabaseClient
         .from('Order')
@@ -279,6 +305,17 @@ serve(async (req) => {
           )
         `, { count: 'exact' })
         .order('orderDate', { ascending: false });
+
+      if (status) {
+        query = query.eq('deliveryStatus', status);
+      }
+      if (supplierId) {
+        query = query.eq('supplierId', supplierId);
+      }
+      if (search && search.trim()) {
+        const s = search.trim();
+        query = query.or(`spruceOrderId.ilike.%${s}%,poNumber.ilike.%${s}%,customerName.ilike.%${s}%,product.ilike.%${s}%`);
+      }
     } else if (resource === 'invoices') {
       query = supabaseClient
         .from('Invoice')
@@ -287,7 +324,19 @@ serve(async (req) => {
           supplier:Supplier(id, name),
           lineItems:InvoiceLineItem(id, flag, rateDiscrepancy)
         `, { count: 'exact' })
-        .order('receivedAt', { ascending: false });
+        .order('receivedAt', { ascending: false, nullsFirst: false })
+        .order('invoiceDate', { ascending: false, nullsFirst: false });
+
+      if (status) {
+        query = query.eq('status', status);
+      }
+      if (supplierId) {
+        query = query.eq('supplierId', supplierId);
+      }
+      if (search && search.trim()) {
+        const s = search.trim();
+        query = query.or(`invoiceNumber.ilike.%${s}%,emailFrom.ilike.%${s}%`);
+      }
     } else if (resource === 'drivers') {
       // For list drivers, we fetch with deliveries so we can compute currentTask and progress stats
       const { data, count, error } = await supabaseClient

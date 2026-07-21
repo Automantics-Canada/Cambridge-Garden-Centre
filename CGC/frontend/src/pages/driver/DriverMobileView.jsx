@@ -4,6 +4,7 @@ import { useSelector, useDispatch } from 'react-redux';
 import api from '../../api/axios';
 import { supabase } from '../../supabaseClient';
 import { logout } from '../../store/authSlice';
+import LogoutModal from '../../components/LogoutModal';
 import { MapPin, Camera, CheckCircle2, Navigation, AlertCircle, Clock, Package, Flag, User, LogOut } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 
@@ -23,6 +24,7 @@ export default function DriverMobileView() {
   const [activeTab, setActiveTab] = useState('orders'); // 'orders' | 'profile'
   const [uploadingType, setUploadingType] = useState(null); // 'pickup' | 'delivery' | 'ticket'
   const [updatingStatus, setUpdatingStatus] = useState(false);
+  const [showLogoutModal, setShowLogoutModal] = useState(false);
 
   const fetchMobileData = async (silent = false) => {
     try {
@@ -150,7 +152,7 @@ export default function DriverMobileView() {
   };
 
   const handleLogout = () => {
-    dispatch(logout());
+    setShowLogoutModal(true);
   };
 
   if (error) {
@@ -440,6 +442,12 @@ export default function DriverMobileView() {
         </div>
 
       </div>
+
+      <LogoutModal
+        isOpen={showLogoutModal}
+        onClose={() => setShowLogoutModal(false)}
+        onConfirm={() => dispatch(logout())}
+      />
     </div>
   );
 }

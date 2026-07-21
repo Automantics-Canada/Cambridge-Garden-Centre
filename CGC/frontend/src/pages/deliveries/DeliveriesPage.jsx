@@ -65,20 +65,36 @@ export default function DeliveriesPage() {
   }, []);
 
   const handleStatusUpdate = async (deliveryId, newStatus) => {
-    // Optimistic Update
+    // Optimistic Update including instant Update History entry
     const originalDeliveries = [...deliveries];
-    setDeliveries(prev => prev.map(del => del.id === deliveryId ? { ...del, status: newStatus } : del));
+    const now = new Date();
+
+    setDeliveries(prev => prev.map(del => {
+      if (del.id === deliveryId) {
+        const newHistoryItem = {
+          id: 'temp-' + Date.now(),
+          deliveryId,
+          status: newStatus,
+          notes: `Status updated to ${newStatus}`,
+          createdAt: now.toISOString()
+        };
+        return {
+          ...del,
+          status: newStatus,
+          startedAt: newStatus === 'IN_TRANSIT' && !del.startedAt ? now.toISOString() : del.startedAt,
+          completedAt: newStatus === 'DELIVERED' ? now.toISOString() : del.completedAt,
+          history: [newHistoryItem, ...(del.history || [])]
+        };
+      }
+      return del;
+    }));
 
     try {
-      api.patch(`/api/deliveries/${deliveryId}/status`, { status: newStatus })
-        .then(() => {
-          toast.success(`Status updated to ${newStatus}`);
-        })
-        .catch((e) => {
-          console.error(e);
-          toast.error('Failed to update status');
-          setDeliveries(originalDeliveries); // Revert on failure
-        });
+      const res = await api.patch(`/api/deliveries/${deliveryId}/status`, { status: newStatus });
+      toast.success(`Status updated to ${newStatus}`);
+      if (res.data) {
+        setDeliveries(prev => prev.map(del => del.id === deliveryId ? { ...del, ...res.data } : del));
+      }
     } catch (e) {
       console.error(e);
       toast.error('Failed to update status');

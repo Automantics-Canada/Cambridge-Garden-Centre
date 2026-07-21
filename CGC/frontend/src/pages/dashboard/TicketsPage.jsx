@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import api from '../../api/axios';
 import { supabase } from '../../supabaseClient';
 import { 
@@ -16,13 +17,16 @@ import {
   X,
   ChevronRight,
   ChevronLeft,
-  RotateCcw
+  RotateCcw,
+  Download
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { Skeleton } from '../../components/Skeleton';
 import Loader from '../../components/Loader';
 
 export default function TicketsPage() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const ticketIdParam = searchParams.get('ticketId');
   const [tickets, setTickets] = useState([]);
   const [stats, setStats] = useState({ unlinkedCount: 0 });
   const [loading, setLoading] = useState(false);
@@ -31,6 +35,7 @@ export default function TicketsPage() {
   
   // Filters
   const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [isUploading, setIsUploading] = useState(false);
   const imageInputRef = useRef(null);
   const pdfInputRef = useRef(null);
@@ -39,6 +44,13 @@ export default function TicketsPage() {
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [suppliers, setSuppliers] = useState([]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(search);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [search]);
 
   // Pagination
   const [page, setPage] = useState(1);
@@ -80,49 +92,68 @@ export default function TicketsPage() {
   const fetchTickets = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
     try {
-      const params = new URLSearchParams({
-        resource: 'tickets',
-        page: String(page),
-        limit: '25'
-      });
-      if (activeTab !== 'ALL') params.append('status', activeTab);
-      if (search) params.append('search', search);
-      if (supplierId) params.append('supplierId', supplierId);
-      if (source) params.append('source', source);
-      if (startDate) params.append('startDate', startDate);
-      if (endDate) params.append('endDate', endDate);
+      const queryParams = {
+        page,
+        limit: 25,
+      };
+      if (activeTab !== 'ALL') queryParams.status = activeTab;
+      if (debouncedSearch && debouncedSearch.trim()) queryParams.search = debouncedSearch.trim();
+      if (supplierId) queryParams.supplierId = supplierId;
+      if (source) queryParams.source = source;
+      if (startDate) queryParams.startDate = startDate;
+      if (endDate) queryParams.endDate = endDate;
 
-      const token = localStorage.getItem('token');
-      const headers = token ? { Authorization: `Bearer ${token}` } : {};
+      let resultData = null;
+      try {
+        const res = await api.get('/api/tickets', { params: queryParams });
+        resultData = res.data;
+      } catch (backendErr) {
+        console.warn('Backend tickets call failed, falling back to edge function:', backendErr);
+        const params = new URLSearchParams({
+          resource: 'tickets',
+          page: String(page),
+          limit: '25'
+        });
+        if (activeTab !== 'ALL') params.append('status', activeTab);
+        if (debouncedSearch && debouncedSearch.trim()) params.append('search', debouncedSearch.trim());
+        if (supplierId) params.append('supplierId', supplierId);
+        if (source) params.append('source', source);
+        if (startDate) params.append('startDate', startDate);
+        if (endDate) params.append('endDate', endDate);
 
-      const { data, error } = await supabase.functions.invoke(`fetch-cgc-data?${params.toString()}`, {
-        method: 'GET',
-        headers
-      });
+        const token = localStorage.getItem('token');
+        const headers = token ? { Authorization: `Bearer ${token}` } : {};
 
-      if (error) {
-        throw error;
+        const { data, error } = await supabase.functions.invoke(`fetch-cgc-data?${params.toString()}`, {
+          method: 'GET',
+          headers
+        });
+        if (error) throw error;
+        resultData = data;
       }
       
-      if (data && data.data) {
-        setTickets(data.data);
-        setTotalPages(data.pagination.totalPages || 1);
+      if (resultData && resultData.data) {
+        setTickets(resultData.data);
+        setTotalPages(resultData.pagination?.totalPages || 1);
+      } else if (Array.isArray(resultData)) {
+        setTickets(resultData);
+        setTotalPages(1);
       } else {
         setTickets([]);
         setTotalPages(1);
       }
     } catch (err) {
-      console.error('Error fetching tickets via Edge Function:', err);
+      console.error('Error fetching tickets:', err);
       toast.error('Failed to load tickets');
     } finally {
       if (!silent) setLoading(false);
     }
-  }, [activeTab, search, supplierId, source, startDate, endDate, page]);
+  }, [activeTab, debouncedSearch, supplierId, source, startDate, endDate, page]);
 
   // Reset to page 1 on filter changes
   useEffect(() => {
     setPage(1);
-  }, [activeTab, search, supplierId, source, startDate, endDate]);
+  }, [activeTab, debouncedSearch, supplierId, source, startDate, endDate]);
 
   useEffect(() => {
     fetchTickets();
@@ -235,24 +266,116 @@ export default function TicketsPage() {
     }
   };
 
-  const handleOpenReviewModal = async (ticket) => {
+  const handleDownloadTicketImage = async (ticketUrl, ticketNumber) => {
+    if (!ticketUrl) {
+      toast.error('No image available to download');
+      return;
+    }
+
+    const toastId = toast.loading('Downloading ticket file...');
+    try {
+      const baseUrl = import.meta.env.VITE_API_URL || 'https://cambridge-garden-centre-1.onrender.com';
+      const fullUrl = ticketUrl.startsWith('http') 
+        ? ticketUrl 
+        : `${baseUrl}${ticketUrl}`;
+
+      const response = await fetch(fullUrl);
+      if (!response.ok) throw new Error('Network response was not ok');
+
+      const blob = await response.blob();
+      const downloadUrl = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = downloadUrl;
+
+      let ext = 'jpg';
+      const lowerUrl = ticketUrl.toLowerCase();
+      if (lowerUrl.endsWith('.pdf') || blob.type === 'application/pdf') {
+        ext = 'pdf';
+      } else if (lowerUrl.endsWith('.png') || blob.type === 'image/png') {
+        ext = 'png';
+      } else if (lowerUrl.endsWith('.jpeg')) {
+        ext = 'jpeg';
+      }
+
+      a.download = `Ticket_${ticketNumber || 'image'}.${ext}`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(downloadUrl);
+
+      toast.success('Ticket downloaded successfully', { id: toastId });
+    } catch (err) {
+      console.error('Failed to download ticket image:', err);
+      const baseUrl = import.meta.env.VITE_API_URL || 'https://cambridge-garden-centre-1.onrender.com';
+      const fallbackUrl = ticketUrl.startsWith('http') 
+        ? ticketUrl 
+        : `${baseUrl}${ticketUrl}`;
+      window.open(fallbackUrl, '_blank');
+      toast.success('Opening file in new tab', { id: toastId });
+    }
+  };
+
+  const activeTicketIdRef = useRef(null);
+
+  const handleCloseReviewModal = useCallback(() => {
+    activeTicketIdRef.current = null;
+    setSelectedTicket(null);
+    if (searchParams.has('ticketId')) {
+      const newParams = new URLSearchParams(searchParams);
+      newParams.delete('ticketId');
+      setSearchParams(newParams, { replace: true });
+    }
+  }, [searchParams, setSearchParams]);
+
+  const handleOpenReviewModal = useCallback(async (ticket) => {
+    activeTicketIdRef.current = ticket.id;
     setSelectedTicket(ticket);
+    const newParams = new URLSearchParams(searchParams);
+    newParams.set('ticketId', ticket.id);
+    setSearchParams(newParams, { replace: true });
     try {
       const res = await api.get(`/api/tickets/${ticket.id}`);
-      setSelectedTicket(res.data);
+      if (activeTicketIdRef.current === ticket.id) {
+        setSelectedTicket(res.data);
+      }
     } catch (err) {
       console.error('Failed to load full ticket details:', err);
     }
-  };
+  }, [searchParams, setSearchParams]);
+
+  // Sync ticket review modal with URL query parameter
+  useEffect(() => {
+    if (ticketIdParam) {
+      activeTicketIdRef.current = ticketIdParam;
+      let isSubscribed = true;
+      api.get(`/api/tickets/${ticketIdParam}`)
+        .then(res => {
+          if (isSubscribed && activeTicketIdRef.current === ticketIdParam && res.data) {
+            setSelectedTicket(res.data);
+          }
+        })
+        .catch(err => {
+          console.error('Failed to load ticket for review from URL:', err);
+        });
+      return () => {
+        isSubscribed = false;
+      };
+    } else {
+      activeTicketIdRef.current = null;
+      setSelectedTicket(null);
+    }
+  }, [ticketIdParam]);
 
   const handleLinkToOrder = async (ticketId, orderId) => {
     try {
       await api.post(`/api/tickets/${ticketId}/link`, { orderId });
       toast.success('Ticket linked to order');
       // Refresh ticket details
-      if (selectedTicket?.id === ticketId) {
+      if (activeTicketIdRef.current === ticketId) {
         const res = await api.get(`/api/tickets/${ticketId}`);
-        setSelectedTicket(res.data);
+        if (activeTicketIdRef.current === ticketId) {
+          setSelectedTicket(res.data);
+        }
       }
       fetchTickets();
       fetchStats();
@@ -266,9 +389,11 @@ export default function TicketsPage() {
       await api.post(`/api/tickets/${ticketId}/unlink`, { orderId });
       toast.success('Ticket unlinked from order');
       // Refresh ticket details if modal is open
-      if (selectedTicket?.id === ticketId) {
+      if (activeTicketIdRef.current === ticketId) {
         const res = await api.get(`/api/tickets/${ticketId}`);
-        setSelectedTicket(res.data);
+        if (activeTicketIdRef.current === ticketId) {
+          setSelectedTicket(res.data);
+        }
       }
       fetchTickets();
       fetchStats();
@@ -422,18 +547,29 @@ export default function TicketsPage() {
             </select>
           </div>
 
-          <div className="w-48">
+          <div className="w-72 md:w-80">
              <label className="block text-xs font-medium text-gray-700 mb-1">Date Range</label>
-             <div className="flex items-center gap-2">
-                <input type="date" className="w-full p-2 border rounded-lg text-xs" value={startDate} onChange={e => setStartDate(e.target.value)} />
-                <span className="text-gray-400">-</span>
-                <input type="date" className="w-full p-2 border rounded-lg text-xs" value={endDate} onChange={e => setEndDate(e.target.value)} />
+             <div className="flex items-center gap-1.5">
+                <input 
+                  type="date" 
+                  className="w-full min-w-0 p-2 border rounded-lg text-xs focus:ring-2 focus:ring-green-500 focus:border-green-500 bg-white" 
+                  value={startDate} 
+                  onChange={e => setStartDate(e.target.value)} 
+                />
+                <span className="text-gray-400 font-medium">-</span>
+                <input 
+                  type="date" 
+                  className="w-full min-w-0 p-2 border rounded-lg text-xs focus:ring-2 focus:ring-green-500 focus:border-green-500 bg-white" 
+                  value={endDate} 
+                  onChange={e => setEndDate(e.target.value)} 
+                />
              </div>
           </div>
 
           <button 
             onClick={() => {
               setSearch('');
+              setDebouncedSearch('');
               setSource('');
               setSupplierId('');
               setStartDate('');
@@ -493,7 +629,20 @@ export default function TicketsPage() {
                         ) : ticket.source === 'EMAIL' ? (
                           <Mail className="w-3 h-3 text-blue-500" title="Email" />
                         ) : (
-                          <Upload className="w-3 h-3 text-purple-500" title="Manual Upload" />
+                        <></>
+                       )}
+                        {ticket.imageUrl && (
+                           <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDownloadTicketImage(ticket.imageUrl, ticket.ticketNumber);
+                            }}
+                            className="p-1 text-gray-400 hover:text-green-600 hover:bg-green-50 rounded transition-colors"
+                            title="Download Ticket Image"
+                          >
+                            <Download className="w-3.5 h-3.5" />
+                          </button>
                         )}
                       </div>
                       <div className="text-xs text-gray-500">{new Date(ticket.receivedAt).toLocaleDateString()}</div>
@@ -585,9 +734,12 @@ export default function TicketsPage() {
       {selectedTicket && (
         <div className="fixed inset-0 z-50 overflow-hidden flex items-center justify-center" aria-labelledby="modal-title" role="dialog" aria-modal="true">
           <div className="flex items-center justify-center min-h-screen w-full p-4 text-center">
-            <div className="fixed inset-0 bg-gray-600 bg-opacity-75 transition-opacity backdrop-blur-sm" onClick={() => setSelectedTicket(null)}></div>
+            <div className="fixed inset-0 bg-gray-600 bg-opacity-75 transition-opacity backdrop-blur-sm"></div>
 
-            <div className="inline-block align-middle bg-white rounded-2xl text-left overflow-hidden shadow-2xl transform transition-all sm:max-w-6xl sm:w-full h-[90vh] flex flex-col">
+            <div 
+              className="inline-block align-middle bg-white rounded-2xl text-left overflow-hidden shadow-2xl transform transition-all sm:max-w-6xl sm:w-full h-[90vh] flex flex-col"
+              onClick={(e) => e.stopPropagation()}
+            >
               
               <div className="flex justify-between items-center px-6 py-4 border-b bg-gray-50">
                 <div className="flex items-center gap-3">
@@ -602,21 +754,23 @@ export default function TicketsPage() {
                       Driver: {selectedTicket.driver.name}
                     </span>
                   )}
-                  {selectedTicket.ocrConfidence > 0 && (
-                    <div className="flex items-center gap-1 ml-4" title="OCR Confidence">
-                       <div className="w-24 h-1.5 bg-gray-200 rounded-full overflow-hidden">
-                          <div 
-                            className={`h-full ${selectedTicket.ocrConfidence > 0.8 ? 'bg-green-500' : selectedTicket.ocrConfidence > 0.5 ? 'bg-yellow-500' : 'bg-red-500'}`}
-                            style={{ width: `${selectedTicket.ocrConfidence * 100}%` }}
-                          ></div>
-                       </div>
-                       <span className="text-xs font-semibold text-gray-500">{Math.round(selectedTicket.ocrConfidence * 100)}%</span>
-                    </div>
-                  )}
                 </div>
-                <button onClick={() => setSelectedTicket(null)} className="text-gray-400 hover:text-gray-600 transition-colors p-1 rounded-full hover:bg-gray-100">
-                  <X className="w-6 h-6" />
-                </button>
+                <div className="flex items-center gap-2">
+                  {selectedTicket.imageUrl && (
+                    <button
+                      type="button"
+                      onClick={() => handleDownloadTicketImage(selectedTicket.imageUrl, selectedTicket.ticketNumber)}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white border border-gray-200 hover:border-green-300 text-gray-700 hover:text-green-700 rounded-lg text-xs font-semibold shadow-sm transition-all"
+                      title="Download Ticket File"
+                    >
+                      <Download className="w-3.5 h-3.5 text-green-600" />
+                      Download
+                    </button>
+                  )}
+                  <button onClick={handleCloseReviewModal} className="text-gray-400 hover:text-gray-600 transition-colors p-1 rounded-full hover:bg-gray-100">
+                    <X className="w-6 h-6" />
+                  </button>
+                </div>
               </div>
 
               <div className="flex flex-1 overflow-hidden">

@@ -566,7 +566,7 @@ export default function OrdersPage() {
         <div className="hidden sm:flex sm:flex-1 sm:items-center sm:justify-between">
           <div>
             <p className="text-sm text-gray-700">
-              Showing page <span className="font-medium">{page}</span> <span className="font-medium"></span>
+              Showing page <span className="font-medium">{page}</span> <span className="font-medium"> of {totalPages}</span>
             </p>
           </div>
           <div>

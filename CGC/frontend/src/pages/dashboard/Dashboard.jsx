@@ -200,7 +200,7 @@ export default function Dashboard() {
             <h3 className="text-xl font-bold text-gray-900">Management Links</h3>
             
             <div className="space-y-3">
-               <button 
+               {/* <button 
                 onClick={() => navigate('/dashboard/rates')}
                 className="w-full flex items-center justify-between p-4 rounded-2xl bg-gray-50 hover:bg-gray-100 transition-all group"
                >
@@ -214,7 +214,7 @@ export default function Dashboard() {
                      </div>
                   </div>
                   <ChevronRight className="w-4 h-4 text-gray-300" />
-               </button>
+               </button> */}
 
                <button 
                 onClick={() => navigate('/dashboard/supplier')}

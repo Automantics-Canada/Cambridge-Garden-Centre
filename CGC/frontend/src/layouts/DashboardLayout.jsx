@@ -8,12 +8,14 @@ import {
   File
 } from 'lucide-react';
 import { logout } from '../store/authSlice';
+import LogoutModal from '../components/LogoutModal';
 import clsx from 'clsx';
 
 import { motion, AnimatePresence } from 'framer-motion';
 
 export default function DashboardLayout() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [showLogoutModal, setShowLogoutModal] = useState(false);
   const location = useLocation();
   const dispatch = useDispatch();
   const user = useSelector(state => state.auth.user);
@@ -118,7 +120,7 @@ export default function DashboardLayout() {
         <div className="p-4 border-t border-[#2D6A4F] mt-auto">
           <div className="flex items-center gap-3">
             <div className="w-8 h-8 rounded-full bg-[#2D6A4F] flex items-center justify-center font-bold text-sm flex-shrink-0">
-              {user?.name ? user.name.substring(0, 2).toUpperCase() : "U"}
+              {user?.name ? user.name.charAt(0).toUpperCase() : "U"}
             </div>
             {sidebarOpen && (
               <div className="flex-1 overflow-hidden">
@@ -129,7 +131,7 @@ export default function DashboardLayout() {
               </div>
             )}
             <button 
-              onClick={() => dispatch(logout())} 
+              onClick={() => setShowLogoutModal(true)} 
               className={clsx(
                 "text-green-300 hover:text-white transition-colors",
                 !sidebarOpen && "hidden"
@@ -141,7 +143,7 @@ export default function DashboardLayout() {
           </div>
           {!sidebarOpen && (
             <button 
-              onClick={() => dispatch(logout())} 
+              onClick={() => setShowLogoutModal(true)} 
               className="mt-4 w-full flex justify-center text-green-300 hover:text-white transition-colors"
               title="Logout"
             >
@@ -168,6 +170,13 @@ export default function DashboardLayout() {
           </AnimatePresence>
         </main>
       </div>
+
+      {/* Logout Confirmation Modal */}
+      <LogoutModal
+        isOpen={showLogoutModal}
+        onClose={() => setShowLogoutModal(false)}
+        onConfirm={() => dispatch(logout())}
+      />
     </div>
   );
 }

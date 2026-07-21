@@ -319,7 +319,11 @@ export const InvoiceService = {
   async getInvoices(filters?: { status?: InvoiceStatus; supplierId?: string }) {
     return prisma.invoice.findMany({
       where: filters || {},
-      orderBy: { receivedAt: 'desc' },
+      orderBy: [
+        { receivedAt: 'desc' },
+        { invoiceDate: 'desc' },
+        { createdAt: 'desc' },
+      ],
       include: {
         supplier: true,
         lineItems: true,

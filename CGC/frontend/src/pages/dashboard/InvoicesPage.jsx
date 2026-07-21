@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../../api/axios';
 import { supabase } from '../../supabaseClient';
 import { 
@@ -26,9 +26,10 @@ const STATUS_TABS = [
 
 export default function InvoicesPage() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const activeTab = searchParams.get('status') || 'ALL';
   const [invoices, setInvoices] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState('ALL');
   const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef(null);
   const [suppliers, setSuppliers] = useState([]);
@@ -172,25 +173,37 @@ export default function InvoicesPage() {
     }
   };
 
-  const filteredInvoices = invoices.filter(inv => {
-    const matchesSearch = inv.invoiceNumber?.toLowerCase().includes(search.toLowerCase()) ||
-                         inv.supplier?.name?.toLowerCase().includes(search.toLowerCase());
-    
-    const matchesSupplier = filters.supplierId === 'ALL' || inv.supplierId === filters.supplierId;
-    const matchesType = filters.senderType === 'ALL' || inv.senderType === filters.senderType;
-    const flaggedCount = inv.lineItems?.filter(li => li.flag !== 'OK').length || 0;
-    const matchesDiscrepancy = !filters.hasDiscrepancies || flaggedCount > 0;
-    
-    let matchesDate = true;
-    if (filters.dateStart) {
-      matchesDate = matchesDate && new Date(inv.invoiceDate) >= new Date(filters.dateStart);
-    }
-    if (filters.dateEnd) {
-      matchesDate = matchesDate && new Date(inv.invoiceDate) <= new Date(filters.dateEnd);
-    }
+  const filteredInvoices = invoices
+    .filter(inv => {
+      const matchesSearch = inv.invoiceNumber?.toLowerCase().includes(search.toLowerCase()) ||
+                           inv.supplier?.name?.toLowerCase().includes(search.toLowerCase());
+      
+      const matchesSupplier = filters.supplierId === 'ALL' || inv.supplierId === filters.supplierId;
+      const matchesType = filters.senderType === 'ALL' || inv.senderType === filters.senderType;
+      const flaggedCount = inv.lineItems?.filter(li => li.flag !== 'OK').length || 0;
+      const matchesDiscrepancy = !filters.hasDiscrepancies || flaggedCount > 0;
+      
+      let matchesDate = true;
+      if (filters.dateStart) {
+        matchesDate = matchesDate && new Date(inv.invoiceDate || inv.receivedAt) >= new Date(filters.dateStart);
+      }
+      if (filters.dateEnd) {
+        matchesDate = matchesDate && new Date(inv.invoiceDate || inv.receivedAt) <= new Date(filters.dateEnd);
+      }
 
-    return matchesSearch && matchesSupplier && matchesType && matchesDiscrepancy && matchesDate;
-  });
+      return matchesSearch && matchesSupplier && matchesType && matchesDiscrepancy && matchesDate;
+    })
+    .sort((a, b) => {
+      const timeA = new Date(a.receivedAt || a.invoiceDate || a.createdAt || 0).getTime();
+      const timeB = new Date(b.receivedAt || b.invoiceDate || b.createdAt || 0).getTime();
+      if (timeB !== timeA) return timeB - timeA;
+
+      const docTimeA = new Date(a.invoiceDate || 0).getTime();
+      const docTimeB = new Date(b.invoiceDate || 0).getTime();
+      if (docTimeB !== docTimeA) return docTimeB - docTimeA;
+
+      return String(b.id || '').localeCompare(String(a.id || ''));
+    });
 
   return (
     <div className="flex flex-col h-full space-y-4">
@@ -228,7 +241,15 @@ export default function InvoicesPage() {
             {STATUS_TABS.map((tab) => (
               <button
                 key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
+                onClick={() => {
+                  const newParams = new URLSearchParams(searchParams);
+                  if (tab.id === 'ALL') {
+                    newParams.delete('status');
+                  } else {
+                    newParams.set('status', tab.id);
+                  }
+                  setSearchParams(newParams, { replace: true });
+                }}
                 className={`
                   flex-1 py-4 px-4 text-sm font-medium text-center border-b-2 transition-all
                   ${activeTab === tab.id 

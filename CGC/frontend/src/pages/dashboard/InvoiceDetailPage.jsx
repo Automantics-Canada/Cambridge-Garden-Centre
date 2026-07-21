@@ -112,11 +112,20 @@ export default function InvoiceDetailPage() {
     }
   };
 
+  const handleBack = () => {
+    if (window.history.length > 2) {
+      navigate(-1);
+    } else {
+      const statusParam = invoice?.status ? `?status=${invoice.status}` : '';
+      navigate(`/dashboard/invoices${statusParam}`);
+    }
+  };
+
   if (loading) return <InvoiceDetailSkeleton />;
   if (!invoice) return (
     <div className="p-8 text-center bg-white rounded-xl border">
       <h2 className="text-xl font-semibold mb-4 text-gray-900">Invoice not found</h2>
-      <button onClick={() => navigate('/dashboard/invoices')} className="text-green-600 font-medium">Back to Invoices</button>
+      <button onClick={handleBack} className="text-green-600 font-medium">Back to Invoices</button>
     </div>
   );
 
@@ -140,7 +149,7 @@ export default function InvoiceDetailPage() {
       <div className="flex items-center justify-between bg-white p-4 rounded-xl border border-gray-200 shadow-sm flex-shrink-0">
         <div className="flex items-center gap-4">
           <button 
-            onClick={() => navigate('/dashboard/invoices')}
+            onClick={handleBack}
             className="p-2 hover:bg-gray-100 rounded-lg text-gray-500 transition-colors"
           >
             <ArrowLeft className="w-5 h-5" />

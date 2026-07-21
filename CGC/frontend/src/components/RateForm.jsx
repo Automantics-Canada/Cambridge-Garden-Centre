@@ -7,8 +7,9 @@ import { fetchProducts, fetchUnits } from '../store/productSlice';
 
 export default function RateForm({ supplierId, rate, onClose }) {
   const dispatch = useDispatch();
-  const { loading } = useSelector((state) => state.suppliers);
+  const { suppliers, loading } = useSelector((state) => state.suppliers);
   const { products, units } = useSelector((state) => state.products);
+  const currentSupplier = suppliers.find(s => s.id === supplierId);
 
   const [formData, setFormData] = useState({
     productName: '',
@@ -19,6 +20,7 @@ export default function RateForm({ supplierId, rate, onClose }) {
   });
 
   const [errors, setErrors] = useState({});
+  const [existingRateFound, setExistingRateFound] = useState(false);
 
   useEffect(() => {
     dispatch(fetchProducts());
@@ -34,6 +36,7 @@ export default function RateForm({ supplierId, rate, onClose }) {
         effectiveFrom: rate.effectiveFrom ? new Date(rate.effectiveFrom).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
         notes: rate.notes || '',
       });
+      setExistingRateFound(false);
     } else {
       setFormData({
         productName: '',
@@ -42,6 +45,7 @@ export default function RateForm({ supplierId, rate, onClose }) {
         effectiveFrom: new Date().toISOString().split('T')[0],
         notes: '',
       });
+      setExistingRateFound(false);
     }
   }, [rate]);
 
@@ -73,7 +77,7 @@ export default function RateForm({ supplierId, rate, onClose }) {
         })).unwrap();
         toast.success('Rate updated successfully');
       } else {
-        // Add mode
+        // Add / Update mode
         await dispatch(addSupplierRate({ 
           supplierId, 
           data: {
@@ -81,7 +85,7 @@ export default function RateForm({ supplierId, rate, onClose }) {
             rate: Number(formData.rate)
           } 
         })).unwrap();
-        toast.success('Rate added successfully');
+        toast.success(existingRateFound ? 'Existing rate updated' : 'Rate added successfully');
       }
       onClose();
     } catch (err) {
@@ -94,10 +98,27 @@ export default function RateForm({ supplierId, rate, onClose }) {
     
     if (name === 'productName') {
       const selectedProduct = products.find(p => p.name === value);
-      if (selectedProduct && selectedProduct.unit) {
-        setFormData(prev => ({ ...prev, productName: value, unit: selectedProduct.unit }));
+      const existingRate = currentSupplier?.negotiatedRates?.find(
+        r => r.productName.trim().toLowerCase() === value.trim().toLowerCase()
+      );
+
+      if (existingRate && (!rate || rate.id !== existingRate.id)) {
+        setFormData({
+          productName: value,
+          rate: existingRate.rate || '',
+          unit: existingRate.unit || selectedProduct?.unit || 'ton',
+          effectiveFrom: existingRate.effectiveFrom ? new Date(existingRate.effectiveFrom).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
+          notes: existingRate.notes || '',
+        });
+        setExistingRateFound(true);
+        toast.info(`Loaded existing rate for "${value}" to update`);
       } else {
-        setFormData(prev => ({ ...prev, productName: value }));
+        setExistingRateFound(false);
+        if (selectedProduct && selectedProduct.unit) {
+          setFormData(prev => ({ ...prev, productName: value, unit: selectedProduct.unit }));
+        } else {
+          setFormData(prev => ({ ...prev, productName: value }));
+        }
       }
     } else {
       setFormData(prev => ({ ...prev, [name]: value }));
@@ -150,6 +171,11 @@ export default function RateForm({ supplierId, rate, onClose }) {
           ))}
         </select>
         {errors.productName && <p className="text-red-500 text-[10px] mt-1">{errors.productName}</p>}
+        {existingRateFound && (
+          <p className="text-[10px] text-blue-600 font-semibold mt-1">
+            ℹ️ An existing rate for this product was found and loaded. Submitting will update it.
+          </p>
+        )}
         {products.length === 0 && (
           <p className="text-[10px] text-amber-600 mt-1">
             No products found. Please add products in the Products section first.

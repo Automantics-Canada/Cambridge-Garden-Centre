@@ -377,11 +377,14 @@ export const TicketService = {
       if (filters.endDate) where.receivedAt.lte = new Date(filters.endDate);
     }
 
-    if (filters?.search) {
+    if (filters?.search && filters.search.trim()) {
+      const s = filters.search.trim();
       where.OR = [
-        { ticketNumber: { contains: filters.search, mode: 'insensitive' } },
-        { poNumber: { contains: filters.search, mode: 'insensitive' } },
-        { material: { contains: filters.search, mode: 'insensitive' } },
+        { ticketNumber: { contains: s, mode: 'insensitive' } },
+        { poNumber: { contains: s, mode: 'insensitive' } },
+        { material: { contains: s, mode: 'insensitive' } },
+        { supplierName: { contains: s, mode: 'insensitive' } },
+        { supplier: { name: { contains: s, mode: 'insensitive' } } },
       ];
     }
 
@@ -452,11 +455,14 @@ export const TicketService = {
       if (filters.endDate) where.receivedAt.lte = new Date(filters.endDate);
     }
 
-    if (filters?.search) {
+    if (filters?.search && filters.search.trim()) {
+      const s = filters.search.trim();
       where.OR = [
-        { ticketNumber: { contains: filters.search, mode: 'insensitive' } },
-        { poNumber: { contains: filters.search, mode: 'insensitive' } },
-        { material: { contains: filters.search, mode: 'insensitive' } },
+        { ticketNumber: { contains: s, mode: 'insensitive' } },
+        { poNumber: { contains: s, mode: 'insensitive' } },
+        { material: { contains: s, mode: 'insensitive' } },
+        { supplierName: { contains: s, mode: 'insensitive' } },
+        { supplier: { name: { contains: s, mode: 'insensitive' } } },
       ];
     }
 

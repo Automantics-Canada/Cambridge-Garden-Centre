@@ -197,7 +197,15 @@ const supplierSlice = createSlice({
         const supplier = state.suppliers.find(s => s.id === action.payload.supplierId);
         if (supplier) {
           if (!supplier.negotiatedRates) supplier.negotiatedRates = [];
-          supplier.negotiatedRates.push(action.payload.rate);
+          const existingIndex = supplier.negotiatedRates.findIndex(r => 
+            r.id === action.payload.rate.id || 
+            r.productName.toLowerCase() === action.payload.rate.productName.toLowerCase()
+          );
+          if (existingIndex !== -1) {
+            supplier.negotiatedRates[existingIndex] = action.payload.rate;
+          } else {
+            supplier.negotiatedRates.push(action.payload.rate);
+          }
         }
       })
       .addCase(addSupplierRate.rejected, (state, action) => {
