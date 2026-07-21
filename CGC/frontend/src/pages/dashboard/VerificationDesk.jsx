@@ -24,6 +24,8 @@ import Loader from '../../components/Loader';
 import toast from 'react-hot-toast';
 import { motion, AnimatePresence } from 'framer-motion';
 
+const formatInvoiceNo = (num) => (num || '').replace(/^INV-?/i, '');
+
 export default function VerificationDesk() {
   const [invoices, setInvoices] = useState([]);
   const [selectedInvoice, setSelectedInvoice] = useState(null);
@@ -309,7 +311,7 @@ export default function VerificationDesk() {
                     </div>
                     <div>
                       <div className="flex items-center gap-3">
-                        <span className="text-sm font-semibold tracking-tight text-gray-500">INV-{inv.invoiceNumber}</span>
+                        <span className="text-sm font-semibold tracking-tight text-gray-500">{formatInvoiceNo(inv.invoiceNumber)}</span>
                         <span className={`text-[10px] font-bold uppercase px-2.5 py-0.5 rounded-full tracking-wider ${
                           inv.status === 'VERIFIED' ? 'bg-green-100 text-green-700' :
                           inv.status === 'DISPUTED' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'
@@ -481,7 +483,7 @@ export default function VerificationDesk() {
                                             <span className="text-white text-[9px] font-semibold uppercase tracking-widest opacity-80">Zoom scan</span>
                                             <Maximize2 className="text-white w-4 h-4 opacity-0 group-hover:opacity-100 transition-opacity" />
                                           </div>
-                                          <h3 className="text-white text-lg font-light mt-1">INV-{selectedInvoice.invoiceNumber}</h3>
+                                          <h3 className="text-white text-lg font-light mt-1">{formatInvoiceNo(selectedInvoice.invoiceNumber)}</h3>
                                         </div>
                                       </div>
                                     </div>
