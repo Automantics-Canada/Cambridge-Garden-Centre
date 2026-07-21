@@ -10,9 +10,11 @@ const icons = {
 export default function StatusTimeline({ history }) {
   if (!history || history.length === 0) return <p className="text-xs text-gray-400 italic">No history available</p>;
 
+  const sortedHistory = [...history].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
   return (
     <div className="space-y-4">
-      {history.map((event, idx) => (
+      {sortedHistory.map((event, idx) => (
         <div key={event.id} className="relative flex gap-3">
           {idx !== history.length - 1 && (
             <div className="absolute left-[7px] top-4 bottom-[-16px] w-[1px] bg-gray-200" />
