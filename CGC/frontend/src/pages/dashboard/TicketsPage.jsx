@@ -56,6 +56,89 @@ export default function TicketsPage() {
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
 
+  const renderPageNumbers = () => {
+    const pages = [];
+    const maxVisible = 5;
+    
+    let startPage = Math.max(1, page - 2);
+    let endPage = Math.min(totalPages, startPage + maxVisible - 1);
+    
+    if (endPage - startPage < maxVisible - 1) {
+      startPage = Math.max(1, endPage - maxVisible + 1);
+    }
+    
+    // Add dots at the start if needed
+    if (startPage > 1) {
+      pages.push(
+        <button
+          key={1}
+          onClick={() => setPage(1)}
+          className={`relative inline-flex items-center px-4 py-2 border text-sm font-medium transition-all ${
+            page === 1
+              ? 'z-10 bg-green-50 border-green-500 text-green-600 font-semibold'
+              : 'bg-white border-gray-300 text-gray-500 hover:bg-gray-50'
+          }`}
+        >
+          1
+        </button>
+      );
+      if (startPage > 2) {
+        pages.push(
+          <span key="dots-start" className="relative inline-flex items-center px-4 py-2 border border-gray-300 bg-white text-sm font-medium text-gray-500 select-none">
+            ...
+          </span>
+        );
+      }
+    }
+    
+    for (let i = startPage; i <= endPage; i++) {
+      // Don't duplicate page 1 or page totalPages if already added as boundary
+      if (i === 1 && startPage > 1) continue;
+      if (i === totalPages && endPage < totalPages) continue;
+
+      pages.push(
+        <button
+          key={i}
+          onClick={() => setPage(i)}
+          className={`relative inline-flex items-center px-4 py-2 border text-sm font-medium transition-all ${
+            page === i
+              ? 'z-10 bg-green-50 border-green-500 text-green-600 font-semibold'
+              : 'bg-white border-gray-300 text-gray-500 hover:bg-gray-50'
+          }`}
+        >
+          {i}
+        </button>
+      );
+    }
+
+    // Add dots at the end if needed
+    if (endPage < totalPages) {
+      if (endPage < totalPages - 1) {
+        pages.push(
+          <span key="dots-end" className="relative inline-flex items-center px-4 py-2 border border-gray-300 bg-white text-sm font-medium text-gray-500 select-none">
+            ...
+          </span>
+        );
+      }
+      pages.push(
+        <button
+          key={totalPages}
+          onClick={() => setPage(totalPages)}
+          className={`relative inline-flex items-center px-4 py-2 border text-sm font-medium transition-all ${
+            page === totalPages
+              ? 'z-10 bg-green-50 border-green-500 text-green-600 font-semibold'
+              : 'bg-white border-gray-300 text-gray-500 hover:bg-gray-50'
+          }`}
+        >
+          {totalPages}
+        </button>
+      );
+    }
+    
+    return pages;
+  };
+
+
   // Linking
   const [orderSearch, setOrderSearch] = useState('');
   const [orderResults, setOrderResults] = useState([]);
@@ -94,7 +177,7 @@ export default function TicketsPage() {
     try {
       const queryParams = {
         page,
-        limit: 25,
+        limit: 50,
       };
       if (activeTab !== 'ALL') queryParams.status = activeTab;
       if (debouncedSearch && debouncedSearch.trim()) queryParams.search = debouncedSearch.trim();
@@ -112,7 +195,7 @@ export default function TicketsPage() {
         const params = new URLSearchParams({
           resource: 'tickets',
           page: String(page),
-          limit: '25'
+          limit: '50'
         });
         if (activeTab !== 'ALL') params.append('status', activeTab);
         if (debouncedSearch && debouncedSearch.trim()) params.append('search', debouncedSearch.trim());
@@ -716,6 +799,7 @@ export default function TicketsPage() {
                   <span className="sr-only">Previous</span>
                   <ChevronLeft className="h-5 w-5" aria-hidden="true" />
                 </button>
+                {renderPageNumbers()}
                 <button
                   onClick={() => setPage(p => Math.min(p + 1, totalPages))}
                   disabled={page === totalPages}

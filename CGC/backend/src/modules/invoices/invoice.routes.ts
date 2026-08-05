@@ -18,5 +18,7 @@ router.post('/:id/dispute', InvoiceController.disputeInvoice);
 router.post('/:id/reopen', InvoiceController.reopenInvoice);
 router.post('/line-items/link-order', InvoiceController.linkOrderToLineItem);
 router.post('/line-items/link-tickets', InvoiceController.linkTicketsToLineItem);
+router.post('/line-items/unlink-order', InvoiceController.unlinkOrderFromLineItem);
+router.post('/line-items/unlink-ticket', InvoiceController.unlinkTicketFromLineItem);
 
 export default router;

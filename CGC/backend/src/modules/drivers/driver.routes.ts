@@ -5,7 +5,8 @@ import {
   createDriver, 
   getDriverDeliveries, 
   updateDriver,
-  getLoggedInDriverProfile 
+  getLoggedInDriverProfile,
+  deleteDriver
 } from './driver.controller.js';
 
 const router = Router();
@@ -17,6 +18,8 @@ router.get('/me', getLoggedInDriverProfile);
 router.get('/', getDrivers);
 router.post('/', createDriver);
 router.patch('/:id', updateDriver);
+router.delete('/:id', deleteDriver);
 router.get('/:id/deliveries', getDriverDeliveries);
 
 export default router;
+

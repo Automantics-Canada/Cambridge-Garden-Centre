@@ -127,5 +127,32 @@ export const InvoiceController = {
     } catch (error) {
       next(error);
     }
+  },
+
+  async unlinkOrderFromLineItem(req: Request, res: Response, next: NextFunction) {
+    try {
+      const userId = (req as any).user?.id;
+      if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+
+      const { lineItemId } = req.body;
+      const updated = await InvoiceService.unlinkOrderFromLineItem(lineItemId, userId);
+      res.json(updated);
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  async unlinkTicketFromLineItem(req: Request, res: Response, next: NextFunction) {
+    try {
+      const userId = (req as any).user?.id;
+      if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+
+      const { lineItemId, ticketId } = req.body;
+      const updated = await InvoiceService.unlinkTicketFromLineItem(lineItemId, ticketId, userId);
+      res.json(updated);
+    } catch (error) {
+      next(error);
+    }
   }
 };
+

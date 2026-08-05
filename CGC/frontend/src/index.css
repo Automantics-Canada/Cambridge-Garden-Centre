@@ -31,4 +31,11 @@
 
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
   background: #94a3b8; /* Tailwind's gray-400 */
-}
+}
+
+/* Hide standard Edge/IE password reveal button to fix double eye icons */
+input[type="password"]::-ms-reveal,
+input[type="password"]::-ms-clear {
+  display: none !important;
+}
+

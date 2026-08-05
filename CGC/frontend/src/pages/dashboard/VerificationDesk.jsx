@@ -195,6 +195,37 @@ export default function VerificationDesk() {
     }
   };
 
+  const handleUnlinkOrder = async (lineItemId) => {
+    setIsProcessing(true);
+    try {
+      await api.post('/api/invoices/line-items/unlink-order', {
+        lineItemId
+      });
+      toast.success('Order unlinked successfully');
+      fetchInvoiceDetails(selectedInvoice.id);
+    } catch (err) {
+      toast.error('Failed to unlink order');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const handleUnlinkTicket = async (lineItemId, ticketId) => {
+    setIsProcessing(true);
+    try {
+      await api.post('/api/invoices/line-items/unlink-ticket', {
+        lineItemId,
+        ticketId
+      });
+      toast.success('Ticket unlinked successfully');
+      fetchInvoiceDetails(selectedInvoice.id);
+    } catch (err) {
+      toast.error('Failed to unlink ticket');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
   const searchManualLinks = async (query) => {
     if (!query) {
       setSearchResults([]);
@@ -395,14 +426,14 @@ export default function VerificationDesk() {
                                 </button>
                               </>
                             )}
-                            {selectedInvoice.status !== 'PENDING_REVIEW' && (
-                              <button 
-                                onClick={() => api.post(`/api/invoices/${selectedInvoice.id}/reopen`).then(() => fetchInvoiceDetails(selectedInvoice.id))}
-                                className="px-6 py-2.5 bg-gray-800 text-white rounded-xl font-medium text-xs hover:bg-black transition-all shadow-sm"
-                              >
-                                Reopen Record
-                              </button>
-                            )}
+                            {/* {selectedInvoice.status !== 'PENDING_REVIEW' && (
+                              // <button 
+                              //   onClick={() => api.post(`/api/invoices/${selectedInvoice.id}/reopen`).then(() => fetchInvoiceDetails(selectedInvoice.id))}
+                              //   className="px-6 py-2.5 bg-gray-800 text-white rounded-xl font-medium text-xs hover:bg-black transition-all shadow-sm"
+                              // >
+                              //   Reopen Record
+                              // </button>
+                            )} */}
                           </div>
                         </div>
 
@@ -628,7 +659,12 @@ export default function VerificationDesk() {
                                                           </div>
                                                           <p className="text-[9px] font-bold text-purple-600 uppercase mt-0.5">{Number(t.quantity)} {t.unit}</p>
                                                         </div>
-                                                        <button className="opacity-0 group-hover:opacity-100 p-1 hover:bg-red-50 text-red-400 rounded-lg transition-all flex-shrink-0">
+                                                        <button 
+                                                          onClick={() => handleUnlinkTicket(li.id, t.id)}
+                                                          disabled={isProcessing}
+                                                          className="opacity-0 group-hover:opacity-100 p-1 hover:bg-red-50 text-red-400 rounded-lg transition-all flex-shrink-0"
+                                                          title="Unlink Ticket"
+                                                        >
                                                           <X className="w-3 h-3" />
                                                         </button>
                                                       </div>
@@ -675,7 +711,12 @@ export default function VerificationDesk() {
                                                           <span className="font-bold">{Number(li.matchedOrder?.quantity)} {li.matchedOrder?.unit}</span>
                                                         </div>
                                                       </div>
-                                                      <button className="absolute top-2.5 right-2.5 opacity-0 group-hover:opacity-100 p-1 bg-white/10 hover:bg-white/20 rounded-lg transition-all">
+                                                      <button 
+                                                        onClick={() => handleUnlinkOrder(li.id)}
+                                                        disabled={isProcessing}
+                                                        className="absolute top-2.5 right-2.5 opacity-0 group-hover:opacity-100 p-1 bg-white/10 hover:bg-white/20 rounded-lg transition-all"
+                                                        title="Unlink Order"
+                                                      >
                                                         <X className="w-3 h-3 text-white" />
                                                       </button>
                                                     </div>

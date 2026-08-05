@@ -259,14 +259,14 @@ export default function DriverMobileView() {
                     </div>
 
                     <div className="space-y-3">
-                      <a 
+                      {/* <a 
                         href={`https://maps.google.com/?q=${encodeURIComponent(currentDelivery.order.shippingAddress || currentDelivery.order.customerName)}`}
                         target="_blank" rel="noopener noreferrer"
                         className="w-full flex items-center justify-center gap-3 bg-white hover:bg-slate-50 text-slate-700 py-4 rounded-xl font-semibold text-xs transition-all active:scale-[0.98] tracking-widest uppercase border border-slate-200"
                       >
                         <Navigation size={16} className="text-[#2D6A4F]" strokeWidth={2} />
                         GET DIRECTIONS
-                      </a>
+                      </a> */}
 
                       {/* Status Buttons */}
                       {currentDelivery.status === 'PLACED' && (
@@ -333,14 +333,20 @@ export default function DriverMobileView() {
                               )}
                             </div>
 
-                            {!(currentDelivery.order?.tickets?.length > 0) ? (
+                            <div className="space-y-3 w-full">
+                              {currentDelivery.order?.tickets?.map((t, idx) => (
+                                <div key={t.id || idx} className="flex items-center justify-center gap-2 bg-teal-50 border border-teal-200 text-teal-700 py-4 rounded-xl text-[10px] font-semibold uppercase w-full">
+                                  <CheckCircle2 size={18} strokeWidth={2} /> TICKET {idx + 1} OK
+                                </div>
+                              ))}
+
                               <label className={`flex flex-col items-center justify-center gap-2 py-4 rounded-xl font-semibold text-[10px] tracking-widest uppercase cursor-pointer border transition-all active:scale-[0.98] w-full ${
                                 uploadingType === 'ticket'
                                   ? 'bg-slate-100 border-slate-200 text-slate-400 cursor-not-allowed'
                                   : 'bg-teal-50 border-teal-200 text-teal-700'
                               }`}>
                                 <Camera size={18} strokeWidth={2} className={uploadingType === 'ticket' ? 'animate-spin' : ''} />
-                                {uploadingType === 'ticket' ? 'UPLOADING...' : 'UPLOAD TICKET'}
+                                {uploadingType === 'ticket' ? 'UPLOADING...' : (currentDelivery.order?.tickets?.length > 0 ? 'UPLOAD ANOTHER TICKET' : 'UPLOAD TICKET')}
                                 <input
                                   type="file"
                                   className="hidden"
@@ -350,11 +356,8 @@ export default function DriverMobileView() {
                                   onChange={(e) => handlePhotoUpload(currentDelivery.id, 'ticket', e.target.files?.[0])}
                                 />
                               </label>
-                            ) : (
-                              <div className="flex flex-col items-center justify-center gap-2 bg-teal-50 border border-teal-200 text-teal-700 py-4 rounded-xl text-[10px] font-semibold uppercase w-full">
-                                <CheckCircle2 size={18} strokeWidth={2} /> TICKET OK
-                              </div>
-                            )}
+                            </div>
+
                           </div>
 
                           {/* MARK AS DELIVERED */}

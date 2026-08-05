@@ -217,7 +217,7 @@ export default function SupplierForm({ supplier = null, onClose }) {
       {/* Keywords */}
       <Motion.div variants={itemVariants}>
         <label className="block text-sm font-medium text-gray-700 mb-2">
-          Identification Keywords <span className="text-xs text-gray-500">(comma separated, for WhatsApp/OCR)</span>
+          Identification Keywords <span className="text-xs text-gray-500">(comma separated, for OCR)</span>
         </label>
         <input
           type="text"

@@ -398,5 +398,51 @@ export const DriverService = {
       },
       currentTask: currentTask || null
     };
+  },
+
+  async deleteDriver(id: string) {
+    return prisma.$transaction(async (tx) => {
+      const driver = await tx.driver.findUnique({
+        where: { id },
+        include: { user: true }
+      });
+      if (!driver) throw new Error('Driver not found');
+
+      // Set driverId to null in related records
+      await tx.delivery.updateMany({
+        where: { driverId: id },
+        data: { driverId: null }
+      });
+
+      await tx.order.updateMany({
+        where: { driverId: id },
+        data: { driverId: null }
+      });
+
+      await tx.ticket.updateMany({
+        where: { driverId: id },
+        data: { driverId: null }
+      });
+
+      await tx.whatsAppMessage.updateMany({
+        where: { driverId: id },
+        data: { driverId: null }
+      });
+
+      // Delete the driver record
+      await tx.driver.delete({
+        where: { id }
+      });
+
+      // If there is an associated User record, delete it as well
+      if (driver.userId) {
+        await tx.user.delete({
+          where: { id: driver.userId }
+        });
+      }
+
+      return driver;
+    });
   }
 };
+

@@ -322,7 +322,6 @@ export const InvoiceService = {
       orderBy: [
         { receivedAt: 'desc' },
         { invoiceDate: 'desc' },
-        { createdAt: 'desc' },
       ],
       include: {
         supplier: true,
@@ -467,5 +466,68 @@ export const InvoiceService = {
     });
 
     return updated;
+  },
+
+  async unlinkOrderFromLineItem(lineItemId: string, userId: string) {
+    const updated = await prisma.invoiceLineItem.update({
+      where: { id: lineItemId },
+      data: {
+        matchedOrderId: null,
+        flag: 'NO_ORDER', // Reset flag since we manual unlinked
+      },
+      include: { invoice: true }
+    });
+
+    await prisma.auditLog.create({
+      data: {
+        entityType: AuditEntityType.INVOICE,
+        entityId: updated.invoiceId,
+        actionType: AuditActionType.SYSTEM_CONFIG_CHANGE,
+        performedById: userId,
+        details: { action: 'MANUAL_ORDER_UNLINK', lineItemId },
+      },
+    });
+
+    return updated;
+  },
+
+  async unlinkTicketFromLineItem(lineItemId: string, ticketId: string, userId: string) {
+    const updated = await prisma.invoiceLineItem.update({
+      where: { id: lineItemId },
+      data: {
+        matchedTickets: {
+          disconnect: { id: ticketId }
+        }
+      },
+      include: {
+        invoice: true,
+        matchedTickets: true
+      }
+    });
+
+    // Check if there are remaining tickets. If not, reset flag to NO_TICKET
+    const remaining = updated.matchedTickets.length;
+    const finalFlag = remaining > 0 ? 'OK' : 'NO_TICKET';
+
+    const finalUpdated = await prisma.invoiceLineItem.update({
+      where: { id: lineItemId },
+      data: {
+        flag: finalFlag
+      },
+      include: { invoice: true }
+    });
+
+    await prisma.auditLog.create({
+      data: {
+        entityType: AuditEntityType.INVOICE,
+        entityId: finalUpdated.invoiceId,
+        actionType: AuditActionType.SYSTEM_CONFIG_CHANGE,
+        performedById: userId,
+        details: { action: 'MANUAL_TICKET_UNLINK', lineItemId, ticketId },
+      },
+    });
+
+    return finalUpdated;
   }
 };
+
