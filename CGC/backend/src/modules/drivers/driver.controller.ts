@@ -97,7 +97,7 @@ export const createDriver = async (req: AuthRequest, res: Response) => {
           <div style="background: #f8f9fa; border: 1px solid #edf2f7; border-radius: 20px; padding: 24px; margin-bottom: 30px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);">
             <div style="margin-bottom: 16px; border-bottom: 1px solid #edf2f7; padding-bottom: 12px;">
               <p style="font-size: 10px; font-weight: 800; color: #a0aec0; text-transform: uppercase; letter-spacing: 1px; margin: 0 0 4px 0;">Login Link</p>
-              <p style="font-size: 15px; font-weight: 600; color: #2D6A4F; margin: 0;"><a href="${frontendUrl}/login" style="color: #2D6A4F; text-decoration: none;">${frontendUrl}/login</a></p>
+              <p style="font-size: 15px; font-weight: 600; color: #2D6A4F; margin: 0;"><a href="${frontendUrl}/login/driver" style="color: #2D6A4F; text-decoration: none;">${frontendUrl}/login/driver</a></p>
             </div>
             <div style="margin-bottom: 16px;">
               <p style="font-size: 10px; font-weight: 800; color: #a0aec0; text-transform: uppercase; letter-spacing: 1px; margin: 0 0 4px 0;">Username / Email</p>
@@ -110,7 +110,7 @@ export const createDriver = async (req: AuthRequest, res: Response) => {
           </div>
 
           <div style="text-align: center; margin-bottom: 40px;">
-            <a href="${frontendUrl}/login" style="display: inline-block; background: #2D6A4F; color: white; padding: 18px 36px; border-radius: 16px; font-weight: 800; text-decoration: none; font-size: 16px; box-shadow: 0 10px 15px -3px rgba(45, 106, 79, 0.3);">
+            <a href="${frontendUrl}/login/driver" style="display: inline-block; background: #2D6A4F; color: white; padding: 18px 36px; border-radius: 16px; font-weight: 800; text-decoration: none; font-size: 16px; box-shadow: 0 10px 15px -3px rgba(45, 106, 79, 0.3);">
               LOG IN TO PORTAL
             </a>
           </div>

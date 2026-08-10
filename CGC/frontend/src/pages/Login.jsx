@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate, Link, useLocation } from 'react-router-dom';
 import { loginAsync, clearError } from '../store/authSlice';
 import { FadeInUp } from '../components/Animated';
 import { Eye, EyeOff } from 'lucide-react';
@@ -11,6 +11,8 @@ export default function Login() {
   const [showPassword, setShowPassword] = useState(false);
   const dispatch = useDispatch();
   const navigate = useNavigate();
+  const location = useLocation();
+  const isDriverLogin = location.pathname === '/login/driver';
   
   const { loading, error, isAuthenticated, user } = useSelector((state) => state.auth);
 
@@ -87,12 +89,14 @@ export default function Login() {
           </button>
         </form>
         
-        <p className="mt-6 text-center text-sm text-gray-600">
-          Don't have an account?{' '}
-          <Link to="/register" className="font-medium text-[#1D5333] hover:text-[#11311e]">
-            Register here
-          </Link>
-        </p>
+        {!isDriverLogin && (
+          <p className="mt-6 text-center text-sm text-gray-600">
+            Don't have an account?{' '}
+            <Link to="/register" className="font-medium text-[#1D5333] hover:text-[#11311e]">
+              Register here
+            </Link>
+          </p>
+        )}
       </FadeInUp>
     </div>
   );
