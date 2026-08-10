@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import api from '../../api/axios';
 import { supabase } from '../../supabaseClient';
 import { 
@@ -226,21 +226,31 @@ export default function VerificationDesk() {
     }
   };
 
+  const manualSearchTimeoutRef = useRef(null);
+
   const searchManualLinks = async (query) => {
+    if (manualSearchTimeoutRef.current) {
+      clearTimeout(manualSearchTimeoutRef.current);
+    }
+
     if (!query) {
       setSearchResults([]);
+      setSearching(false);
       return;
     }
+
     setSearching(true);
-    try {
-      const endpoint = linkingLineItem.type === 'order' ? '/api/orders' : '/api/tickets';
-      const res = await api.get(endpoint, { params: { search: query } });
-      setSearchResults(res.data?.data || res.data || []);
-    } catch (err) {
-      console.error('Search error', err);
-    } finally {
-      setSearching(false);
-    }
+    manualSearchTimeoutRef.current = setTimeout(async () => {
+      try {
+        const endpoint = linkingLineItem.type === 'order' ? '/api/orders' : '/api/tickets';
+        const res = await api.get(endpoint, { params: { search: query } });
+        setSearchResults(res.data?.data || res.data || []);
+      } catch (err) {
+        console.error('Search error', err);
+      } finally {
+        setSearching(false);
+      }
+    }, 300);
   };
 
   const filteredInvoices = invoices.filter(inv => {

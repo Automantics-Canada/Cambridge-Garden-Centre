@@ -485,20 +485,30 @@ export default function TicketsPage() {
     }
   };
 
+  const orderSearchTimeoutRef = useRef(null);
+
   const searchOrders = async (query) => {
+    if (orderSearchTimeoutRef.current) {
+      clearTimeout(orderSearchTimeoutRef.current);
+    }
+
     if (!query) {
       setOrderResults([]);
+      setSearchingOrders(false);
       return;
     }
+
     setSearchingOrders(true);
-    try {
-      const res = await api.get('/api/orders', { params: { search: query } });
-      setOrderResults(res.data?.data || res.data || []);
-    } catch (err) {
-      console.error('Order search error:', err);
-    } finally {
-      setSearchingOrders(false);
-    }
+    orderSearchTimeoutRef.current = setTimeout(async () => {
+      try {
+        const res = await api.get('/api/orders', { params: { search: query } });
+        setOrderResults(res.data?.data || res.data || []);
+      } catch (err) {
+        console.error('Order search error:', err);
+      } finally {
+        setSearchingOrders(false);
+      }
+    }, 300);
   };
 
   return (
