@@ -29,6 +29,6 @@ export function isServiceRoleBearer(
   if (!authorizationHeader || !serviceRoleKey) return false;
   if (!authorizationHeader.startsWith('Bearer ')) return false;
   const token = authorizationHeader.slice('Bearer '.length);
-  if (!token || !serviceRoleKey) return false;
+  if (!token) return false;
   return timingSafeEqual(token, serviceRoleKey);
 }
