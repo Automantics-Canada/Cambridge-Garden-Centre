@@ -3,6 +3,15 @@ import type { AuthRequest } from '../../middleware/authMiddleware.js';
 import { DeliveriesService } from './deliveries.service.js';
 import { prisma } from '../../db/prisma.js';
 
+async function canAccessDelivery(req: AuthRequest, deliveryId: string) {
+  if (req.user?.role !== 'DRIVER') return true;
+  const delivery = await prisma.delivery.findFirst({
+    where: { id: deliveryId, driver: { userId: req.user.id } },
+    select: { id: true },
+  });
+  return Boolean(delivery);
+}
+
 export const getDeliveries = async (req: AuthRequest, res: Response) => {
   try {
     const { driverId, status, priority } = req.query;
@@ -34,6 +43,9 @@ export const getDeliveries = async (req: AuthRequest, res: Response) => {
 export const updateStatus = async (req: AuthRequest, res: Response) => {
   try {
     const { id } = req.params as { id: string };
+    if (!(await canAccessDelivery(req, id))) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
     const { status, notes } = req.body;
     const delivery = await DeliveriesService.updateStatus(id, status, notes);
     res.json(delivery);
@@ -45,6 +57,9 @@ export const updateStatus = async (req: AuthRequest, res: Response) => {
 export const uploadPhoto = async (req: AuthRequest, res: Response) => {
   try {
     const { id } = req.params as { id: string };
+    if (!(await canAccessDelivery(req, id))) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
     const { type } = req.body; // 'pickup' | 'delivery' | 'ticket'
     
     if (!req.file) {

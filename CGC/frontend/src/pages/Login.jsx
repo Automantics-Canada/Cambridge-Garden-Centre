@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
-import { useNavigate, Link, useLocation } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { loginAsync, clearError } from '../store/authSlice';
 import { FadeInUp } from '../components/Animated';
 import { Eye, EyeOff } from 'lucide-react';
@@ -90,11 +90,8 @@ export default function Login() {
         </form>
         
         {!isDriverLogin && (
-          <p className="mt-6 text-center text-sm text-gray-600">
-            Don't have an account?{' '}
-            <Link to="/register" className="font-medium text-[#1D5333] hover:text-[#11311e]">
-              Register here
-            </Link>
+          <p className="mt-6 text-center text-sm text-gray-500">
+            Need access? Contact a CGC administrator.
           </p>
         )}
       </FadeInUp>

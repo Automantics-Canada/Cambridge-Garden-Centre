@@ -1,23 +1,29 @@
-import React from 'react';
+import { lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { useSelector } from 'react-redux';
-import DashboardLayout from './layouts/DashboardLayout';
-import Dashboard from './pages/dashboard/Dashboard';
-import OrdersPage from './pages/dashboard/OrdersPage';
-import InvoicesPage from './pages/dashboard/InvoicesPage';
-import InvoiceDetailPage from './pages/dashboard/InvoiceDetailPage';
-import TicketsPage from './pages/dashboard/TicketsPage';
-import Login from './pages/Login';
-import Register from './pages/Register';
 import './App.css';
-import SupplierPage from './pages/dashboard/SupplierPage';
-import RatesPage from './pages/dashboard/RatesPage';
-import ProductPage from './pages/dashboard/ProductPage';
-import VerificationDesk from './pages/dashboard/VerificationDesk';
-import DriversPage from './pages/drivers/DriversPage';
-import DispatchBoard from './pages/dispatch/DispatchBoard';
-import DeliveriesPage from './pages/deliveries/DeliveriesPage';
-import DriverMobileView from './pages/driver/DriverMobileView';
+
+const DashboardLayout = lazy(() => import('./layouts/DashboardLayout'));
+const Dashboard = lazy(() => import('./pages/dashboard/Dashboard'));
+const OrdersPage = lazy(() => import('./pages/dashboard/OrdersPage'));
+const InvoicesPage = lazy(() => import('./pages/dashboard/InvoicesPage'));
+const InvoiceDetailPage = lazy(() => import('./pages/dashboard/InvoiceDetailPage'));
+const TicketsPage = lazy(() => import('./pages/dashboard/TicketsPage'));
+const Login = lazy(() => import('./pages/Login'));
+const SupplierPage = lazy(() => import('./pages/dashboard/SupplierPage'));
+const RatesPage = lazy(() => import('./pages/dashboard/RatesPage'));
+const ProductPage = lazy(() => import('./pages/dashboard/ProductPage'));
+const VerificationDesk = lazy(() => import('./pages/dashboard/VerificationDesk'));
+const DriversPage = lazy(() => import('./pages/drivers/DriversPage'));
+const DispatchBoard = lazy(() => import('./pages/dispatch/DispatchBoard'));
+const DeliveriesPage = lazy(() => import('./pages/deliveries/DeliveriesPage'));
+const DriverMobileView = lazy(() => import('./pages/driver/DriverMobileView'));
+
+const RouteFallback = () => (
+  <div className="min-h-screen bg-gray-50 flex items-center justify-center text-sm font-semibold text-[#1B4332]">
+    Loading Cambridge Garden Centre…
+  </div>
+);
 
 const ProtectedRoute = ({ children }) => {
   const { isAuthenticated, user } = useSelector((state) => state.auth);
@@ -44,11 +50,11 @@ const DriverProtectedRoute = ({ children }) => {
 function App() {
   return (
     <BrowserRouter>
-      <Routes>
-        <Route path="/" element={<Navigate to="/dashboard" replace />} />
-        <Route path="/login" element={<Login />} />
-        <Route path="/login/driver" element={<Login />} />
-        <Route path="/register" element={<Register />} />
+      <Suspense fallback={<RouteFallback />}>
+        <Routes>
+          <Route path="/" element={<Navigate to="/dashboard" replace />} />
+          <Route path="/login" element={<Login />} />
+          <Route path="/login/driver" element={<Login />} />
         
         <Route path="/dashboard" element={
           <ProtectedRoute>
@@ -69,12 +75,13 @@ function App() {
           <Route path="deliveries" element={<DeliveriesPage />} />
         </Route>
         
-        <Route path="/driver/today" element={
-          <DriverProtectedRoute>
-            <DriverMobileView />
-          </DriverProtectedRoute>
-        } />
-      </Routes>
+          <Route path="/driver/today" element={
+            <DriverProtectedRoute>
+              <DriverMobileView />
+            </DriverProtectedRoute>
+          } />
+        </Routes>
+      </Suspense>
     </BrowserRouter>
   );
 }

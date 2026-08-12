@@ -5,10 +5,7 @@
 
 import { v4 as uuidv4 } from 'uuid';
 import { uploadTicketImage, uploadInvoiceImage, uploadCsvFile } from './supabaseStorage.js';
-import fs from 'node:fs';
-import path from 'node:path';
-import os from 'node:os';
-import { pdf } from 'pdf-to-img';
+import { pdfToPng } from 'pdf-to-png-converter';
 
 /**
  * Helper to convert PDF ticket buffer to PNG buffer if necessary using in-process converter
@@ -21,15 +18,22 @@ async function convertPdfToPngIfNecessary(
     (buffer.length > 4 && buffer.toString('ascii', 0, 4) === '%PDF');
 
   if (isPdf) {
-    console.log(`[FileStorage] Converting PDF "${originalName}" to PNG using pdf-to-img...`);
+    console.log(`[FileStorage] Converting PDF "${originalName}" to PNG...`);
     try {
-      const document = await pdf(buffer, { scale: 3 });
-      const imageBuffer = await document.getPage(1);
+      const pages = await pdfToPng(buffer, {
+        viewportScale: 3,
+        pagesToProcess: [1],
+        disableFontFace: false,
+        useSystemFonts: true,
+        enableXfa: true,
+      });
+      const imageBuffer = pages[0]?.content;
+      if (!imageBuffer) throw new Error('PDF did not render a first page');
       const baseName = originalName.substring(0, originalName.lastIndexOf('.')) || originalName;
       console.log(`[FileStorage] Successfully converted PDF "${originalName}" to PNG`);
 
       return {
-        buffer: imageBuffer,
+        buffer: Buffer.from(imageBuffer),
         name: `${baseName}.png`,
       };
     } catch (error) {

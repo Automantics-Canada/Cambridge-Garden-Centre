@@ -1,6 +1,7 @@
 import type { Response } from 'express';
 import type { AuthRequest } from '../../middleware/authMiddleware.js';
 import { DriverService } from './driver.service.js';
+import { prisma } from '../../db/prisma.js';
 import nodemailer from 'nodemailer';
 
 export const getDrivers = async (req: AuthRequest, res: Response) => {
@@ -173,7 +174,17 @@ export const updateDriver = async (req: AuthRequest, res: Response) => {
 
 export const getDriverDeliveries = async (req: AuthRequest, res: Response) => {
   try {
-    const { id } = req.params as { id: string };
+    let { id } = req.params as { id: string };
+    if (req.user?.role === 'DRIVER') {
+      const ownDriver = await prisma.driver.findUnique({
+        where: { userId: req.user.id },
+        select: { id: true },
+      });
+      if (!ownDriver || ownDriver.id !== id) {
+        return res.status(403).json({ error: 'Forbidden' });
+      }
+      id = ownDriver.id;
+    }
     const deliveries = await DriverService.getDriverDeliveries(id);
     res.json(deliveries);
   } catch (error: any) {

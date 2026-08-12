@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import multer from 'multer';
-import { authMiddleware } from '../../middleware/authMiddleware.js';
+import { authMiddleware, requireRole } from '../../middleware/authMiddleware.js';
 import {
   ingestWhatsappTicket,
   ingestEmailTicket,
@@ -25,15 +25,19 @@ const upload = multer({
   limits: { fileSize: 50 * 1024 * 1024 }, // Increase limit to 50MB for multi-page PDFs
 });
 
-router.post('/whatsapp', upload.single('file'), ingestWhatsappTicket);
+// External ingestion must be moved behind provider-signature verification before
+// it is re-enabled. Until then, require an authenticated operations role.
+router.post('/whatsapp', authMiddleware, requireRole(['AP_USER', 'OWNER', 'ADMIN']), upload.single('file'), ingestWhatsappTicket);
 
-router.post('/email', upload.single('file'), ingestEmailTicket);
+router.post('/email', authMiddleware, requireRole(['AP_USER', 'OWNER', 'ADMIN']), upload.single('file'), ingestEmailTicket);
 
 // Manual upload by admin (authenticated)
-router.post('/upload', authMiddleware, upload.single('file'), uploadManualTicket);
+router.post('/upload', authMiddleware, requireRole(['AP_USER', 'OWNER', 'ADMIN']), upload.single('file'), uploadManualTicket);
 
 // Manual multi-ticket PDF upload (authenticated)
-router.post('/upload-pdf', authMiddleware, upload.single('file'), uploadManualPdfTickets);
+router.post('/upload-pdf', authMiddleware, requireRole(['AP_USER', 'OWNER', 'ADMIN']), upload.single('file'), uploadManualPdfTickets);
+
+router.use(authMiddleware, requireRole(['AP_USER', 'OWNER', 'ADMIN']));
 
 router.post('/:id/process-ocr', processTicketOcr);
 

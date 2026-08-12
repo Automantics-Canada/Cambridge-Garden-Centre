@@ -30,33 +30,21 @@ export async function authMiddleware(
         email: string;
         role: UserRole;
       };
-      req.user = decoded;
+      const currentUser = await prisma.user.findUnique({
+        where: { id: decoded.id },
+        select: { id: true, email: true, role: true, active: true },
+      });
+      if (!currentUser?.active) {
+        return res.status(401).json({ error: 'Account is inactive' });
+      }
+      req.user = {
+        id: currentUser.id,
+        email: currentUser.email,
+        role: currentUser.role as UserRole,
+      };
       return next();
     } catch {
       // Let it fall through or fail
-    }
-  }
-
-  // Support legacy driver URL token access
-  if (queryToken) {
-    try {
-      const decoded = Buffer.from(queryToken, 'base64').toString('ascii');
-      const [driverId] = decoded.split(':');
-      if (driverId) {
-        const driver = await prisma.driver.findUnique({
-          where: { id: driverId }
-        });
-        if (driver) {
-          req.user = {
-            id: driver.userId || `legacy-driver-id-${driver.id}`,
-            email: driver.email || 'legacy@example.com',
-            role: 'DRIVER'
-          };
-          return next();
-        }
-      }
-    } catch (e) {
-      console.error('Failed to parse legacy driver token:', e);
     }
   }
 
@@ -76,7 +64,18 @@ export async function authMiddleware(
       email: string;
       role: UserRole;
     };
-    req.user = decoded;
+    const currentUser = await prisma.user.findUnique({
+      where: { id: decoded.id },
+      select: { id: true, email: true, role: true, active: true },
+    });
+    if (!currentUser?.active) {
+      return res.status(401).json({ error: 'Account is inactive' });
+    }
+    req.user = {
+      id: currentUser.id,
+      email: currentUser.email,
+      role: currentUser.role as UserRole,
+    };
     next();
   } catch {
     return res.status(401).json({ error: 'Invalid token' });

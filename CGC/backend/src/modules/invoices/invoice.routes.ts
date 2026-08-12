@@ -1,16 +1,17 @@
 import { Router } from 'express';
 import multer from 'multer';
 import { InvoiceController } from './invoice.controller.js';
-import { authMiddleware } from '../../middleware/authMiddleware.js';
+import { authMiddleware, requireRole } from '../../middleware/authMiddleware.js';
 
 const router = Router();
-const upload = multer({ storage: multer.memoryStorage() });
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 15 * 1024 * 1024 } });
 
-// Mock endpoint for simulating email receipt from Gmail API (no auth needed for testing webhook simulation)
-router.post('/mock-email', upload.single('file'), InvoiceController.ingestMockEmail);
+// Keep the simulator available for controlled troubleshooting, never publicly.
+router.post('/mock-email', authMiddleware, requireRole(['ADMIN']), upload.single('file'), InvoiceController.ingestMockEmail);
 
 // Protected routes
 router.use(authMiddleware);
+router.use(requireRole(['AP_USER', 'OWNER', 'ADMIN']));
 router.get('/', InvoiceController.getInvoices);
 router.get('/:id', InvoiceController.getInvoiceById);
 router.post('/:id/verify', InvoiceController.verifyInvoice);
