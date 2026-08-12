@@ -95,6 +95,42 @@ export async function uploadTicketImage(
 /**
  * Upload invoice image to Supabase Storage
  */
+/**
+ * Upload a derived thumbnail at a caller-supplied deterministic path.
+ *
+ * `upsert: true` deliberately differs from the originals above: the path is a
+ * pure function of the original object, so a repeat write is the same bytes for
+ * the same source. That is what makes the backfill safe to re-run.
+ */
+export async function uploadTicketThumbnail(
+  buffer: Buffer,
+  path: string,
+  contentType: string,
+): Promise<UploadResult> {
+  const { data, error } = await supabase.storage
+    .from(env.supabaseStorageBucket)
+    .upload(path, buffer, {
+      cacheControl: IMMUTABLE_CACHE_CONTROL,
+      upsert: true,
+      contentType,
+    });
+
+  if (error) {
+    throw new Error(`Supabase thumbnail upload error: ${error.message}`);
+  }
+
+  const { data: publicUrlData } = supabase.storage
+    .from(env.supabaseStorageBucket)
+    .getPublicUrl(path);
+
+  return {
+    path: data.path,
+    publicUrl: publicUrlData.publicUrl,
+    size: buffer.length,
+    timestamp: new Date().toISOString(),
+  };
+}
+
 export async function uploadInvoiceImage(
   buffer: Buffer,
   invoiceId: string,

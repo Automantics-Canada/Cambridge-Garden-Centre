@@ -24,6 +24,7 @@ import toast from 'react-hot-toast';
 import { Skeleton } from '../../components/Skeleton';
 import Loader from '../../components/Loader';
 import { useIntervalRefresh } from '../../hooks/useIntervalRefresh';
+import { ticketThumbnailSrc } from '../../utils/ticketImage';
 
 // Each row renders a full-resolution ticket photo. Halving the page halves the
 // number of images requested and the rows the list query projects. This is an
@@ -733,7 +734,7 @@ export default function TicketsPage() {
                       <div className="w-12 h-12 bg-gray-100 rounded-lg overflow-hidden border border-gray-200 cursor-zoom-in" onClick={() => handleOpenReviewModal(ticket)}>
                         {ticket.imageUrl ? (
                           <img
-                            src={ticket.imageUrl.startsWith('http') ? ticket.imageUrl : `${import.meta.env.VITE_API_URL || ''}${ticket.imageUrl}`}
+                            src={ticketThumbnailSrc(ticket)}
                             alt="Ticket thumb"
                             className="w-full h-full object-cover"
                             // These are full-resolution phone photos (~615 KB,

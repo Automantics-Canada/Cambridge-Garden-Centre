@@ -52,6 +52,10 @@ model Ticket {
   rateOnTicket            Decimal?           @db.Decimal
   ticketDate              DateTime?          @db.Date
   imageUrl                String
+  /// Small derived WebP for list/mobile rendering. Nullable: generation is
+  /// best-effort and must never block a proof-of-delivery upload. Null means
+  /// "not generated yet" and the UI falls back to imageUrl.
+  thumbnailUrl            String?
   ocrRawText              String
   ocrConfidence           Float
   linkedOrderId           String?            @db.Uuid

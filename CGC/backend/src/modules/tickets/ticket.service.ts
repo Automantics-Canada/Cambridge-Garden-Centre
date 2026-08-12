@@ -109,6 +109,7 @@ const TICKET_LIST_SELECT = {
   quantity: true,
   unit: true,
   imageUrl: true,
+  thumbnailUrl: true,
   status: true,
   receivedAt: true,
   supplier: { select: { id: true, name: true } },
@@ -123,7 +124,7 @@ export const TicketService = {
     originalName: string;
     fromPhone: string;
   }) {
-    const imageUrl = await saveTicketImage(params.buffer, params.originalName);
+    const { imageUrl, thumbnailUrl } = await saveTicketImage(params.buffer, params.originalName);
 
     const driverId = await findDriverIdByPhone(params.fromPhone);
 
@@ -131,6 +132,7 @@ export const TicketService = {
       data: {
         source: TicketSource.WHATSAPP,
         imageUrl,
+        thumbnailUrl,
         // required non-null fields in your model:
         ocrRawText: '',
         ocrConfidence: 0,
@@ -164,7 +166,7 @@ export const TicketService = {
     originalName: string;
     fromEmail: string;
   }) {
-    const imageUrl = await saveTicketImage(params.buffer, params.originalName);
+    const { imageUrl, thumbnailUrl } = await saveTicketImage(params.buffer, params.originalName);
 
     const supplierId = await findSupplierIdByEmail(params.fromEmail);
 
@@ -172,6 +174,7 @@ export const TicketService = {
       data: {
         source: TicketSource.EMAIL,
         imageUrl,
+        thumbnailUrl,
         ocrRawText: '',
         ocrConfidence: 0,
         status: TicketStatus.UNLINKED,
@@ -202,12 +205,13 @@ export const TicketService = {
     buffer: Buffer;
     originalName: string;
   }, waitOcr: boolean = false) {
-    const imageUrl = await saveTicketImage(params.buffer, params.originalName);
+    const { imageUrl, thumbnailUrl } = await saveTicketImage(params.buffer, params.originalName);
 
     let ticket = await prisma.ticket.create({
       data: {
         source: TicketSource.MANUAL,
         imageUrl,
+        thumbnailUrl,
         ocrRawText: '',
         ocrConfidence: 0,
         status: TicketStatus.UNLINKED,

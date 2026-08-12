@@ -13,7 +13,8 @@
     "bootstrap:admin": "tsx src/scripts/bootstrapAdmin.ts",
     "test": "tsx --test tests/**/*.test.ts",
     "keep-alive": "node scripts/keep-alive.js",
-    "ping-once": "node scripts/ping-once.js"
+    "ping-once": "node scripts/ping-once.js",
+    "backfill:thumbnails": "tsx src/scripts/backfillTicketThumbnails.ts"
   },
   "keywords": [],
   "author": "",
@@ -60,6 +61,7 @@
     "pdf-parse": "^2.4.5",
     "pdf-to-png-converter": "^4.0.0",
     "pdf2json": "^4.0.3",
+    "sharp": "^0.35.3",
     "string-similarity": "^4.0.4",
     "uuid": "^11.1.1"
   }

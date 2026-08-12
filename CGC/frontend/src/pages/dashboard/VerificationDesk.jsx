@@ -23,6 +23,7 @@ import { SidebarSkeleton, Skeleton } from '../../components/Skeleton';
 import Loader from '../../components/Loader';
 import toast from 'react-hot-toast';
 import { motion, AnimatePresence } from 'framer-motion';
+import { ticketThumbnailSrc } from '../../utils/ticketImage';
 
 export default function VerificationDesk() {
   const [invoices, setInvoices] = useState([]);
@@ -658,7 +659,7 @@ export default function VerificationDesk() {
                                                           className="w-10 h-10 rounded-lg overflow-hidden border border-gray-200 cursor-pointer flex-shrink-0 bg-white" 
                                                           onClick={() => setZoomedImage(getFullUrl(t.imageUrl))}
                                                         >
-                                                          <img src={getFullUrl(t.imageUrl)} className="w-full h-full object-cover" alt="Ticket Scan" />
+                                                          <img src={ticketThumbnailSrc(t) || getFullUrl(t.imageUrl)} loading="lazy" decoding="async" className="w-full h-full object-cover" alt="Ticket Scan" />
                                                         </div>
                                                         <div className="flex-1 min-w-0">
                                                           <div className="flex items-center gap-1.5">
