@@ -9,6 +9,7 @@ import { MapPin, Camera, CheckCircle2, Navigation, AlertCircle, Clock, Package, 
 import { toast } from 'react-hot-toast';
 
 import { MobileDriverSkeleton } from '../../components/Skeleton';
+import { useIntervalRefresh } from '../../hooks/useIntervalRefresh';
 
 export default function DriverMobileView() {
   const [searchParams] = useSearchParams();
@@ -83,36 +84,13 @@ export default function DriverMobileView() {
     fetchMobileData();
   }, [token, isAuthenticated]);
 
-  // Set up Supabase Realtime Subscription for instant real-time synchronization
-  useEffect(() => {
-    if (!driverInfo?.id) return;
-
-    console.log(`[REALTIME] Subscribing to Delivery changes for driverId: ${driverInfo.id}`);
-
-    const channel = supabase
-      .channel(`driver-deliveries-${driverInfo.id}`)
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'Delivery',
-          filter: `driverId=eq.${driverInfo.id}`
-        },
-        (payload) => {
-          console.log('[REALTIME] Delivery update detected:', payload);
-          // Refetch active deliveries instantly without full-screen loading skeleton
-          fetchMobileData(true);
-        }
-      )
-      .subscribe((status) => {
-        console.log(`[REALTIME] Subscription status: ${status}`);
-      });
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [driverInfo?.id]);
+  useIntervalRefresh(
+    () => {
+      fetchMobileData(true);
+    },
+    8_000,
+    { enabled: Boolean(driverInfo?.id) && !uploadingType && !updatingStatus }
+  );
 
   const handleStatusChange = async (id, newStatus, notes) => {
     try {

@@ -1,7 +1,7 @@
 // @ts-nocheck
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.38.0"
-import { canAccessResource, requiresOwnDriverScope } from "../_shared/accessPolicy.ts"
+import { canAccessResource, requiresOwnDriverScope, sessionFromUserRecord } from "../_shared/accessPolicy.ts"
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -116,6 +116,37 @@ serve(async (req) => {
       }
     });
 
+    const tokenUserId = decodedPayload.id || decodedPayload.userId;
+    if (!tokenUserId) {
+      return new Response(
+        JSON.stringify({ error: 'User ID missing from token' }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // Re-read the live account. The token role/active claims are not trusted
+    // past this point — same rule Express already applies.
+    const { data: currentUser, error: currentUserError } = await supabaseClient
+      .from('User')
+      .select('id, email, role, active')
+      .eq('id', tokenUserId)
+      .maybeSingle();
+
+    if (currentUserError) {
+      return new Response(
+        JSON.stringify({ error: currentUserError.message }),
+        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    const session = sessionFromUserRecord(currentUser);
+    if (!session) {
+      return new Response(
+        JSON.stringify({ error: 'Account is inactive' }),
+        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
     const url = new URL(req.url);
     const resource = url.searchParams.get('resource'); // 'dashboard-summary', 'tickets', 'orders', 'invoices', 'invoice-details', 'drivers', 'drivers-me', 'suppliers', 'products', 'deliveries', 'dispatch-board'
     const status = url.searchParams.get('status');
@@ -123,7 +154,7 @@ serve(async (req) => {
     const page = parseInt(url.searchParams.get('page') || '1');
     const offset = (page - 1) * limit;
 
-    if (!canAccessResource(decodedPayload.role, resource)) {
+    if (!canAccessResource(session.role, resource)) {
       return new Response(
         JSON.stringify({ error: 'Forbidden' }),
         { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -134,8 +165,8 @@ serve(async (req) => {
     // from the verified token subject; any caller-supplied driverId is ignored
     // so one driver cannot enumerate another driver's route.
     let enforcedDriverId: string | null = null;
-    if (requiresOwnDriverScope(decodedPayload.role, resource)) {
-      const sessionUserId = decodedPayload.id || decodedPayload.userId;
+    if (requiresOwnDriverScope(session.role, resource)) {
+      const sessionUserId = session.id;
       if (!sessionUserId) {
         return new Response(
           JSON.stringify({ error: 'User ID missing from token' }),
@@ -219,7 +250,7 @@ serve(async (req) => {
 
     // Handle drivers-me self lookup
     if (resource === 'drivers-me') {
-      const userId = decodedPayload.id || decodedPayload.userId;
+      const userId = session.id;
       if (!userId) {
         return new Response(
           JSON.stringify({ error: 'User ID missing from token' }),

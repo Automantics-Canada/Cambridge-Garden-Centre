@@ -24,6 +24,7 @@ const upload = multer({
 const pdfUpload = createUploader({ maxBytes: 5 * 1024 * 1024, kinds: ['pdf'] });
 
 router.use(authMiddleware);
+router.use(requireRole([UserRole.AP_USER, UserRole.OWNER, UserRole.ADMIN]));
 
 router.get('/', getOrders);
 router.get('/import/stream', streamPdfImport);

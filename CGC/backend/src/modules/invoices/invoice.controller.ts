@@ -34,6 +34,39 @@ export const InvoiceController = {
     }
   },
 
+  /**
+   * Staff dashboard upload. Sender fields are set server-side so this is not
+   * a second copy of the ADMIN email simulator.
+   */
+  async ingestStaffUpload(req: Request, res: Response, next: NextFunction) {
+    try {
+      if (!req.file) {
+        return res.status(400).json({ error: 'No file uploaded' });
+      }
+
+      const originalName = req.file.originalname || 'invoice';
+      const { invoice, ocrJob } = await InvoiceService.ingestEmailInvoice({
+        buffer: req.file.buffer,
+        originalName,
+        fromEmail: 'staff_upload@cambridgegardencentre.ca',
+        subject: `Manual Upload: ${originalName}`,
+        gmailMessageId: `staff-${Date.now()}`,
+      });
+
+      if (ocrJob.id) {
+        triggerOcrProcessing(ocrJob.id);
+      }
+
+      res.status(202).json({
+        message: 'Invoice uploaded, pending OCR',
+        invoice,
+        ocrJob,
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+
   async getInvoices(req: Request, res: Response, next: NextFunction) {
     try {
       const { status, supplierId } = req.query;

@@ -1,6 +1,7 @@
 // @ts-nocheck
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { SMTPClient } from "https://deno.land/x/denomailer@1.6.0/mod.ts"
+import { isServiceRoleBearer } from "../_shared/serviceRole.ts"
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -14,6 +15,17 @@ serve(async (req) => {
   }
 
   try {
+    // The only caller is the Express driver-create path, which already sends
+    // the service-role key. The published anon key is a valid project JWT, so
+    // gateway verify_jwt is not enough — require the service-role secret.
+    const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")
+    if (!isServiceRoleBearer(req.headers.get("Authorization"), serviceRoleKey)) {
+      return new Response(JSON.stringify({ error: "Unauthorized" }), {
+        status: 401,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      })
+    }
+
     const { email, name, password } = await req.json()
 
     if (!email || !name || !password) {

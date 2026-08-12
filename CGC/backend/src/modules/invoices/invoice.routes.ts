@@ -27,6 +27,13 @@ router.post(
 // Protected routes
 router.use(authMiddleware);
 router.use(requireRole(['AP_USER', 'OWNER', 'ADMIN']));
+router.post(
+  '/upload',
+  rateLimit({ windowMs: 60_000, max: 10, name: 'invoice ingest' }),
+  upload.single('file'),
+  validateUploadContent(['image', 'pdf']),
+  InvoiceController.ingestStaffUpload
+);
 router.get('/', InvoiceController.getInvoices);
 router.get('/:id', InvoiceController.getInvoiceById);
 router.post('/:id/verify', InvoiceController.verifyInvoice);

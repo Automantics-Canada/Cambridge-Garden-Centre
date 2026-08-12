@@ -16,6 +16,7 @@ import {
   canAccessResource,
   requiresOwnDriverScope,
   isOperationsRole,
+  sessionFromUserRecord,
 } from '../../supabase/functions/_shared/accessPolicy.ts';
 
 const OPERATIONS = ['AP_USER', 'OWNER', 'ADMIN'] as const;
@@ -109,5 +110,52 @@ describe('requiresOwnDriverScope', () => {
     // Fail closed: a role added later must be pinned until it is explicitly
     // classified as operations.
     assert.equal(requiresOwnDriverScope('SUPERUSER', 'deliveries'), true);
+  });
+});
+
+describe('sessionFromUserRecord', () => {
+  it('denies a missing or inactive account', () => {
+    assert.equal(sessionFromUserRecord(null), null);
+    assert.equal(sessionFromUserRecord(undefined), null);
+    assert.equal(
+      sessionFromUserRecord({ id: 'u1', email: 'a@x.test', role: 'ADMIN', active: false }),
+      null
+    );
+  });
+
+  it('denies an incomplete row', () => {
+    assert.equal(
+      sessionFromUserRecord({ id: '', email: 'a@x.test', role: 'ADMIN', active: true }),
+      null
+    );
+    assert.equal(
+      sessionFromUserRecord({ id: 'u1', email: 'a@x.test', role: '', active: true }),
+      null
+    );
+  });
+
+  it('takes the current database role, not a token claim', () => {
+    // A token minted while the user was ADMIN must not keep admin rights after
+    // a demotion. The caller discards the claim and passes only the live row.
+    const session = sessionFromUserRecord({
+      id: 'u1',
+      email: 'a@x.test',
+      role: 'DRIVER',
+      active: true,
+    });
+    assert.deepEqual(session, { id: 'u1', email: 'a@x.test', role: 'DRIVER' });
+    assert.equal(canAccessResource(session?.role, 'invoices'), false);
+    assert.equal(canAccessResource(session?.role, 'deliveries'), true);
+  });
+
+  it('an active ADMIN still reaches operations resources', () => {
+    const session = sessionFromUserRecord({
+      id: 'u2',
+      email: 'ops@x.test',
+      role: 'ADMIN',
+      active: true,
+    });
+    assert.equal(canAccessResource(session?.role, 'invoices'), true);
+    assert.equal(canAccessResource(session?.role, 'dispatch-board'), true);
   });
 });

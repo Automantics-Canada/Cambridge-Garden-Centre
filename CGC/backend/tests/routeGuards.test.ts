@@ -24,6 +24,8 @@ import invoiceRouter from '../src/modules/invoices/invoice.routes.js';
 import ticketRouter from '../src/modules/tickets/ticket.routes.js';
 import orderRouter from '../src/modules/orders/order.routes.js';
 import authRouter from '../src/modules/auth/auth.routes.js';
+import supplierRouter from '../src/modules/supplier/supplier.routes.js';
+import productRouter from '../src/modules/products/product.routes.js';
 
 const OPERATIONS: UserRole[] = ['AP_USER', 'OWNER', 'ADMIN'];
 
@@ -116,6 +118,14 @@ describe('dispatch routes', () => {
 describe('invoice routes', () => {
   it('the mock-email simulator is ADMIN only', () => {
     assertGuarded(invoiceRouter, 'post', '/mock-email', ['ADMIN']);
+  });
+
+  it('staff invoice upload admits operations roles and keeps DRIVER out', () => {
+    assertGuarded(invoiceRouter, 'post', '/upload', OPERATIONS);
+    assert.equal(
+      admittedRoles(effectiveChain(invoiceRouter, 'post', '/upload'))?.includes('DRIVER'),
+      false
+    );
   });
 
   const routes: Array<[string, string]> = [
@@ -216,6 +226,60 @@ describe('order routes', () => {
     assertGuarded(orderRouter, 'post', '/import', OPERATIONS);
     assertGuarded(orderRouter, 'post', '/import-pdf', OPERATIONS);
   });
+
+  it('order GETs require an operations role so a DRIVER cannot dump the book', () => {
+    assertGuarded(orderRouter, 'get', '/', OPERATIONS);
+    assertGuarded(orderRouter, 'get', '/import/stream', OPERATIONS);
+    assert.equal(admittedRoles(effectiveChain(orderRouter, 'get', '/'))?.includes('DRIVER'), false);
+  });
+});
+
+describe('supplier routes', () => {
+  it('listing suppliers is operations-only', () => {
+    assertGuarded(supplierRouter, 'get', '/', OPERATIONS);
+    assert.equal(
+      admittedRoles(effectiveChain(supplierRouter, 'get', '/'))?.includes('DRIVER'),
+      false
+    );
+  });
+});
+
+describe('product routes', () => {
+  it('listing products and units is operations-only', () => {
+    assertGuarded(productRouter, 'get', '/', OPERATIONS);
+    assertGuarded(productRouter, 'get', '/units', OPERATIONS);
+    assert.equal(
+      admittedRoles(effectiveChain(productRouter, 'get', '/'))?.includes('DRIVER'),
+      false
+    );
+  });
+});
+
+describe('GET routes that operations staff use', () => {
+  const cases: Array<[any, string, string, UserRole[] | null]> = [
+    [dispatchRouter, 'get', '/', OPERATIONS],
+    [invoiceRouter, 'get', '/', OPERATIONS],
+    [invoiceRouter, 'get', '/:id', OPERATIONS],
+    [ticketRouter, 'get', '/', OPERATIONS],
+    [ticketRouter, 'get', '/stats', OPERATIONS],
+    [ticketRouter, 'get', '/:id', OPERATIONS],
+    [ticketRouter, 'get', '/:ticketId/ocr-status', OPERATIONS],
+    [orderRouter, 'get', '/', OPERATIONS],
+    [orderRouter, 'get', '/import/stream', OPERATIONS],
+    [supplierRouter, 'get', '/', OPERATIONS],
+    [productRouter, 'get', '/', OPERATIONS],
+    [productRouter, 'get', '/units', OPERATIONS],
+    [deliveriesRouter, 'get', '/', null],
+    [driverRouter, 'get', '/me', null],
+    [driverRouter, 'get', '/', null],
+    [driverRouter, 'get', '/:id/deliveries', null],
+  ];
+
+  for (const [router, method, path, roles] of cases) {
+    it(`${method.toUpperCase()} ${path} is authenticated with the intended roles`, () => {
+      assertGuarded(router, method, path, roles);
+    });
+  }
 });
 
 describe('auth routes', () => {

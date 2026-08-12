@@ -14,6 +14,7 @@ import { UserRole } from '@prisma/client';
 const router = Router();
 
 router.use(authMiddleware);
+router.use(requireRole([UserRole.ADMIN, UserRole.OWNER, UserRole.AP_USER]));
 
 router.get('/', listSuppliers);
 

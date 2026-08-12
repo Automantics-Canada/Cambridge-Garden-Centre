@@ -50,3 +50,42 @@ export function requiresOwnDriverScope(
 ): boolean {
   return resource === 'deliveries' && !isOperationsRole(role);
 }
+
+/**
+ * Live account row used to decide whether a verified JWT may proceed.
+ *
+ * The token's own `role` claim is discarded here. Express already re-reads
+ * `User.active` and `User.role` on every request; the Edge function must do
+ * the same or a deactivated / demoted account keeps its old privileges for
+ * the rest of the 7-day token lifetime.
+ */
+export interface UserRecord {
+  id: string;
+  email?: string | null;
+  role: string;
+  active: boolean;
+}
+
+export interface EdgeSession {
+  id: string;
+  email: string;
+  role: SessionRole;
+}
+
+/**
+ * Turn a database user row into a session, or null when the account must not
+ * be treated as authenticated. Missing, inactive, or incomplete rows fail closed.
+ */
+export function sessionFromUserRecord(
+  user: UserRecord | null | undefined
+): EdgeSession | null {
+  if (!user || user.active !== true) return null;
+  if (!user.id || typeof user.role !== 'string' || user.role.length === 0) {
+    return null;
+  }
+  return {
+    id: user.id,
+    email: typeof user.email === 'string' ? user.email : '',
+    role: user.role,
+  };
+}
