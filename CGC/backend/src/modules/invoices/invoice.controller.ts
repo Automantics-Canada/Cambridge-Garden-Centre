@@ -1,6 +1,21 @@
 import type { Request, Response, NextFunction } from 'express';
+import { v4 as uuidv4 } from 'uuid';
 import { InvoiceService } from './invoice.service.js';
 import { triggerOcrProcessing } from '../../services/ocrJobProcessor.js';
+
+/**
+ * `Invoice.gmailMessageId` is @unique. Synthesising it from `Date.now()` meant
+ * two uploads landing in the same millisecond collided on the constraint and
+ * surfaced as an opaque 500, so locally-generated ids use a UUID instead.
+ */
+export function syntheticMessageId(prefix: string): string {
+  return `${prefix}-${uuidv4()}`;
+}
+
+/** Prisma unique-constraint violation. */
+export function isUniqueConstraintError(error: unknown): boolean {
+  return (error as { code?: string } | null)?.code === 'P2002';
+}
 
 export const InvoiceController = {
   async ingestMockEmail(req: Request, res: Response, next: NextFunction) {
@@ -16,7 +31,7 @@ export const InvoiceController = {
         originalName: req.file.originalname,
         fromEmail,
         subject,
-        gmailMessageId: `manual-${Date.now()}`
+        gmailMessageId: syntheticMessageId('manual')
       });
 
       // Kick off OCR via unified processor
@@ -30,6 +45,9 @@ export const InvoiceController = {
         ocrJob,
       });
     } catch (error) {
+      if (isUniqueConstraintError(error)) {
+        return res.status(409).json({ error: 'This invoice has already been ingested' });
+      }
       next(error);
     }
   },
@@ -50,7 +68,7 @@ export const InvoiceController = {
         originalName,
         fromEmail: 'staff_upload@cambridgegardencentre.ca',
         subject: `Manual Upload: ${originalName}`,
-        gmailMessageId: `staff-${Date.now()}`,
+        gmailMessageId: syntheticMessageId('staff'),
       });
 
       if (ocrJob.id) {
@@ -63,6 +81,9 @@ export const InvoiceController = {
         ocrJob,
       });
     } catch (error) {
+      if (isUniqueConstraintError(error)) {
+        return res.status(409).json({ error: 'This invoice has already been ingested' });
+      }
       next(error);
     }
   },

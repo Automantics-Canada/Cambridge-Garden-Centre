@@ -18,6 +18,23 @@ function readPage(relativePath: string): string {
   return readFileSync(join(frontendSrc, relativePath), 'utf8');
 }
 
+/**
+ * Detect a PostgREST table read on the anon client.
+ *
+ * Whitespace is stripped before matching. A plain `includes('supabase.from(')`
+ * looks correct but silently misses the shape the original defect actually had,
+ * because the call was split across lines:
+ *
+ *     const { count, error } = await supabase
+ *       .from('Ticket')
+ *
+ * The self-check below pins that, so this matcher cannot quietly rot back into
+ * a test that always passes.
+ */
+function containsAnonTableAccess(source: string): boolean {
+  return source.replace(/\s+/g, '').includes('supabase.from(');
+}
+
 const PAGES = [
   'pages/dashboard/InvoicesPage.jsx',
   'pages/dashboard/TicketsPage.jsx',
@@ -32,9 +49,32 @@ describe('polling replacement does not reintroduce anon table access', () => {
     });
 
     it(`${page} does not query tables with the anon client`, () => {
-      assert.equal(readPage(page).includes('supabase.from('), false, page);
+      assert.equal(containsAnonTableAccess(readPage(page)), false, page);
     });
   }
+
+  it('the matcher itself catches the multi-line form the original defect used', () => {
+    // Verbatim shape of the violation that shipped in TicketsPage before the
+    // polling rewrite. A naive substring check passes on this, which is exactly
+    // how it survived an earlier review.
+    const historicalViolation = `
+      const { count, error } = await supabase
+        .from('Ticket')
+        .select('*', { count: 'exact', head: true })
+        .eq('status', 'UNLINKED');
+    `;
+    assert.equal(containsAnonTableAccess(historicalViolation), true);
+    assert.equal(
+      historicalViolation.includes('supabase.from('),
+      false,
+      'the naive check must be shown to miss it, or this guard proves nothing'
+    );
+  });
+
+  it('the matcher does not fire on the authenticated replacement', () => {
+    const replacement = `const res = await api.get('/api/tickets/stats');`;
+    assert.equal(containsAnonTableAccess(replacement), false);
+  });
 
   it('TicketsPage loads unlinked stats from the authenticated API', () => {
     const source = readPage('pages/dashboard/TicketsPage.jsx');
