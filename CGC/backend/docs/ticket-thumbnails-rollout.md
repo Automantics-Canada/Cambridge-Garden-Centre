@@ -27,23 +27,32 @@ Re-measure after rollout; do not quote these as production figures.
 
 ## Order of operations
 
-### 0. Confirm Railway builds the TypeScript source
+### 0. Railway preflight
 
 The repository still tracks legacy `CGC/backend/dist/` files even though that
 directory is now ignored. A Railway deployment that only runs `npm start` can
 therefore execute stale JavaScript and silently omit every backend change in
 this stack.
 
-Before rollout, confirm one of these equivalent configurations in Railway:
+Verified read-only against the production service on 2026-08-13:
 
-- Root Directory `CGC/backend`, Build Command `npm run build`, Start Command
-  `npm start`; or
-- repository root, Build Command `cd CGC/backend && npm ci && npm run build`,
-  Start Command `cd CGC/backend && npm start`.
+- Root Directory is `/CGC/backend`.
+- Builder is the default Railpack builder and Custom Build Command is unset.
+- The latest successful Linux build log ran `npm install`, `npm run build`
+  (`tsc`), then `npm run start`.
 
-Do not infer this from a successful Vercel preview; Vercel is a separate
-frontend target. Capture the Railway setting and a build log showing
-`prisma generate` followed by `tsc` before promoting the deployment.
+That proves TypeScript is rebuilt rather than stale tracked `dist/` files being
+started directly. The first build containing this PR must additionally show
+Sharp installing/loading successfully on Linux.
+
+**Region: resolved.** An earlier check found Railway rejecting the configured
+region `us-east4-eqdc4a` as invalid and blocking deployments. Settings → Scale
+now shows **US East (Virginia, USA), 1 replica**, with no invalid-region
+warning. Deployments are no longer blocked on this.
+
+With a single replica, note that the in-process rate limiter and the background
+jobs both behave as documented. Adding replicas later multiplies the effective
+rate limit and double-runs the pollers.
 
 ### 1. Apply the migration
 
