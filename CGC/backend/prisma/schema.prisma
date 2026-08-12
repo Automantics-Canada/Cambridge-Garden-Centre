@@ -74,6 +74,11 @@ model Ticket {
   @@index([poNumber])
   @@index([supplierId])
   @@index([receivedAt])
+  // The list screen filters on status and sorts by receivedAt desc. Separate
+  // single-column indexes cannot serve both, so Postgres sorts the whole
+  // matching set on every page load.
+  @@index([status, receivedAt(sort: Desc)])
+  @@index([supplierId, receivedAt(sort: Desc)])
 }
 
 
@@ -122,6 +127,9 @@ model Invoice {
   @@index([status])
   @@index([supplierId])
   @@index([receivedAt])
+  // Same filter+sort shape as Ticket: the invoice list filters on status and
+  // orders by receivedAt desc.
+  @@index([status, receivedAt(sort: Desc)])
 }
 
 

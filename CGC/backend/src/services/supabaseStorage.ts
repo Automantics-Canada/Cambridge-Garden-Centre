@@ -38,6 +38,13 @@ function getContentType(fileExtension: string): string {
 /**
  * Upload ticket image to Supabase Storage
  */
+/**
+ * Every upload below writes to a key containing a uuid and a timestamp, so a
+ * given URL never points at different bytes. Hourly revalidation was costing a
+ * round trip per image on list screens that render dozens of them.
+ */
+const IMMUTABLE_CACHE_CONTROL = 'public, max-age=31536000, immutable';
+
 export async function uploadTicketImage(
   buffer: Buffer,
   ticketId: string,
@@ -52,7 +59,7 @@ export async function uploadTicketImage(
     const { data, error } = await supabase.storage
       .from(env.supabaseStorageBucket)
       .upload(path, buffer, {
-        cacheControl: '3600',
+        cacheControl: IMMUTABLE_CACHE_CONTROL,
         upsert: false,
         contentType: getContentType(fileExtension),
       });
@@ -96,7 +103,7 @@ export async function uploadInvoiceImage(
     const { data, error } = await supabase.storage
       .from(env.supabaseStorageBucket)
       .upload(path, buffer, {
-        cacheControl: '3600',
+        cacheControl: IMMUTABLE_CACHE_CONTROL,
         upsert: false,
         contentType: getContentType(fileExtension),
       });
@@ -139,7 +146,7 @@ export async function uploadCsvFile(
     const { data, error } = await supabase.storage
       .from(env.supabaseStorageBucket)
       .upload(path, buffer, {
-        cacheControl: '3600',
+        cacheControl: IMMUTABLE_CACHE_CONTROL,
         upsert: false,
         contentType: 'text/csv',
       });

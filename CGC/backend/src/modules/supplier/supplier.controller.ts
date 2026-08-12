@@ -8,6 +8,11 @@ export const listSuppliers = async (_req: AuthRequest, res: Response) => {
   res.json(suppliers);
 };
 
+export const listSupplierOptions = async (_req: AuthRequest, res: Response) => {
+  const suppliers = await SupplierService.listOptions();
+  res.json(suppliers);
+};
+
 export const createSupplier = async (req: AuthRequest, res: Response) => {
   const { name, type, emailDomains, keywords, contactName, contactEmail, phone, address } =
     req.body;

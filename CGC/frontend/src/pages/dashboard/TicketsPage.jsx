@@ -25,6 +25,11 @@ import { Skeleton } from '../../components/Skeleton';
 import Loader from '../../components/Loader';
 import { useIntervalRefresh } from '../../hooks/useIntervalRefresh';
 
+// Each row renders a full-resolution ticket photo. Halving the page halves the
+// image payload and the rows the list query has to project, which is the
+// cheapest available win until real thumbnails exist.
+const PAGE_SIZE = 25;
+
 export default function TicketsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const ticketIdParam = searchParams.get('ticketId');
@@ -147,14 +152,10 @@ export default function TicketsPage() {
 
   const fetchSuppliers = useCallback(async () => {
     try {
-      const token = localStorage.getItem('token');
-      const headers = token ? { Authorization: `Bearer ${token}` } : {};
-      const { data, error } = await supabase.functions.invoke('fetch-cgc-data?resource=suppliers&limit=1000', {
-        method: 'GET',
-        headers
-      });
-      if (error) throw error;
-      setSuppliers(data?.data || []);
+      // Only id and name are needed to populate the filter dropdown. Fetching
+      // 1000 complete supplier records for this cost ~2.7s in production.
+      const res = await api.get('/api/suppliers/options');
+      setSuppliers(res.data || []);
     } catch (err) {
       console.error('Error fetching suppliers:', err);
     }
@@ -174,7 +175,7 @@ export default function TicketsPage() {
     try {
       const queryParams = {
         page,
-        limit: 50,
+        limit: PAGE_SIZE,
       };
       if (activeTab !== 'ALL') queryParams.status = activeTab;
       if (debouncedSearch && debouncedSearch.trim()) queryParams.search = debouncedSearch.trim();
@@ -192,7 +193,7 @@ export default function TicketsPage() {
         const params = new URLSearchParams({
           resource: 'tickets',
           page: String(page),
-          limit: '50'
+          limit: String(PAGE_SIZE)
         });
         if (activeTab !== 'ALL') params.append('status', activeTab);
         if (debouncedSearch && debouncedSearch.trim()) params.append('search', debouncedSearch.trim());
@@ -263,7 +264,10 @@ export default function TicketsPage() {
       fetchTicketsRef.current(true);
       fetchStatsRef.current();
     },
-    20_000
+    // The list endpoint and the count are the two most expensive calls on this
+    // screen. Polling them every 20s put them under constant load for every
+    // open dashboard; the hook additionally skips ticks while the tab is hidden.
+    60_000
   );
 
   const handleUpdateTicket = async (id, data) => {
@@ -669,10 +673,18 @@ export default function TicketsPage() {
                     <td className="px-6 py-4 whitespace-nowrap w-20">
                       <div className="w-12 h-12 bg-gray-100 rounded-lg overflow-hidden border border-gray-200 cursor-zoom-in" onClick={() => handleOpenReviewModal(ticket)}>
                         {ticket.imageUrl ? (
-                          <img 
-                            src={ticket.imageUrl.startsWith('http') ? ticket.imageUrl : `https://cambridge-garden-centre-1.onrender.com${ticket.imageUrl}`} 
-                            alt="Ticket thumb" 
+                          <img
+                            src={ticket.imageUrl.startsWith('http') ? ticket.imageUrl : `${import.meta.env.VITE_API_URL || ''}${ticket.imageUrl}`}
+                            alt="Ticket thumb"
                             className="w-full h-full object-cover"
+                            // These are full-resolution phone photos (~615 KB,
+                            // 1800x2391) rendered into 48 CSS px. Until real
+                            // thumbnails exist, only fetch the rows actually
+                            // scrolled into view instead of all 50 on mount.
+                            loading="lazy"
+                            decoding="async"
+                            width={48}
+                            height={48}
                           />
                         ) : (
                           <div className="w-full h-full flex items-center justify-center text-gray-400">

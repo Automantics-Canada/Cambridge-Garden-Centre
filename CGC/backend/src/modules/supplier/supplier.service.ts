@@ -67,6 +67,21 @@ export const SupplierService = {
     return newSupplier;
   },
 
+  /**
+   * Minimal projection for filter dropdowns.
+   *
+   * The full list() includes negotiated rates and every supplier column. The
+   * tickets screen was pulling all of that just to render <option> elements,
+   * which measured ~2.7s in production.
+   */
+  async listOptions() {
+    return prisma.supplier.findMany({
+      where: { active: true },
+      select: { id: true, name: true },
+      orderBy: { name: 'asc' },
+    });
+  },
+
   async list() {
     return prisma.supplier.findMany({
       where: { active: true },

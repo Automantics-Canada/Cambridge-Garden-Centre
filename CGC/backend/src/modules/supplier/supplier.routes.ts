@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import {
   listSuppliers,
+  listSupplierOptions,
   createSupplier,
   updateSupplier,
   deleteSupplier,
@@ -16,6 +17,9 @@ const router = Router();
 router.use(authMiddleware);
 router.use(requireRole([UserRole.ADMIN, UserRole.OWNER, UserRole.AP_USER]));
 
+// Registered before '/' so the lean dropdown projection is reachable; both are
+// operations-only via the router-level guard.
+router.get('/options', listSupplierOptions);
 router.get('/', listSuppliers);
 
 router.post('/', requireRole([UserRole.ADMIN, UserRole.OWNER, UserRole.AP_USER]), createSupplier);
