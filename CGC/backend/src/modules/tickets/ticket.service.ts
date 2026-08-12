@@ -91,9 +91,12 @@ export function buildTicketWhere(filters?: TicketFilters) {
  *
  * The previous projection pulled whole related rows — supplier, driver, linked
  * order, and every order match with its complete order attached — for all 50
- * rows on the page. Measured against production that endpoint took ~6s. The
- * review modal refetches the full ticket by id when it opens, so none of that
- * relational payload was ever displayed in the list.
+ * rows on the page. The review modal refetches the full ticket by id when it
+ * opens, so none of that relational payload was ever displayed in the list.
+ *
+ * GET /api/tickets measured ~6s in production before this change. That number
+ * covers the endpoint as a whole; how much of it this projection accounted for
+ * has not been isolated.
  */
 const TICKET_LIST_SELECT = {
   id: true,

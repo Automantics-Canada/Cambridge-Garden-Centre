@@ -1,9 +1,14 @@
 -- Composite indexes for the list screens.
 --
--- The tickets and invoices tables are filtered on `status` and ordered by
--- `receivedAt DESC`. Separate single-column indexes cannot serve both halves of
--- that query, so Postgres reads every matching row and sorts it on each page
--- load. Measured against production, GET /api/tickets took ~6s.
+-- The tickets and invoices list screens filter on `status` and order by
+-- `receivedAt DESC`. Only single-column indexes exist for those columns today,
+-- and a single-column index does not support both halves of that shape. These
+-- composite indexes do.
+--
+-- No query plan was captured for this change. GET /api/tickets was measured at
+-- ~6s in production, but that figure covers the whole endpoint and the index
+-- contribution to it is unquantified. Run EXPLAIN (ANALYZE, BUFFERS) on the
+-- list and count queries before and after to establish the actual effect.
 --
 -- These are plain (non-CONCURRENT) index builds, which take a brief write lock
 -- on the table. That is deliberate: these tables are small today (tens to low

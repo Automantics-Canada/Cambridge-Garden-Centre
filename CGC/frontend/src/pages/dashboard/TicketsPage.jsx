@@ -26,9 +26,36 @@ import Loader from '../../components/Loader';
 import { useIntervalRefresh } from '../../hooks/useIntervalRefresh';
 
 // Each row renders a full-resolution ticket photo. Halving the page halves the
-// image payload and the rows the list query has to project, which is the
-// cheapest available win until real thumbnails exist.
+// number of images requested and the rows the list query projects. This is an
+// interim measure until real thumbnails exist.
 const PAGE_SIZE = 25;
+
+// Bounded per request rather than on the shared Axios instance, which is also
+// used for uploads and OCR triggers that legitimately take longer.
+const TICKETS_REQUEST_TIMEOUT_MS = 15_000;
+
+function isAbortError(error) {
+  return (
+    error?.code === 'ERR_CANCELED' ||
+    error?.name === 'CanceledError' ||
+    error?.name === 'AbortError'
+  );
+}
+
+/**
+ * Whether a failed backend call is worth retrying through the Edge function.
+ *
+ * Only transport-level failures and server faults are. A 4xx is a definitive
+ * answer — retrying an auth or validation failure doubles the latency and hides
+ * the real cause behind a second, unrelated error.
+ */
+function shouldFallBackToEdge(error) {
+  if (isAbortError(error)) return false;
+  if (error?.code === 'ECONNABORTED' || error?.code === 'ETIMEDOUT') return true;
+  const status = error?.response?.status;
+  if (status === undefined) return true; // network error, no response received
+  return status >= 500;
+}
 
 export default function TicketsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -45,6 +72,10 @@ export default function TicketsPage() {
   const [isUploading, setIsUploading] = useState(false);
   const imageInputRef = useRef(null);
   const pdfInputRef = useRef(null);
+  // Cancels the in-flight tickets request; the id guards against a superseded
+  // response still reaching setState if it resolves before the abort lands.
+  const requestAbortRef = useRef(null);
+  const latestRequestIdRef = useRef(0);
   const [supplierId, setSupplierId] = useState('');
   const [source, setSource] = useState('');
   const [startDate, setStartDate] = useState('');
@@ -57,6 +88,9 @@ export default function TicketsPage() {
     }, 300);
     return () => clearTimeout(timer);
   }, [search]);
+
+  // Drop any in-flight tickets request when the page unmounts.
+  useEffect(() => () => requestAbortRef.current?.abort(), []);
 
   // Pagination
   const [page, setPage] = useState(1);
@@ -171,6 +205,16 @@ export default function TicketsPage() {
   }, []);
 
   const fetchTickets = useCallback(async (silent = false) => {
+    // Supersede any in-flight request. Without this, a slow response for an
+    // earlier filter could resolve after a newer one and overwrite the list
+    // with stale rows.
+    requestAbortRef.current?.abort();
+    const controller = new AbortController();
+    requestAbortRef.current = controller;
+
+    const requestId = ++latestRequestIdRef.current;
+    const isCurrent = () => requestId === latestRequestIdRef.current;
+
     if (!silent) setLoading(true);
     try {
       const queryParams = {
@@ -186,9 +230,21 @@ export default function TicketsPage() {
 
       let resultData = null;
       try {
-        const res = await api.get('/api/tickets', { params: queryParams });
+        const res = await api.get('/api/tickets', {
+          params: queryParams,
+          signal: controller.signal,
+          // Bounded per request rather than globally: the shared Axios instance
+          // is used by uploads and OCR triggers that legitimately run longer.
+          timeout: TICKETS_REQUEST_TIMEOUT_MS,
+        });
         resultData = res.data;
       } catch (backendErr) {
+        if (isAbortError(backendErr)) return;
+        // Only retry through the Edge function when the backend was unreachable
+        // or failed server-side. A 400/401/403 is a definitive answer and
+        // retrying it just doubles the latency and hides the real cause.
+        if (!shouldFallBackToEdge(backendErr)) throw backendErr;
+
         console.warn('Backend tickets call failed, falling back to edge function:', backendErr);
         const params = new URLSearchParams({
           resource: 'tickets',
@@ -212,7 +268,9 @@ export default function TicketsPage() {
         if (error) throw error;
         resultData = data;
       }
-      
+
+      if (!isCurrent()) return;
+
       if (resultData && resultData.data) {
         setTickets(resultData.data);
         setTotalPages(resultData.pagination?.totalPages || 1);
@@ -224,10 +282,11 @@ export default function TicketsPage() {
         setTotalPages(1);
       }
     } catch (err) {
+      if (isAbortError(err) || !isCurrent()) return;
       console.error('Error fetching tickets:', err);
       if (!silent) toast.error('Failed to load tickets');
     } finally {
-      if (!silent) setLoading(false);
+      if (!silent && isCurrent()) setLoading(false);
     }
   }, [activeTab, debouncedSearch, supplierId, source, startDate, endDate, page]);
 
@@ -679,8 +738,11 @@ export default function TicketsPage() {
                             className="w-full h-full object-cover"
                             // These are full-resolution phone photos (~615 KB,
                             // 1800x2391) rendered into 48 CSS px. Until real
-                            // thumbnails exist, only fetch the rows actually
-                            // scrolled into view instead of all 50 on mount.
+                            // thumbnails exist, native lazy loading at least
+                            // defers offscreen rows. Browsers choose their own
+                            // preload distance, so this reduces the initial
+                            // burst rather than guaranteeing only visible rows
+                            // are fetched.
                             loading="lazy"
                             decoding="async"
                             width={48}

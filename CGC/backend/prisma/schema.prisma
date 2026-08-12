@@ -74,9 +74,9 @@ model Ticket {
   @@index([poNumber])
   @@index([supplierId])
   @@index([receivedAt])
-  // The list screen filters on status and sorts by receivedAt desc. Separate
-  // single-column indexes cannot serve both, so Postgres sorts the whole
-  // matching set on every page load.
+  // The list screen filters on status and sorts by receivedAt desc, a shape a
+  // single-column index does not support. Effect on the query plan is
+  // unverified — no EXPLAIN ANALYZE was captured.
   @@index([status, receivedAt(sort: Desc)])
   @@index([supplierId, receivedAt(sort: Desc)])
 }
