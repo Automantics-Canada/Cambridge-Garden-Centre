@@ -39,11 +39,17 @@ function getContentType(fileExtension: string): string {
  * Upload ticket image to Supabase Storage
  */
 /**
+ * Supabase Storage's `cacheControl` option takes a number of seconds, not a
+ * complete Cache-Control header: the SDK emits `max-age=<value>` itself. Passing
+ * a full header string produced `max-age=public, max-age=31536000, immutable`,
+ * which is malformed and would be discarded.
+ *
  * Every upload below writes to a key containing a uuid and a timestamp, so a
- * given URL never points at different bytes. Hourly revalidation was costing a
- * round trip per image on list screens that render dozens of them.
+ * given URL never points at different bytes and a one-year max age is safe.
+ * Hourly revalidation was costing a round trip per image on list screens that
+ * render dozens of them.
  */
-const IMMUTABLE_CACHE_CONTROL = 'public, max-age=31536000, immutable';
+const LONG_CACHE_SECONDS = '31536000';
 
 export async function uploadTicketImage(
   buffer: Buffer,
@@ -59,7 +65,7 @@ export async function uploadTicketImage(
     const { data, error } = await supabase.storage
       .from(env.supabaseStorageBucket)
       .upload(path, buffer, {
-        cacheControl: IMMUTABLE_CACHE_CONTROL,
+        cacheControl: LONG_CACHE_SECONDS,
         upsert: false,
         contentType: getContentType(fileExtension),
       });
@@ -103,7 +109,7 @@ export async function uploadInvoiceImage(
     const { data, error } = await supabase.storage
       .from(env.supabaseStorageBucket)
       .upload(path, buffer, {
-        cacheControl: IMMUTABLE_CACHE_CONTROL,
+        cacheControl: LONG_CACHE_SECONDS,
         upsert: false,
         contentType: getContentType(fileExtension),
       });
@@ -146,7 +152,7 @@ export async function uploadCsvFile(
     const { data, error } = await supabase.storage
       .from(env.supabaseStorageBucket)
       .upload(path, buffer, {
-        cacheControl: IMMUTABLE_CACHE_CONTROL,
+        cacheControl: LONG_CACHE_SECONDS,
         upsert: false,
         contentType: 'text/csv',
       });
