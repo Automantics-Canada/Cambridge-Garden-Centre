@@ -1,6 +1,7 @@
 import { prisma } from '../../db/prisma.js';
 import { DeliveryStatus } from '@prisma/client';
 import supabaseStorage from '../../services/supabaseStorage.js';
+import { saveTicketImage } from '../../services/fileStorage.js';
 
 export const DeliveriesService = {
   async getDeliveries(filters: any) {
@@ -65,8 +66,6 @@ export const DeliveriesService = {
   },
 
   async uploadPhoto(id: string, type: 'pickup' | 'delivery' | 'ticket', fileBuffer: Buffer, filename: string) {
-    const uploadResult = await supabaseStorage.uploadTicketImage(fileBuffer, `${id}-${type}`, filename);
-    
     if (type === 'ticket') {
       const delivery = await prisma.delivery.findUnique({
         where: { id },
@@ -74,11 +73,16 @@ export const DeliveriesService = {
       });
       if (!delivery) throw new Error('Delivery not found');
 
+      // Driver-uploaded POD tickets must use the same path as email, WhatsApp,
+      // and dashboard uploads so they also receive a best-effort thumbnail.
+      const { imageUrl, thumbnailUrl } = await saveTicketImage(fileBuffer, filename);
+
       // Create a ticket in the database linked to the driver and order
       const ticket = await prisma.ticket.create({
         data: {
           source: 'MANUAL',
-          imageUrl: uploadResult.publicUrl,
+          imageUrl,
+          thumbnailUrl,
           ocrRawText: '',
           ocrConfidence: 0,
           status: 'LINKED',
@@ -138,6 +142,7 @@ export const DeliveriesService = {
         }
       });
     } else {
+      const uploadResult = await supabaseStorage.uploadTicketImage(fileBuffer, `${id}-${type}`, filename);
       const updateData = type === 'pickup' ? { pickupPhotoUrl: uploadResult.publicUrl } : { deliveryPhotoUrl: uploadResult.publicUrl };
 
       return prisma.delivery.update({

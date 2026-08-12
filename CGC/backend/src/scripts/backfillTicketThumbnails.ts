@@ -28,6 +28,8 @@
  *   - The database is updated only after the thumbnail upload has succeeded.
  */
 import { PrismaClient } from '@prisma/client';
+import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { env } from '../config/env.js';
 import { uploadTicketThumbnail } from '../services/supabaseStorage.js';
 import {
@@ -71,7 +73,7 @@ function parseOptions(argv: string[]): Options {
 }
 
 /** Only the configured Supabase storage origin is fetchable. */
-function assertAllowedSource(url: string): void {
+export function assertAllowedSource(url: string): void {
   let parsed: URL;
   let configured: URL;
   try {
@@ -80,12 +82,40 @@ function assertAllowedSource(url: string): void {
   } catch {
     throw new Error('Malformed source or configured Supabase URL');
   }
-  if (parsed.protocol !== 'https:' || parsed.hostname !== configured.hostname) {
-    throw new Error(`Refusing to download from untrusted origin "${parsed.hostname}"`);
+  if (parsed.protocol !== 'https:' || parsed.origin !== configured.origin) {
+    throw new Error(`Refusing to download from untrusted origin "${parsed.origin}"`);
   }
 }
 
-async function download(url: string): Promise<Buffer> {
+export async function readBoundedBody(
+  response: Response,
+  maxBytes: number = MAX_SOURCE_BYTES,
+): Promise<Buffer> {
+  if (!response.body) {
+    throw new Error('Source response had no body');
+  }
+
+  const reader = response.body.getReader();
+  const chunks: Buffer[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        await reader.cancel('source exceeds byte limit');
+        throw new Error(`Source exceeded the ${maxBytes} byte limit while streaming`);
+      }
+      chunks.push(Buffer.from(value));
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  return Buffer.concat(chunks, total);
+}
+
+export async function downloadTicketSource(url: string): Promise<Buffer> {
   assertAllowedSource(url);
 
   const controller = new AbortController();
@@ -101,12 +131,9 @@ async function download(url: string): Promise<Buffer> {
       throw new Error(`Source is ${declared} bytes, over the ${MAX_SOURCE_BYTES} limit`);
     }
 
-    const buffer = Buffer.from(await response.arrayBuffer());
-    // Re-check: content-length may be absent or wrong.
-    if (buffer.length > MAX_SOURCE_BYTES) {
-      throw new Error(`Source is ${buffer.length} bytes, over the ${MAX_SOURCE_BYTES} limit`);
-    }
-    return buffer;
+    // Stream the body so a missing or dishonest Content-Length cannot make the
+    // process buffer an unbounded response before discovering it is too large.
+    return await readBoundedBody(response);
   } finally {
     clearTimeout(timer);
   }
@@ -126,7 +153,11 @@ async function processTicket(
 ): Promise<Outcome> {
   const objectPath = storagePathFromPublicUrl(ticket.imageUrl, env.supabaseStorageBucket);
   if (!objectPath) {
-    return { ticketId: ticket.id, status: 'skipped', detail: 'imageUrl is not a public storage object URL' };
+    return {
+      ticketId: ticket.id,
+      status: options.apply ? 'failed' : 'skipped',
+      detail: 'imageUrl is not a public storage object URL',
+    };
   }
 
   const thumbnailPath = deriveThumbnailPath(objectPath);
@@ -136,7 +167,7 @@ async function processTicket(
   }
 
   try {
-    const source = await download(ticket.imageUrl);
+    const source = await downloadTicketSource(ticket.imageUrl);
     const thumbnail = await generateThumbnail(source);
     const uploaded = await uploadTicketThumbnail(
       thumbnail.buffer,
@@ -232,11 +263,17 @@ async function main() {
   }
 }
 
-main()
-  .catch((error) => {
-    console.error('Backfill failed:', error instanceof Error ? error.message : error);
-    process.exitCode = 1;
-  })
-  .finally(async () => {
-    await prisma.$disconnect();
-  });
+const invokedAsScript = Boolean(
+  process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+);
+
+if (invokedAsScript) {
+  main()
+    .catch((error) => {
+      console.error('Backfill failed:', error instanceof Error ? error.message : error);
+      process.exitCode = 1;
+    })
+    .finally(async () => {
+      await prisma.$disconnect();
+    });
+}

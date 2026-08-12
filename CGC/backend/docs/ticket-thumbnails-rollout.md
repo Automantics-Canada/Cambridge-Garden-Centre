@@ -27,6 +27,24 @@ Re-measure after rollout; do not quote these as production figures.
 
 ## Order of operations
 
+### 0. Confirm Railway builds the TypeScript source
+
+The repository still tracks legacy `CGC/backend/dist/` files even though that
+directory is now ignored. A Railway deployment that only runs `npm start` can
+therefore execute stale JavaScript and silently omit every backend change in
+this stack.
+
+Before rollout, confirm one of these equivalent configurations in Railway:
+
+- Root Directory `CGC/backend`, Build Command `npm run build`, Start Command
+  `npm start`; or
+- repository root, Build Command `cd CGC/backend && npm ci && npm run build`,
+  Start Command `cd CGC/backend && npm start`.
+
+Do not infer this from a successful Vercel preview; Vercel is a separate
+frontend target. Capture the Railway setting and a build log showing
+`prisma generate` followed by `tsc` before promoting the deployment.
+
 ### 1. Apply the migration
 
 ```bash
@@ -59,7 +77,20 @@ still succeeds, and a line is logged naming the object and the retry command.
 List and grid views prefer `thumbnailUrl` and fall back to `imageUrl`. The
 review modal and the download action always use the original.
 
-### 4. Backfill existing tickets
+### 4. Deploy the changed Edge Function
+
+The driver and fallback data paths receive `thumbnailUrl` from
+`fetch-cgc-data`. Deploy that function after the database migration and before
+verifying the driver flow. This is a separate Supabase rollout target from the
+Railway backend and Vercel frontend.
+
+```bash
+npx supabase functions deploy fetch-cgc-data \
+  --project-ref "$SUPABASE_PROJECT_REF" \
+  --workdir ../supabase
+```
+
+### 5. Backfill existing tickets
 
 Dry run first. This is the default; it writes nothing.
 
@@ -107,7 +138,7 @@ npm run backfill:thumbnails -- --apply --limit=500 --concurrency=3
 - Source URLs must match the configured Supabase origin; anything else is refused.
 - Decoding is capped at 40 megapixels to bound the worst-case allocation.
 
-### 5. Verify
+### 6. Verify
 
 - A newly uploaded ticket has a non-null `thumbnailUrl`.
 - The tickets list renders thumbnails and the transferred bytes drop sharply.
@@ -123,10 +154,12 @@ npm run backfill:thumbnails -- --apply --limit=500 --concurrency=3
   `@img/sharp-linuxmusl-x64`, and arm variants) are present in
   `package-lock.json` as optional dependencies, so `npm ci` on Railway resolves
   the correct platform build. Verified: lockfile v3 carries all 16 Linux entries.
-- Thumbnails are written with `cache-control: public, max-age=31536000,
-  immutable`. This is only sound because the key is derived from the original's
-  path, which already contains a uuid and a timestamp — a given URL can never
-  point at different bytes. Do not copy that header onto a mutable key.
+- Supabase's client accepts cache duration as seconds and emits the header. The
+  upload uses `cacheControl: '31536000'`, producing a one-year max age. Do not
+  pass a complete header string to that option: the SDK prepends `max-age=`.
+- Roll the application and Edge Function back before dropping `thumbnailUrl`.
+  The safest database rollback is normally to leave this additive nullable
+  column in place; dropping it while newer code still selects it breaks reads.
 - EXIF is applied then dropped: orientation is baked into the pixels, and no
   metadata — including any GPS coordinates from the driver's phone — survives
   into the thumbnail.

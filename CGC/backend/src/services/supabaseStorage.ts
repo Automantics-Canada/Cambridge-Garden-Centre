@@ -36,18 +36,15 @@ function getContentType(fileExtension: string): string {
 }
 
 /**
- * Upload ticket image to Supabase Storage
- */
-/**
  * Supabase Storage's `cacheControl` option takes a number of seconds, not a
  * complete Cache-Control header: the SDK emits `max-age=<value>` itself. Passing
  * a full header string produced `max-age=public, max-age=31536000, immutable`,
- * which is malformed and would be discarded.
+ * which is malformed and would have been discarded.
  *
- * Every upload below writes to a key containing a uuid and a timestamp, so a
- * given URL never points at different bytes and a one-year max age is safe.
- * Hourly revalidation was costing a round trip per image on list screens that
- * render dozens of them.
+ * Every upload below writes to a versioned key containing a uuid and a
+ * timestamp, so a given URL never points at different bytes and a one-year max
+ * age is safe. Hourly revalidation was costing a round trip per image on list
+ * screens that render dozens of them.
  */
 const LONG_CACHE_SECONDS = '31536000';
 
@@ -110,7 +107,7 @@ export async function uploadTicketThumbnail(
   const { data, error } = await supabase.storage
     .from(env.supabaseStorageBucket)
     .upload(path, buffer, {
-      cacheControl: IMMUTABLE_CACHE_CONTROL,
+      cacheControl: LONG_CACHE_SECONDS,
       upsert: true,
       contentType,
     });
