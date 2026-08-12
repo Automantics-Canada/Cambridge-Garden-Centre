@@ -1,13 +1,28 @@
 import { Router } from 'express';
-import multer from 'multer';
 import { InvoiceController } from './invoice.controller.js';
 import { authMiddleware, requireRole } from '../../middleware/authMiddleware.js';
+import {
+  createUploader,
+  validateUploadContent,
+  uploadErrorHandler,
+} from '../../middleware/uploadValidation.js';
+import { rateLimit } from '../../middleware/rateLimit.js';
 
 const router = Router();
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 15 * 1024 * 1024 } });
+// The invoice upload UI offers .jpg/.jpeg/.png/.pdf.
+const upload = createUploader({ maxBytes: 15 * 1024 * 1024, kinds: ['image', 'pdf'] });
 
 // Keep the simulator available for controlled troubleshooting, never publicly.
-router.post('/mock-email', authMiddleware, requireRole(['ADMIN']), upload.single('file'), InvoiceController.ingestMockEmail);
+// It persists an invoice and triggers paid OCR, so it is rate limited too.
+router.post(
+  '/mock-email',
+  authMiddleware,
+  requireRole(['ADMIN']),
+  rateLimit({ windowMs: 60_000, max: 10, name: 'invoice ingest' }),
+  upload.single('file'),
+  validateUploadContent(['image', 'pdf']),
+  InvoiceController.ingestMockEmail
+);
 
 // Protected routes
 router.use(authMiddleware);
@@ -21,5 +36,7 @@ router.post('/line-items/link-order', InvoiceController.linkOrderToLineItem);
 router.post('/line-items/link-tickets', InvoiceController.linkTicketsToLineItem);
 router.post('/line-items/unlink-order', InvoiceController.unlinkOrderFromLineItem);
 router.post('/line-items/unlink-ticket', InvoiceController.unlinkTicketFromLineItem);
+
+router.use(uploadErrorHandler);
 
 export default router;

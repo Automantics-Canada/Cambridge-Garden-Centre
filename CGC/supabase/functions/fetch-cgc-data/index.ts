@@ -1,6 +1,7 @@
 // @ts-nocheck
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.38.0"
+import { canAccessResource, requiresOwnDriverScope } from "../_shared/accessPolicy.ts"
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -122,12 +123,46 @@ serve(async (req) => {
     const page = parseInt(url.searchParams.get('page') || '1');
     const offset = (page - 1) * limit;
 
-    const operationsRoles = new Set(['AP_USER', 'OWNER', 'ADMIN']);
-    if (resource !== 'drivers-me' && !operationsRoles.has(decodedPayload.role)) {
+    if (!canAccessResource(decodedPayload.role, resource)) {
       return new Response(
         JSON.stringify({ error: 'Forbidden' }),
         { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
+    }
+
+    // A DRIVER may read deliveries, but only its own. The scope is resolved
+    // from the verified token subject; any caller-supplied driverId is ignored
+    // so one driver cannot enumerate another driver's route.
+    let enforcedDriverId: string | null = null;
+    if (requiresOwnDriverScope(decodedPayload.role, resource)) {
+      const sessionUserId = decodedPayload.id || decodedPayload.userId;
+      if (!sessionUserId) {
+        return new Response(
+          JSON.stringify({ error: 'User ID missing from token' }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
+      const { data: ownDriver, error: ownDriverError } = await supabaseClient
+        .from('Driver')
+        .select('id')
+        .eq('userId', sessionUserId)
+        .maybeSingle();
+
+      if (ownDriverError) {
+        return new Response(
+          JSON.stringify({ error: ownDriverError.message }),
+          { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+      if (!ownDriver) {
+        return new Response(
+          JSON.stringify({ error: 'No driver profile is linked to this account' }),
+          { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
+      enforcedDriverId = ownDriver.id;
     }
 
     // Keep the dashboard payload small. Previously the browser downloaded up to
@@ -498,7 +533,9 @@ serve(async (req) => {
         `, { count: 'exact' })
         .order('name', { ascending: true });
     } else if (resource === 'deliveries') {
-      const driverId = url.searchParams.get('driverId');
+      // enforcedDriverId is set for driver sessions and always wins over the
+      // query parameter. Operations roles keep the existing filter behaviour.
+      const driverId = enforcedDriverId ?? url.searchParams.get('driverId');
       query = supabaseClient
         .from('Delivery')
         .select(`

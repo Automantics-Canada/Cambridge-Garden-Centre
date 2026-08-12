@@ -45,4 +45,3 @@ The repository currently lacks comprehensive automated tests and has pre-existin
 4. Run the relevant quality and authenticated workflow gates.
 5. Commit intentionally, push the scoped branch, and open a draft PR with evidence and remaining limitations.
 6. Do not describe deployment or client UAT as complete unless independently verified.
-

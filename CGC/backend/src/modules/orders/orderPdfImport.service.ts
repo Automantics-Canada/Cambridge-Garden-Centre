@@ -4,6 +4,7 @@ import { PDFParse } from 'pdf-parse';
 import { prisma } from '../../db/prisma.js';
 import type { Prisma } from '@prisma/client';
 import { orderEventEmitter, OrderEvents } from './order.events.js';
+import { buildSpruceOrderKey } from './orderImportKey.js';
 
 const textractClient = new TextractClient({
   region: process.env.AWS_REGION || 'us-east-1',
@@ -84,7 +85,8 @@ export const OrderPdfImportService = {
         console.log(`[OrderPdfImport] Page ${pageIdx + 1} found ${tableBlocks.length} tables.`);
         if (tableBlocks.length === 0) continue;
 
-        for (const tableBlock of tableBlocks) {
+        for (let tableIdx = 0; tableIdx < tableBlocks.length; tableIdx++) {
+          const tableBlock = tableBlocks[tableIdx]!;
           const cells = blocks.filter(
             (block) =>
               block.BlockType === 'CELL' &&
@@ -198,7 +200,7 @@ export const OrderPdfImportService = {
             if (!spruceOrderId || !customerName) {
               console.log(`[OrderPdfImport] Skipping row ${rowIndex}: Missing required fields`, { spruceOrderId, customerName, itemDesc });
               skipped++;
-              errors.push({ rowNumber: rowIndex, error: `Page ${pageIdx + 1}, Row ${rowIndex}: Missing spruceOrderId="${spruceOrderId}", customerName="${customerName}", itemDesc="${itemDesc}"` });
+              errors.push({ rowNumber: rowIndex, error: `Page ${pageIdx + 1}, Table ${tableIdx + 1}, Row ${rowIndex}: Missing spruceOrderId="${spruceOrderId}", customerName="${customerName}", itemDesc="${itemDesc}"` });
               continue;
             }
 
@@ -235,12 +237,12 @@ export const OrderPdfImportService = {
             }
 
             const data: Prisma.OrderUncheckedCreateInput = {
-              // Retain the legacy ID format for page 1 so re-imports update
-              // existing data, and include the page for subsequent pages to
-              // prevent row 2 on every page from overwriting the same order.
-              spruceOrderId: pageIdx === 0
-                ? `${spruceOrderId}-${rowIndex}`
-                : `${spruceOrderId}-P${pageIdx + 1}-${rowIndex}`,
+              spruceOrderId: buildSpruceOrderKey({
+                documentId: spruceOrderId,
+                pageIndex: pageIdx,
+                tableIndex: tableIdx,
+                rowIndex,
+              }),
               poNumber,
               customerName,
               supplierId,
@@ -271,7 +273,7 @@ export const OrderPdfImportService = {
               skipped++;
               errors.push({
                 rowNumber: rowIndex,
-                error: `Page ${pageIdx + 1}, Row ${rowIndex}: ${e?.message || 'Database error'}`,
+                error: `Page ${pageIdx + 1}, Table ${tableIdx + 1}, Row ${rowIndex}: ${e?.message || 'Database error'}`,
               });
             }
           }
