@@ -383,7 +383,7 @@ export default function DispatchBoard() {
           <tr key={i}>
             <td className="px-6 py-4 whitespace-nowrap">
               <div className="flex items-center gap-3">
-                <div className="w-8 h-8 rounded-lg bg-ink/[0.06] animate-pulse" />
+                <div className="w-8 h-8 rounded-control bg-ink/[0.06] animate-pulse" />
                 <div className="h-4 bg-ink/[0.06] rounded w-28 animate-pulse" />
               </div>
             </td>
@@ -391,7 +391,7 @@ export default function DispatchBoard() {
               <div className="h-4 bg-ink/[0.06] rounded w-20 animate-pulse" />
             </td>
             <td className="px-6 py-4 whitespace-nowrap">
-              <div className="h-6 bg-ink/[0.06] rounded-xl w-32 animate-pulse" />
+              <div className="h-6 bg-ink/[0.06] rounded-control w-32 animate-pulse" />
             </td>
             <td className="px-6 py-4 whitespace-nowrap text-center">
               <div className="h-4 bg-ink/[0.06] rounded w-8 mx-auto animate-pulse" />
@@ -400,7 +400,7 @@ export default function DispatchBoard() {
               <div className="h-5 bg-ink/[0.06] rounded-full w-16 animate-pulse" />
             </td>
             <td className="px-6 py-4 whitespace-nowrap text-right">
-              <div className="w-8 h-8 bg-ink/[0.06] rounded-lg ml-auto animate-pulse" />
+              <div className="w-8 h-8 bg-ink/[0.06] rounded-control ml-auto animate-pulse" />
             </td>
           </tr>
         ))}
@@ -415,7 +415,7 @@ export default function DispatchBoard() {
           <tr key={i}>
             <td className="px-6 py-4 whitespace-nowrap">
               <div className="flex items-center gap-3">
-                <div className="w-8 h-8 rounded-lg bg-ink/[0.06] animate-pulse" />
+                <div className="w-8 h-8 rounded-control bg-ink/[0.06] animate-pulse" />
                 <div className="h-4 bg-ink/[0.06] rounded w-24 animate-pulse" />
               </div>
             </td>
@@ -435,7 +435,7 @@ export default function DispatchBoard() {
               <div className="h-5 bg-ink/[0.06] rounded-full w-24 animate-pulse" />
             </td>
             <td className="px-6 py-4 whitespace-nowrap text-right">
-              <div className="w-20 h-6 bg-ink/[0.06] rounded-lg ml-auto animate-pulse" />
+              <div className="w-20 h-6 bg-ink/[0.06] rounded-control ml-auto animate-pulse" />
             </td>
           </tr>
         ))}
@@ -478,7 +478,7 @@ export default function DispatchBoard() {
       </FadeInUp>
 
       {/* TOP SECTION: DRIVERS EXCEL SPREADSHEET TABLE */}
-      <div className="bg-surface rounded-xl border border-line shadow-sm overflow-hidden flex flex-col">
+      <div className="bg-surface rounded-card border border-line shadow-card overflow-hidden flex flex-col">
         <div className="bg-ink/[0.03] px-6 py-4 border-b border-line flex justify-between items-center select-none">
           <div>
             <h3 className="text-sm font-bold text-ink flex items-center gap-2">
@@ -492,12 +492,12 @@ export default function DispatchBoard() {
           <table className="min-w-full divide-y divide-line">
             <thead className="bg-ink/[0.03]">
               <tr>
-                <th scope="col" className="px-6 py-3 text-left text-xs font-bold text-muted uppercase tracking-wider w-64 select-none">Driver</th>
-                <th scope="col" className="px-6 py-3 text-left text-xs font-bold text-muted uppercase tracking-wider w-40 select-none">Type</th>
-                <th scope="col" className="px-6 py-3 text-left text-xs font-bold text-muted uppercase tracking-wider select-none">Active Assignments</th>
-                <th scope="col" className="px-6 py-3 text-left text-xs font-bold text-muted uppercase tracking-wider w-32 text-center select-none">Completed</th>
-                <th scope="col" className="px-6 py-3 text-left text-xs font-bold text-muted uppercase tracking-wider w-32 select-none">Status</th>
-                <th scope="col" className="px-6 py-3 text-right text-xs font-bold text-muted uppercase tracking-wider w-24 select-none">Action</th>
+                <th scope="col" className="px-6 py-3 text-left text-[12.5px] font-bold text-muted w-64 select-none">Driver</th>
+                <th scope="col" className="px-6 py-3 text-left text-[12.5px] font-bold text-muted w-40 select-none">Type</th>
+                <th scope="col" className="px-6 py-3 text-left text-[12.5px] font-bold text-muted select-none">Active Assignments</th>
+                <th scope="col" className="px-6 py-3 text-left text-[12.5px] font-bold text-muted w-32 text-center select-none">Completed</th>
+                <th scope="col" className="px-6 py-3 text-left text-[12.5px] font-bold text-muted w-32 select-none">Status</th>
+                <th scope="col" className="px-6 py-3 text-right text-[12.5px] font-bold text-muted w-24 select-none">Action</th>
               </tr>
             </thead>
             <tbody className="bg-surface divide-y divide-line">
@@ -525,7 +525,7 @@ export default function DispatchBoard() {
                         {/* Driver Column */}
                         <td className="px-6 py-4 whitespace-nowrap">
                           <div className="flex items-center gap-3">
-                            <div className="p-2 bg-ink/[0.06] rounded-lg group-hover:bg-brand/10 transition-colors flex-shrink-0">
+                            <div className="p-2 bg-ink/[0.06] rounded-control group-hover:bg-brand/10 transition-colors flex-shrink-0">
                               <Truck className="w-5 h-5 text-muted group-hover:text-brand" />
                             </div>
                             <div>
@@ -546,11 +546,11 @@ export default function DispatchBoard() {
                         <td className="px-6 py-4">
                           <div className="flex flex-wrap gap-2 items-center">
                             {filteredDeliveries.length === 0 ? (
-                              <span className="text-xs text-muted font-semibold italic select-none">
+                              <span className="text-[12.5px] text-muted font-semibold italic select-none">
                                 No assignments — drag orders onto this row to assign
                               </span>
                             ) : (
-                              <div className="flex items-center gap-2 bg-ink/[0.03] border border-line rounded-xl px-3 py-1.5 text-xs font-bold text-muted select-none shadow-sm">
+                              <div className="flex items-center gap-2 bg-ink/[0.03] border border-line rounded-control px-3 py-1.5 text-[12.5px] font-bold text-muted select-none shadow-card">
                                 <Package2 size={14} className="text-muted" />
                                 <span>{filteredDeliveries.length} {filteredDeliveries.length === 1 ? 'Order' : 'Orders'} Assigned</span>
                               </div>
@@ -581,7 +581,7 @@ export default function DispatchBoard() {
                                 toast.error('No assignments assigned to this driver');
                               }
                             }}
-                            className={`transition-all p-2 rounded-lg ${isExpanded
+                            className={`transition-all p-2 rounded-control ${isExpanded
                                 ? 'bg-brand/10 text-brand'
                                 : 'text-muted hover:text-brand hover:bg-brand/10'
                               }`}
@@ -604,10 +604,10 @@ export default function DispatchBoard() {
                                 transition={{ duration: 0.2 }}
                                 className="overflow-hidden"
                               >
-                                <div className="border border-line rounded-xl bg-surface shadow-sm overflow-hidden flex flex-col">
+                                <div className="border border-line rounded-control bg-surface shadow-card overflow-hidden flex flex-col">
                                   {/* Sub-row Header */}
                                   <div className="bg-ink/[0.03] px-4 py-2 border-b border-line flex justify-between items-center select-none">
-                                    <span className="text-[12.5px] font-bold text-muted uppercase tracking-wider">
+                                    <span className="text-[12.5px] font-bold text-muted">
                                       Assigned Deliveries for {driver.name} ({filteredDeliveries.length})
                                     </span>
                                     <span className="text-[12.5px] text-muted font-semibold">
@@ -635,10 +635,10 @@ export default function DispatchBoard() {
                                               {/* Order ID Column */}
                                               <td className="px-6 py-4 whitespace-nowrap w-48">
                                                 <div className="flex items-center gap-2">
-                                                  <div className="p-1.5 bg-ink/[0.06] rounded-lg text-muted group-hover/item:text-brand group-hover/item:bg-brand/10 transition-colors flex-shrink-0">
+                                                  <div className="p-1.5 bg-ink/[0.06] rounded-control text-muted group-hover/item:text-brand group-hover/item:bg-brand/10 transition-colors flex-shrink-0">
                                                     <Package2 className="w-4 h-4" />
                                                   </div>
-                                                  <div className="text-xs font-bold text-ink tracking-wider flex items-center gap-1.5 uppercase select-none">
+                                                  <div className="text-[12.5px] font-bold text-ink flex items-center gap-1.5 select-none">
                                                     <GripVertical size={12} className="text-muted group-hover/item:text-muted transition-colors flex-shrink-0" />
                                                     {del.order.spruceOrderId}
                                                   </div>
@@ -646,7 +646,7 @@ export default function DispatchBoard() {
                                               </td>
 
                                               {/* Customer Column */}
-                                              <td className="px-6 py-4 whitespace-nowrap text-xs text-muted font-bold select-none w-64">
+                                              <td className="px-6 py-4 whitespace-nowrap text-[12.5px] text-muted font-bold select-none w-64">
                                                 {del.order.customerName}
                                               </td>
 
@@ -656,7 +656,7 @@ export default function DispatchBoard() {
                                               </td>
 
                                               {/* Quantity Column */}
-                                              <td className="px-6 py-4 whitespace-nowrap text-xs text-muted font-bold select-none w-32">
+                                              <td className="px-6 py-4 whitespace-nowrap text-[12.5px] text-muted font-bold select-none w-32">
                                                 {Number(del.order.quantity)} {del.order.unit}
                                               </td>
 
@@ -666,10 +666,10 @@ export default function DispatchBoard() {
                                               </td>
 
                                               {/* Actions Inline Column */}
-                                              <td className="px-6 py-4 whitespace-nowrap text-right text-xs font-bold w-64">
+                                              <td className="px-6 py-4 whitespace-nowrap text-right text-[12.5px] font-bold w-64">
                                                 <div className="flex items-center justify-end gap-2">
                                                   <select
-                                                    className="text-[12.5px] font-bold border border-line rounded-lg px-2 py-1 outline-none focus:ring-1 focus:ring-brand bg-surface cursor-pointer text-ink"
+                                                    className="text-[12.5px] font-bold border border-line rounded-control px-2 py-1 outline-none focus:ring-1 focus:ring-brand bg-surface cursor-pointer text-ink"
                                                     value={del.status}
                                                     onChange={(e) => {
                                                       handleStatusUpdate(del.id, e.target.value);
@@ -691,7 +691,7 @@ export default function DispatchBoard() {
                                                           fetchBoard();
                                                         });
                                                     }}
-                                                    className="px-2.5 py-1.5 rounded-lg border border-clay/30 text-clay hover:bg-clay/10 text-[12.5px] font-bold uppercase transition-colors bg-surface"
+                                                    className="px-2.5 py-1.5 rounded-control border border-clay/30 text-clay hover:bg-clay/10 text-[12.5px] font-bold transition-colors bg-surface"
                                                     title="Remove Assignment"
                                                   >
                                                     Unassign
@@ -707,14 +707,14 @@ export default function DispatchBoard() {
                                                   <div className="flex gap-6 items-center pl-8 py-1">
                                                     {del.pickupPhotoUrl && (
                                                       <div className="flex gap-2 items-center">
-                                                        <span className="text-[12.5px] font-bold text-muted uppercase">Pickup photo:</span>
-                                                        <img src={del.pickupPhotoUrl} className="w-20 h-10 object-cover rounded-lg border hover:scale-105 transition-all cursor-zoom-in" alt="Pickup Evidence" />
+                                                        <span className="text-[12.5px] font-bold text-muted">Pickup photo:</span>
+                                                        <img src={del.pickupPhotoUrl} className="w-20 h-10 object-cover rounded-control border hover:scale-105 transition-all cursor-zoom-in" alt="Pickup Evidence" />
                                                       </div>
                                                     )}
                                                     {del.deliveryPhotoUrl && (
                                                       <div className="flex gap-2 items-center">
-                                                        <span className="text-[12.5px] font-bold text-muted uppercase">Delivery photo:</span>
-                                                        <img src={del.deliveryPhotoUrl} className="w-20 h-10 object-cover rounded-lg border hover:scale-105 transition-all cursor-zoom-in" alt="Delivery Evidence" />
+                                                        <span className="text-[12.5px] font-bold text-muted">Delivery photo:</span>
+                                                        <img src={del.deliveryPhotoUrl} className="w-20 h-10 object-cover rounded-control border hover:scale-105 transition-all cursor-zoom-in" alt="Delivery Evidence" />
                                                       </div>
                                                     )}
                                                   </div>
@@ -746,7 +746,7 @@ export default function DispatchBoard() {
         onDragOver={handleDragOverUnassigned}
         onDragLeave={handleDragLeaveUnassigned}
         onDrop={handleDropOnUnassigned}
-        className={`bg-surface rounded-xl border shadow-sm overflow-hidden flex flex-col transition-all duration-300 ${isOverUnassignedDropZone
+        className={`bg-surface rounded-card border shadow-card overflow-hidden flex flex-col transition-all duration-300 ${isOverUnassignedDropZone
             ? 'border-brand ring-4 ring-brand/10 bg-brand/[0.04]'
             : 'border-line'
           }`}
@@ -762,7 +762,7 @@ export default function DispatchBoard() {
             <motion.div
               initial={{ scale: 0.9 }}
               animate={{ scale: 1 }}
-              className="text-xs font-bold text-brand bg-brand/10 px-3 py-1 rounded-lg uppercase tracking-wider animate-bounce"
+              className="text-[12.5px] font-bold text-brand bg-brand/10 px-3 py-1 rounded-control animate-bounce"
             >
               Drop here to Unassign!
             </motion.div>
@@ -773,13 +773,13 @@ export default function DispatchBoard() {
           <table className="min-w-full divide-y divide-line">
             <thead className="bg-ink/[0.03]">
               <tr>
-                <th scope="col" className="px-6 py-3 text-left text-xs font-bold text-muted uppercase tracking-wider select-none">Order</th>
-                <th scope="col" className="px-6 py-3 text-left text-xs font-bold text-muted uppercase tracking-wider select-none">Customer</th>
-                <th scope="col" className="px-6 py-3 text-left text-xs font-bold text-muted uppercase tracking-wider select-none">Product</th>
-                <th scope="col" className="px-6 py-3 text-left text-xs font-bold text-muted uppercase tracking-wider select-none">Quantity</th>
-                <th scope="col" className="px-6 py-3 text-left text-xs font-bold text-muted uppercase tracking-wider select-none">Date</th>
-                <th scope="col" className="px-6 py-3 text-left text-xs font-bold text-muted uppercase tracking-wider select-none">Status</th>
-                <th scope="col" className="px-6 py-3 text-right text-xs font-bold text-muted uppercase tracking-wider select-none">Assign</th>
+                <th scope="col" className="px-6 py-3 text-left text-[12.5px] font-bold text-muted select-none">Order</th>
+                <th scope="col" className="px-6 py-3 text-left text-[12.5px] font-bold text-muted select-none">Customer</th>
+                <th scope="col" className="px-6 py-3 text-left text-[12.5px] font-bold text-muted select-none">Product</th>
+                <th scope="col" className="px-6 py-3 text-left text-[12.5px] font-bold text-muted select-none">Quantity</th>
+                <th scope="col" className="px-6 py-3 text-left text-[12.5px] font-bold text-muted select-none">Date</th>
+                <th scope="col" className="px-6 py-3 text-left text-[12.5px] font-bold text-muted select-none">Status</th>
+                <th scope="col" className="px-6 py-3 text-right text-[12.5px] font-bold text-muted select-none">Assign</th>
               </tr>
             </thead>
             <tbody className="bg-surface divide-y divide-line">
@@ -808,10 +808,10 @@ export default function DispatchBoard() {
                     {/* Order Column */}
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="flex items-center gap-3">
-                        <div className="p-2 bg-ink/[0.06] rounded-lg group-hover:bg-brand/10 transition-colors flex-shrink-0">
+                        <div className="p-2 bg-ink/[0.06] rounded-control group-hover:bg-brand/10 transition-colors flex-shrink-0">
                           <Package2 className="w-5 h-5 text-muted group-hover:text-brand" />
                         </div>
-                        <div className="text-sm font-bold text-ink tracking-wider flex items-center gap-1.5 uppercase select-none">
+                        <div className="text-sm font-bold text-ink flex items-center gap-1.5 select-none">
                           <GripVertical size={14} className="text-muted group-hover:text-muted transition-colors flex-shrink-0" />
                           {order.spruceOrderId}
                         </div>
@@ -846,7 +846,7 @@ export default function DispatchBoard() {
                     {/* Assign Column */}
                     <td className="px-6 py-4 whitespace-nowrap text-right">
                       <select
-                        className="border border-line rounded-lg px-2 py-1 text-[12.5px] font-bold bg-surface focus:ring-1 focus:ring-brand outline-none cursor-pointer text-muted hover:border-brand/40 transition-all"
+                        className="border border-line rounded-control px-2 py-1 text-[12.5px] font-bold bg-surface focus:ring-1 focus:ring-brand outline-none cursor-pointer text-muted hover:border-brand/40 transition-all"
                         onChange={(e) => {
                           if (e.target.value) {
                             const driverObj = board.drivers.find(d => d.id === e.target.value);
