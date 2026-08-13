@@ -577,13 +577,13 @@ export default function TicketsPage() {
           <button
             onClick={() => pdfInputRef.current?.click()}
             disabled={isUploading}
-            className="flex items-center gap-2 bg-brand hover:brightness-110 text-on-brand px-4 py-2 rounded-lg font-medium text-xs transition-all shadow-md disabled:opacity-50"
+            className="flex items-center gap-2 bg-brand hover:brightness-110 text-on-brand px-4 py-2 rounded-control font-medium text-[12.5px] transition-all shadow-card disabled:opacity-50"
           >
             {isUploading ? <Loader size="inline" /> : <Upload className="w-4 h-4" />}
             {isUploading ? 'Processing...' : 'Upload ticket PDF'}
           </button>
 
-          <div className="bg-ochre/15 border border-ochre/30 rounded-lg p-3 flex items-center gap-3">
+          <div className="bg-ochre/15 border border-ochre/30 rounded-control p-3 flex items-center gap-3">
              <div className="bg-ochre/20 p-2 rounded-full">
                 <AlertCircle className="w-5 h-5 text-ochre" />
              </div>
@@ -597,7 +597,7 @@ export default function TicketsPage() {
       />
 
       {/* Tabs & Filters */}
-      <div className="bg-surface rounded-xl border border-line shadow-sm overflow-hidden">
+      <div className="bg-surface rounded-card border border-line shadow-card overflow-hidden">
         <div className="border-b border-line">
           <nav className="flex -mb-px" aria-label="Tabs">
             {[
@@ -618,7 +618,7 @@ export default function TicketsPage() {
                 <span className="flex items-center justify-center gap-2">
                   {tab.name}
                   {tab.count !== undefined && (
-                    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${activeTab === tab.id ? 'bg-brand/12 text-brand' : 'bg-ink/[0.06] text-ink'}`}>
+                    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[12.5px] font-medium ${activeTab === tab.id ? 'bg-brand/12 text-brand' : 'bg-ink/[0.06] text-ink'}`}>
                       {tab.count}
                     </span>
                   )}
@@ -630,13 +630,13 @@ export default function TicketsPage() {
 
         <div className="p-4 flex flex-wrap gap-4 items-end">
           <div className="flex-1 min-w-[200px]">
-            <label className="block text-xs font-medium text-ink mb-1">Search</label>
+            <label className="block text-[12.5px] font-medium text-ink mb-1">Search</label>
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted" />
               <input 
                 type="text" 
                 placeholder="Ticket #, PO, Material..."
-                className="w-full pl-10 pr-4 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-brand focus:border-brand"
+                className="w-full pl-10 pr-4 py-2 border rounded-control text-sm focus:ring-2 focus:ring-brand focus:border-brand"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
               />
@@ -644,9 +644,9 @@ export default function TicketsPage() {
           </div>
 
           <div className="w-48">
-            <label className="block text-xs font-medium text-ink mb-1">Supplier</label>
+            <label className="block text-[12.5px] font-medium text-ink mb-1">Supplier</label>
             <select 
-              className="w-full p-2 border rounded-lg text-sm bg-surface"
+              className="w-full p-2 border rounded-control text-sm bg-surface"
               value={supplierId}
               onChange={(e) => setSupplierId(e.target.value)}
             >
@@ -658,9 +658,9 @@ export default function TicketsPage() {
           </div>
 
           <div className="w-40">
-            <label className="block text-xs font-medium text-ink mb-1">Source</label>
+            <label className="block text-[12.5px] font-medium text-ink mb-1">Source</label>
             <select 
-              className="w-full p-2 border rounded-lg text-sm"
+              className="w-full p-2 border rounded-control text-sm"
               value={source}
               onChange={(e) => setSource(e.target.value)}
             >
@@ -672,18 +672,18 @@ export default function TicketsPage() {
           </div>
 
           <div className="w-72 md:w-80">
-             <label className="block text-xs font-medium text-ink mb-1">Date Range</label>
+             <label className="block text-[12.5px] font-medium text-ink mb-1">Date Range</label>
              <div className="flex items-center gap-1.5">
                 <input 
                   type="date" 
-                  className="w-full min-w-0 p-2 border rounded-lg text-xs focus:ring-2 focus:ring-brand focus:border-brand bg-surface" 
+                  className="w-full min-w-0 p-2 border rounded-control text-[12.5px] focus:ring-2 focus:ring-brand focus:border-brand bg-surface" 
                   value={startDate} 
                   onChange={e => setStartDate(e.target.value)} 
                 />
                 <span className="text-muted font-medium">-</span>
                 <input 
                   type="date" 
-                  className="w-full min-w-0 p-2 border rounded-lg text-xs focus:ring-2 focus:ring-brand focus:border-brand bg-surface" 
+                  className="w-full min-w-0 p-2 border rounded-control text-[12.5px] focus:ring-2 focus:ring-brand focus:border-brand bg-surface" 
                   value={endDate} 
                   onChange={e => setEndDate(e.target.value)} 
                 />
@@ -708,18 +708,18 @@ export default function TicketsPage() {
       </div>
 
       {/* Tickets Table */}
-      <div className="flex-1 bg-surface rounded-xl border border-line shadow-sm overflow-hidden flex flex-col">
+      <div className="flex-1 bg-surface rounded-card border border-line shadow-card overflow-hidden flex flex-col">
         <div className="overflow-x-auto">
           <table className="min-w-full divide-y divide-line">
             <thead className="bg-ink/[0.03] whitespace-nowrap">
               <tr>
-                <th colSpan="2" className="px-6 py-3 text-left text-xs font-medium text-muted uppercase tracking-wider">Ticket / Image</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-muted uppercase tracking-wider">Supplier</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-muted uppercase tracking-wider">Material</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-muted uppercase tracking-wider">Quantity</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-muted uppercase tracking-wider">PO #</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-muted uppercase tracking-wider">Status</th>
-                <th className="px-6 py-3 text-right text-xs font-medium text-muted uppercase tracking-wider">Action</th>
+                <th colSpan="2" className="px-6 py-3 text-left text-[12.5px] font-medium text-muted">Ticket / Image</th>
+                <th className="px-6 py-3 text-left text-[12.5px] font-medium text-muted">Supplier</th>
+                <th className="px-6 py-3 text-left text-[12.5px] font-medium text-muted">Material</th>
+                <th className="px-6 py-3 text-left text-[12.5px] font-medium text-muted">Quantity</th>
+                <th className="px-6 py-3 text-left text-[12.5px] font-medium text-muted">PO #</th>
+                <th className="px-6 py-3 text-left text-[12.5px] font-medium text-muted">Status</th>
+                <th className="px-6 py-3 text-right text-[12.5px] font-medium text-muted">Action</th>
               </tr>
             </thead>
             <tbody className="bg-surface divide-y divide-line">
@@ -731,7 +731,7 @@ export default function TicketsPage() {
                 tickets.map((ticket) => (
                   <tr key={ticket.id} className="hover:bg-ink/[0.03] transition-colors group">
                     <td className="px-6 py-4 whitespace-nowrap w-20">
-                      <div className="w-12 h-12 bg-ink/[0.06] rounded-lg overflow-hidden border border-line cursor-zoom-in" onClick={() => handleOpenReviewModal(ticket)}>
+                      <div className="w-12 h-12 bg-ink/[0.06] rounded-control overflow-hidden border border-line cursor-zoom-in" onClick={() => handleOpenReviewModal(ticket)}>
                         {ticket.imageUrl ? (
                           <img
                             src={ticketThumbnailSrc(ticket)}
@@ -780,7 +780,7 @@ export default function TicketsPage() {
                           </button>
                         )}
                       </div>
-                      <div className="text-xs text-muted">{formatDate(ticket.receivedAt)}</div>
+                      <div className="text-[12.5px] text-muted">{formatDate(ticket.receivedAt)}</div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-ink">
                       {ticket.supplier?.name || ticket.supplierName || '-'}
@@ -800,7 +800,7 @@ export default function TicketsPage() {
                     <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                       <button 
                         onClick={() => handleOpenReviewModal(ticket)}
-                        className="text-brand hover:text-brand bg-brand/10 hover:bg-brand/10 px-3 py-1.5 rounded-lg transition-colors inline-flex items-center gap-2"
+                        className="text-brand hover:text-brand bg-brand/10 hover:bg-brand/10 px-3 py-1.5 rounded-control transition-colors inline-flex items-center gap-2"
                       >
                         <Eye className="w-4 h-4" /> Review
                       </button>
@@ -818,14 +818,14 @@ export default function TicketsPage() {
             <button
               onClick={() => setPage(p => Math.max(p - 1, 1))}
               disabled={page === 1}
-              className="relative inline-flex items-center px-4 py-2 border border-line text-sm font-medium rounded-md text-ink bg-surface hover:bg-ink/[0.03] disabled:opacity-50 transition-all"
+              className="relative inline-flex items-center px-4 py-2 border border-line text-sm font-medium rounded-control text-ink bg-surface hover:bg-ink/[0.03] disabled:opacity-50 transition-all"
             >
               Previous
             </button>
             <button
               onClick={() => setPage(p => Math.min(p + 1, totalPages))}
               disabled={page === totalPages}
-              className="ml-3 relative inline-flex items-center px-4 py-2 border border-line text-sm font-medium rounded-md text-ink bg-surface hover:bg-ink/[0.03] disabled:opacity-50 transition-all"
+              className="ml-3 relative inline-flex items-center px-4 py-2 border border-line text-sm font-medium rounded-control text-ink bg-surface hover:bg-ink/[0.03] disabled:opacity-50 transition-all"
             >
               Next
             </button>
@@ -838,7 +838,7 @@ export default function TicketsPage() {
               </p>
             </div>
             <div>
-              <nav className="relative z-0 inline-flex rounded-md shadow-sm -space-x-px" aria-label="Pagination">
+              <nav className="relative z-0 inline-flex rounded-control shadow-card -space-x-px" aria-label="Pagination">
                 <button
                   onClick={() => setPage(p => Math.max(p - 1, 1))}
                   disabled={page === 1}
@@ -869,7 +869,7 @@ export default function TicketsPage() {
             <div className="fixed inset-0 bg-ink/60 bg-opacity-75 transition-opacity backdrop-blur-sm"></div>
 
             <div 
-              className="inline-block align-middle bg-surface rounded-2xl text-left overflow-hidden shadow-2xl transform transition-all sm:max-w-6xl sm:w-full h-[90vh] flex flex-col"
+              className="inline-block align-middle bg-surface rounded-card text-left overflow-hidden shadow-overlay transform transition-all sm:max-w-6xl sm:w-full h-[90vh] flex flex-col"
               onClick={(e) => e.stopPropagation()}
             >
               
@@ -878,11 +878,9 @@ export default function TicketsPage() {
                   <h3 className="text-lg font-bold text-ink">
                     Ticket Review: {selectedTicket.ticketNumber || 'Unknown'}
                   </h3>
-                  <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${selectedTicket.status === 'LINKED' ? 'bg-brand/12 text-brand' : 'bg-ochre/20 text-ochre'}`}>
-                    {selectedTicket.status}
-                  </span>
+                  <StatusBadge status={selectedTicket.status} />
                   {selectedTicket.driver?.name && (
-                    <span className="bg-ink/[0.05] border border-line text-brand px-2.5 py-0.5 rounded-full text-xs font-semibold" title="Uploaded by Driver">
+                    <span className="bg-ink/[0.05] border border-line text-brand px-2.5 py-0.5 rounded-full text-[12.5px] font-semibold" title="Uploaded by Driver">
                       Driver: {selectedTicket.driver.name}
                     </span>
                   )}
@@ -892,7 +890,7 @@ export default function TicketsPage() {
                     <button
                       type="button"
                       onClick={() => handleDownloadTicketImage(selectedTicket.imageUrl, selectedTicket.ticketNumber)}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-surface border border-line hover:border-brand/40 text-ink hover:text-brand rounded-lg text-xs font-semibold shadow-sm transition-all"
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-surface border border-line hover:border-brand/40 text-ink hover:text-brand rounded-control text-[12.5px] font-semibold shadow-card transition-all"
                       title="Download Ticket File"
                     >
                       <Download className="w-3.5 h-3.5 text-brand" />
@@ -918,7 +916,7 @@ export default function TicketsPage() {
                     ) : (
                       <img 
                         src={selectedTicket.imageUrl.startsWith('http') ? selectedTicket.imageUrl : `${import.meta.env.VITE_API_URL || 'http://localhost:4000'}${selectedTicket.imageUrl}`} 
-                        className="max-w-full max-h-full object-contain shadow-2xl transition-transform duration-300 group-hover:scale-[1.02]"
+                        className="max-w-full max-h-full object-contain shadow-overlay transition-transform duration-300 group-hover:scale-[1.02]"
                         alt="Full ticket"
                       />
                     )
@@ -936,64 +934,64 @@ export default function TicketsPage() {
                   {/* OCR Data Section */}
                   <section>
                     <div className="flex items-center justify-between mb-4">
-                      <h4 className="text-sm font-bold text-ink uppercase tracking-widest flex items-center gap-2">
+                      <h4 className="text-sm font-bold text-ink flex items-center gap-2">
                         <FileText className="w-4 h-4 text-brand" /> Extracted Information
                       </h4>
-                      <p className="text-[12.5px] text-muted font-medium">VALUES CAN BE MANUALLY OVERRIDDEN</p>
+                      <p className="text-[12.5px] text-muted font-medium">Values can be manually overridden</p>
                     </div>
                     
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-1">
-                        <label className="text-[12.5px] font-bold text-muted uppercase px-1">Supplier</label>
+                        <label className="text-[12.5px] font-bold text-muted px-1">Supplier</label>
                         <input 
                           type="text" 
-                          className="w-full p-2.5 bg-ink/[0.03] border border-line rounded-lg text-sm focus:ring-2 focus:ring-brand outline-none transition-all"
+                          className="w-full p-2.5 bg-ink/[0.03] border border-line rounded-control text-sm focus:ring-2 focus:ring-brand outline-none transition-all"
                           defaultValue={selectedTicket.supplier?.name || selectedTicket.supplierName}
                           onBlur={(e) => handleUpdateTicket(selectedTicket.id, { supplierName: e.target.value })}
                         />
                       </div>
                       <div className="space-y-1">
-                        <label className="text-[12.5px] font-bold text-muted uppercase px-1">Ticket Date</label>
+                        <label className="text-[12.5px] font-bold text-muted px-1">Ticket Date</label>
                         <input 
                           type="date" 
-                          className="w-full p-2.5 bg-ink/[0.03] border border-line rounded-lg text-sm focus:ring-2 focus:ring-brand outline-none"
+                          className="w-full p-2.5 bg-ink/[0.03] border border-line rounded-control text-sm focus:ring-2 focus:ring-brand outline-none"
                           defaultValue={selectedTicket.ticketDate ? new Date(selectedTicket.ticketDate).toISOString().split('T')[0] : ''}
                           onBlur={(e) => handleUpdateTicket(selectedTicket.id, { ticketDate: e.target.value })}
                         />
                       </div>
                       <div className="space-y-1">
-                        <label className="text-[12.5px] font-bold text-muted uppercase px-1">Ticket Number</label>
+                        <label className="text-[12.5px] font-bold text-muted px-1">Ticket Number</label>
                         <input 
                           type="text" 
-                          className="w-full p-2.5 bg-ink/[0.03] border border-line rounded-lg text-sm focus:ring-2 focus:ring-brand outline-none"
+                          className="w-full p-2.5 bg-ink/[0.03] border border-line rounded-control text-sm focus:ring-2 focus:ring-brand outline-none"
                           defaultValue={selectedTicket.ticketNumber}
                           onBlur={(e) => handleUpdateTicket(selectedTicket.id, { ticketNumber: e.target.value })}
                         />
                       </div>
                       <div className="space-y-1">
-                        <label className="text-[12.5px] font-bold text-muted uppercase px-1">PO Number</label>
+                        <label className="text-[12.5px] font-bold text-muted px-1">PO Number</label>
                         <input 
                           type="text" 
-                          className="w-full p-2.5 bg-ink/[0.03] border border-line rounded-lg text-sm focus:ring-2 focus:ring-brand outline-none"
+                          className="w-full p-2.5 bg-ink/[0.03] border border-line rounded-control text-sm focus:ring-2 focus:ring-brand outline-none"
                           defaultValue={selectedTicket.poNumber}
                           onBlur={(e) => handleUpdateTicket(selectedTicket.id, { poNumber: e.target.value })}
                         />
                       </div>
                       <div className="space-y-1">
-                        <label className="text-[12.5px] font-bold text-muted uppercase px-1">Material</label>
+                        <label className="text-[12.5px] font-bold text-muted px-1">Material</label>
                         <input 
                           type="text" 
-                          className="w-full p-2.5 bg-ink/[0.03] border border-line rounded-lg text-sm focus:ring-2 focus:ring-brand outline-none"
+                          className="w-full p-2.5 bg-ink/[0.03] border border-line rounded-control text-sm focus:ring-2 focus:ring-brand outline-none"
                           defaultValue={selectedTicket.material}
                           onBlur={(e) => handleUpdateTicket(selectedTicket.id, { material: e.target.value })}
                         />
                       </div>
                       <div className="space-y-1">
-                        <label className="text-[12.5px] font-bold text-muted uppercase px-1">Quantity</label>
+                        <label className="text-[12.5px] font-bold text-muted px-1">Quantity</label>
                         <div className="relative">
                           <input 
                             type="number" 
-                            className="w-full p-2.5 bg-ink/[0.03] border border-line rounded-lg text-sm focus:ring-2 focus:ring-brand outline-none"
+                            className="w-full p-2.5 bg-ink/[0.03] border border-line rounded-control text-sm focus:ring-2 focus:ring-brand outline-none"
                             defaultValue={selectedTicket.quantity}
                             onBlur={(e) => handleUpdateTicket(selectedTicket.id, { quantity: parseFloat(e.target.value) })}
                           />
@@ -1007,7 +1005,7 @@ export default function TicketsPage() {
                   {/* Linking Section */}
                   <section className="bg-brand/10 p-6 rounded-card border border-brand/20">
                     <div className="flex items-center justify-between mb-4">
-                      <h4 className="text-sm font-bold text-ink uppercase tracking-widest flex items-center gap-2">
+                      <h4 className="text-sm font-bold text-ink flex items-center gap-2">
                         <LinkIcon className="w-4 h-4 text-brand" /> Linked Orders
                       </h4>
                     </div>
@@ -1016,19 +1014,19 @@ export default function TicketsPage() {
                       {/* List of currently linked orders */}
                       {(selectedTicket.orderMatches?.length > 0 || selectedTicket.linkedOrder) ? (
                         <div className="space-y-2">
-                          <p className="text-[12.5px] font-bold text-muted uppercase px-1">Linked Records</p>
+                          <p className="text-[12.5px] font-bold text-muted px-1">Linked Records</p>
                           
                           {/* Many-to-many matches */}
                           {selectedTicket.orderMatches?.map(match => (
-                            <div key={match.id} className="bg-surface p-3 rounded-xl border border-brand/30 flex items-center justify-between shadow-sm">
+                            <div key={match.id} className="bg-surface p-3 rounded-control border border-brand/30 flex items-center justify-between shadow-card">
                                <div>
                                   <p className="text-sm font-bold text-ink">Spruce ID: {match.order?.spruceOrderId || 'N/A'}</p>
-                                  <p className="text-[12.5px] text-muted uppercase">Customer: {match.order?.customerName || 'Unknown'}</p>
+                                  <p className="text-[12.5px] text-muted">Customer: {match.order?.customerName || 'Unknown'}</p>
                                   <p className="text-[12.5px] text-muted">Method: {match.matchMethod}</p>
                                </div>
                                <button 
                                 onClick={() => handleUnlinkOrder(selectedTicket.id, match.orderId)}
-                                className="text-xs text-clay hover:bg-clay/10 p-2 rounded-lg font-bold transition-colors"
+                                className="text-[12.5px] text-clay hover:bg-clay/10 p-2 rounded-control font-bold transition-colors"
                                 title="Unlink Order"
                                >
                                   <X className="w-4 h-4" />
@@ -1038,15 +1036,15 @@ export default function TicketsPage() {
 
                           {/* Fallback for legacy single-order link if no matches records exist */}
                           {(!selectedTicket.orderMatches || selectedTicket.orderMatches.length === 0) && selectedTicket.linkedOrder && (
-                            <div className="bg-surface p-3 rounded-xl border border-ochre/30 flex items-center justify-between shadow-sm">
+                            <div className="bg-surface p-3 rounded-control border border-ochre/30 flex items-center justify-between shadow-card">
                                <div>
                                   <p className="text-sm font-bold text-ink">Spruce ID: {selectedTicket.linkedOrder.spruceOrderId}</p>
-                                  <p className="text-[12.5px] text-muted uppercase">Customer: {selectedTicket.linkedOrder.customerName}</p>
+                                  <p className="text-[12.5px] text-muted">Customer: {selectedTicket.linkedOrder.customerName}</p>
                                   <p className="text-[12.5px] text-muted">Method: {selectedTicket.linkMethod} (Legacy)</p>
                                </div>
                                <button 
                                 onClick={() => handleUnlinkOrder(selectedTicket.id, selectedTicket.linkedOrderId)}
-                                className="text-xs text-clay hover:bg-clay/10 p-2 rounded-lg font-bold transition-colors"
+                                className="text-[12.5px] text-clay hover:bg-clay/10 p-2 rounded-control font-bold transition-colors"
                                 title="Unlink Order"
                                >
                                   <X className="w-4 h-4" />
@@ -1058,13 +1056,13 @@ export default function TicketsPage() {
 
                       {/* Search for more orders to link */}
                       <div className="space-y-3 pt-4 border-t border-line">
-                         <p className="text-[12.5px] font-bold text-muted uppercase px-1">Link {selectedTicket.orderMatches?.length > 0 ? 'Another' : 'an'} Order</p>
+                         <p className="text-[12.5px] font-bold text-muted px-1">Link {selectedTicket.orderMatches?.length > 0 ? 'Another' : 'an'} Order</p>
                          <div className="relative">
                             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted" />
                             <input 
                               type="text" 
                               placeholder="Search Order by PO, Customer, ID..."
-                              className="w-full pl-10 pr-4 py-3 bg-surface border border-line rounded-xl text-sm focus:ring-2 focus:ring-brand outline-none shadow-sm"
+                              className="w-full pl-10 pr-4 py-3 bg-surface border border-line rounded-control text-sm focus:ring-2 focus:ring-brand outline-none shadow-card"
                               value={orderSearch}
                               onChange={(e) => {
                                 setOrderSearch(e.target.value);
@@ -1075,19 +1073,19 @@ export default function TicketsPage() {
 
                          <div className="space-y-2 max-h-48 overflow-y-auto pr-2 custom-scrollbar">
                             {searchingOrders ? (
-                              <div className="text-center py-4 text-muted text-xs italic">Searching available orders...</div>
+                              <div className="text-center py-4 text-muted text-[12.5px] italic">Searching available orders...</div>
                             ) : orderResults.length > 0 ? (
                                orderResults.map(order => (
-                                 <div key={order.id} className="bg-surface p-3 rounded-xl border border-line flex items-center justify-between hover:border-brand/40 transition-all shadow-sm group">
+                                 <div key={order.id} className="bg-surface p-3 rounded-control border border-line flex items-center justify-between hover:border-brand/40 transition-all shadow-card group">
                                     <div className="flex-1">
                                        <p className="text-sm font-bold text-ink">{order.customerName}</p>
-                                       <p className="text-[12.5px] text-muted uppercase tracking-tighter">ID: {order.spruceOrderId} | PO: {order.poNumber || 'N/A'}</p>
+                                       <p className="text-[12.5px] text-muted">ID: {order.spruceOrderId} | PO: {order.poNumber || 'N/A'}</p>
                                     </div>
                                     <div className="flex items-center gap-3">
-                                       <span className="text-xs font-bold text-muted">{order.product}</span>
+                                       <span className="text-[12.5px] font-bold text-muted">{order.product}</span>
                                        <button 
                                           onClick={() => handleLinkToOrder(selectedTicket.id, order.id)}
-                                          className="bg-brand text-on-brand p-2 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity"
+                                          className="bg-brand text-on-brand p-2 rounded-control opacity-0 group-hover:opacity-100 transition-opacity"
                                           disabled={selectedTicket.orderMatches?.some(m => m.orderId === order.id)}
                                        >
                                           {selectedTicket.orderMatches?.some(m => m.orderId === order.id) ? <CheckCircle className="w-4 h-4" /> : <LinkIcon className="w-4 h-4" />}
@@ -1096,9 +1094,9 @@ export default function TicketsPage() {
                                  </div>
                                ))
                             ) : orderSearch ? (
-                               <div className="text-center py-4 text-muted text-xs italic">No matching orders found</div>
+                               <div className="text-center py-4 text-muted text-[12.5px] italic">No matching orders found</div>
                             ) : (
-                               <div className="text-center py-4 text-muted text-xs italic">Enter search criteria above</div>
+                               <div className="text-center py-4 text-muted text-[12.5px] italic">Enter search criteria above</div>
                             )}
                          </div>
                       </div>
@@ -1122,7 +1120,7 @@ function TicketsTableSkeleton() {
       {[...Array(8)].map((_, i) => (
         <tr key={i}>
           <td className="px-6 py-4 whitespace-nowrap w-20">
-            <Skeleton variant="rectangle" width="48px" height="48px" className="rounded-lg" />
+            <Skeleton variant="rectangle" width="48px" height="48px" className="rounded-control" />
           </td>
           <td className="px-0 py-4 whitespace-nowrap space-y-2">
             <Skeleton variant="text" width="100px" height="16px" />
@@ -1144,7 +1142,7 @@ function TicketsTableSkeleton() {
             <Skeleton variant="rectangle" width="70px" height="20px" className="rounded-full" />
           </td>
           <td className="px-6 py-4 whitespace-nowrap text-right">
-            <Skeleton variant="rectangle" width="80px" height="32px" className="rounded-lg ml-auto" />
+            <Skeleton variant="rectangle" width="80px" height="32px" className="rounded-control ml-auto" />
           </td>
         </tr>
       ))}
