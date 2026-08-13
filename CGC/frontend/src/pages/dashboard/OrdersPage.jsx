@@ -1,13 +1,21 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import api from '../../api/axios';
-import { supabase } from '../../supabaseClient';
-import { Search, Upload } from 'lucide-react';
+import { Search, Upload, Inbox } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { Skeleton } from '../../components/Skeleton';
-import Loader from '../../components/Loader';
 import { FadeInUp, StaggerContainer, StaggerItem } from '../../components/Animated';
 import { ticketThumbnailSrc } from '../../utils/ticketImage';
+import {
+  Badge,
+  Button,
+  Card,
+  EmptyState,
+  Input,
+  PageHeader,
+  Select,
+} from '../../components/ui';
+import { cn } from '../../lib/cn';
 
 export default function OrdersPage() {
   const [searchParams] = useSearchParams();
@@ -99,7 +107,7 @@ export default function OrdersPage() {
         const baseUrl = import.meta.env.VITE_API_URL || 'http://localhost:4000';
         const token = localStorage.getItem('token');
         const eventSource = new EventSource(`${baseUrl}/api/orders/import/stream?jobId=${jobId}&token=${token}`);
-        
+
         let localCreated = 0;
         let localUpdated = 0;
         setUploadProgressText('Connecting to stream...');
@@ -108,19 +116,19 @@ export default function OrdersPage() {
 
         eventSource.onmessage = (e) => {
           const data = JSON.parse(e.data);
-          
+
           if (data.type === 'progress') {
             if (data.action === 'created') localCreated++;
             if (data.action === 'updated') localUpdated++;
             setUploadProgressText(`Importing... ${localCreated + localUpdated} orders processed`);
-            
+
             orderBuffer.push(data);
-            
+
             // Batch UI updates every 10 items for smoother rendering
             if (orderBuffer.length >= 10) {
               const currentBatch = [...orderBuffer];
               orderBuffer = [];
-              
+
               setOrders(prev => {
                 let next = [...prev];
                 currentBatch.forEach(bData => {
@@ -134,7 +142,7 @@ export default function OrdersPage() {
                 return page === 1 ? next.slice(0, 30) : next;
               });
             }
-            
+
           } else if (data.type === 'done') {
             // Flush remaining buffer
             if (orderBuffer.length > 0) {
@@ -152,7 +160,7 @@ export default function OrdersPage() {
               });
               orderBuffer = [];
             }
-            
+
             eventSource.close();
             toast.success(`PDF Import complete! ${data.summary.created} created, ${data.summary.updated} updated.`);
             setIsUploading(false);
@@ -205,236 +213,206 @@ export default function OrdersPage() {
 
   const filteredOrders = orders;
 
+  const emptyTitle =
+    uploadFilter === 'today'
+      ? 'No orders uploaded today'
+      : uploadFilter === 'yesterday'
+      ? 'No orders uploaded yesterday'
+      : selectedUploadDate
+      ? `No orders uploaded on ${new Date(selectedUploadDate + 'T00:00:00').toLocaleDateString(undefined, { dateStyle: 'long' })}`
+      : 'No orders uploaded on this date';
+
   return (
-    <div className="flex flex-col h-full space-y-4">
-      <FadeInUp className="sm:flex sm:items-center justify-between bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
-        <div className="sm:flex-auto">
-          <h1 className="text-2xl font-semibold text-gray-900">Orders</h1>
-          <p className="mt-2 text-sm text-gray-700">
-            View and import orders via CSV or PDF.
-          </p>
-        </div>
-
-        <div className="mt-4 sm:ml-16 sm:mt-0 sm:flex-none flex items-center gap-2">
-          <input
-            type="file"
-            accept=".csv"
-            ref={fileInputRef}
-            onChange={handleFileUpload}
-            className="hidden"
-          />
-          <input
-            type="file"
-            accept=".pdf"
-            ref={pdfInputRef}
-            onChange={handleFileUpload}
-            className="hidden"
-          />
-          <button
-            onClick={() => fileInputRef.current?.click()}
-            disabled={isUploading}
-            className="flex items-center gap-2 bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg font-medium text-sm transition-colors disabled:opacity-50"
-          >
-            {isUploading ? (
-              <>Processing...</>
-            ) : (
-              <>
-                <Upload className="w-4 h-4" /> Import CSV
-              </>
-            )}
-          </button>
-          <button
-            onClick={() => pdfInputRef.current?.click()}
-            disabled={isUploading}
-            className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg font-medium text-sm transition-colors disabled:opacity-50"
-          >
-            {isUploading ? (
-              <>Processing...</>
-            ) : (
-              <>
-                <Upload className="w-4 h-4" /> Import PDF
-              </>
-            )}
-          </button>
-        </div>
+    <div className="flex flex-col h-full space-y-6">
+      <FadeInUp>
+        <PageHeader
+          title="Orders"
+          subtitle={uploadProgressText || 'Import Spruce orders, then match them to tickets and invoices.'}
+          actions={
+            <div className="flex items-center gap-2">
+              <input
+                type="file"
+                accept=".csv"
+                ref={fileInputRef}
+                onChange={handleFileUpload}
+                className="hidden"
+              />
+              <input
+                type="file"
+                accept=".pdf"
+                ref={pdfInputRef}
+                onChange={handleFileUpload}
+                className="hidden"
+              />
+              <Button
+                variant="primary"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isUploading}
+              >
+                {isUploading ? 'Processing...' : (<><Upload size={16} /> Import CSV</>)}
+              </Button>
+              <Button
+                onClick={() => pdfInputRef.current?.click()}
+                disabled={isUploading}
+              >
+                {isUploading ? 'Processing...' : (<><Upload size={16} /> Import PDF</>)}
+              </Button>
+            </div>
+          }
+        />
       </FadeInUp>
 
-      <FadeInUp delay={0.1} className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm space-y-4">
-        <div className="flex flex-wrap gap-4 items-end">
-          <div className="w-full sm:w-auto flex-1 min-w-[200px]">
-            <label className="block text-xs font-medium text-gray-700 mb-1">Search Text</label>
-            <div className="relative rounded-md shadow-sm">
-              <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
-                <Search className="h-4 w-4 text-gray-400" aria-hidden="true" />
+      <FadeInUp delay={0.1}>
+        <Card className="p-4 space-y-4">
+          <div className="flex flex-wrap gap-4 items-end">
+            <div className="w-full sm:w-auto flex-1 min-w-[200px]">
+              <label className="block text-[12.5px] font-medium text-muted mb-1.5">Search</label>
+              <div className="relative">
+                <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
+                  <Search className="h-4 w-4 text-muted" aria-hidden="true" />
+                </div>
+                <Input
+                  type="text"
+                  className="pl-10"
+                  placeholder="Order ID, PO, customer, product..."
+                  value={search}
+                  onChange={(e) => { setSearch(e.target.value); setPage(1); }}
+                />
               </div>
-              <input
+            </div>
+
+            <div>
+              <label className="block text-[12.5px] font-medium text-muted mb-1.5">Upload date</label>
+              <div className="flex items-center gap-1 bg-ink/[0.05] p-1 rounded-control">
+                {[
+                  ['today', 'Today'],
+                  ['yesterday', 'Yesterday'],
+                  ['select', 'Select date'],
+                ].map(([id, label]) => (
+                  <button
+                    key={id}
+                    type="button"
+                    onClick={() => setUploadFilter(id)}
+                    className={cn(
+                      'px-3 py-1.5 rounded-control text-[13px] font-semibold transition-colors',
+                      uploadFilter === id
+                        ? 'bg-surface text-brand shadow-card border border-line'
+                        : 'text-muted hover:text-ink'
+                    )}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {uploadFilter === 'select' && (
+              <div>
+                <label className="block text-[12.5px] font-medium text-muted mb-1.5">Choose date</label>
+                <Input
+                  type="date"
+                  className="tabular"
+                  value={selectedUploadDate}
+                  onChange={(e) => setSelectedUploadDate(e.target.value)}
+                />
+              </div>
+            )}
+
+            <div>
+              <label className="block text-[12.5px] font-medium text-muted mb-1.5">Buyer type</label>
+              <Select
+                value={buyerType}
+                onChange={(e) => { setBuyerType(e.target.value); setPage(1); }}
+              >
+                <option value="">All types</option>
+                <option value="RETAIL">Retail</option>
+                <option value="CONTRACTOR">Contractor</option>
+              </Select>
+            </div>
+
+            <div>
+              <label className="block text-[12.5px] font-medium text-muted mb-1.5">Has invoice?</label>
+              <Select
+                value={hasInvoice}
+                onChange={(e) => setHasInvoice(e.target.value)}
+              >
+                <option value="">Any</option>
+                <option value="yes">Yes</option>
+                <option value="no">No</option>
+              </Select>
+            </div>
+
+            <div>
+              <label className="block text-[12.5px] font-medium text-muted mb-1.5">Has linked tickets?</label>
+              <Select
+                value={hasLinkedTickets}
+                onChange={(e) => setHasLinkedTickets(e.target.value)}
+              >
+                <option value="">Any</option>
+                <option value="yes">Yes</option>
+                <option value="no">No</option>
+              </Select>
+            </div>
+
+            <div>
+              <label className="block text-[12.5px] font-medium text-muted mb-1.5">Supplier ID</label>
+              <Input
                 type="text"
-                className="block w-full rounded-md border-gray-300 pl-10 focus:border-green-500 focus:ring-green-500 sm:text-sm p-2 border"
-                placeholder="Order ID, PO, Customer, Product..."
-                value={search}
-                onChange={(e) => { setSearch(e.target.value); setPage(1); }}
+                placeholder="UUID"
+                value={supplierId}
+                onChange={(e) => setSupplierId(e.target.value)}
               />
             </div>
           </div>
-
-          <div>
-            <label className="block text-xs font-medium text-gray-700 mb-1">Upload Date</label>
-            <div className="flex items-center gap-1 bg-gray-100 p-1 rounded-lg border border-gray-200">
-              <button
-                type="button"
-                onClick={() => setUploadFilter('today')}
-                className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-all ${
-                  uploadFilter === 'today'
-                    ? 'bg-white text-green-700 shadow-sm border border-gray-200/50'
-                    : 'text-gray-600 hover:text-gray-950 hover:bg-gray-200/50'
-                }`}
-              >
-                Today
-              </button>
-              <button
-                type="button"
-                onClick={() => setUploadFilter('yesterday')}
-                className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-all ${
-                  uploadFilter === 'yesterday'
-                    ? 'bg-white text-green-700 shadow-sm border border-gray-200/50'
-                    : 'text-gray-600 hover:text-gray-950 hover:bg-gray-200/50'
-                }`}
-              >
-                Yesterday
-              </button>
-              <button
-                type="button"
-                onClick={() => setUploadFilter('select')}
-                className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-all ${
-                  uploadFilter === 'select'
-                    ? 'bg-white text-green-700 shadow-sm border border-gray-200/50'
-                    : 'text-gray-600 hover:text-gray-950 hover:bg-gray-200/50'
-                }`}
-              >
-                Select Date
-              </button>
-            </div>
-          </div>
-
-          {uploadFilter === 'select' && (
-            <div className="transition-all duration-300">
-              <label className="block text-xs font-medium text-gray-700 mb-1">Choose Date</label>
-              <input
-                type="date"
-                className="border border-gray-300 rounded-md sm:text-sm p-2 bg-white text-gray-900 focus:border-green-500 focus:ring-green-500"
-                value={selectedUploadDate}
-                onChange={(e) => setSelectedUploadDate(e.target.value)}
-              />
-            </div>
-          )}
-
-          <div>
-            <label className="block text-xs font-medium text-gray-700 mb-1">Buyer Type</label>
-            <select
-              className="border-gray-300 rounded-md sm:text-sm p-2 pr-8 border"
-              value={buyerType}
-              onChange={(e) => { setBuyerType(e.target.value); setPage(1); }}
-            >
-              <option value="">All Types</option>
-              <option value="RETAIL">Retail</option>
-              <option value="CONTRACTOR">Contractor</option>
-            </select>
-          </div>
-
-          <div>
-            <label className="block text-xs font-medium text-gray-700 mb-1">Has Invoice?</label>
-            <select
-              className="border-gray-300 rounded-md sm:text-sm p-2 pr-8 border"
-              value={hasInvoice}
-              onChange={(e) => setHasInvoice(e.target.value)}
-            >
-              <option value="">Any</option>
-              <option value="yes">Yes</option>
-              <option value="no">No</option>
-            </select>
-          </div>
-
-          <div>
-            <label className="block text-xs font-medium text-gray-700 mb-1">Has Linked Tickets?</label>
-            <select
-              className="border-gray-300 rounded-md sm:text-sm p-2 pr-8 border"
-              value={hasLinkedTickets}
-              onChange={(e) => setHasLinkedTickets(e.target.value)}
-            >
-              <option value="">Any</option>
-              <option value="yes">Yes</option>
-              <option value="no">No</option>
-            </select>
-          </div>
-
-          <div>
-            <label className="block text-xs font-medium text-gray-700 mb-1">Supplier ID</label>
-            <input
-              type="text"
-              placeholder="UUID"
-              className="border-gray-300 rounded-md sm:text-sm p-2 border"
-              value={supplierId}
-              onChange={(e) => setSupplierId(e.target.value)}
-            />
-          </div>
-        </div>
+        </Card>
       </FadeInUp>
 
-      <div className="flex-1 bg-white rounded-xl border border-gray-200 shadow-sm flex flex-col overflow-hidden">
+      <Card className="flex-1 flex flex-col overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-gray-300">
-            <thead className="bg-green-50 sticky top-0">
+          <table className="min-w-full divide-y divide-line">
+            <thead className="bg-ink/[0.03] sticky top-0">
               <tr>
-                <th scope="col" className="py-3.5 pl-4 pr-3 text-left text-sm font-semibold text-gray-900 sm:pl-6 text-nowrap">
+                <th scope="col" className="py-3.5 pl-4 pr-3 text-left text-[12.5px] font-semibold text-muted sm:pl-6 text-nowrap">
                   Spruce ID
                 </th>
-                <th scope="col" className="px-3 py-3.5 text-left text-sm font-semibold text-gray-900">
+                <th scope="col" className="px-3 py-3.5 text-left text-[12.5px] font-semibold text-muted">
                   Customer
                 </th>
-                <th scope="col" className="px-3 py-3.5 text-left text-sm font-semibold text-gray-900">
-                  Buyer Type
+                <th scope="col" className="px-3 py-3.5 text-left text-[12.5px] font-semibold text-muted">
+                  Buyer type
                 </th>
-                <th scope="col" className="px-3 py-3.5 text-left text-sm font-semibold text-gray-900 text-nowrap">
+                <th scope="col" className="px-3 py-3.5 text-left text-[12.5px] font-semibold text-muted text-nowrap">
                   Product
                 </th>
-                <th scope="col" className="px-3 py-3.5 text-left text-sm font-semibold text-gray-900">
+                <th scope="col" className="px-3 py-3.5 text-left text-[12.5px] font-semibold text-muted">
                   Quantity
                 </th>
-                <th scope="col" className="px-3 py-3.5 text-left text-sm font-semibold text-gray-900">
+                <th scope="col" className="px-3 py-3.5 text-left text-[12.5px] font-semibold text-muted">
                   Supplier
                 </th>
-                <th scope="col" className="px-3 py-3.5 text-left text-sm font-semibold text-gray-900">
-                  Order Date
+                <th scope="col" className="px-3 py-3.5 text-left text-[12.5px] font-semibold text-muted">
+                  Order date
                 </th>
-                <th scope="col" className="px-3 py-3.5 text-left text-sm font-semibold text-gray-900">
+                <th scope="col" className="px-3 py-3.5 text-left text-[12.5px] font-semibold text-muted">
                   Tickets
                 </th>
-                <th scope="col" className="px-3 py-3.5 text-left text-sm font-semibold text-gray-900 text-nowrap">
-                  Invoice Status
+                <th scope="col" className="px-3 py-3.5 text-left text-[12.5px] font-semibold text-muted text-nowrap">
+                  Invoice
                 </th>
               </tr>
             </thead>
 
-            <StaggerContainer component="tbody" className="divide-y divide-gray-200 bg-white">
+            <StaggerContainer component="tbody" className="divide-y divide-line bg-surface">
               {loading ? (
                 <OrdersTableSkeleton />
               ) : filteredOrders.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="py-16 text-center text-sm text-gray-500">
-                    <div className="flex flex-col items-center justify-center space-y-2">
-                      <p className="text-base font-semibold text-gray-700">
-                        {uploadFilter === 'today'
-                          ? 'No orders uploaded today'
-                          : uploadFilter === 'yesterday'
-                          ? 'No orders uploaded yesterday'
-                          : selectedUploadDate
-                          ? `No orders uploaded on ${new Date(selectedUploadDate + 'T00:00:00').toLocaleDateString(undefined, { dateStyle: 'long' })}`
-                          : 'No orders uploaded on this date'}
-                      </p>
-                      <p className="text-xs text-gray-400">
-                        Try importing an order PDF/CSV or changing your date selection.
-                      </p>
-                    </div>
+                  <td colSpan={9}>
+                    <EmptyState
+                      icon={Inbox}
+                      title={emptyTitle}
+                      message="Import a Spruce CSV or PDF, or pick a different upload date."
+                    />
                   </td>
                 </tr>
               ) : (
@@ -445,51 +423,41 @@ export default function OrdersPage() {
                     <StaggerItem
                       key={order.id}
                       component="tr"
-                      className={hasGaps ? 'bg-amber-50 hover:bg-amber-100' : 'hover:bg-gray-50'}
+                      className={hasGaps ? 'bg-ochre/10 hover:bg-ochre/15' : 'hover:bg-brand/[0.04]'}
                     >
                       <td className="whitespace-nowrap py-4 pl-4 pr-3 text-sm sm:pl-6">
-                        <div className="font-medium text-gray-900 flex items-center gap-2">
+                        <div className="font-medium text-ink flex items-center gap-2">
                           {order.spruceOrderId}
                           {hasGaps && (
-                            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-200 text-amber-800 uppercase tracking-tighter">
-                              Needs Attention
-                            </span>
+                            <Badge tone="warn">Needs attention</Badge>
                           )}
                         </div>
-                        <div className="text-gray-500 text-xs">
-                          PO: {order.poNumber || <span className="text-red-400 italic font-medium">None</span>}
+                        <div className="text-muted text-[13px]">
+                          PO: {order.poNumber || <span className="text-clay font-medium">None</span>}
                         </div>
                       </td>
 
-                      <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-900 font-medium">
+                      <td className="whitespace-nowrap px-3 py-4 text-sm text-ink font-medium">
                         {order.customerName}
                       </td>
 
                       <td className="whitespace-nowrap px-3 py-4 text-sm">
-                        <span
-                          className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider ${
-                            order.buyerType === 'CONTRACTOR'
-                              ? 'bg-indigo-100 text-indigo-800 border border-indigo-200'
-                              : 'bg-green-100 text-green-800 border border-green-200'
-                          }`}
-                        >
-                          {order.buyerType}
-                        </span>
+                        <Badge tone="neutral">{order.buyerType}</Badge>
                       </td>
 
-                      <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-900">
+                      <td className="whitespace-nowrap px-3 py-4 text-sm text-ink">
                         {order.product}
                       </td>
 
-                      <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-500 font-medium italic">
+                      <td className="tabular whitespace-nowrap px-3 py-4 text-sm text-muted font-medium">
                         {order.quantity} {order.unit}
                       </td>
 
-                      <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-500">
+                      <td className="whitespace-nowrap px-3 py-4 text-sm text-muted">
                         {order.supplier?.name || '-'}
                       </td>
 
-                      <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-500">
+                      <td className="tabular whitespace-nowrap px-3 py-4 text-sm text-muted">
                         {order.orderDate ? new Date(order.orderDate).toLocaleDateString() : '-'}
                       </td>
 
@@ -497,26 +465,26 @@ export default function OrdersPage() {
                         <div className="flex -space-x-2 overflow-hidden">
                           {order.ticketMatches?.length > 0 ? (
                             order.ticketMatches.map(match => (
-                              <div 
-                                key={match.id} 
-                                className="inline-block h-8 w-8 rounded-full ring-2 ring-white bg-gray-100 overflow-hidden border border-gray-200" 
+                              <div
+                                key={match.id}
+                                className="inline-block h-8 w-8 rounded-pill ring-2 ring-surface bg-ink/[0.06] overflow-hidden border border-line"
                                 title={`Ticket: ${match.ticket.ticketNumber || 'N/A'}`}
                               >
                                 {match.ticket.imageUrl ? (
-                                  <img 
+                                  <img
                                     src={ticketThumbnailSrc(match.ticket)}
-                                    className="h-full w-full object-cover" 
+                                    className="h-full w-full object-cover"
                                     alt="Ticket"
                                   />
                                 ) : (
-                                  <div className="h-full w-full flex items-center justify-center bg-gray-200">
-                                    <span className="text-[8px] font-bold">T</span>
+                                  <div className="h-full w-full flex items-center justify-center bg-ink/[0.08]">
+                                    <span className="text-[12px] font-semibold text-muted">T</span>
                                   </div>
                                 )}
                               </div>
                             ))
                           ) : (
-                            <span className="text-[10px] text-gray-400 italic">No tickets</span>
+                            <span className="text-[12.5px] text-muted">No tickets</span>
                           )}
                         </div>
                       </td>
@@ -524,17 +492,13 @@ export default function OrdersPage() {
                       <td className="whitespace-nowrap px-3 py-4 text-sm">
                         {order.hasInvoice ? (
                           <div className="flex flex-col">
-                            <span className="inline-flex items-center rounded-full bg-green-100 px-2.5 py-0.5 text-[10px] font-bold uppercase text-green-800 w-fit">
-                              Invoiced
-                            </span>
-                            <span className="text-[10px] text-gray-400 mt-1">
+                            <Badge tone="good">Invoiced</Badge>
+                            <span className="tabular text-[12.5px] text-muted mt-1">
                               {order.invoiceNumber || ''}
                             </span>
                           </div>
                         ) : (
-                          <span className="inline-flex items-center rounded-full bg-gray-100 px-2.5 py-0.5 text-[10px] font-bold uppercase text-gray-500">
-                            Waiting
-                          </span>
+                          <Badge tone="warn">Waiting</Badge>
                         )}
                       </td>
                     </StaggerItem>
@@ -544,52 +508,49 @@ export default function OrdersPage() {
             </StaggerContainer>
           </table>
         </div>
-      </div>
+      </Card>
 
-      {/* Pagination Controls */}
-      <div className="flex items-center justify-between bg-white px-4 py-3 sm:px-6 rounded-xl border border-gray-200 shadow-sm">
-        <div className="flex flex-1 justify-between sm:hidden">
-          <button
-            onClick={() => setPage(p => Math.max(1, p - 1))}
-            disabled={page === 1}
-            className="relative inline-flex items-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
-          >
-            Previous
-          </button>
-          <button
-            onClick={() => setPage(p => Math.min(totalPages, p + 1))}
-            disabled={page >= totalPages}
-            className="relative ml-3 inline-flex items-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
-          >
-            Next
-          </button>
-        </div>
-        <div className="hidden sm:flex sm:flex-1 sm:items-center sm:justify-between">
-          <div>
-            <p className="text-sm text-gray-700">
-              Showing page <span className="font-medium">{page}</span> <span className="font-medium"> of {totalPages}</span>
-            </p>
+      <Card className="px-4 py-3 sm:px-6">
+        <div className="flex items-center justify-between">
+          <div className="flex flex-1 justify-between sm:hidden">
+            <Button
+              size="sm"
+              onClick={() => setPage(p => Math.max(1, p - 1))}
+              disabled={page === 1}
+            >
+              Previous
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+              disabled={page >= totalPages}
+            >
+              Next
+            </Button>
           </div>
-          <div>
-            <nav className="isolate inline-flex -space-x-px rounded-md shadow-sm" aria-label="Pagination">
-              <button
+          <div className="hidden sm:flex sm:flex-1 sm:items-center sm:justify-between">
+            <p className="tabular text-sm text-muted">
+              Showing page <span className="font-medium text-ink">{page}</span> of <span className="font-medium text-ink">{totalPages}</span>
+            </p>
+            <div className="flex gap-2">
+              <Button
+                size="sm"
                 onClick={() => setPage(p => Math.max(1, p - 1))}
                 disabled={page === 1}
-                className="relative inline-flex items-center rounded-l-md px-3 py-2 text-gray-400 ring-1 ring-inset ring-gray-300 hover:bg-gray-50 focus:z-20 focus:outline-offset-0 disabled:opacity-50"
               >
                 Previous
-              </button>
-              <button
+              </Button>
+              <Button
+                size="sm"
                 onClick={() => setPage(p => Math.min(totalPages, p + 1))}
                 disabled={page >= totalPages}
-                className="relative inline-flex items-center rounded-r-md px-3 py-2 text-gray-400 ring-1 ring-inset ring-gray-300 hover:bg-gray-50 focus:z-20 focus:outline-offset-0 disabled:opacity-50"
               >
                 Next
-              </button>
-            </nav>
+              </Button>
+            </div>
           </div>
         </div>
-      </div>
+      </Card>
     </div>
   );
 }
@@ -607,7 +568,7 @@ function OrdersTableSkeleton() {
             <Skeleton variant="text" width="140px" height="16px" />
           </td>
           <td className="whitespace-nowrap px-3 py-4">
-            <Skeleton variant="rectangle" width="80px" height="20px" className="rounded-full" />
+            <Skeleton variant="rectangle" width="80px" height="20px" className="rounded-pill" />
           </td>
           <td className="whitespace-nowrap px-3 py-4">
             <Skeleton variant="text" width="100px" height="16px" />
@@ -622,10 +583,10 @@ function OrdersTableSkeleton() {
             <Skeleton variant="text" width="80px" height="16px" />
           </td>
           <td className="whitespace-nowrap px-3 py-4">
-            <Skeleton variant="rectangle" width="40px" height="24px" className="rounded-full" />
+            <Skeleton variant="rectangle" width="40px" height="24px" className="rounded-pill" />
           </td>
           <td className="whitespace-nowrap px-3 py-4">
-            <Skeleton variant="rectangle" width="70px" height="20px" className="rounded-full" />
+            <Skeleton variant="rectangle" width="70px" height="20px" className="rounded-pill" />
           </td>
         </tr>
       ))}

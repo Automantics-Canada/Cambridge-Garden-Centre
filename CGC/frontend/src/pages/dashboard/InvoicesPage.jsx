@@ -2,25 +2,32 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../../api/axios';
 import { supabase } from '../../supabaseClient';
-import { 
-  Search, 
-  Eye, 
-  AlertCircle, 
-  CheckCircle, 
-  Upload, 
-  FileText, 
+import {
+  Search,
+  Upload,
+  FileText,
   AlertTriangle,
   ChevronRight,
-  History
+  Inbox,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { Skeleton } from '../../components/Skeleton';
-import Loader from '../../components/Loader';
 import { useIntervalRefresh } from '../../hooks/useIntervalRefresh';
+import {
+  Badge,
+  Button,
+  Card,
+  EmptyState,
+  Input,
+  PageHeader,
+  Select,
+  StatusBadge,
+} from '../../components/ui';
+import { cn } from '../../lib/cn';
 
 const STATUS_TABS = [
-  { id: 'ALL', name: 'All Invoices' },
-  { id: 'PENDING_REVIEW', name: 'Pending Review' },
+  { id: 'ALL', name: 'All invoices' },
+  { id: 'PENDING_REVIEW', name: 'Pending review' },
   { id: 'VERIFIED', name: 'Verified' },
   { id: 'DISPUTED', name: 'Disputed' }
 ];
@@ -147,12 +154,12 @@ export default function InvoicesPage() {
     .filter(inv => {
       const matchesSearch = inv.invoiceNumber?.toLowerCase().includes(search.toLowerCase()) ||
                            inv.supplier?.name?.toLowerCase().includes(search.toLowerCase());
-      
+
       const matchesSupplier = filters.supplierId === 'ALL' || inv.supplierId === filters.supplierId;
       const matchesType = filters.senderType === 'ALL' || inv.senderType === filters.senderType;
       const flaggedCount = inv.lineItems?.filter(li => li.flag !== 'OK').length || 0;
       const matchesDiscrepancy = !filters.hasDiscrepancies || flaggedCount > 0;
-      
+
       let matchesDate = true;
       if (filters.dateStart) {
         matchesDate = matchesDate && new Date(inv.invoiceDate || inv.receivedAt) >= new Date(filters.dateStart);
@@ -176,72 +183,70 @@ export default function InvoicesPage() {
     });
 
   return (
-    <div className="flex flex-col h-full space-y-4">
-      {/* Header */}
-      <div className="sm:flex sm:items-center justify-between bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
-        <div className="sm:flex-auto">
-          <h1 className="text-2xl font-semibold text-gray-900">Invoices</h1>
-          <p className="mt-2 text-sm text-gray-700">
-            Review and verify incoming invoices from suppliers and trucking companies.
-          </p>
-        </div>
-        <div className="mt-4 sm:ml-16 sm:mt-0 sm:flex-none">
-          <input 
-            type="file" 
-            accept=".jpg,.jpeg,.png,.pdf" 
-            ref={fileInputRef} 
-            onChange={handleFileUpload} 
-            className="hidden" 
-          />
-          <button
-            onClick={() => fileInputRef.current?.click()}
-            disabled={isUploading}
-            className="flex items-center gap-2 bg-gray-900 hover:bg-black text-white px-4 py-2 rounded-lg font-medium text-sm transition-all shadow-md disabled:opacity-50"
-          >
-            {isUploading ? <Loader className="w-4 h-4" /> : <Upload className="w-4 h-4" />}
-            {isUploading ? 'Processing...' : 'Manual Upload'}
-          </button>
-        </div>
-      </div>
+    <div className="flex flex-col h-full space-y-6">
+      <PageHeader
+        title="Invoices"
+        subtitle="Review incoming invoices and check them against the agreed rates."
+        actions={
+          <>
+            <input
+              type="file"
+              accept=".jpg,.jpeg,.png,.pdf"
+              ref={fileInputRef}
+              onChange={handleFileUpload}
+              className="hidden"
+            />
+            <Button
+              variant="primary"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={isUploading}
+            >
+              {isUploading ? (
+                <div className="w-4 h-4 border-2 border-on-brand border-t-transparent rounded-pill animate-spin" />
+              ) : (
+                <Upload size={16} />
+              )}
+              {isUploading ? 'Processing...' : 'Upload invoice'}
+            </Button>
+          </>
+        }
+      />
 
-      {/* Tabs & Search */}
-      <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-        <div className="border-b border-gray-200">
-          <nav className="flex -mb-px" aria-label="Tabs">
-            {STATUS_TABS.map((tab) => (
-              <button
-                key={tab.id}
-                onClick={() => {
-                  const newParams = new URLSearchParams(searchParams);
-                  if (tab.id === 'ALL') {
-                    newParams.delete('status');
-                  } else {
-                    newParams.set('status', tab.id);
-                  }
-                  setSearchParams(newParams, { replace: true });
-                }}
-                className={`
-                  flex-1 py-4 px-4 text-sm font-medium text-center border-b-2 transition-all
-                  ${activeTab === tab.id 
-                    ? 'text-green-600 border-green-600 bg-green-50/20' 
-                    : 'text-gray-500 border-transparent hover:text-gray-700 hover:bg-gray-50'}
-                `}
-              >
-                {tab.name}
-              </button>
-            ))}
-          </nav>
-        </div>
+      <Card className="overflow-hidden">
+        <nav className="flex border-b border-line" aria-label="Tabs">
+          {STATUS_TABS.map((tab) => (
+            <button
+              key={tab.id}
+              onClick={() => {
+                const newParams = new URLSearchParams(searchParams);
+                if (tab.id === 'ALL') {
+                  newParams.delete('status');
+                } else {
+                  newParams.set('status', tab.id);
+                }
+                setSearchParams(newParams, { replace: true });
+              }}
+              className={cn(
+                'flex-1 py-4 px-4 text-sm font-medium text-center border-b-2 transition-colors',
+                activeTab === tab.id
+                  ? 'text-brand border-brand bg-brand/[0.04]'
+                  : 'text-muted border-transparent hover:text-ink hover:bg-ink/[0.03]'
+              )}
+            >
+              {tab.name}
+            </button>
+          ))}
+        </nav>
 
         <div className="p-4 flex flex-wrap gap-4 items-end">
           <div className="flex-1 min-w-[240px]">
-            <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Search</label>
+            <label className="block text-[12.5px] font-medium text-muted mb-1.5">Search</label>
             <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-              <input 
-                type="text" 
-                placeholder="Invoice # or supplier..."
-                className="w-full pl-10 pr-4 py-2 border rounded-xl text-sm outline-none focus:ring-2 focus:ring-green-100 transition-all border-gray-200"
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted" />
+              <Input
+                type="text"
+                placeholder="Invoice number or supplier..."
+                className="pl-10"
                 value={search}
                 onChange={e => setSearch(e.target.value)}
               />
@@ -249,45 +254,43 @@ export default function InvoicesPage() {
           </div>
 
           <div className="w-48">
-             <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Supplier</label>
-             <select 
-               className="w-full px-3 py-2 border rounded-xl text-sm outline-none bg-white border-gray-200"
-               value={filters.supplierId}
-               onChange={e => setFilters({...filters, supplierId: e.target.value})}
-             >
-               <option value="ALL">All Suppliers</option>
-               {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-             </select>
+            <label className="block text-[12.5px] font-medium text-muted mb-1.5">Supplier</label>
+            <Select
+              value={filters.supplierId}
+              onChange={e => setFilters({...filters, supplierId: e.target.value})}
+            >
+              <option value="ALL">All suppliers</option>
+              {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+            </Select>
           </div>
 
           <div className="w-40">
-             <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Type</label>
-             <select 
-               className="w-full px-3 py-2 border rounded-xl text-sm outline-none bg-white border-gray-200"
-               value={filters.senderType}
-               onChange={e => setFilters({...filters, senderType: e.target.value})}
-             >
-               <option value="ALL">All Types</option>
-               <option value="SUPPLIER">Supplier</option>
-               <option value="TRUCKING_COMPANY">Trucking</option>
-             </select>
+            <label className="block text-[12.5px] font-medium text-muted mb-1.5">Type</label>
+            <Select
+              value={filters.senderType}
+              onChange={e => setFilters({...filters, senderType: e.target.value})}
+            >
+              <option value="ALL">All types</option>
+              <option value="SUPPLIER">Supplier</option>
+              <option value="TRUCKING_COMPANY">Trucking</option>
+            </Select>
           </div>
 
-          <div className="flex gap-2 items-center">
+          <div className="flex gap-2 items-end">
             <div>
-              <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">From</label>
-              <input 
-                type="date" 
-                className="px-3 py-1.5 border rounded-xl text-xs outline-none bg-white border-gray-200"
+              <label className="block text-[12.5px] font-medium text-muted mb-1.5">From</label>
+              <Input
+                type="date"
+                className="tabular"
                 value={filters.dateStart}
                 onChange={e => setFilters({...filters, dateStart: e.target.value})}
               />
             </div>
             <div>
-              <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">To</label>
-              <input 
-                type="date" 
-                className="px-3 py-1.5 border rounded-xl text-xs outline-none bg-white border-gray-200"
+              <label className="block text-[12.5px] font-medium text-muted mb-1.5">To</label>
+              <Input
+                type="date"
+                className="tabular"
                 value={filters.dateEnd}
                 onChange={e => setFilters({...filters, dateEnd: e.target.value})}
               />
@@ -295,81 +298,86 @@ export default function InvoicesPage() {
           </div>
 
           <div className="flex items-center gap-2 pb-2">
-            <input 
-              type="checkbox" 
+            <input
+              type="checkbox"
               id="discrepancy"
-              className="w-4 h-4 rounded text-green-600 focus:ring-green-500 border-gray-300"
+              className="w-4 h-4 rounded border-line text-brand accent-brand"
               checked={filters.hasDiscrepancies}
               onChange={e => setFilters({...filters, hasDiscrepancies: e.target.checked})}
             />
-            <label htmlFor="discrepancy" className="text-sm font-medium text-gray-700">Flagged Only</label>
+            <label htmlFor="discrepancy" className="text-sm font-medium text-ink">Flagged only</label>
           </div>
         </div>
-      </div>
+      </Card>
 
-      {/* Table */}
-      <div className="flex-1 bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden flex flex-col">
+      <Card className="flex-1 overflow-hidden flex flex-col">
         <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50 sticky top-0">
+          <table className="min-w-full divide-y divide-line">
+            <thead className="bg-ink/[0.03] sticky top-0">
               <tr>
-                <th className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Invoice</th>
-                <th className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Supplier</th>
-                <th className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Date</th>
-                <th className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Total</th>
-                <th className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider text-center">Lines</th>
-                <th className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Status</th>
-                <th className="px-6 py-3 text-right text-xs font-bold text-gray-500 uppercase tracking-wider">Action</th>
+                <th className="px-6 py-3 text-left text-[12.5px] font-semibold text-muted">Invoice</th>
+                <th className="px-6 py-3 text-left text-[12.5px] font-semibold text-muted">Supplier</th>
+                <th className="px-6 py-3 text-left text-[12.5px] font-semibold text-muted">Date</th>
+                <th className="px-6 py-3 text-left text-[12.5px] font-semibold text-muted">Total</th>
+                <th className="px-6 py-3 text-left text-[12.5px] font-semibold text-muted text-center">Lines</th>
+                <th className="px-6 py-3 text-left text-[12.5px] font-semibold text-muted">Status</th>
+                <th className="px-6 py-3 text-right text-[12.5px] font-semibold text-muted">Action</th>
               </tr>
             </thead>
-            <tbody className="bg-white divide-y divide-gray-200">
+            <tbody className="bg-surface divide-y divide-line">
               {loading ? (
                 <InvoicesTableSkeleton />
               ) : filteredInvoices.length === 0 ? (
-                <tr><td colSpan="7" className="px-6 py-12 text-center text-gray-500">No invoices found.</td></tr>
+                <tr>
+                  <td colSpan="7">
+                    <EmptyState
+                      icon={Inbox}
+                      title="No invoices match"
+                      message="Try another status, search, or date range — or upload an invoice to get started."
+                    />
+                  </td>
+                </tr>
               ) : (
                 filteredInvoices.map((inv) => {
                   const flaggedCount = inv.lineItems?.filter(li => li.flag !== 'OK').length || 0;
                   return (
-                    <tr key={inv.id} className="hover:bg-gray-50/50 transition-colors cursor-pointer group" onClick={() => navigate(`/dashboard/invoices/${inv.id}`)}>
+                    <tr
+                      key={inv.id}
+                      className="hover:bg-brand/[0.04] transition-colors cursor-pointer group"
+                      onClick={() => navigate(`/dashboard/invoices/${inv.id}`)}
+                    >
                       <td className="px-6 py-4 whitespace-nowrap">
                         <div className="flex items-center gap-3">
-                           <div className="p-2 bg-gray-100 rounded-lg group-hover:bg-green-100 transition-colors">
-                              <FileText className="w-5 h-5 text-gray-400 group-hover:text-green-600" />
+                           <div className="p-2 bg-ink/[0.05] rounded-control group-hover:bg-brand/10 transition-colors">
+                              <FileText className="w-5 h-5 text-muted group-hover:text-brand" />
                            </div>
-                           <div className="text-sm font-bold text-gray-900">{inv.invoiceNumber}</div>
+                           <div className="text-sm font-semibold text-ink">{inv.invoiceNumber}</div>
                         </div>
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 font-medium">
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-muted font-medium">
                         {inv.supplier?.name || '-'}
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                      <td className="tabular px-6 py-4 whitespace-nowrap text-sm text-muted">
                         {new Date(inv.invoiceDate).toLocaleDateString()}
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm font-bold text-gray-900">
+                      <td className="tabular px-6 py-4 whitespace-nowrap text-sm font-semibold text-ink">
                         ${Number(inv.totalAmount).toFixed(2)}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-center">
                         <div className="flex items-center justify-center gap-2">
-                           <span className="text-xs font-medium text-gray-600">{inv.lineItems?.length || 0}</span>
+                           <span className="tabular text-[13px] font-medium text-ink">{inv.lineItems?.length || 0}</span>
                            {flaggedCount > 0 && (
-                             <span className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-red-100 text-red-700 text-[10px] font-bold">
-                               <AlertTriangle className="w-2.5 h-2.5" /> {flaggedCount}
-                             </span>
+                             <Badge tone="bad" className="gap-1">
+                               <AlertTriangle className="w-3 h-3" /> {flaggedCount}
+                             </Badge>
                            )}
                         </div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
-                        <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider ${
-                          inv.status === 'VERIFIED' ? 'bg-green-100 text-green-800 border border-green-200' :
-                          inv.status === 'DISPUTED' ? 'bg-red-100 text-red-800 border border-red-200' :
-                          'bg-yellow-100 text-yellow-800 border border-yellow-200'
-                        }`}>
-                          {inv.status.replace('_', ' ')}
-                        </span>
+                        <StatusBadge status={inv.status} />
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                        <button className="text-gray-400 group-hover:text-green-600 transition-colors p-2 rounded-lg group-hover:bg-green-50">
+                        <button className="text-muted group-hover:text-brand transition-colors p-2 rounded-control group-hover:bg-brand/10">
                            <ChevronRight className="w-5 h-5" />
                         </button>
                       </td>
@@ -380,7 +388,7 @@ export default function InvoicesPage() {
             </tbody>
           </table>
         </div>
-      </div>
+      </Card>
     </div>
   );
 }
@@ -391,7 +399,7 @@ function InvoicesTableSkeleton() {
         <tr key={i}>
           <td className="px-6 py-4 whitespace-nowrap">
             <div className="flex items-center gap-3">
-              <Skeleton variant="rectangle" width="32px" height="32px" className="rounded-lg" />
+              <Skeleton variant="rectangle" width="32px" height="32px" className="rounded-control" />
               <Skeleton variant="text" width="100px" height="16px" />
             </div>
           </td>
@@ -410,10 +418,10 @@ function InvoicesTableSkeleton() {
             </div>
           </td>
           <td className="px-6 py-4 whitespace-nowrap">
-            <Skeleton variant="rectangle" width="80px" height="20px" className="rounded-full" />
+            <Skeleton variant="rectangle" width="80px" height="20px" className="rounded-pill" />
           </td>
           <td className="px-6 py-4 whitespace-nowrap text-right">
-            <Skeleton variant="rectangle" width="32px" height="32px" className="rounded-lg ml-auto" />
+            <Skeleton variant="rectangle" width="32px" height="32px" className="rounded-control ml-auto" />
           </td>
         </tr>
       ))}

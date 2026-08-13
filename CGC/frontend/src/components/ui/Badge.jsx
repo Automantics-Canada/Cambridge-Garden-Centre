@@ -35,6 +35,7 @@ const STATUS_MAP = {
   DELIVERED: { tone: 'good', label: 'Delivered' },
   COMPLETED: { tone: 'good', label: 'Completed' },
   LINKED: { tone: 'good', label: 'Linked' },
+  OK: { tone: 'good', label: 'OK' },
 
   PENDING_REVIEW: { tone: 'warn', label: 'Pending review' },
   PENDING: { tone: 'warn', label: 'Pending' },
