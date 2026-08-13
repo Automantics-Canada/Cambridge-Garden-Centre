@@ -349,7 +349,7 @@ export default function VerificationDesk() {
                     <div>
                       <div className="flex items-center gap-3">
                         <span className="text-sm font-semibold tracking-tight text-muted">INV-{inv.invoiceNumber}</span>
-                        <span className={`text-[10px] font-bold uppercase px-2.5 py-0.5 rounded-full tracking-wider ${
+                        <span className={`text-[12.5px] font-bold uppercase px-2.5 py-0.5 rounded-full tracking-wider ${
                           inv.status === 'VERIFIED' ? 'bg-brand/12 text-brand' :
                           inv.status === 'DISPUTED' ? 'bg-clay/14 text-clay' : 'bg-ochre/20 text-ochre'
                         }`}>
@@ -363,13 +363,13 @@ export default function VerificationDesk() {
                   <div className="flex flex-wrap items-center gap-8 md:gap-12">
                     {/* Total Billed */}
                     <div className="flex flex-col">
-                      <span className="text-[10px] font-normal uppercase tracking-widest text-muted">Total Billed</span>
+                      <span className="text-[12.5px] font-normal uppercase tracking-widest text-muted">Total Billed</span>
                       <span className="text-lg font-semibold text-ink mt-0.5">${Number(inv.totalAmount).toLocaleString()}</span>
                     </div>
 
                     {/* Reconciliation State Badge */}
                     <div className="flex flex-col">
-                      <span className="text-[10px] font-normal uppercase tracking-widest text-muted">Reconciliation</span>
+                      <span className="text-[12.5px] font-normal uppercase tracking-widest text-muted">Reconciliation</span>
                       <span className="text-xs font-medium text-muted mt-1.5 flex items-center gap-1.5">
                         <FileText className="w-3.5 h-3.5 text-brand" />
                         {isExpanded ? 'Viewing Details' : 'Click to Reconcile'}
@@ -401,12 +401,12 @@ export default function VerificationDesk() {
                         <div className="bg-surface rounded-3xl p-6 border border-line shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-6">
                           <div className="flex items-center gap-8">
                             <div className="flex flex-col">
-                              <span className="text-[10px] font-light text-muted uppercase tracking-widest">Supplier Name</span>
+                              <span className="text-[12.5px] font-light text-muted uppercase tracking-widest">Supplier Name</span>
                               <span className="text-base font-medium text-ink mt-0.5">{selectedInvoice.supplier?.name}</span>
                             </div>
                             <div className="w-px h-8 bg-ink/[0.08]" />
                             <div className="flex flex-col">
-                              <span className="text-[10px] font-light text-muted uppercase tracking-widest">Verification Status</span>
+                              <span className="text-[12.5px] font-light text-muted uppercase tracking-widest">Verification Status</span>
                               <div className="flex items-center gap-2 mt-1">
                                 <div className={`w-2.5 h-2.5 rounded-full ${selectedInvoice.status === 'VERIFIED' ? 'bg-brand' : 'bg-ochre'} animate-pulse`} />
                                 <span className={`text-xs font-semibold uppercase ${selectedInvoice.status === 'VERIFIED' ? 'text-brand' : 'text-ochre'}`}>
@@ -456,7 +456,7 @@ export default function VerificationDesk() {
                             >
                               <AlertTriangle className="w-8 h-8 text-on-clay flex-shrink-0" />
                               <div className="flex-1">
-                                <label className="text-[10px] font-semibold text-on-clay uppercase tracking-widest">Why are you disputing this invoice?</label>
+                                <label className="text-[12.5px] font-semibold text-on-clay uppercase tracking-widest">Why are you disputing this invoice?</label>
                                 <input 
                                   type="text" 
                                   placeholder="e.g. Quantity mismatch on gravel line... or Rate doesn't match negotiated..."
@@ -531,7 +531,7 @@ export default function VerificationDesk() {
 
                             {/* Summary Totals Card */}
                             <div className="bg-brand rounded-3xl p-6 text-on-brand shadow-lg shadow-card">
-                              <h4 className="text-[10px] font-semibold uppercase tracking-widest text-on-brand/60 mb-4">Invoice Summary</h4>
+                              <h4 className="text-[12.5px] font-semibold uppercase tracking-widest text-on-brand/60 mb-4">Invoice Summary</h4>
                               <div className="space-y-4">
                                 <div className="flex items-center justify-between">
                                   <span className="text-sm font-normal opacity-70">Total Billed</span>
@@ -589,9 +589,9 @@ export default function VerificationDesk() {
                                         {li.approvedTotal && (
                                           <div className="mt-1 flex items-center justify-end gap-1.5">
                                             {Number(li.lineTotal) - Number(li.approvedTotal) !== 0 ? (
-                                              <span className="text-[10px] font-bold text-clay bg-clay/14 px-1.5 py-0.5 rounded uppercase">Discrepancy</span>
+                                              <span className="text-[12.5px] font-bold text-clay bg-clay/14 px-1.5 py-0.5 rounded uppercase">Discrepancy</span>
                                             ) : (
-                                              <span className="text-[10px] font-bold text-brand bg-brand/10 px-1.5 py-0.5 rounded uppercase">Matched</span>
+                                              <span className="text-[12.5px] font-bold text-brand bg-brand/10 px-1.5 py-0.5 rounded uppercase">Matched</span>
                                             )}
                                           </div>
                                         )}
@@ -641,7 +641,7 @@ export default function VerificationDesk() {
                                             {/* Ticket / Delivery Evidence */}
                                             <div className="bg-surface rounded-2xl p-5 border border-line shadow-sm flex flex-col">
                                               <div className="flex items-center justify-between mb-4 flex-shrink-0">
-                                                <span className="text-[10px] font-semibold uppercase tracking-wider text-ink flex items-center gap-1.5">
+                                                <span className="text-[12.5px] font-semibold uppercase tracking-wider text-ink flex items-center gap-1.5">
                                                   <Truck className="w-3.5 h-3.5 text-brand" /> Delivery Evidence
                                                 </span>
                                                 {li.matchedTickets?.length > 0 && <CheckCircle className="w-4 h-4 text-brand" />}
@@ -660,7 +660,7 @@ export default function VerificationDesk() {
                                                         </div>
                                                         <div className="flex-1 min-w-0">
                                                           <div className="flex items-center gap-1.5">
-                                                            <p className="text-[10px] font-semibold text-ink truncate">T-{t.ticketNumber || t.id.substring(0,6)}</p>
+                                                            <p className="text-[12.5px] font-semibold text-ink truncate">T-{t.ticketNumber || t.id.substring(0,6)}</p>
                                                             {t.spruceMatched && (
                                                               <span className="bg-brand/12 text-brand px-1 py-0.2 rounded text-[12px] font-bold tracking-widest flex items-center gap-0.5"><CheckCircle className="w-2 h-2"/> MATCHED</span>
                                                             )}
@@ -679,7 +679,7 @@ export default function VerificationDesk() {
                                                     ))}
                                                     <button 
                                                       onClick={() => setLinkingLineItem({ id: li.id, type: 'ticket' })} 
-                                                      className="w-full mt-1.5 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted hover:text-brand transition-colors border border-dashed border-line hover:border-brand/40 rounded-xl"
+                                                      className="w-full mt-1.5 py-2 text-[12.5px] font-semibold uppercase tracking-wider text-muted hover:text-brand transition-colors border border-dashed border-line hover:border-brand/40 rounded-xl"
                                                     >
                                                       Add Link +
                                                     </button>
@@ -689,7 +689,7 @@ export default function VerificationDesk() {
                                                     <AlertTriangle className="w-6 h-6 text-ochre mx-auto mb-2" />
                                                     <button 
                                                       onClick={() => setLinkingLineItem({ id: li.id, type: 'ticket' })} 
-                                                      className="text-[10px] font-semibold uppercase tracking-wider text-brand hover:underline underline-offset-4"
+                                                      className="text-[12.5px] font-semibold uppercase tracking-wider text-brand hover:underline underline-offset-4"
                                                     >
                                                       Manual Ticket Link
                                                     </button>
@@ -701,7 +701,7 @@ export default function VerificationDesk() {
                                             {/* Spruce Order Card */}
                                             <div className="bg-surface rounded-2xl p-5 border border-line shadow-sm flex flex-col">
                                               <div className="flex items-center justify-between mb-4 flex-shrink-0">
-                                                <span className="text-[10px] font-semibold uppercase tracking-wider text-ink flex items-center gap-1.5">
+                                                <span className="text-[12.5px] font-semibold uppercase tracking-wider text-ink flex items-center gap-1.5">
                                                   <ShoppingCart className="w-3.5 h-3.5 text-brand" /> Spruce Order
                                                 </span>
                                                 {li.matchedOrderId && <CheckCircle className="w-4 h-4 text-brand" />}
@@ -714,7 +714,7 @@ export default function VerificationDesk() {
                                                       <div className="relative z-10">
                                                         <p className="text-[12px] font-bold text-on-brand uppercase tracking-widest mb-0.5">Authorization ID</p>
                                                         <p className="text-sm font-semibold tracking-tight">{li.matchedOrder?.spruceOrderId}</p>
-                                                        <div className="flex items-center justify-between mt-3 border-t border-white/10 pt-2 text-[10px]">
+                                                        <div className="flex items-center justify-between mt-3 border-t border-white/10 pt-2 text-[12.5px]">
                                                           <span className="opacity-75">Order Qty</span>
                                                           <span className="font-bold">{Number(li.matchedOrder?.quantity)} {li.matchedOrder?.unit}</span>
                                                         </div>
@@ -735,7 +735,7 @@ export default function VerificationDesk() {
                                                         <div className="flex justify-between items-center">
                                                           <div className="flex items-center gap-1.5">
                                                             <Truck className="w-3.5 h-3.5 text-muted" />
-                                                            <span className="text-[10px] font-bold text-ink truncate">{del.driver?.name || 'Unassigned'}</span>
+                                                            <span className="text-[12.5px] font-bold text-ink truncate">{del.driver?.name || 'Unassigned'}</span>
                                                           </div>
                                                           <span className={`text-[12px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider ${del.status === 'DELIVERED' ? 'bg-brand/12 text-brand' : 'bg-ink/[0.08] text-muted'}`}>
                                                             {del.status.replace('_', ' ')}
@@ -767,7 +767,7 @@ export default function VerificationDesk() {
                                                     <Package className="w-6 h-6 text-muted mx-auto mb-2" />
                                                     <button 
                                                       onClick={() => setLinkingLineItem({ id: li.id, type: 'order' })} 
-                                                      className="text-[10px] font-semibold uppercase tracking-wider text-brand hover:underline underline-offset-4"
+                                                      className="text-[12.5px] font-semibold uppercase tracking-wider text-brand hover:underline underline-offset-4"
                                                     >
                                                       Find Order Link
                                                     </button>
@@ -845,12 +845,12 @@ export default function VerificationDesk() {
                         </div>
                         <div>
                           <p className="text-base font-semibold text-ink leading-none">{res.spruceOrderId || res.ticketNumber || res.id.substring(0,8)}</p>
-                          <p className="text-[10px] font-bold text-muted uppercase tracking-widest mt-1.5">{res.product || res.material || 'General Material'}</p>
+                          <p className="text-[12.5px] font-bold text-muted uppercase tracking-widest mt-1.5">{res.product || res.material || 'General Material'}</p>
                         </div>
                       </div>
                       <div className="text-right">
                         <p className="text-sm font-semibold text-ink">{res.quantity} {res.unit}</p>
-                        <div className="flex items-center gap-1 text-[10px] font-bold text-brand uppercase mt-1">
+                        <div className="flex items-center gap-1 text-[12.5px] font-bold text-brand uppercase mt-1">
                           PO: {res.poNumber || 'N/A'} <ChevronRight className="w-3 h-3" />
                         </div>
                       </div>

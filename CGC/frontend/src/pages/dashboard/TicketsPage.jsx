@@ -938,12 +938,12 @@ export default function TicketsPage() {
                       <h4 className="text-sm font-bold text-ink uppercase tracking-widest flex items-center gap-2">
                         <FileText className="w-4 h-4 text-brand" /> Extracted Information
                       </h4>
-                      <p className="text-[10px] text-muted font-medium">VALUES CAN BE MANUALLY OVERRIDDEN</p>
+                      <p className="text-[12.5px] text-muted font-medium">VALUES CAN BE MANUALLY OVERRIDDEN</p>
                     </div>
                     
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-1">
-                        <label className="text-[10px] font-bold text-muted uppercase px-1">Supplier</label>
+                        <label className="text-[12.5px] font-bold text-muted uppercase px-1">Supplier</label>
                         <input 
                           type="text" 
                           className="w-full p-2.5 bg-ink/[0.03] border border-line rounded-lg text-sm focus:ring-2 focus:ring-brand outline-none transition-all"
@@ -952,7 +952,7 @@ export default function TicketsPage() {
                         />
                       </div>
                       <div className="space-y-1">
-                        <label className="text-[10px] font-bold text-muted uppercase px-1">Ticket Date</label>
+                        <label className="text-[12.5px] font-bold text-muted uppercase px-1">Ticket Date</label>
                         <input 
                           type="date" 
                           className="w-full p-2.5 bg-ink/[0.03] border border-line rounded-lg text-sm focus:ring-2 focus:ring-brand outline-none"
@@ -961,7 +961,7 @@ export default function TicketsPage() {
                         />
                       </div>
                       <div className="space-y-1">
-                        <label className="text-[10px] font-bold text-muted uppercase px-1">Ticket Number</label>
+                        <label className="text-[12.5px] font-bold text-muted uppercase px-1">Ticket Number</label>
                         <input 
                           type="text" 
                           className="w-full p-2.5 bg-ink/[0.03] border border-line rounded-lg text-sm focus:ring-2 focus:ring-brand outline-none"
@@ -970,7 +970,7 @@ export default function TicketsPage() {
                         />
                       </div>
                       <div className="space-y-1">
-                        <label className="text-[10px] font-bold text-muted uppercase px-1">PO Number</label>
+                        <label className="text-[12.5px] font-bold text-muted uppercase px-1">PO Number</label>
                         <input 
                           type="text" 
                           className="w-full p-2.5 bg-ink/[0.03] border border-line rounded-lg text-sm focus:ring-2 focus:ring-brand outline-none"
@@ -979,7 +979,7 @@ export default function TicketsPage() {
                         />
                       </div>
                       <div className="space-y-1">
-                        <label className="text-[10px] font-bold text-muted uppercase px-1">Material</label>
+                        <label className="text-[12.5px] font-bold text-muted uppercase px-1">Material</label>
                         <input 
                           type="text" 
                           className="w-full p-2.5 bg-ink/[0.03] border border-line rounded-lg text-sm focus:ring-2 focus:ring-brand outline-none"
@@ -988,7 +988,7 @@ export default function TicketsPage() {
                         />
                       </div>
                       <div className="space-y-1">
-                        <label className="text-[10px] font-bold text-muted uppercase px-1">Quantity</label>
+                        <label className="text-[12.5px] font-bold text-muted uppercase px-1">Quantity</label>
                         <div className="relative">
                           <input 
                             type="number" 
@@ -1015,15 +1015,15 @@ export default function TicketsPage() {
                       {/* List of currently linked orders */}
                       {(selectedTicket.orderMatches?.length > 0 || selectedTicket.linkedOrder) ? (
                         <div className="space-y-2">
-                          <p className="text-[10px] font-bold text-muted uppercase px-1">Linked Records</p>
+                          <p className="text-[12.5px] font-bold text-muted uppercase px-1">Linked Records</p>
                           
                           {/* Many-to-many matches */}
                           {selectedTicket.orderMatches?.map(match => (
                             <div key={match.id} className="bg-surface p-3 rounded-xl border border-brand/30 flex items-center justify-between shadow-sm">
                                <div>
                                   <p className="text-sm font-bold text-ink">Spruce ID: {match.order?.spruceOrderId || 'N/A'}</p>
-                                  <p className="text-[10px] text-muted uppercase">Customer: {match.order?.customerName || 'Unknown'}</p>
-                                  <p className="text-[10px] text-muted">Method: {match.matchMethod}</p>
+                                  <p className="text-[12.5px] text-muted uppercase">Customer: {match.order?.customerName || 'Unknown'}</p>
+                                  <p className="text-[12.5px] text-muted">Method: {match.matchMethod}</p>
                                </div>
                                <button 
                                 onClick={() => handleUnlinkOrder(selectedTicket.id, match.orderId)}
@@ -1040,8 +1040,8 @@ export default function TicketsPage() {
                             <div className="bg-surface p-3 rounded-xl border border-ochre/30 flex items-center justify-between shadow-sm">
                                <div>
                                   <p className="text-sm font-bold text-ink">Spruce ID: {selectedTicket.linkedOrder.spruceOrderId}</p>
-                                  <p className="text-[10px] text-muted uppercase">Customer: {selectedTicket.linkedOrder.customerName}</p>
-                                  <p className="text-[10px] text-muted">Method: {selectedTicket.linkMethod} (Legacy)</p>
+                                  <p className="text-[12.5px] text-muted uppercase">Customer: {selectedTicket.linkedOrder.customerName}</p>
+                                  <p className="text-[12.5px] text-muted">Method: {selectedTicket.linkMethod} (Legacy)</p>
                                </div>
                                <button 
                                 onClick={() => handleUnlinkOrder(selectedTicket.id, selectedTicket.linkedOrderId)}
@@ -1057,7 +1057,7 @@ export default function TicketsPage() {
 
                       {/* Search for more orders to link */}
                       <div className="space-y-3 pt-4 border-t border-line">
-                         <p className="text-[10px] font-bold text-muted uppercase px-1">Link {selectedTicket.orderMatches?.length > 0 ? 'Another' : 'an'} Order</p>
+                         <p className="text-[12.5px] font-bold text-muted uppercase px-1">Link {selectedTicket.orderMatches?.length > 0 ? 'Another' : 'an'} Order</p>
                          <div className="relative">
                             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted" />
                             <input 
@@ -1080,7 +1080,7 @@ export default function TicketsPage() {
                                  <div key={order.id} className="bg-surface p-3 rounded-xl border border-line flex items-center justify-between hover:border-brand/40 transition-all shadow-sm group">
                                     <div className="flex-1">
                                        <p className="text-sm font-bold text-ink">{order.customerName}</p>
-                                       <p className="text-[10px] text-muted uppercase tracking-tighter">ID: {order.spruceOrderId} | PO: {order.poNumber || 'N/A'}</p>
+                                       <p className="text-[12.5px] text-muted uppercase tracking-tighter">ID: {order.spruceOrderId} | PO: {order.poNumber || 'N/A'}</p>
                                     </div>
                                     <div className="flex items-center gap-3">
                                        <span className="text-xs font-bold text-muted">{order.product}</span>
