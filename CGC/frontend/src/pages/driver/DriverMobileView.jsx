@@ -5,16 +5,18 @@ import api from '../../api/axios';
 import { supabase } from '../../supabaseClient';
 import { logout } from '../../store/authSlice';
 import LogoutModal from '../../components/LogoutModal';
-import { MapPin, Camera, CheckCircle2, Navigation, AlertCircle, Clock, Package, Flag, User, LogOut } from 'lucide-react';
+import { MapPin, Camera, CheckCircle2, AlertCircle, Package, User, LogOut } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 
 import { MobileDriverSkeleton } from '../../components/Skeleton';
 import { useIntervalRefresh } from '../../hooks/useIntervalRefresh';
+import { Badge } from '../../components/ui';
+import { cn } from '../../lib/cn';
 
 export default function DriverMobileView() {
   const [searchParams] = useSearchParams();
   const token = searchParams.get('token');
-  
+
   const dispatch = useDispatch();
   const { isAuthenticated } = useSelector((state) => state.auth);
 
@@ -32,7 +34,7 @@ export default function DriverMobileView() {
       if (!silent) {
         setLoading(true);
       }
-      
+
       let driverInfoData, deliveriesData;
       if (token) {
         // Legacy URL token access
@@ -65,12 +67,12 @@ export default function DriverMobileView() {
       }
 
       setDriverInfo(driverInfoData);
-      
+
       // Sort by priority and filter active
       const active = (deliveriesData || [])
         .filter(d => d.status !== 'DELIVERED' && d.status !== 'CANCELLED')
         .sort((a, b) => (a.priority || 0) - (b.priority || 0));
-      
+
       setDeliveries(active);
     } catch (e) {
       console.error(e);
@@ -95,8 +97,8 @@ export default function DriverMobileView() {
   const handleStatusChange = async (id, newStatus, notes) => {
     try {
       setUpdatingStatus(true);
-      const url = token 
-        ? `/api/deliveries/${id}/status?token=${token}` 
+      const url = token
+        ? `/api/deliveries/${id}/status?token=${token}`
         : `/api/deliveries/${id}/status`;
       await api.patch(url, { status: newStatus, notes });
       toast.success(`Status: ${newStatus.replace(/_/g, ' ')}`);
@@ -115,9 +117,9 @@ export default function DriverMobileView() {
       const formData = new FormData();
       formData.append('file', file);
       formData.append('type', type);
-      
-      const url = token 
-        ? `/api/deliveries/${id}/photos?token=${token}` 
+
+      const url = token
+        ? `/api/deliveries/${id}/photos?token=${token}`
         : `/api/deliveries/${id}/photos`;
       await api.post(url, formData);
       toast.success(`${type === 'pickup' ? 'Pickup' : type === 'delivery' ? 'Delivery' : 'Ticket'} photo uploaded!`);
@@ -135,11 +137,11 @@ export default function DriverMobileView() {
 
   if (error) {
     return (
-      <div className="min-h-screen bg-[#F9FBF9] flex items-center justify-center p-8 text-center">
-        <div className="bg-white border border-red-100 p-8 rounded-[2.5rem] shadow-xl shadow-red-500/5 max-w-sm mx-auto">
-          <AlertCircle className="mx-auto mb-4 text-red-500" size={48} strokeWidth={1.5} />
-          <h2 className="text-xl font-semibold text-slate-800 mb-2">Access Denied</h2>
-          <p className="text-slate-500 text-sm font-normal leading-relaxed">{error}</p>
+      <div className="min-h-screen bg-canvas flex items-center justify-center p-8 text-center">
+        <div className="bg-surface border border-clay/30 p-8 rounded-card shadow-lift max-w-sm mx-auto">
+          <AlertCircle className="mx-auto mb-4 text-clay" size={48} strokeWidth={1.5} />
+          <h2 className="text-xl font-semibold text-ink mb-2">Access denied</h2>
+          <p className="text-muted text-sm font-normal leading-relaxed">{error}</p>
         </div>
       </div>
     );
@@ -149,29 +151,28 @@ export default function DriverMobileView() {
   const currentDelivery = deliveries[0];
 
   return (
-    <div className="min-h-screen bg-[#F9FBF9] text-slate-800 pb-28 font-sans selection:bg-[#2D6A4F] selection:text-white">
-      <div className="max-w-md mx-auto bg-white min-h-screen shadow-2xl shadow-slate-200 flex flex-col justify-between">
-        
+    <div className="min-h-screen bg-canvas text-ink pb-28 font-sans">
+      <div className="max-w-md mx-auto bg-surface min-h-screen shadow-lift flex flex-col justify-between">
+
         <div>
-          {/* Mobile Header */}
-          <div className="sticky top-0 bg-white/90 backdrop-blur-xl border-b border-slate-100 p-5 z-20 flex items-center justify-between">
+          <div className="sticky top-0 bg-surface/90 backdrop-blur-xl border-b border-line p-5 z-20 flex items-center justify-between">
             <div className="flex flex-col">
-              <h1 className="text-xl font-semibold text-slate-900 tracking-tight">CGC Logistics</h1>
+              <h1 className="text-xl font-semibold text-ink tracking-tight">CGC Logistics</h1>
               <div className="flex items-center gap-2 mt-0.5">
-                <div className="w-1.5 h-1.5 rounded-full bg-[#2D6A4F] animate-pulse" />
-                <p className="text-[#2D6A4F] text-[10px] font-semibold uppercase tracking-widest">{driverInfo?.name || 'Driver'}</p>
+                <div className="w-1.5 h-1.5 rounded-pill bg-brand animate-pulse" />
+                <p className="text-brand text-[13px] font-semibold">{driverInfo?.name || 'Driver'}</p>
               </div>
             </div>
-            
+
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-[#F0F7F4] flex items-center justify-center font-semibold text-sm text-[#2D6A4F] border border-[#2D6A4F]/10">
+              <div className="w-11 h-11 rounded-control bg-brand/10 flex items-center justify-center font-semibold text-sm text-brand border border-brand/20">
                 {driverInfo?.name?.split(' ').map(n => n[0]).join('').toUpperCase() || 'D'}
               </div>
-              
+
               {isAuthenticated && (
-                <button 
+                <button
                   onClick={handleLogout}
-                  className="w-10 h-10 rounded-xl bg-red-50 hover:bg-red-100 flex items-center justify-center text-red-600 transition-colors border border-red-100"
+                  className="w-11 h-11 rounded-control bg-clay/14 hover:bg-clay/20 flex items-center justify-center text-clay transition-colors border border-clay/30"
                   title="Logout"
                 >
                   <LogOut size={16} />
@@ -184,94 +185,92 @@ export default function DriverMobileView() {
             {loading ? (
               <MobileDriverSkeleton />
             ) : activeTab === 'orders' ? (
-              // Active Tasks view
               !currentDelivery ? (
-                <div className="text-center py-20 px-8 bg-white rounded-[2.5rem] border border-slate-100 mt-10">
-                  <div className="w-20 h-20 bg-[#F0F7F4] rounded-full flex items-center justify-center mx-auto mb-6">
-                    <CheckCircle2 size={40} className="text-[#2D6A4F]" strokeWidth={2} />
+                <div className="text-center py-20 px-8 bg-surface rounded-card border border-line mt-10">
+                  <div className="w-20 h-20 bg-brand/10 rounded-pill flex items-center justify-center mx-auto mb-6">
+                    <CheckCircle2 size={40} className="text-brand" strokeWidth={2} />
                   </div>
-                  <h2 className="text-2xl font-semibold text-slate-900 mb-2 tracking-tight">Mission Accomplished</h2>
-                  <p className="text-slate-500 text-sm font-normal leading-relaxed">All deliveries have been completed.<br/>Safe travels back to the depot!</p>
+                  <h2 className="text-2xl font-semibold text-ink mb-2 tracking-tight">All done for now</h2>
+                  <p className="text-muted text-sm font-normal leading-relaxed">Every stop on your list is complete.<br/>Safe travels back to the depot.</p>
                 </div>
               ) : (
                 <div className="space-y-6">
                   <div className="px-2 flex items-center justify-between">
-                     <h2 className="text-[10px] font-semibold text-slate-400 uppercase tracking-[0.2em]">Active Task</h2>
-                     <span className="bg-[#2D6A4F] text-white px-3 py-1 rounded-full text-[10px] font-semibold uppercase tracking-widest">
-                       {deliveries.length} Stop{deliveries.length > 1 ? 's' : ''} Remaining
-                     </span>
+                     <h2 className="text-[13px] font-semibold text-muted">Active task</h2>
+                     <Badge tone="warn">
+                       {deliveries.length} stop{deliveries.length > 1 ? 's' : ''} remaining
+                     </Badge>
                   </div>
 
-                  <div className="relative overflow-hidden transition-all duration-500 bg-white ring-1 ring-[#2D6A4F]/20 shadow-xl shadow-[#2D6A4F]/10 rounded-[2rem] border border-slate-100 p-6">
-                    <div className="absolute top-0 right-0 bg-[#2D6A4F] text-white px-4 py-1.5 rounded-bl-2xl text-[10px] font-semibold tracking-widest uppercase">
-                      In Progress
+                  <div className="relative overflow-hidden transition-all duration-500 bg-surface border border-line shadow-card rounded-card p-6">
+                    <div className="absolute top-0 right-0 bg-brand text-on-brand px-4 py-1.5 rounded-bl-card text-[13px] font-semibold">
+                      In progress
                     </div>
 
                     <div className="flex items-start gap-4 mb-6">
-                      <div className="w-12 h-12 rounded-2xl flex flex-col items-center justify-center border bg-[#2D6A4F] border-[#2D6A4F] text-white">
-                        <span className="text-[8px] font-semibold uppercase leading-none opacity-60 mb-0.5">STOP</span>
-                        <span className="text-lg font-semibold leading-none">1</span>
+                      <div className="w-12 h-12 rounded-control flex flex-col items-center justify-center border bg-brand border-brand text-on-brand">
+                        <span className="text-[12px] font-semibold uppercase leading-none opacity-80 mb-0.5">Stop</span>
+                        <span className="tabular text-lg font-semibold leading-none">1</span>
                       </div>
                       <div className="flex-1 pt-1">
-                        <h3 className="font-semibold text-xl text-slate-900 tracking-tight leading-none">{currentDelivery.order.spruceOrderId}</h3>
-                        <p className="text-slate-600 text-xs font-normal uppercase mt-2 tracking-wide truncate max-w-[180px]">{currentDelivery.order.customerName}</p>
+                        <h3 className="font-semibold text-xl text-ink tracking-tight leading-none">{currentDelivery.order.spruceOrderId}</h3>
+                        <p className="text-muted text-[13px] font-normal mt-2 truncate max-w-[180px]">{currentDelivery.order.customerName}</p>
                       </div>
                     </div>
 
-                    <div className="bg-[#F9FBF9] rounded-2xl p-5 mb-6 border border-slate-200/50 space-y-4">
+                    <div className="bg-ink/[0.03] rounded-card p-5 mb-6 border border-line space-y-4">
                       <div className="flex items-center gap-4 text-sm">
-                        <div className="w-8 h-8 rounded-full bg-white flex items-center justify-center shadow-sm border border-slate-100">
-                          <Package className="text-[#2D6A4F]" size={16} strokeWidth={2} />
+                        <div className="w-8 h-8 rounded-pill bg-surface flex items-center justify-center shadow-card border border-line">
+                          <Package className="text-brand" size={16} strokeWidth={2} />
                         </div>
                         <div>
-                          <p className="font-semibold text-slate-800 leading-none">{Number(currentDelivery.order.quantity)} {currentDelivery.order.unit}</p>
-                          <p className="text-[10px] text-slate-500 font-normal uppercase mt-1 tracking-widest">{currentDelivery.order.product}</p>
+                          <p className="tabular font-semibold text-ink leading-none">{Number(currentDelivery.order.quantity)} {currentDelivery.order.unit}</p>
+                          <p className="text-[13px] text-muted font-normal mt-1">{currentDelivery.order.product}</p>
                         </div>
                       </div>
-                      <div className="flex items-start gap-4 text-sm pt-4 border-t border-slate-200/40">
-                        <div className="w-8 h-8 rounded-full bg-white flex items-center justify-center shadow-sm border border-slate-100 flex-shrink-0">
-                          <MapPin className="text-red-500" size={16} strokeWidth={2} />
+                      <div className="flex items-start gap-4 text-sm pt-4 border-t border-line">
+                        <div className="w-8 h-8 rounded-pill bg-surface flex items-center justify-center shadow-card border border-line flex-shrink-0">
+                          <MapPin className="text-clay" size={16} strokeWidth={2} />
                         </div>
-                        <p className="font-normal text-slate-600 text-xs leading-relaxed uppercase pt-1">{currentDelivery.order.shippingAddress || '78 Hespeler Rd, Cambridge, ON'}</p>
+                        <p className="font-normal text-muted text-[13px] leading-relaxed pt-1">{currentDelivery.order.shippingAddress || '78 Hespeler Rd, Cambridge, ON'}</p>
                       </div>
                     </div>
 
                     <div className="space-y-3">
-                      {/* <a 
+                      {/* <a
                         href={`https://maps.google.com/?q=${encodeURIComponent(currentDelivery.order.shippingAddress || currentDelivery.order.customerName)}`}
                         target="_blank" rel="noopener noreferrer"
-                        className="w-full flex items-center justify-center gap-3 bg-white hover:bg-slate-50 text-slate-700 py-4 rounded-xl font-semibold text-xs transition-all active:scale-[0.98] tracking-widest uppercase border border-slate-200"
+                        className="w-full flex items-center justify-center gap-3 bg-surface hover:bg-ink/[0.03] text-ink py-4 rounded-control font-semibold text-[13px] transition-all active:scale-[0.98] border border-line min-h-11"
                       >
-                        <Navigation size={16} className="text-[#2D6A4F]" strokeWidth={2} />
-                        GET DIRECTIONS
+                        <Navigation size={16} className="text-brand" strokeWidth={2} />
+                        Get directions
                       </a> */}
 
-                      {/* Status Buttons */}
                       {currentDelivery.status === 'PLACED' && (
-                        <button 
+                        <button
                           onClick={() => handleStatusChange(currentDelivery.id, 'IN_TRANSIT', 'Driver confirmed and started delivery')}
                           disabled={uploadingType !== null || updatingStatus}
-                          className="w-full py-4 rounded-xl font-semibold bg-[#2D6A4F] hover:bg-[#1B4332] text-white transition-all active:scale-[0.98] text-xs tracking-widest uppercase shadow-lg shadow-[#2D6A4F]/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                          className="w-full min-h-11 py-4 rounded-pill font-semibold bg-brand hover:brightness-110 text-on-brand transition-all active:scale-[0.98] text-[15px] disabled:opacity-50 disabled:cursor-not-allowed"
                         >
-                          {updatingStatus ? 'CONFIRMING...' : 'CONFIRM & START'}
+                          {updatingStatus ? 'Confirming...' : 'Confirm and start'}
                         </button>
                       )}
 
                       {currentDelivery.status === 'IN_TRANSIT' && (
                         <>
-                          {/* Photo Uploads */}
                           <div className="space-y-3">
                             <div className="grid grid-cols-2 gap-3">
                               {!currentDelivery.pickupPhotoUrl ? (
-                                <label className={`flex flex-col items-center justify-center gap-2 py-4 rounded-xl font-semibold text-[10px] tracking-widest uppercase cursor-pointer border transition-all active:scale-[0.98] ${
+                                <label className={cn(
+                                  'flex flex-col items-center justify-center gap-2 py-4 min-h-[88px] rounded-control font-semibold text-[13px] cursor-pointer border transition-all active:scale-[0.98]',
                                   uploadingType === 'pickup'
-                                    ? 'bg-slate-100 border-slate-200 text-slate-400 cursor-not-allowed'
+                                    ? 'bg-ink/[0.06] border-line text-muted cursor-not-allowed'
                                     : driverInfo?.type === 'INDEPENDENT'
-                                    ? 'bg-orange-50 border-orange-200 text-orange-700'
-                                    : 'bg-slate-50 border-slate-200 text-slate-600'
-                                }`}>
+                                    ? 'bg-ochre/15 border-ochre/30 text-ink'
+                                    : 'bg-ink/[0.03] border-line text-ink'
+                                )}>
                                   <Camera size={18} strokeWidth={2} className={uploadingType === 'pickup' ? 'animate-spin' : ''} />
-                                  {uploadingType === 'pickup' ? 'UPLOADING...' : 'PICKUP PHOTO'}
+                                  {uploadingType === 'pickup' ? 'Uploading...' : 'Pickup photo'}
                                   <input
                                     type="file"
                                     className="hidden"
@@ -282,19 +281,20 @@ export default function DriverMobileView() {
                                   />
                                 </label>
                               ) : (
-                                <div className="flex flex-col items-center justify-center gap-2 bg-green-50 border border-green-200 text-green-700 py-4 rounded-xl text-[10px] font-semibold uppercase">
-                                  <CheckCircle2 size={18} strokeWidth={2} /> PICKUP OK
+                                <div className="flex flex-col items-center justify-center gap-2 bg-brand/12 border border-brand/30 text-brand py-4 min-h-[88px] rounded-control text-[13px] font-semibold">
+                                  <CheckCircle2 size={18} strokeWidth={2} /> Pickup ok
                                 </div>
                               )}
 
                               {!currentDelivery.deliveryPhotoUrl ? (
-                                <label className={`flex flex-col items-center justify-center gap-2 py-4 rounded-xl font-semibold text-[10px] tracking-widest uppercase cursor-pointer border transition-all active:scale-[0.98] ${
+                                <label className={cn(
+                                  'flex flex-col items-center justify-center gap-2 py-4 min-h-[88px] rounded-control font-semibold text-[13px] cursor-pointer border transition-all active:scale-[0.98]',
                                   uploadingType === 'delivery'
-                                    ? 'bg-slate-100 border-slate-200 text-slate-400 cursor-not-allowed'
-                                    : 'bg-indigo-50 border-indigo-200 text-indigo-700'
-                                }`}>
+                                    ? 'bg-ink/[0.06] border-line text-muted cursor-not-allowed'
+                                    : 'bg-ink/[0.03] border-line text-ink'
+                                )}>
                                   <Camera size={18} strokeWidth={2} className={uploadingType === 'delivery' ? 'animate-spin' : ''} />
-                                  {uploadingType === 'delivery' ? 'UPLOADING...' : 'DELIVERY PHOTO'}
+                                  {uploadingType === 'delivery' ? 'Uploading...' : 'Delivery photo'}
                                   <input
                                     type="file"
                                     className="hidden"
@@ -305,26 +305,27 @@ export default function DriverMobileView() {
                                   />
                                 </label>
                               ) : (
-                                <div className="flex flex-col items-center justify-center gap-2 bg-indigo-50 border border-indigo-200 text-indigo-700 py-4 rounded-xl text-[10px] font-semibold uppercase">
-                                  <CheckCircle2 size={18} strokeWidth={2} /> PROOF OK
+                                <div className="flex flex-col items-center justify-center gap-2 bg-brand/12 border border-brand/30 text-brand py-4 min-h-[88px] rounded-control text-[13px] font-semibold">
+                                  <CheckCircle2 size={18} strokeWidth={2} /> Proof ok
                                 </div>
                               )}
                             </div>
 
                             <div className="space-y-3 w-full">
                               {currentDelivery.order?.tickets?.map((t, idx) => (
-                                <div key={t.id || idx} className="flex items-center justify-center gap-2 bg-teal-50 border border-teal-200 text-teal-700 py-4 rounded-xl text-[10px] font-semibold uppercase w-full">
-                                  <CheckCircle2 size={18} strokeWidth={2} /> TICKET {idx + 1} OK
+                                <div key={t.id || idx} className="flex items-center justify-center gap-2 bg-brand/12 border border-brand/30 text-brand py-4 min-h-11 rounded-control text-[13px] font-semibold w-full">
+                                  <CheckCircle2 size={18} strokeWidth={2} /> Ticket {idx + 1} ok
                                 </div>
                               ))}
 
-                              <label className={`flex flex-col items-center justify-center gap-2 py-4 rounded-xl font-semibold text-[10px] tracking-widest uppercase cursor-pointer border transition-all active:scale-[0.98] w-full ${
+                              <label className={cn(
+                                'flex flex-col items-center justify-center gap-2 py-4 min-h-11 rounded-control font-semibold text-[13px] cursor-pointer border transition-all active:scale-[0.98] w-full',
                                 uploadingType === 'ticket'
-                                  ? 'bg-slate-100 border-slate-200 text-slate-400 cursor-not-allowed'
-                                  : 'bg-teal-50 border-teal-200 text-teal-700'
-                              }`}>
+                                  ? 'bg-ink/[0.06] border-line text-muted cursor-not-allowed'
+                                  : 'bg-brand/10 border-brand/30 text-brand'
+                              )}>
                                 <Camera size={18} strokeWidth={2} className={uploadingType === 'ticket' ? 'animate-spin' : ''} />
-                                {uploadingType === 'ticket' ? 'UPLOADING...' : (currentDelivery.order?.tickets?.length > 0 ? 'UPLOAD ANOTHER TICKET' : 'UPLOAD TICKET')}
+                                {uploadingType === 'ticket' ? 'Uploading...' : (currentDelivery.order?.tickets?.length > 0 ? 'Upload another ticket' : 'Upload ticket')}
                                 <input
                                   type="file"
                                   className="hidden"
@@ -338,13 +339,12 @@ export default function DriverMobileView() {
 
                           </div>
 
-                          {/* MARK AS DELIVERED */}
-                          <button 
+                          <button
                             onClick={() => handleStatusChange(currentDelivery.id, 'DELIVERED', 'Delivered by driver')}
                             disabled={uploadingType !== null || updatingStatus}
-                            className="w-full py-4 rounded-xl font-semibold bg-[#1B4332] hover:bg-[#0D2119] text-[#FFF] transition-all active:scale-[0.98] text-xs tracking-widest uppercase shadow-lg shadow-green-900/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                            className="w-full min-h-11 py-4 rounded-pill font-semibold bg-brand hover:brightness-110 text-on-brand transition-all active:scale-[0.98] text-[15px] disabled:opacity-50 disabled:cursor-not-allowed"
                           >
-                            {updatingStatus ? 'COMPLETING...' : 'COMPLETE DELIVERY'}
+                            {updatingStatus ? 'Completing...' : 'Complete delivery'}
                           </button>
                         </>
                       )}
@@ -353,72 +353,75 @@ export default function DriverMobileView() {
                 </div>
               )
             ) : (
-              // Read-only Profile view
               <div className="space-y-6">
                 <div className="px-2">
-                   <h2 className="text-[10px] font-semibold text-slate-400 uppercase tracking-[0.2em]">My Profile</h2>
+                   <h2 className="text-[13px] font-semibold text-muted">My profile</h2>
                 </div>
 
-                <div className="bg-white border border-slate-100 rounded-[2rem] p-6 shadow-xl shadow-slate-200/50 space-y-6">
-                  <div className="flex flex-col items-center py-4 border-b border-slate-100">
-                    <div className="w-20 h-20 rounded-full bg-green-50 text-[#2D6A4F] border border-green-100 flex items-center justify-center font-bold text-3xl mb-3 shadow-inner">
+                <div className="bg-surface border border-line rounded-card p-6 shadow-card space-y-6">
+                  <div className="flex flex-col items-center py-4 border-b border-line">
+                    <div className="w-20 h-20 rounded-pill bg-brand/10 text-brand border border-brand/20 flex items-center justify-center font-bold text-3xl mb-3">
                       {driverInfo?.name?.split(' ').map(n => n[0]).join('').toUpperCase() || 'D'}
                     </div>
-                    <h3 className="text-xl font-bold text-slate-900">{driverInfo?.name}</h3>
-                    <p className="text-xs text-[#2D6A4F] font-semibold uppercase tracking-wider mt-1">{driverInfo?.type === 'CGC_FLEET' ? 'CGC Fleet Driver' : 'Independent Contractor'}</p>
+                    <h3 className="text-xl font-bold text-ink">{driverInfo?.name}</h3>
+                    <p className="text-[13px] text-brand font-semibold mt-1">{driverInfo?.type === 'CGC_FLEET' ? 'CGC fleet driver' : 'Independent contractor'}</p>
                   </div>
 
                   <div className="space-y-4">
-                    <div className="flex justify-between items-center py-2 border-b border-slate-50">
-                      <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Email Address</span>
-                      <span className="text-sm font-semibold text-slate-800">{driverInfo?.email || 'N/A'}</span>
+                    <div className="flex justify-between items-center py-2 border-b border-line">
+                      <span className="text-[13px] font-medium text-muted">Email</span>
+                      <span className="text-sm font-semibold text-ink">{driverInfo?.email || 'N/A'}</span>
                     </div>
 
-                    <div className="flex justify-between items-center py-2 border-b border-slate-50">
-                      <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Phone Number</span>
-                      <span className="text-sm font-semibold text-slate-800">{driverInfo?.phone || 'N/A'}</span>
+                    <div className="flex justify-between items-center py-2 border-b border-line">
+                      <span className="text-[13px] font-medium text-muted">Phone</span>
+                      <span className="tabular text-sm font-semibold text-ink">{driverInfo?.phone || 'N/A'}</span>
                     </div>
 
-                    <div className="flex justify-between items-center py-2 border-b border-slate-50">
-                      <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Pay rate</span>
-                      <span className="text-sm font-bold text-[#2D6A4F]">${driverInfo?.ratePerTrip} per Trip</span>
+                    <div className="flex justify-between items-center py-2 border-b border-line">
+                      <span className="text-[13px] font-medium text-muted">Pay rate</span>
+                      <span className="tabular text-sm font-bold text-ink">${driverInfo?.ratePerTrip} per trip</span>
                     </div>
 
                     <div className="flex justify-between items-center py-2">
-                      <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Account Status</span>
-                      <div className="flex items-center gap-1.5 bg-green-50 border border-green-100 text-green-700 px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wide">
-                        <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
+                      <span className="text-[13px] font-medium text-muted">Account status</span>
+                      <Badge tone={driverInfo?.active ? 'good' : 'neutral'}>
                         {driverInfo?.active ? 'Active' : 'Inactive'}
-                      </div>
+                      </Badge>
                     </div>
                   </div>
                 </div>
 
-                <div className="bg-slate-50 border border-slate-100 rounded-2xl p-5 text-center text-xs text-slate-400 leading-relaxed">
-                  🔒 Profile details are locked and managed by CGC Dispatchers.<br />
-                  If you need to update your details, please contact operations.
+                <div className="bg-ink/[0.03] border border-line rounded-card p-5 text-center text-[13px] text-muted leading-relaxed">
+                  Profile details are locked and managed by CGC dispatchers.<br />
+                  If you need to update your details, contact operations.
                 </div>
               </div>
             )}
           </div>
         </div>
 
-        {/* Sleek Bottom Navigation Bar */}
-        <div className="sticky bottom-0 w-full bg-white/95 backdrop-blur-xl border-t border-slate-100 py-4 flex justify-around items-center z-30 shadow-2xl">
-          <button 
+        <div className="sticky bottom-0 w-full bg-surface/95 backdrop-blur-xl border-t border-line py-3 flex justify-around items-center z-30">
+          <button
             onClick={() => setActiveTab('orders')}
-            className={`flex flex-col items-center gap-1 transition-all duration-300 ${activeTab === 'orders' ? 'text-[#2D6A4F] scale-105 font-bold' : 'text-slate-400 hover:text-slate-600 font-medium'}`}
+            className={cn(
+              'flex flex-col items-center justify-center gap-1 min-h-11 min-w-[88px] transition-colors',
+              activeTab === 'orders' ? 'text-brand font-semibold' : 'text-muted hover:text-ink font-medium'
+            )}
           >
             <Package size={20} strokeWidth={activeTab === 'orders' ? 2.5 : 2} />
-            <span className="text-[10px] tracking-widest uppercase">Active Task</span>
+            <span className="text-[13px]">Active task</span>
           </button>
-          
-          <button 
+
+          <button
             onClick={() => setActiveTab('profile')}
-            className={`flex flex-col items-center gap-1 transition-all duration-300 ${activeTab === 'profile' ? 'text-[#2D6A4F] scale-105 font-bold' : 'text-slate-400 hover:text-slate-600 font-medium'}`}
+            className={cn(
+              'flex flex-col items-center justify-center gap-1 min-h-11 min-w-[88px] transition-colors',
+              activeTab === 'profile' ? 'text-brand font-semibold' : 'text-muted hover:text-ink font-medium'
+            )}
           >
             <User size={20} strokeWidth={activeTab === 'profile' ? 2.5 : 2} />
-            <span className="text-[10px] tracking-widest uppercase">My Profile</span>
+            <span className="text-[13px]">My profile</span>
           </button>
         </div>
 
