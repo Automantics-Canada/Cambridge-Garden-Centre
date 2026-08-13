@@ -3,8 +3,16 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 
 serve(async (req) => {
   try {
+    const webhookSecret = Deno.env.get("OCR_WEBHOOK_SECRET")
+    const suppliedSecret = req.headers.get("x-webhook-secret")
+    if (!webhookSecret || suppliedSecret !== webhookSecret) {
+      return new Response(
+        JSON.stringify({ error: "Unauthorized" }),
+        { status: 401, headers: { "Content-Type": "application/json" } }
+      )
+    }
+
     const payload = await req.json()
-    console.log("[ORCHESTRATOR] Received event payload:", JSON.stringify(payload))
 
     const jobId = payload.record?.id
     const jobType = payload.record?.type // E.g., 'INVOICE'
@@ -13,10 +21,10 @@ serve(async (req) => {
       const backendUrl = Deno.env.get("BACKEND_URL")
       const sharedSecret = Deno.env.get("INTERNAL_SHARED_SECRET")
 
-      if (!backendUrl) {
-        console.error("[ORCHESTRATOR] Error: BACKEND_URL environment variable is not defined.")
+      if (!backendUrl || !sharedSecret) {
+        console.error("[ORCHESTRATOR] Required service configuration is missing.")
         return new Response(
-          JSON.stringify({ error: "BACKEND_URL is not set" }),
+          JSON.stringify({ error: "Service configuration unavailable" }),
           { status: 500, headers: { "Content-Type": "application/json" } }
         )
       }
@@ -33,11 +41,11 @@ serve(async (req) => {
       })
 
       const status = response.status
-      const responseText = await response.text()
-      console.log(`[ORCHESTRATOR] Backend responded with status ${status}: ${responseText}`)
+      await response.body?.cancel()
+      console.log(`[ORCHESTRATOR] Backend responded with status ${status}`)
 
       return new Response(
-        JSON.stringify({ success: true, backendStatus: status, details: responseText }),
+        JSON.stringify({ success: response.ok, backendStatus: status }),
         { headers: { "Content-Type": "application/json" } }
       )
     }

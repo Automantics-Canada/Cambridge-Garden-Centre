@@ -11,10 +11,19 @@ export const register = async (req: Request, res: Response) => {
     return res.status(400).json({ error: 'email, password, name required' });
   }
 
+  if (typeof password !== 'string' || password.length < 8) {
+    return res.status(400).json({ error: 'password must be at least 8 characters' });
+  }
+
+  const allowedRoles: UserRole[] = ['AP_USER', 'OWNER', 'ADMIN'];
+  if (role !== undefined && !allowedRoles.includes(role)) {
+    return res.status(400).json({ error: 'invalid role' });
+  }
+
   const result = await AuthService.register(
-    email,
+    String(email).trim().toLowerCase(),
     password,
-    name,
+    String(name).trim(),
     role as UserRole | undefined
   );
 

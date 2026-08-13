@@ -23,6 +23,7 @@ import {
 import toast from 'react-hot-toast';
 import { Skeleton } from '../../components/Skeleton';
 import Loader from '../../components/Loader';
+import { useIntervalRefresh } from '../../hooks/useIntervalRefresh';
 
 export default function TicketsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -161,12 +162,8 @@ export default function TicketsPage() {
 
   const fetchStats = useCallback(async () => {
     try {
-      const { count, error } = await supabase
-        .from('Ticket')
-        .select('*', { count: 'exact', head: true })
-        .eq('status', 'UNLINKED');
-      if (error) throw error;
-      setStats({ unlinkedCount: count || 0 });
+      const res = await api.get('/api/tickets/stats');
+      setStats({ unlinkedCount: res.data?.unlinkedCount || 0 });
     } catch (err) {
       console.error('Error fetching ticket stats:', err);
     }
@@ -227,7 +224,7 @@ export default function TicketsPage() {
       }
     } catch (err) {
       console.error('Error fetching tickets:', err);
-      toast.error('Failed to load tickets');
+      if (!silent) toast.error('Failed to load tickets');
     } finally {
       if (!silent) setLoading(false);
     }
@@ -250,10 +247,8 @@ export default function TicketsPage() {
     fetchSuppliers();
   }, [fetchSuppliers]);
 
-  // Stable references for realtime debounced updates to prevent channel recreation
   const fetchTicketsRef = useRef(fetchTickets);
   const fetchStatsRef = useRef(fetchStats);
-  const debounceTimeoutRef = useRef(null);
 
   useEffect(() => {
     fetchTicketsRef.current = fetchTickets;
@@ -263,41 +258,13 @@ export default function TicketsPage() {
     fetchStatsRef.current = fetchStats;
   }, [fetchStats]);
 
-  useEffect(() => {
-    return () => {
-      if (debounceTimeoutRef.current) {
-        clearTimeout(debounceTimeoutRef.current);
-      }
-    };
-  }, []);
-
-  const fetchTicketsDebounced = useCallback((silent = false) => {
-    if (debounceTimeoutRef.current) {
-      clearTimeout(debounceTimeoutRef.current);
-    }
-    debounceTimeoutRef.current = setTimeout(() => {
-      fetchTicketsRef.current(silent);
+  useIntervalRefresh(
+    () => {
+      fetchTicketsRef.current(true);
       fetchStatsRef.current();
-    }, 500);
-  }, []);
-
-  useEffect(() => {
-    const channel = supabase
-      .channel('ticket-changes')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'Ticket' },
-        (payload) => {
-          console.log('[REALTIME] Ticket change received:', payload);
-          fetchTicketsDebounced(true); // Silent reload in background
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [fetchTicketsDebounced]);
+    },
+    20_000
+  );
 
   const handleUpdateTicket = async (id, data) => {
     try {

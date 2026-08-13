@@ -15,6 +15,7 @@ export interface AuthRequest extends Request {
 }
 
 import { prisma } from '../db/prisma.js';
+import { resolveActiveUser } from '../services/authorization.js';
 
 export async function authMiddleware(
   req: AuthRequest,
@@ -30,33 +31,14 @@ export async function authMiddleware(
         email: string;
         role: UserRole;
       };
-      req.user = decoded;
+      const currentUser = await resolveActiveUser(prisma, decoded.id);
+      if (!currentUser) {
+        return res.status(401).json({ error: 'Account is inactive' });
+      }
+      req.user = currentUser;
       return next();
     } catch {
       // Let it fall through or fail
-    }
-  }
-
-  // Support legacy driver URL token access
-  if (queryToken) {
-    try {
-      const decoded = Buffer.from(queryToken, 'base64').toString('ascii');
-      const [driverId] = decoded.split(':');
-      if (driverId) {
-        const driver = await prisma.driver.findUnique({
-          where: { id: driverId }
-        });
-        if (driver) {
-          req.user = {
-            id: driver.userId || `legacy-driver-id-${driver.id}`,
-            email: driver.email || 'legacy@example.com',
-            role: 'DRIVER'
-          };
-          return next();
-        }
-      }
-    } catch (e) {
-      console.error('Failed to parse legacy driver token:', e);
     }
   }
 
@@ -76,15 +58,29 @@ export async function authMiddleware(
       email: string;
       role: UserRole;
     };
-    req.user = decoded;
+    const currentUser = await resolveActiveUser(prisma, decoded.id);
+    if (!currentUser) {
+      return res.status(401).json({ error: 'Account is inactive' });
+    }
+    req.user = currentUser;
     next();
   } catch {
     return res.status(401).json({ error: 'Invalid token' });
   }
 }
 
-export function requireRole(roles: UserRole[]) {
-  return (req: AuthRequest, res: Response, next: NextFunction) => {
+/** A role guard, carrying the roles it allows so route wiring can be asserted. */
+export interface RoleGuard {
+  (req: AuthRequest, res: Response, next: NextFunction): void;
+  allowedRoles: readonly UserRole[];
+}
+
+export function requireRole(roles: UserRole[]): RoleGuard {
+  const guard = function requireRoleMiddleware(
+    req: AuthRequest,
+    res: Response,
+    next: NextFunction
+  ) {
     if (!req.user) {
       return res.status(401).json({ error: 'Not authenticated' });
     }
@@ -92,5 +88,10 @@ export function requireRole(roles: UserRole[]) {
       return res.status(403).json({ error: 'Forbidden' });
     }
     next();
-  };
+  } as RoleGuard;
+
+  // Exposed so the route-guard regression test can assert exactly which roles
+  // each endpoint admits, rather than only that some guard is present.
+  guard.allowedRoles = Object.freeze([...roles]);
+  return guard;
 }

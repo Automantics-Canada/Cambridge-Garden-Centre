@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useSelector } from 'react-redux';
 import { useNavigate } from 'react-router-dom';
-import api from '../../api/axios';
 import { supabase } from '../../supabaseClient';
 import { 
   FileCheck, 
@@ -28,11 +27,6 @@ export default function Dashboard() {
   });
   const [recentInvoices, setRecentInvoices] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [suppliers, setSuppliers] = useState([]);
-  
-  // Dashboard Filters
-  const [buyerType, setBuyerType] = useState('');
-  const [supplierId, setSupplierId] = useState('');
 
   const fetchDashboardData = useCallback(async () => {
     setLoading(true);
@@ -40,43 +34,18 @@ export default function Dashboard() {
       const token = localStorage.getItem('token');
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
 
-      const [resInvoices, resSuppliers] = await Promise.all([
-        supabase.functions.invoke('fetch-cgc-data?resource=invoices&limit=1000', {
-          method: 'GET',
-          headers
-        }),
-        supabase.functions.invoke('fetch-cgc-data?resource=suppliers&limit=1000', {
-          method: 'GET',
-          headers
-        })
-      ]);
-
-      if (resInvoices.error) throw resInvoices.error;
-      if (resSuppliers.error) throw resSuppliers.error;
-      
-      const invoices = resInvoices.data?.data || [];
-      setRecentInvoices(invoices.slice(0, 5));
-      setSuppliers(resSuppliers.data?.data || []);
-
-      // In real scenario, backend should return these stats. Calculating here for v1.
-      const now = new Date();
-      const thisMonth = now.getMonth();
-      const thisYear = now.getFullYear();
-
-      const monthlyInvoices = invoices.filter(inv => {
-        const d = new Date(inv.receivedAt);
-        return d.getMonth() === thisMonth && d.getFullYear() === thisYear;
+      const summaryResponse = await supabase.functions.invoke('fetch-cgc-data?resource=dashboard-summary', {
+        method: 'GET',
+        headers
       });
 
-      setStats({
-        totalMonthly: monthlyInvoices.length,
-        pendingCount: invoices.filter(i => i.status === 'PENDING_REVIEW').length,
-        disputedCount: invoices.filter(i => i.status === 'DISPUTED').length,
-        savingsDetected: invoices.reduce((acc, inv) => {
-          const savings = inv.lineItems?.reduce((s, li) => s + (li.rateDiscrepancy || 0), 0) || 0;
-          return acc + (inv.status === 'DISPUTED' ? Number(savings) : 0);
-        }, 0)
-      });
+      if (summaryResponse.error) throw summaryResponse.error;
+
+      setRecentInvoices(summaryResponse.data?.recentInvoices || []);
+      setStats(current => ({
+        ...current,
+        ...summaryResponse.data?.stats
+      }));
 
     } catch (err) {
       console.error('Error fetching dashboard data:', err);

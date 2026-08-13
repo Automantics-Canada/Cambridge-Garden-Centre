@@ -312,6 +312,9 @@ export const DriverService = {
               throw new Error(`Email ${emailNormalized} is already registered with role ${existingUserWithEmail.role}.`);
             }
           } else {
+            if (!hash) {
+              throw new Error('A password is required when enabling login for an existing driver.');
+            }
             const newUser = await tx.user.create({
               data: {
                 email: emailNormalized,
@@ -319,7 +322,7 @@ export const DriverService = {
                 phone: phone !== undefined ? phone.trim() : existingDriver.phone,
                 role: 'DRIVER',
                 active: active !== undefined ? active : existingDriver.active,
-                passwordHash: hash || await bcrypt.hash('CgcDriver123!', 10)
+                passwordHash: hash
               }
             });
             userId = newUser.id;

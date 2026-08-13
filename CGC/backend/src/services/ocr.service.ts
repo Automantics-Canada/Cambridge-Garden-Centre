@@ -6,7 +6,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { downloadFileToTemp, cleanupTempFile, isSupabaseUrl, getFilenameFromUrl } from './urlHandler.js';
 import { extractStructuredData } from './bedrock.service.js';
-import { pdf } from 'pdf-to-img';
+import { pdfToPng } from 'pdf-to-png-converter';
 
 const textractClient = new TextractClient(); // Relies on standard AWS credential provider chain
 
@@ -39,7 +39,14 @@ export async function extractTextFromLocalImage(imageUrl: string): Promise<OcrEx
       localPath = tempFile;
     } else if (imageUrl.startsWith('/uploads/')) {
       // Handle legacy local paths
-      localPath = path.join(process.cwd(), imageUrl);
+      const uploadsRoot = path.resolve(process.cwd(), 'uploads');
+      const requestedPath = path.resolve(process.cwd(), `.${imageUrl}`);
+      if (!requestedPath.startsWith(`${uploadsRoot}${path.sep}`)) {
+        throw new Error('Invalid legacy upload path');
+      }
+      localPath = requestedPath;
+    } else {
+      throw new Error('Unsupported OCR file location');
     }
 
     if (!fs.existsSync(localPath)) {
@@ -51,11 +58,18 @@ export async function extractTextFromLocalImage(imageUrl: string): Promise<OcrEx
 
     if (ext === '.pdf') {
       console.log(`[OCR] Converting PDF to image: ${localPath}`);
-      const document = await pdf(localPath, { scale: 3 });
-      const imageBuffer = await document.getPage(1);
+      const pages = await pdfToPng(fs.readFileSync(localPath), {
+        viewportScale: 3,
+        pagesToProcess: [1],
+        disableFontFace: false,
+        useSystemFonts: true,
+        enableXfa: true,
+      });
+      const imageBuffer = pages[0]?.content;
+      if (!imageBuffer) throw new Error('PDF did not render a first page');
       
       generatedImagePath = path.join(path.dirname(localPath), `${path.basename(localPath, ext)}-1.png`);
-      fs.writeFileSync(generatedImagePath, imageBuffer);
+      fs.writeFileSync(generatedImagePath, Buffer.from(imageBuffer));
       
       console.log(`[OCR] Successfully converted PDF to image: ${generatedImagePath}`);
       imagePathForOcr = generatedImagePath;

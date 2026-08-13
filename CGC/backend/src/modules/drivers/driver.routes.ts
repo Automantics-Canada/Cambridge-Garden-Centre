@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { authMiddleware } from '../../middleware/authMiddleware.js';
+import { authMiddleware, requireRole } from '../../middleware/authMiddleware.js';
 import { 
   getDrivers, 
   createDriver, 
@@ -16,9 +16,9 @@ router.use(authMiddleware);
 
 router.get('/me', getLoggedInDriverProfile);
 router.get('/', getDrivers);
-router.post('/', createDriver);
-router.patch('/:id', updateDriver);
-router.delete('/:id', deleteDriver);
+router.post('/', requireRole(['OWNER', 'ADMIN']), createDriver);
+router.patch('/:id', requireRole(['OWNER', 'ADMIN']), updateDriver);
+router.delete('/:id', requireRole(['OWNER', 'ADMIN']), deleteDriver);
 router.get('/:id/deliveries', getDriverDeliveries);
 
 export default router;

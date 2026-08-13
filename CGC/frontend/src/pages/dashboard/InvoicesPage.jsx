@@ -16,6 +16,7 @@ import {
 import toast from 'react-hot-toast';
 import { Skeleton } from '../../components/Skeleton';
 import Loader from '../../components/Loader';
+import { useIntervalRefresh } from '../../hooks/useIntervalRefresh';
 
 const STATUS_TABS = [
   { id: 'ALL', name: 'All Invoices' },
@@ -66,7 +67,7 @@ export default function InvoicesPage() {
       setInvoices(data && data.data ? data.data : []);
     } catch (err) {
       console.error('Error fetching invoices via Edge Function:', err);
-      toast.error('Failed to load invoices');
+      if (!silent) toast.error('Failed to load invoices');
     } finally {
       if (!silent) setLoading(false);
     }
@@ -97,48 +98,19 @@ export default function InvoicesPage() {
     fetchSuppliers();
   }, [fetchSuppliers]);
 
-  // Stable references for realtime debounced updates to prevent channel recreation
   const fetchInvoicesRef = useRef(fetchInvoices);
-  const debounceTimeoutRef = useRef(null);
 
   useEffect(() => {
     fetchInvoicesRef.current = fetchInvoices;
   }, [fetchInvoices]);
 
-  useEffect(() => {
-    return () => {
-      if (debounceTimeoutRef.current) {
-        clearTimeout(debounceTimeoutRef.current);
-      }
-    };
-  }, []);
-
-  const fetchInvoicesDebounced = useCallback((silent = false) => {
-    if (debounceTimeoutRef.current) {
-      clearTimeout(debounceTimeoutRef.current);
-    }
-    debounceTimeoutRef.current = setTimeout(() => {
-      fetchInvoicesRef.current(silent);
-    }, 500);
-  }, []);
-
-  useEffect(() => {
-    const channel = supabase
-      .channel('invoice-changes')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'Invoice' },
-        (payload) => {
-          console.log('[REALTIME] Invoice change received:', payload);
-          fetchInvoicesDebounced(true); // Silent reload in background
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [fetchInvoicesDebounced]);
+  useIntervalRefresh(
+    () => {
+      fetchInvoicesRef.current(true);
+    },
+    20_000,
+    { enabled: !isUploading }
+  );
 
   const handleFileUpload = async (event) => {
     const file = event.target.files?.[0];
@@ -151,12 +123,10 @@ export default function InvoicesPage() {
 
     const formData = new FormData();
     formData.append('file', file);
-    formData.append('fromEmail', 'staff_upload@cambridgegardencentre.ca');
-    formData.append('subject', `Manual Upload: ${file.name}`);
 
     setIsUploading(true);
     try {
-      const res = await api.post('/api/invoices/mock-email', formData, {
+      const res = await api.post('/api/invoices/upload', formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
       });
       toast.success('Invoice uploaded and processing!');

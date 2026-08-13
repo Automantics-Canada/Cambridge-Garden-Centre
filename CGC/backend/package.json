@@ -5,11 +5,13 @@
   "main": "index.js",
   "scripts": {
     "dev": "tsx watch src/server.ts",
+    "prebuild": "prisma generate",
     "build": "tsc",
     "start": "node dist/server.js",
     "db:push": "prisma db push",
     "db:generate": "prisma generate",
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "bootstrap:admin": "tsx src/scripts/bootstrapAdmin.ts",
+    "test": "tsx --test tests/**/*.test.ts",
     "keep-alive": "node scripts/keep-alive.js",
     "ping-once": "node scripts/ping-once.js"
   },
@@ -56,7 +58,6 @@
     "nodemon": "^3.1.14",
     "pdf-lib": "^1.17.1",
     "pdf-parse": "^2.4.5",
-    "pdf-to-img": "^6.2.0",
     "pdf-to-png-converter": "^4.0.0",
     "pdf2json": "^4.0.3",
     "string-similarity": "^4.0.4",

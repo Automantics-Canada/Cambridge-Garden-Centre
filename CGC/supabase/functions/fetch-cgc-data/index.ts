@@ -1,6 +1,7 @@
 // @ts-nocheck
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.38.0"
+import { canAccessResource, requiresOwnDriverScope, sessionFromUserRecord } from "../_shared/accessPolicy.ts"
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -45,9 +46,15 @@ async function verifyHS256(token: string, secret: string): Promise<any | null> {
 
     if (!isValid) return null;
 
-    // Parse payload
+    // Parse and validate time-based claims. Signature verification alone must
+    // not keep expired or not-yet-valid sessions alive indefinitely.
     const decodedPayload = atob(payloadB64.replace(/-/g, "+").replace(/_/g, "/"));
-    return JSON.parse(decodedPayload);
+    const payload = JSON.parse(decodedPayload);
+    const now = Math.floor(Date.now() / 1000);
+    if (typeof payload.exp !== 'number' || payload.exp <= now) return null;
+    if (typeof payload.nbf === 'number' && payload.nbf > now + 30) return null;
+    if (!payload.id || !payload.role) return null;
+    return payload;
   } catch (e) {
     console.error("JWT verification failed:", e);
     return null;
@@ -63,7 +70,13 @@ serve(async (req) => {
   try {
     const supabaseUrl = Deno.env.get('SUPABASE_URL') || '';
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
-    const jwtSecret = Deno.env.get('JWT_SECRET') || 'super-secret-change-me';
+    const jwtSecret = Deno.env.get('JWT_SECRET');
+    if (!supabaseUrl || !supabaseServiceKey || !jwtSecret) {
+      return new Response(
+        JSON.stringify({ error: 'Service configuration unavailable' }),
+        { status: 503, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
 
     // Verify user JWT token from authorization header
     const authHeader = req.headers.get('Authorization');
@@ -103,16 +116,141 @@ serve(async (req) => {
       }
     });
 
+    const tokenUserId = decodedPayload.id || decodedPayload.userId;
+    if (!tokenUserId) {
+      return new Response(
+        JSON.stringify({ error: 'User ID missing from token' }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // Re-read the live account. The token role/active claims are not trusted
+    // past this point — same rule Express already applies.
+    const { data: currentUser, error: currentUserError } = await supabaseClient
+      .from('User')
+      .select('id, email, role, active')
+      .eq('id', tokenUserId)
+      .maybeSingle();
+
+    if (currentUserError) {
+      return new Response(
+        JSON.stringify({ error: currentUserError.message }),
+        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    const session = sessionFromUserRecord(currentUser);
+    if (!session) {
+      return new Response(
+        JSON.stringify({ error: 'Account is inactive' }),
+        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
     const url = new URL(req.url);
-    const resource = url.searchParams.get('resource'); // 'tickets', 'orders', 'invoices', 'invoice-details', 'drivers', 'drivers-me', 'suppliers', 'products', 'deliveries', 'dispatch-board'
+    const resource = url.searchParams.get('resource'); // 'dashboard-summary', 'tickets', 'orders', 'invoices', 'invoice-details', 'drivers', 'drivers-me', 'suppliers', 'products', 'deliveries', 'dispatch-board'
     const status = url.searchParams.get('status');
     const limit = parseInt(url.searchParams.get('limit') || '50');
     const page = parseInt(url.searchParams.get('page') || '1');
     const offset = (page - 1) * limit;
 
+    if (!canAccessResource(session.role, resource)) {
+      return new Response(
+        JSON.stringify({ error: 'Forbidden' }),
+        { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // A DRIVER may read deliveries, but only its own. The scope is resolved
+    // from the verified token subject; any caller-supplied driverId is ignored
+    // so one driver cannot enumerate another driver's route.
+    let enforcedDriverId: string | null = null;
+    if (requiresOwnDriverScope(session.role, resource)) {
+      const sessionUserId = session.id;
+      if (!sessionUserId) {
+        return new Response(
+          JSON.stringify({ error: 'User ID missing from token' }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
+      const { data: ownDriver, error: ownDriverError } = await supabaseClient
+        .from('Driver')
+        .select('id')
+        .eq('userId', sessionUserId)
+        .maybeSingle();
+
+      if (ownDriverError) {
+        return new Response(
+          JSON.stringify({ error: ownDriverError.message }),
+          { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+      if (!ownDriver) {
+        return new Response(
+          JSON.stringify({ error: 'No driver profile is linked to this account' }),
+          { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
+      enforcedDriverId = ownDriver.id;
+    }
+
+    // Keep the dashboard payload small. Previously the browser downloaded up to
+    // 1,000 invoices (including every line-item flag) plus every supplier and
+    // negotiated rate just to render three counters and five recent rows.
+    if (resource === 'dashboard-summary') {
+      const now = new Date();
+      const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString();
+
+      const [recentResult, pendingResult, disputedResult, monthlyResult] = await Promise.all([
+        supabaseClient
+          .from('Invoice')
+          .select(`
+            id, invoiceNumber, invoiceDate, totalAmount, currency, status, receivedAt,
+            supplier:Supplier(id, name)
+          `)
+          .order('receivedAt', { ascending: false, nullsFirst: false })
+          .limit(5),
+        supabaseClient
+          .from('Invoice')
+          .select('id', { count: 'exact', head: true })
+          .eq('status', 'PENDING_REVIEW'),
+        supabaseClient
+          .from('Invoice')
+          .select('id', { count: 'exact', head: true })
+          .eq('status', 'DISPUTED'),
+        supabaseClient
+          .from('Invoice')
+          .select('id', { count: 'exact', head: true })
+          .gte('receivedAt', monthStart),
+      ]);
+
+      const queryError = recentResult.error || pendingResult.error || disputedResult.error || monthlyResult.error;
+      if (queryError) {
+        return new Response(
+          JSON.stringify({ error: queryError.message }),
+          { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
+      return new Response(
+        JSON.stringify({
+          recentInvoices: recentResult.data || [],
+          stats: {
+            pendingCount: pendingResult.count || 0,
+            disputedCount: disputedResult.count || 0,
+            totalMonthly: monthlyResult.count || 0,
+            savingsDetected: 0,
+          },
+        }),
+        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
     // Handle drivers-me self lookup
     if (resource === 'drivers-me') {
-      const userId = decodedPayload.id || decodedPayload.userId;
+      const userId = session.id;
       if (!userId) {
         return new Response(
           JSON.stringify({ error: 'User ID missing from token' }),
@@ -426,7 +564,9 @@ serve(async (req) => {
         `, { count: 'exact' })
         .order('name', { ascending: true });
     } else if (resource === 'deliveries') {
-      const driverId = url.searchParams.get('driverId');
+      // enforcedDriverId is set for driver sessions and always wins over the
+      // query parameter. Operations roles keep the existing filter behaviour.
+      const driverId = enforcedDriverId ?? url.searchParams.get('driverId');
       query = supabaseClient
         .from('Delivery')
         .select(`
@@ -442,7 +582,7 @@ serve(async (req) => {
       }
     } else {
       return new Response(
-        JSON.stringify({ error: 'Invalid resource. Supported resources: tickets, orders, invoices, invoice-details, drivers, suppliers, products, deliveries, dispatch-board' }),
+        JSON.stringify({ error: 'Invalid resource. Supported resources: dashboard-summary, tickets, orders, invoices, invoice-details, drivers, suppliers, products, deliveries, dispatch-board' }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }

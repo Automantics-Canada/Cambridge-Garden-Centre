@@ -1,6 +1,8 @@
 import type { Response } from 'express';
 import type { AuthRequest } from '../../middleware/authMiddleware.js';
 import { DriverService } from './driver.service.js';
+import { prisma } from '../../db/prisma.js';
+import { resolveDriverDeliveriesScope } from '../../services/authorization.js';
 import nodemailer from 'nodemailer';
 
 export const getDrivers = async (req: AuthRequest, res: Response) => {
@@ -174,7 +176,11 @@ export const updateDriver = async (req: AuthRequest, res: Response) => {
 export const getDriverDeliveries = async (req: AuthRequest, res: Response) => {
   try {
     const { id } = req.params as { id: string };
-    const deliveries = await DriverService.getDriverDeliveries(id);
+    const scope = await resolveDriverDeliveriesScope(prisma, req.user, id);
+    if (!scope.allowed) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+    const deliveries = await DriverService.getDriverDeliveries(scope.driverId);
     res.json(deliveries);
   } catch (error: any) {
     res.status(500).json({ error: error.message });

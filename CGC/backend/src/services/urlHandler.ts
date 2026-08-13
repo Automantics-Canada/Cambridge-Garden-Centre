@@ -32,12 +32,19 @@ export async function downloadFileToTemp(
     await ensureTempDir();
 
     // Generate filename if not provided
-    const finalFilename = filename || `temp-${Date.now()}.tmp`;
+    if (!isSupabaseUrl(url)) {
+      throw new Error('Refusing to download from an untrusted origin');
+    }
+    const finalFilename = path.basename(filename || `temp-${Date.now()}.tmp`);
     const tempPath = path.join(TEMP_DIR, finalFilename);
 
     // Download file
     const response = await axios.get(url, {
       responseType: 'arraybuffer',
+      timeout: 15_000,
+      maxRedirects: 0,
+      maxContentLength: 20 * 1024 * 1024,
+      maxBodyLength: 20 * 1024 * 1024,
     });
 
     // Save to temp
@@ -71,7 +78,15 @@ export async function cleanupTempFile(tempPath: string): Promise<void> {
  * Check if URL is a Supabase Storage URL
  */
 export function isSupabaseUrl(url: string): boolean {
-  return url.includes('supabase.co') || url.includes(env.supabaseUrl);
+  try {
+    const candidate = new URL(url);
+    const configured = new URL(env.supabaseUrl);
+    return candidate.protocol === 'https:' &&
+      candidate.hostname === configured.hostname &&
+      candidate.port === configured.port;
+  } catch {
+    return false;
+  }
 }
 
 /**

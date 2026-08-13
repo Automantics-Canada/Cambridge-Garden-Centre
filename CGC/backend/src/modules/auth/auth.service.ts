@@ -29,8 +29,12 @@ export const AuthService = {
   },
 
   async login(email: string, password: string) {
-    const user = await prisma.user.findUnique({ where: { email } });
+    const normalizedEmail = email.trim().toLowerCase();
+    const user = await prisma.user.findUnique({ where: { email: normalizedEmail } });
     if (!user) {
+      throw { status: 401, message: 'Invalid credentials' };
+    }
+    if (!user.active) {
       throw { status: 401, message: 'Invalid credentials' };
     }
 

@@ -4,6 +4,7 @@ import { PDFParse } from 'pdf-parse';
 import { prisma } from '../../db/prisma.js';
 import type { Prisma } from '@prisma/client';
 import { orderEventEmitter, OrderEvents } from './order.events.js';
+import { buildSpruceOrderKey } from './orderImportKey.js';
 
 const textractClient = new TextractClient({
   region: process.env.AWS_REGION || 'us-east-1',
@@ -33,6 +34,40 @@ export const OrderPdfImportService = {
       const pageCount = pdfDoc.getPageCount();
       console.log(`[OrderPdfImport] Processing ${pageCount} pages...`);
 
+      const suppliers = await prisma.supplier.findMany({
+        select: { id: true, name: true },
+      });
+
+      // Splitting is local and fast. OCR is the expensive network operation, so
+      // process a few pages concurrently while keeping parsing in page order.
+      const pageDocuments: Uint8Array[] = [];
+      for (let pageIdx = 0; pageIdx < pageCount; pageIdx++) {
+        const subDoc = await PDFDocument.create();
+        const [copiedPage] = await subDoc.copyPages(pdfDoc, [pageIdx]);
+        if (!copiedPage) {
+          throw new Error(`Unable to copy PDF page ${pageIdx + 1}`);
+        }
+        subDoc.addPage(copiedPage);
+        pageDocuments.push(await subDoc.save());
+      }
+
+      const pageBlocks: Array<Block[] | undefined> = new Array(pageCount);
+      let nextPageIndex = 0;
+      const workerCount = Math.min(3, pageCount);
+      await Promise.all(Array.from({ length: workerCount }, async () => {
+        while (true) {
+          const pageIdx = nextPageIndex++;
+          if (pageIdx >= pageCount) return;
+
+          console.log(`[OrderPdfImport] Sending page ${pageIdx + 1} to Textract...`);
+          const response = await textractClient.send(new AnalyzeDocumentCommand({
+            Document: { Bytes: pageDocuments[pageIdx] },
+            FeatureTypes: ['TABLES'],
+          }));
+          pageBlocks[pageIdx] = response.Blocks;
+        }
+      }));
+
       let lastOrderId: string | undefined = undefined;
       let lastCustomerName: string | undefined = undefined;
       let lastEntryDateRaw: string | undefined = undefined;
@@ -40,35 +75,19 @@ export const OrderPdfImportService = {
       let lastPoNumber: string | null = null;
 
       for (let pageIdx = 0; pageIdx < pageCount; pageIdx++) {
-        console.log(`[OrderPdfImport] Sending page ${pageIdx + 1} to Textract...`);
-
-        // Create a new PDF containing only this page
-        const subDoc = await PDFDocument.create();
-        const [copiedPage] = await subDoc.copyPages(pdfDoc, [pageIdx]);
-        subDoc.addPage(copiedPage);
-        const pagePdfBytes = await subDoc.save();
-
-        const params = {
-          Document: {
-            Bytes: pagePdfBytes,
-          },
-          FeatureTypes: ['TABLES' as any],
-        };
-
-        const command = new AnalyzeDocumentCommand(params);
-        const response = await textractClient.send(command);
-
-        if (!response.Blocks) {
+        const blocks = pageBlocks[pageIdx];
+        if (!blocks) {
           console.log(`[OrderPdfImport] Page ${pageIdx + 1}: No blocks returned from Textract.`);
           continue;
         }
 
-        const tableBlocks = response.Blocks.filter((block) => block.BlockType === 'TABLE');
+        const tableBlocks = blocks.filter((block) => block.BlockType === 'TABLE');
         console.log(`[OrderPdfImport] Page ${pageIdx + 1} found ${tableBlocks.length} tables.`);
         if (tableBlocks.length === 0) continue;
 
-        for (const tableBlock of tableBlocks) {
-          const cells = response.Blocks.filter(
+        for (let tableIdx = 0; tableIdx < tableBlocks.length; tableIdx++) {
+          const tableBlock = tableBlocks[tableIdx]!;
+          const cells = blocks.filter(
             (block) =>
               block.BlockType === 'CELL' &&
               tableBlock.Relationships?.some((rel) => rel.Ids?.includes(block.Id || ''))
@@ -102,7 +121,7 @@ export const OrderPdfImportService = {
           if (rows[1]) {
             rows[1].forEach((cell) => {
               if (cell.ColumnIndex !== undefined) {
-                const headerText = getText(cell, response.Blocks || []).toLowerCase().replace(/\s+/g, '');
+                const headerText = getText(cell, blocks).toLowerCase().replace(/\s+/g, '');
                 headers[cell.ColumnIndex] = headerText;
               }
             });
@@ -121,7 +140,7 @@ export const OrderPdfImportService = {
               if (colIdx !== undefined) {
                 const headerKey = headers[colIdx];
                 if (headerKey !== undefined) {
-                  rowData[headerKey] = getText(cell, response.Blocks || []);
+                  rowData[headerKey] = getText(cell, blocks);
                 }
               }
             });
@@ -181,7 +200,7 @@ export const OrderPdfImportService = {
             if (!spruceOrderId || !customerName) {
               console.log(`[OrderPdfImport] Skipping row ${rowIndex}: Missing required fields`, { spruceOrderId, customerName, itemDesc });
               skipped++;
-              errors.push({ rowNumber: rowIndex, error: `Page ${pageIdx + 1}, Row ${rowIndex}: Missing spruceOrderId="${spruceOrderId}", customerName="${customerName}", itemDesc="${itemDesc}"` });
+              errors.push({ rowNumber: rowIndex, error: `Page ${pageIdx + 1}, Table ${tableIdx + 1}, Row ${rowIndex}: Missing spruceOrderId="${spruceOrderId}", customerName="${customerName}", itemDesc="${itemDesc}"` });
               continue;
             }
 
@@ -208,16 +227,22 @@ export const OrderPdfImportService = {
             // Find supplierId if possible
             let supplierId: string | null = null;
             if (customerName) {
-              const foundSupplier = await prisma.supplier.findFirst({
-                where: { name: { contains: customerName, mode: 'insensitive' } },
-              });
+              const normalizedCustomer = customerName.toLowerCase();
+              const foundSupplier = suppliers.find(supplier =>
+                supplier.name.toLowerCase().includes(normalizedCustomer)
+              );
               if (foundSupplier) {
                 supplierId = foundSupplier.id;
               }
             }
 
             const data: Prisma.OrderUncheckedCreateInput = {
-              spruceOrderId: `${spruceOrderId}-${rowIndex}`,
+              spruceOrderId: buildSpruceOrderKey({
+                documentId: spruceOrderId,
+                pageIndex: pageIdx,
+                tableIndex: tableIdx,
+                rowIndex,
+              }),
               poNumber,
               customerName,
               supplierId,
@@ -248,7 +273,7 @@ export const OrderPdfImportService = {
               skipped++;
               errors.push({
                 rowNumber: rowIndex,
-                error: `Page ${pageIdx + 1}, Row ${rowIndex}: ${e?.message || 'Database error'}`,
+                error: `Page ${pageIdx + 1}, Table ${tableIdx + 1}, Row ${rowIndex}: ${e?.message || 'Database error'}`,
               });
             }
           }

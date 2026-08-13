@@ -2,6 +2,7 @@ import type { Response } from 'express';
 import type { AuthRequest } from '../../middleware/authMiddleware.js';
 import { DeliveriesService } from './deliveries.service.js';
 import { prisma } from '../../db/prisma.js';
+import { canAccessDelivery, findDriverIdForUser } from '../../services/authorization.js';
 
 export const getDeliveries = async (req: AuthRequest, res: Response) => {
   try {
@@ -10,13 +11,11 @@ export const getDeliveries = async (req: AuthRequest, res: Response) => {
 
     if (req.user?.role === 'DRIVER') {
       // Securely enforce that drivers can only query their own deliveries
-      const driver = await prisma.driver.findUnique({
-        where: { userId: req.user.id }
-      });
-      if (!driver) {
+      const ownDriverId = await findDriverIdForUser(prisma, req.user.id);
+      if (!ownDriverId) {
         return res.status(404).json({ error: 'Driver profile not linked' });
       }
-      filters.driverId = driver.id;
+      filters.driverId = ownDriverId;
     } else {
       if (driverId) filters.driverId = driverId;
     }
@@ -34,6 +33,9 @@ export const getDeliveries = async (req: AuthRequest, res: Response) => {
 export const updateStatus = async (req: AuthRequest, res: Response) => {
   try {
     const { id } = req.params as { id: string };
+    if (!(await canAccessDelivery(prisma, req.user, id))) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
     const { status, notes } = req.body;
     const delivery = await DeliveriesService.updateStatus(id, status, notes);
     res.json(delivery);
@@ -45,6 +47,9 @@ export const updateStatus = async (req: AuthRequest, res: Response) => {
 export const uploadPhoto = async (req: AuthRequest, res: Response) => {
   try {
     const { id } = req.params as { id: string };
+    if (!(await canAccessDelivery(prisma, req.user, id))) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
     const { type } = req.body; // 'pickup' | 'delivery' | 'ticket'
     
     if (!req.file) {

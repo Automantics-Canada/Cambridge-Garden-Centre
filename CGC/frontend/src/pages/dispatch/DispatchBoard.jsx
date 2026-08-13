@@ -5,6 +5,7 @@ import { Truck, MapPin, Search, ChevronUp, ChevronDown, ChevronRight, User, Grip
 import { motion, AnimatePresence } from 'framer-motion';
 import { toast } from 'react-hot-toast';
 import { FadeInUp } from '../../components/Animated';
+import { useIntervalRefresh } from '../../hooks/useIntervalRefresh';
 
 export default function DispatchBoard() {
   const [board, setBoard] = useState({ unassignedOrders: [], unassignedDeliveries: [], drivers: [] });
@@ -37,7 +38,7 @@ export default function DispatchBoard() {
       setBoard({ ...data, drivers });
     } catch (e) {
       console.error(e);
-      toast.error('Failed to fetch dispatch board');
+      if (!isBackgroundSync) toast.error('Failed to fetch dispatch board');
     } finally {
       setLoading(false);
     }
@@ -47,37 +48,13 @@ export default function DispatchBoard() {
     fetchBoard();
   }, []);
 
-  useEffect(() => {
-    // Subscribe to both Order and Delivery changes to sync the board instantly
-    const orderChannel = supabase
-      .channel('dispatch-orders')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'Order' },
-        (payload) => {
-          console.log('[REALTIME] Order change received:', payload);
-          fetchBoard(true);
-        }
-      )
-      .subscribe();
-
-    const deliveryChannel = supabase
-      .channel('dispatch-deliveries')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'Delivery' },
-        (payload) => {
-          console.log('[REALTIME] Delivery change received:', payload);
-          fetchBoard(true);
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(orderChannel);
-      supabase.removeChannel(deliveryChannel);
-    };
-  }, []);
+  useIntervalRefresh(
+    () => {
+      fetchBoard(true);
+    },
+    10_000,
+    { enabled: !draggingOrderId }
+  );
 
   const handleResendEmail = async (deliveryId) => {
     try {

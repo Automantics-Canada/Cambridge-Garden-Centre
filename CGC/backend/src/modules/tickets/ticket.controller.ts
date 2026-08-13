@@ -10,7 +10,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
 import crypto from 'node:crypto';
-import { pdf } from 'pdf-to-img';
+import { pdfToPng } from 'pdf-to-png-converter';
 
 export const ingestWhatsappTicket = async (req: Request, res: Response) => {
   const file = (req as any).file as Express.Multer.File | undefined;
@@ -135,14 +135,22 @@ export const uploadManualPdfTickets = async (req: Request, res: Response) => {
   }
 
   try {
-    console.log(`[UploadPDF] Converting PDF buffer to image using pdf-to-img...`);
+    console.log(`[UploadPDF] Converting PDF buffer to image...`);
     let imageBuffer: Buffer;
     try {
-      const document = await pdf(file.buffer, { scale: 3 });
-      imageBuffer = await document.getPage(1);
+      const pages = await pdfToPng(file.buffer, {
+        viewportScale: 3,
+        pagesToProcess: [1],
+        disableFontFace: false,
+        useSystemFonts: true,
+        enableXfa: true,
+      });
+      const firstPage = pages[0]?.content;
+      if (!firstPage) throw new Error('PDF did not render a first page');
+      imageBuffer = Buffer.from(firstPage);
     } catch (err) {
       console.error('[UploadPDF] Error converting PDF to image:', err);
-      throw new Error('Failed to convert PDF to image using pdf-to-img');
+      throw new Error('Failed to convert PDF to image');
     }
 
     const baseName = file.originalname.substring(0, file.originalname.lastIndexOf('.')) || file.originalname;
