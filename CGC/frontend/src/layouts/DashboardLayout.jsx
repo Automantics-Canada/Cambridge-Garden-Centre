@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import { Outlet, NavLink, useLocation } from 'react-router-dom';
 import { useDispatch, useSelector } from 'react-redux';
 import {
@@ -56,7 +56,7 @@ function NavItem({ item, onNavigate }) {
           'flex items-center gap-3 rounded-pill px-4 py-2.5 text-[13.5px]',
           'transition-colors duration-150',
           isActive
-            ? 'bg-brand text-white font-semibold'
+            ? 'bg-brand text-on-brand font-semibold'
             : 'text-rail-ink font-medium hover:bg-brand/10'
         )
       }
@@ -82,10 +82,8 @@ export default function DashboardLayout() {
   const dispatch = useDispatch();
   const user = useSelector((state) => state.auth.user);
 
-  // Moving to another page should never leave the mobile drawer hanging open.
-  useEffect(() => {
-    setDrawerOpen(false);
-  }, [location.pathname]);
+  // Tapping a link should never leave the mobile drawer hanging open.
+  const closeDrawer = () => setDrawerOpen(false);
 
   const sidebar = (
     <div className="flex flex-col h-full bg-rail border-r border-line">
@@ -100,7 +98,7 @@ export default function DashboardLayout() {
         </div>
         <button
           type="button"
-          onClick={() => setDrawerOpen(false)}
+          onClick={closeDrawer}
           className="ml-auto lg:hidden text-muted hover:text-ink p-1"
           aria-label="Close menu"
         >
@@ -117,7 +115,7 @@ export default function DashboardLayout() {
             </p>
             <div className="space-y-1">
               {group.items.map((item) => (
-                <NavItem key={item.path} item={item} />
+                <NavItem key={item.path} item={item} onNavigate={closeDrawer} />
               ))}
             </div>
           </div>
@@ -163,7 +161,7 @@ export default function DashboardLayout() {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              onClick={() => setDrawerOpen(false)}
+              onClick={closeDrawer}
               className="fixed inset-0 z-40 bg-ink/40 lg:hidden"
             />
             <motion.aside

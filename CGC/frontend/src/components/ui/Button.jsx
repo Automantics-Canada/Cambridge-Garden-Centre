@@ -4,7 +4,7 @@ import { cn } from '../../lib/cn';
 const VARIANTS = {
   // Filled green pill — one per screen, for the single most likely action.
   primary:
-    'bg-brand text-white hover:brightness-110 active:brightness-95 shadow-card',
+    'bg-brand text-on-brand hover:brightness-110 active:brightness-95 shadow-card',
   // The everyday button: white surface, hairline border.
   secondary:
     'bg-surface text-ink border border-line hover:bg-brand/[0.06] hover:border-brand/30',
@@ -13,7 +13,7 @@ const VARIANTS = {
     'text-muted hover:text-ink hover:bg-ink/[0.05]',
   // Destructive or dispute-related.
   danger:
-    'bg-clay text-white hover:brightness-110 active:brightness-95 shadow-card',
+    'bg-clay text-on-clay hover:brightness-110 active:brightness-95 shadow-card',
   // Quiet destructive, for secondary placement.
   'danger-quiet':
     'text-clay border border-clay/30 hover:bg-clay/10',

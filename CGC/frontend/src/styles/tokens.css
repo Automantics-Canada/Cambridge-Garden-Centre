@@ -27,6 +27,12 @@
   --c-clay: 176 84 44;        /* #B0542C  problems: disputed, failed        */
   --c-ochre: 201 154 62;      /* #C99A3E  attention: pending, waiting       */
 
+  /* Text drawn ON TOP of a filled accent. These flip in dark mode, where the
+     accents lighten — white on light green is unreadable. Never hard-code
+     `text-white` on a brand/clay background; use these. */
+  --c-on-brand: 255 255 255;
+  --c-on-clay: 255 255 255;
+
   /* -- shape ----------------------------------------------------------- */
   --r-card: 20px;             /* panels and stat tiles                      */
   --r-control: 12px;          /* inputs, buttons, small surfaces            */
@@ -57,6 +63,10 @@
     --c-clay: 217 127 78;     /* #D97F4E */
     --c-ochre: 221 176 90;    /* #DDB05A */
 
+    /* The accents are light here, so text on them must be dark. */
+    --c-on-brand: 18 20 15;
+    --c-on-clay: 18 20 15;
+
     --sh-card: 0 1px 2px rgb(0 0 0 / 0.4);
     --sh-lift: 0 6px 20px rgb(0 0 0 / 0.5);
   }
@@ -75,6 +85,9 @@
   --c-brand: 111 180 141;
   --c-clay: 217 127 78;
   --c-ochre: 221 176 90;
+
+  --c-on-brand: 18 20 15;
+  --c-on-clay: 18 20 15;
 
   --sh-card: 0 1px 2px rgb(0 0 0 / 0.4);
   --sh-lift: 0 6px 20px rgb(0 0 0 / 0.5);

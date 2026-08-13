@@ -8,4 +8,4 @@ export { default as StatTile } from './StatTile';
 export { Input, Select, Textarea, Field } from './Input';
 export { default as PageHeader } from './PageHeader';
 export { default as EmptyState } from './EmptyState';
-export { default as ThemeToggle, applyTheme, getStoredTheme } from './ThemeToggle';
+export { default as ThemeToggle } from './ThemeToggle';

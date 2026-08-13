@@ -20,6 +20,9 @@ export default {
         brand: 'rgb(var(--c-brand) / <alpha-value>)',
         clay: 'rgb(var(--c-clay) / <alpha-value>)',
         ochre: 'rgb(var(--c-ochre) / <alpha-value>)',
+        // Use these for text sitting on a filled brand/clay background.
+        'on-brand': 'rgb(var(--c-on-brand) / <alpha-value>)',
+        'on-clay': 'rgb(var(--c-on-clay) / <alpha-value>)',
       },
       borderRadius: {
         card: 'var(--r-card)',

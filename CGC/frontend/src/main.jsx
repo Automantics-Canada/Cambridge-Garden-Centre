@@ -5,7 +5,7 @@ import { Toaster } from 'react-hot-toast';
 import { store } from './store/index.js';
 import './index.css'
 import App from './App.jsx'
-import { applyTheme, getStoredTheme } from './components/ui/ThemeToggle';
+import { applyTheme, getStoredTheme } from './lib/theme';
 
 // Apply the saved theme before React paints, so a dark-mode user never sees
 // a white flash on load.
