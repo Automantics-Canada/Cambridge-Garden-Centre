@@ -209,12 +209,14 @@ export const getTickets = async (req: Request, res: Response) => {
     if (pageNum && limitNum) {
       filters.page = pageNum;
       filters.limit = limitNum;
-    }
 
-    const tickets = await TicketService.getTickets(filters);
+      // The list and the count apply the same predicate but are independent,
+      // so they run concurrently instead of adding their latencies together.
+      const [tickets, totalCount] = await Promise.all([
+        TicketService.getTickets(filters),
+        TicketService.countTickets(filters),
+      ]);
 
-    if (pageNum && limitNum) {
-      const totalCount = await TicketService.countTickets(filters);
       return res.status(200).json({
         data: tickets,
         pagination: {
@@ -226,7 +228,7 @@ export const getTickets = async (req: Request, res: Response) => {
       });
     }
 
-    return res.status(200).json(tickets);
+    return res.status(200).json(await TicketService.getTickets(filters));
   } catch (error: any) {
     return res.status(500).json({ error: error.message || 'Unexpected error' });
   }

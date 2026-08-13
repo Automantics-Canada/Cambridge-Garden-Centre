@@ -242,6 +242,16 @@ describe('supplier routes', () => {
       false
     );
   });
+
+  it('the lean options endpoint carries the same guard as the full list', () => {
+    // Added for the tickets filter dropdown. A cheaper projection must not mean
+    // a weaker guard — it still exposes the supplier roster.
+    assertGuarded(supplierRouter, 'get', '/options', OPERATIONS);
+    assert.equal(
+      admittedRoles(effectiveChain(supplierRouter, 'get', '/options'))?.includes('DRIVER'),
+      false
+    );
+  });
 });
 
 describe('product routes', () => {

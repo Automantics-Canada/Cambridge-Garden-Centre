@@ -41,6 +41,79 @@ async function findSupplierIdByEmail(fromEmail: string | undefined | null) {
 }
 
 
+export interface TicketFilters {
+  status?: TicketStatus;
+  supplierId?: string;
+  source?: TicketSource;
+  startDate?: string;
+  endDate?: string;
+  search?: string;
+  page?: number;
+  limit?: number;
+}
+
+/**
+ * Single source of truth for ticket filtering.
+ *
+ * The list query and the pagination count must apply identical predicates or
+ * the reported total will not match the rows returned. This was previously
+ * duplicated verbatim in both functions, which is exactly how those two drift.
+ */
+export function buildTicketWhere(filters?: TicketFilters) {
+  const where: any = {};
+
+  if (filters?.status) where.status = filters.status;
+  if (filters?.supplierId) where.supplierId = filters.supplierId;
+  if (filters?.source) where.source = filters.source;
+
+  if (filters?.startDate || filters?.endDate) {
+    where.receivedAt = {};
+    if (filters.startDate) where.receivedAt.gte = new Date(filters.startDate);
+    if (filters.endDate) where.receivedAt.lte = new Date(filters.endDate);
+  }
+
+  if (filters?.search && filters.search.trim()) {
+    const s = filters.search.trim();
+    where.OR = [
+      { ticketNumber: { contains: s, mode: 'insensitive' } },
+      { poNumber: { contains: s, mode: 'insensitive' } },
+      { material: { contains: s, mode: 'insensitive' } },
+      { supplierName: { contains: s, mode: 'insensitive' } },
+      { supplier: { name: { contains: s, mode: 'insensitive' } } },
+    ];
+  }
+
+  return where;
+}
+
+/**
+ * Columns the tickets table actually renders.
+ *
+ * The previous projection pulled whole related rows — supplier, driver, linked
+ * order, and every order match with its complete order attached — for all 50
+ * rows on the page. The review modal refetches the full ticket by id when it
+ * opens, so none of that relational payload was ever displayed in the list.
+ *
+ * GET /api/tickets measured ~6s in production before this change. That number
+ * covers the endpoint as a whole; how much of it this projection accounted for
+ * has not been isolated.
+ */
+const TICKET_LIST_SELECT = {
+  id: true,
+  ticketNumber: true,
+  source: true,
+  supplierId: true,
+  supplierName: true,
+  poNumber: true,
+  material: true,
+  quantity: true,
+  unit: true,
+  imageUrl: true,
+  status: true,
+  receivedAt: true,
+  supplier: { select: { id: true, name: true } },
+} as const;
+
 export const TicketService = {
   /**
    * Ticket arrives via WhatsApp: save file, create Ticket, queue OCR.
@@ -355,38 +428,8 @@ export const TicketService = {
   /**
    * Get all tickets with optional filtering and pagination
    */
-  async getTickets(filters?: {
-    status?: TicketStatus;
-    supplierId?: string;
-    source?: TicketSource;
-    startDate?: string;
-    endDate?: string;
-    search?: string;
-    page?: number;
-    limit?: number;
-  }) {
-    const where: any = {};
-
-    if (filters?.status) where.status = filters.status;
-    if (filters?.supplierId) where.supplierId = filters.supplierId;
-    if (filters?.source) where.source = filters.source;
-
-    if (filters?.startDate || filters?.endDate) {
-      where.receivedAt = {};
-      if (filters.startDate) where.receivedAt.gte = new Date(filters.startDate);
-      if (filters.endDate) where.receivedAt.lte = new Date(filters.endDate);
-    }
-
-    if (filters?.search && filters.search.trim()) {
-      const s = filters.search.trim();
-      where.OR = [
-        { ticketNumber: { contains: s, mode: 'insensitive' } },
-        { poNumber: { contains: s, mode: 'insensitive' } },
-        { material: { contains: s, mode: 'insensitive' } },
-        { supplierName: { contains: s, mode: 'insensitive' } },
-        { supplier: { name: { contains: s, mode: 'insensitive' } } },
-      ];
-    }
+  async getTickets(filters?: TicketFilters) {
+    const where = buildTicketWhere(filters);
 
     const page = filters?.page ? Number(filters.page) : undefined;
     const limit = filters?.limit ? Number(filters.limit) : undefined;
@@ -396,37 +439,7 @@ export const TicketService = {
     const queryOptions: any = {
       where,
       orderBy: { receivedAt: 'desc' },
-      select: {
-        id: true,
-        ticketNumber: true,
-        source: true,
-        supplierId: true,
-        supplierName: true,
-        poNumber: true,
-        material: true,
-        quantity: true,
-        unit: true,
-        rateOnTicket: true,
-        ticketDate: true,
-        imageUrl: true,
-        ocrConfidence: true,
-        linkedOrderId: true,
-        linkMethod: true,
-        linkedById: true,
-        status: true,
-        receivedAt: true,
-        driverId: true,
-        deliveryStatus: true,
-        spruceMatched: true,
-        supplier: true,
-        driver: true,
-        linkedOrder: true,
-        orderMatches: {
-          include: {
-            order: true
-          }
-        }
-      }
+      select: TICKET_LIST_SELECT,
     };
 
     if (skip !== undefined) queryOptions.skip = skip;
@@ -435,38 +448,8 @@ export const TicketService = {
     return prisma.ticket.findMany(queryOptions);
   },
 
-  async countTickets(filters?: {
-    status?: TicketStatus;
-    supplierId?: string;
-    source?: TicketSource;
-    startDate?: string;
-    endDate?: string;
-    search?: string;
-  }) {
-    const where: any = {};
-
-    if (filters?.status) where.status = filters.status;
-    if (filters?.supplierId) where.supplierId = filters.supplierId;
-    if (filters?.source) where.source = filters.source;
-
-    if (filters?.startDate || filters?.endDate) {
-      where.receivedAt = {};
-      if (filters.startDate) where.receivedAt.gte = new Date(filters.startDate);
-      if (filters.endDate) where.receivedAt.lte = new Date(filters.endDate);
-    }
-
-    if (filters?.search && filters.search.trim()) {
-      const s = filters.search.trim();
-      where.OR = [
-        { ticketNumber: { contains: s, mode: 'insensitive' } },
-        { poNumber: { contains: s, mode: 'insensitive' } },
-        { material: { contains: s, mode: 'insensitive' } },
-        { supplierName: { contains: s, mode: 'insensitive' } },
-        { supplier: { name: { contains: s, mode: 'insensitive' } } },
-      ];
-    }
-
-    return prisma.ticket.count({ where });
+  async countTickets(filters?: TicketFilters) {
+    return prisma.ticket.count({ where: buildTicketWhere(filters) });
   },
 
 
