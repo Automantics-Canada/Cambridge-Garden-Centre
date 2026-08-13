@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import api from '../../api/axios';
 import { supabase } from '../../supabaseClient';
@@ -17,7 +17,6 @@ export default function DeliveriesPage() {
   const [deliveries, setDeliveries] = useState([]);
   const [drivers, setDrivers] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [expandedDriverId, setExpandedDriverId] = useState(null);
   const [expandedDeliveryId, setExpandedDeliveryId] = useState(null);
 
   // Search and Filter State
@@ -27,7 +26,7 @@ export default function DeliveriesPage() {
 
   const driverIdParam = searchParams.get('driverId');
 
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     try {
       setLoading(true);
       const token = localStorage.getItem('token');
@@ -49,22 +48,23 @@ export default function DeliveriesPage() {
 
       setDeliveries(delRes.data?.data || []);
       setDrivers(driverRes.data?.data || []);
-
-      if (driverIdParam) {
-        setExpandedDriverId(driverIdParam);
-        setSelectedDriver(driverIdParam);
-      }
     } catch (e) {
       console.error('Failed to fetch data', e);
       toast.error('Failed to load deliveries');
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     fetchData();
-  }, []);
+  }, [fetchData]);
+
+  useEffect(() => {
+    if (driverIdParam) {
+      setSelectedDriver(driverIdParam);
+    }
+  }, [driverIdParam]);
 
   const handleStatusUpdate = async (deliveryId, newStatus) => {
     // Optimistic Update including instant Update History entry
@@ -104,26 +104,6 @@ export default function DeliveriesPage() {
     }
   };
 
-  const handleReorder = async (driverId, newDeliveries) => {
-    // We need to re-assign priorities based on the new order for this specific driver's deliveries
-    const otherDeliveries = deliveries.filter(d => d.driverId !== driverId);
-    const sortedForDriver = newDeliveries.map((d, index) => ({ ...d, priority: index + 1 }));
-
-    setDeliveries([...otherDeliveries, ...sortedForDriver]);
-
-    try {
-      await api.post('/api/dispatch/reorder', {
-        driverId,
-        deliveryIds: newDeliveries.map(d => d.id)
-      });
-      toast.success('Priority updated');
-    } catch (e) {
-      console.error(e);
-      toast.error('Failed to update priority');
-      fetchData(); // Rollback
-    }
-  };
-
   const filteredDeliveries = useMemo(() => {
     let result = [...deliveries];
 
@@ -154,16 +134,6 @@ export default function DeliveriesPage() {
     // Sort by date descending
     return result.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
   }, [deliveries, searchQuery, selectedDate, selectedDriver]);
-
-  const groupedDeliveries = useMemo(() => {
-    const map = {};
-    filteredDeliveries.forEach(del => {
-      const dId = del.driverId || 'unassigned';
-      if (!map[dId]) map[dId] = [];
-      map[dId].push(del);
-    });
-    return map;
-  }, [filteredDeliveries]);
 
   if (loading) return <DeliveryTableSkeleton />;
 
