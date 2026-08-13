@@ -25,6 +25,7 @@ import { Skeleton } from '../../components/Skeleton';
 import Loader from '../../components/Loader';
 import { useIntervalRefresh } from '../../hooks/useIntervalRefresh';
 import { ticketThumbnailSrc } from '../../utils/ticketImage';
+import { EmptyState, PageHeader, StatusBadge } from '../../components/ui';
 
 // Each row renders a full-resolution ticket photo. Halving the page halves the
 // number of images requested and the rows the list query projects. This is an
@@ -116,8 +117,8 @@ export default function TicketsPage() {
           onClick={() => setPage(1)}
           className={`relative inline-flex items-center px-4 py-2 border text-sm font-medium transition-all ${
             page === 1
-              ? 'z-10 bg-green-50 border-green-500 text-green-600 font-semibold'
-              : 'bg-white border-gray-300 text-gray-500 hover:bg-gray-50'
+              ? 'z-10 bg-brand/10 border-brand text-brand font-semibold'
+              : 'bg-surface border-line text-muted hover:bg-ink/[0.03]'
           }`}
         >
           1
@@ -125,7 +126,7 @@ export default function TicketsPage() {
       );
       if (startPage > 2) {
         pages.push(
-          <span key="dots-start" className="relative inline-flex items-center px-4 py-2 border border-gray-300 bg-white text-sm font-medium text-gray-500 select-none">
+          <span key="dots-start" className="relative inline-flex items-center px-4 py-2 border border-line bg-surface text-sm font-medium text-muted select-none">
             ...
           </span>
         );
@@ -143,8 +144,8 @@ export default function TicketsPage() {
           onClick={() => setPage(i)}
           className={`relative inline-flex items-center px-4 py-2 border text-sm font-medium transition-all ${
             page === i
-              ? 'z-10 bg-green-50 border-green-500 text-green-600 font-semibold'
-              : 'bg-white border-gray-300 text-gray-500 hover:bg-gray-50'
+              ? 'z-10 bg-brand/10 border-brand text-brand font-semibold'
+              : 'bg-surface border-line text-muted hover:bg-ink/[0.03]'
           }`}
         >
           {i}
@@ -156,7 +157,7 @@ export default function TicketsPage() {
     if (endPage < totalPages) {
       if (endPage < totalPages - 1) {
         pages.push(
-          <span key="dots-end" className="relative inline-flex items-center px-4 py-2 border border-gray-300 bg-white text-sm font-medium text-gray-500 select-none">
+          <span key="dots-end" className="relative inline-flex items-center px-4 py-2 border border-line bg-surface text-sm font-medium text-muted select-none">
             ...
           </span>
         );
@@ -167,8 +168,8 @@ export default function TicketsPage() {
           onClick={() => setPage(totalPages)}
           className={`relative inline-flex items-center px-4 py-2 border text-sm font-medium transition-all ${
             page === totalPages
-              ? 'z-10 bg-green-50 border-green-500 text-green-600 font-semibold'
-              : 'bg-white border-gray-300 text-gray-500 hover:bg-gray-50'
+              ? 'z-10 bg-brand/10 border-brand text-brand font-semibold'
+              : 'bg-surface border-line text-muted hover:bg-ink/[0.03]'
           }`}
         >
           {totalPages}
@@ -545,14 +546,11 @@ export default function TicketsPage() {
   return (
     <div className="flex flex-col h-full space-y-4 relative">
       {/* Header & Stats */}
-      <div className="sm:flex sm:items-center justify-between bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
-        <div className="sm:flex-auto">
-          <h1 className="text-2xl font-semibold text-gray-900">Delivery Tickets</h1>
-          {/* <p className="mt-2 text-sm text-gray-700">
-            Process and link supplier delivery tickets received via WhatsApp and Email.
-          </p> */}
-        </div>
-        <div className="mt-4 sm:mt-0 flex gap-4 items-center">
+      <PageHeader
+        title="Tickets"
+        subtitle="Photos of what arrived. Link each one to a Spruce order so invoices can be checked."
+        actions={
+        <div className="flex gap-3 items-center">
           <input 
             type="file" 
             accept=".jpg,.jpeg,.png" 
@@ -570,7 +568,7 @@ export default function TicketsPage() {
           <button
             onClick={() => imageInputRef.current?.click()}
             disabled={isUploading}
-            className="flex items-center gap-2 bg-[#1B4332] hover:bg-black text-white px-4 py-2 rounded-lg font-medium text-xs transition-all shadow-md disabled:opacity-50"
+            className="flex items-center gap-2 bg-brand hover:brightness-110 text-on-brand px-4 py-2 rounded-pill font-medium text-[13px] transition-all shadow-card disabled:opacity-50"
           >
             {isUploading ? <Loader className="w-4 h-4" /> : <Upload className="w-4 h-4" />}
             {isUploading ? 'Processing...' : 'Upload Ticket Image'}
@@ -578,27 +576,28 @@ export default function TicketsPage() {
           <button
             onClick={() => pdfInputRef.current?.click()}
             disabled={isUploading}
-            className="flex items-center gap-2 bg-[#028090] hover:bg-[#006e7a] text-white px-4 py-2 rounded-lg font-medium text-xs transition-all shadow-md disabled:opacity-50"
+            className="flex items-center gap-2 bg-brand hover:brightness-110 text-on-brand px-4 py-2 rounded-lg font-medium text-xs transition-all shadow-md disabled:opacity-50"
           >
             {isUploading ? <Loader className="w-4 h-4" /> : <Upload className="w-4 h-4" />}
             {isUploading ? 'Processing...' : 'Upload ticket PDF'}
           </button>
 
-          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 flex items-center gap-3">
-             <div className="bg-yellow-100 p-2 rounded-full">
-                <AlertCircle className="w-5 h-5 text-yellow-600" />
+          <div className="bg-ochre/15 border border-ochre/30 rounded-lg p-3 flex items-center gap-3">
+             <div className="bg-ochre/20 p-2 rounded-full">
+                <AlertCircle className="w-5 h-5 text-ochre" />
              </div>
              <div>
-                <p className="text-xs text-yellow-700 font-medium uppercase tracking-wider">Needs Attention</p>
-                <p className="text-xl font-bold text-yellow-900">{stats.unlinkedCount} Unlinked</p>
+                <p className="text-[12.5px] text-ink font-medium">Needs attention</p>
+                <p className="tabular text-xl font-bold text-ink">{stats.unlinkedCount} unlinked</p>
              </div>
           </div>
         </div>
-      </div>
+        }
+      />
 
       {/* Tabs & Filters */}
-      <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-        <div className="border-b border-gray-200">
+      <div className="bg-surface rounded-xl border border-line shadow-sm overflow-hidden">
+        <div className="border-b border-line">
           <nav className="flex -mb-px" aria-label="Tabs">
             {[
               { id: 'ALL', name: 'All Tickets' },
@@ -609,16 +608,16 @@ export default function TicketsPage() {
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
                 className={`
-                  relative min-w-0 flex-1 overflow-hidden py-4 px-4 text-sm font-medium text-center hover:bg-gray-50 focus:z-10 transition-colors
+                  relative min-w-0 flex-1 overflow-hidden py-4 px-4 text-sm font-medium text-center hover:bg-ink/[0.03] focus:z-10 transition-colors
                   ${activeTab === tab.id 
-                    ? 'text-green-600 border-b-2 border-green-600 bg-green-50/30' 
-                    : 'text-gray-500 border-b-2 border-transparent hover:text-gray-700'}
+                    ? 'text-brand border-b-2 border-brand bg-brand/[0.06]' 
+                    : 'text-muted border-b-2 border-transparent hover:text-ink'}
                 `}
               >
                 <span className="flex items-center justify-center gap-2">
                   {tab.name}
                   {tab.count !== undefined && (
-                    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${activeTab === tab.id ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'}`}>
+                    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${activeTab === tab.id ? 'bg-brand/12 text-brand' : 'bg-ink/[0.06] text-ink'}`}>
                       {tab.count}
                     </span>
                   )}
@@ -630,13 +629,13 @@ export default function TicketsPage() {
 
         <div className="p-4 flex flex-wrap gap-4 items-end">
           <div className="flex-1 min-w-[200px]">
-            <label className="block text-xs font-medium text-gray-700 mb-1">Search</label>
+            <label className="block text-xs font-medium text-ink mb-1">Search</label>
             <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted" />
               <input 
                 type="text" 
                 placeholder="Ticket #, PO, Material..."
-                className="w-full pl-10 pr-4 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-green-500 focus:border-green-500"
+                className="w-full pl-10 pr-4 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-brand focus:border-brand"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
               />
@@ -644,9 +643,9 @@ export default function TicketsPage() {
           </div>
 
           <div className="w-48">
-            <label className="block text-xs font-medium text-gray-700 mb-1">Supplier</label>
+            <label className="block text-xs font-medium text-ink mb-1">Supplier</label>
             <select 
-              className="w-full p-2 border rounded-lg text-sm bg-white"
+              className="w-full p-2 border rounded-lg text-sm bg-surface"
               value={supplierId}
               onChange={(e) => setSupplierId(e.target.value)}
             >
@@ -658,7 +657,7 @@ export default function TicketsPage() {
           </div>
 
           <div className="w-40">
-            <label className="block text-xs font-medium text-gray-700 mb-1">Source</label>
+            <label className="block text-xs font-medium text-ink mb-1">Source</label>
             <select 
               className="w-full p-2 border rounded-lg text-sm"
               value={source}
@@ -672,18 +671,18 @@ export default function TicketsPage() {
           </div>
 
           <div className="w-72 md:w-80">
-             <label className="block text-xs font-medium text-gray-700 mb-1">Date Range</label>
+             <label className="block text-xs font-medium text-ink mb-1">Date Range</label>
              <div className="flex items-center gap-1.5">
                 <input 
                   type="date" 
-                  className="w-full min-w-0 p-2 border rounded-lg text-xs focus:ring-2 focus:ring-green-500 focus:border-green-500 bg-white" 
+                  className="w-full min-w-0 p-2 border rounded-lg text-xs focus:ring-2 focus:ring-brand focus:border-brand bg-surface" 
                   value={startDate} 
                   onChange={e => setStartDate(e.target.value)} 
                 />
-                <span className="text-gray-400 font-medium">-</span>
+                <span className="text-muted font-medium">-</span>
                 <input 
                   type="date" 
-                  className="w-full min-w-0 p-2 border rounded-lg text-xs focus:ring-2 focus:ring-green-500 focus:border-green-500 bg-white" 
+                  className="w-full min-w-0 p-2 border rounded-lg text-xs focus:ring-2 focus:ring-brand focus:border-brand bg-surface" 
                   value={endDate} 
                   onChange={e => setEndDate(e.target.value)} 
                 />
@@ -699,7 +698,7 @@ export default function TicketsPage() {
               setStartDate('');
               setEndDate('');
             }}
-            className="p-2 text-gray-500 hover:text-gray-700 transition-colors"
+            className="p-2 text-muted hover:text-ink transition-colors"
             title="Clear Filters"
           >
             <RotateCcw className="w-5 h-5" />
@@ -708,30 +707,30 @@ export default function TicketsPage() {
       </div>
 
       {/* Tickets Table */}
-      <div className="flex-1 bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden flex flex-col">
+      <div className="flex-1 bg-surface rounded-xl border border-line shadow-sm overflow-hidden flex flex-col">
         <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50 whitespace-nowrap">
+          <table className="min-w-full divide-y divide-line">
+            <thead className="bg-ink/[0.03] whitespace-nowrap">
               <tr>
-                <th colSpan="2" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Ticket / Image</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Supplier</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Material</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Quantity</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">PO #</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
-                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Action</th>
+                <th colSpan="2" className="px-6 py-3 text-left text-xs font-medium text-muted uppercase tracking-wider">Ticket / Image</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-muted uppercase tracking-wider">Supplier</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-muted uppercase tracking-wider">Material</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-muted uppercase tracking-wider">Quantity</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-muted uppercase tracking-wider">PO #</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-muted uppercase tracking-wider">Status</th>
+                <th className="px-6 py-3 text-right text-xs font-medium text-muted uppercase tracking-wider">Action</th>
               </tr>
             </thead>
-            <tbody className="bg-white divide-y divide-gray-200">
+            <tbody className="bg-surface divide-y divide-line">
               {loading ? (
                 <TicketsTableSkeleton />
               ) : tickets.length === 0 ? (
-                <tr><td colSpan="8" className="px-6 py-12 text-center text-gray-500">No tickets found.</td></tr>
+                <tr><td colSpan="8"><EmptyState title="No tickets match" message="Try another tab, search, or date range — or upload a ticket photo." /></td></tr>
               ) : (
                 tickets.map((ticket) => (
-                  <tr key={ticket.id} className="hover:bg-gray-50 transition-colors group">
+                  <tr key={ticket.id} className="hover:bg-ink/[0.03] transition-colors group">
                     <td className="px-6 py-4 whitespace-nowrap w-20">
-                      <div className="w-12 h-12 bg-gray-100 rounded-lg overflow-hidden border border-gray-200 cursor-zoom-in" onClick={() => handleOpenReviewModal(ticket)}>
+                      <div className="w-12 h-12 bg-ink/[0.06] rounded-lg overflow-hidden border border-line cursor-zoom-in" onClick={() => handleOpenReviewModal(ticket)}>
                         {ticket.imageUrl ? (
                           <img
                             src={ticketThumbnailSrc(ticket)}
@@ -750,19 +749,19 @@ export default function TicketsPage() {
                             height={48}
                           />
                         ) : (
-                          <div className="w-full h-full flex items-center justify-center text-gray-400">
+                          <div className="w-full h-full flex items-center justify-center text-muted">
                              <FileText className="w-5 h-5" />
                           </div>
                         )}
                       </div>
                     </td>
                     <td className="px-0 py-4 whitespace-nowrap">
-                      <div className="text-sm font-medium text-gray-900 flex items-center gap-2">
+                      <div className="text-sm font-medium text-ink flex items-center gap-2">
                         {ticket.ticketNumber || 'No Ticket #'}
                         {ticket.source === 'WHATSAPP' ? (
-                          <Smartphone className="w-3 h-3 text-green-500" title="WhatsApp" />
+                          <Smartphone className="w-3 h-3 text-brand" title="WhatsApp" />
                         ) : ticket.source === 'EMAIL' ? (
-                          <Mail className="w-3 h-3 text-blue-500" title="Email" />
+                          <Mail className="w-3 h-3 text-brand" title="Email" />
                         ) : (
                         <></>
                        )}
@@ -773,38 +772,34 @@ export default function TicketsPage() {
                               e.stopPropagation();
                               handleDownloadTicketImage(ticket.imageUrl, ticket.ticketNumber);
                             }}
-                            className="p-1 text-gray-400 hover:text-green-600 hover:bg-green-50 rounded transition-colors"
+                            className="p-1 text-muted hover:text-brand hover:bg-brand/10 rounded transition-colors"
                             title="Download Ticket Image"
                           >
                             <Download className="w-3.5 h-3.5" />
                           </button>
                         )}
                       </div>
-                      <div className="text-xs text-gray-500">{new Date(ticket.receivedAt).toLocaleDateString()}</div>
+                      <div className="text-xs text-muted">{new Date(ticket.receivedAt).toLocaleDateString()}</div>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-ink">
                       {ticket.supplier?.name || ticket.supplierName || '-'}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-muted">
                       {ticket.material || '-'}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 font-medium">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-ink font-medium">
                       {ticket.quantity ? `${ticket.quantity} ${ticket.unit || 'ton'}` : '-'}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-muted">
                       {ticket.poNumber || '-'}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
-                      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                        ticket.status === 'LINKED' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'
-                      }`}>
-                        {ticket.status}
-                      </span>
+                      <StatusBadge status={ticket.status} />
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                       <button 
                         onClick={() => handleOpenReviewModal(ticket)}
-                        className="text-green-600 hover:text-green-900 bg-green-50 hover:bg-green-100 px-3 py-1.5 rounded-lg transition-colors inline-flex items-center gap-2"
+                        className="text-brand hover:text-brand bg-brand/10 hover:bg-brand/10 px-3 py-1.5 rounded-lg transition-colors inline-flex items-center gap-2"
                       >
                         <Eye className="w-4 h-4" /> Review
                       </button>
@@ -817,26 +812,26 @@ export default function TicketsPage() {
         </div>
 
         {/* Pagination Controls */}
-        <div className="bg-white px-4 py-3 flex items-center justify-between border-t border-gray-200 sm:px-6">
+        <div className="bg-surface px-4 py-3 flex items-center justify-between border-t border-line sm:px-6">
           <div className="flex-1 flex justify-between sm:hidden">
             <button
               onClick={() => setPage(p => Math.max(p - 1, 1))}
               disabled={page === 1}
-              className="relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50 transition-all"
+              className="relative inline-flex items-center px-4 py-2 border border-line text-sm font-medium rounded-md text-ink bg-surface hover:bg-ink/[0.03] disabled:opacity-50 transition-all"
             >
               Previous
             </button>
             <button
               onClick={() => setPage(p => Math.min(p + 1, totalPages))}
               disabled={page === totalPages}
-              className="ml-3 relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50 transition-all"
+              className="ml-3 relative inline-flex items-center px-4 py-2 border border-line text-sm font-medium rounded-md text-ink bg-surface hover:bg-ink/[0.03] disabled:opacity-50 transition-all"
             >
               Next
             </button>
           </div>
           <div className="hidden sm:flex-1 sm:flex sm:items-center sm:justify-between">
             <div>
-              <p className="text-sm text-gray-700">
+              <p className="text-sm text-ink">
                 Showing page <span className="font-medium">{page}</span> of{' '}
                 <span className="font-medium">{totalPages}</span>
               </p>
@@ -846,7 +841,7 @@ export default function TicketsPage() {
                 <button
                   onClick={() => setPage(p => Math.max(p - 1, 1))}
                   disabled={page === 1}
-                  className="relative inline-flex items-center px-2 py-2 rounded-l-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50 disabled:opacity-50 transition-all"
+                  className="relative inline-flex items-center px-2 py-2 rounded-l-md border border-line bg-surface text-sm font-medium text-muted hover:bg-ink/[0.03] disabled:opacity-50 transition-all"
                 >
                   <span className="sr-only">Previous</span>
                   <ChevronLeft className="h-5 w-5" aria-hidden="true" />
@@ -855,7 +850,7 @@ export default function TicketsPage() {
                 <button
                   onClick={() => setPage(p => Math.min(p + 1, totalPages))}
                   disabled={page === totalPages}
-                  className="relative inline-flex items-center px-2 py-2 rounded-r-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50 disabled:opacity-50 transition-all"
+                  className="relative inline-flex items-center px-2 py-2 rounded-r-md border border-line bg-surface text-sm font-medium text-muted hover:bg-ink/[0.03] disabled:opacity-50 transition-all"
                 >
                   <span className="sr-only">Next</span>
                   <ChevronRight className="h-5 w-5" aria-hidden="true" />
@@ -870,23 +865,23 @@ export default function TicketsPage() {
       {selectedTicket && (
         <div className="fixed inset-0 z-50 overflow-hidden flex items-center justify-center" aria-labelledby="modal-title" role="dialog" aria-modal="true">
           <div className="flex items-center justify-center min-h-screen w-full p-4 text-center">
-            <div className="fixed inset-0 bg-gray-600 bg-opacity-75 transition-opacity backdrop-blur-sm"></div>
+            <div className="fixed inset-0 bg-ink/60 bg-opacity-75 transition-opacity backdrop-blur-sm"></div>
 
             <div 
-              className="inline-block align-middle bg-white rounded-2xl text-left overflow-hidden shadow-2xl transform transition-all sm:max-w-6xl sm:w-full h-[90vh] flex flex-col"
+              className="inline-block align-middle bg-surface rounded-2xl text-left overflow-hidden shadow-2xl transform transition-all sm:max-w-6xl sm:w-full h-[90vh] flex flex-col"
               onClick={(e) => e.stopPropagation()}
             >
               
-              <div className="flex justify-between items-center px-6 py-4 border-b bg-gray-50">
+              <div className="flex justify-between items-center px-6 py-4 border-b bg-ink/[0.03]">
                 <div className="flex items-center gap-3">
-                  <h3 className="text-lg font-bold text-gray-900">
+                  <h3 className="text-lg font-bold text-ink">
                     Ticket Review: {selectedTicket.ticketNumber || 'Unknown'}
                   </h3>
-                  <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${selectedTicket.status === 'LINKED' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'}`}>
+                  <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${selectedTicket.status === 'LINKED' ? 'bg-brand/12 text-brand' : 'bg-ochre/20 text-ochre'}`}>
                     {selectedTicket.status}
                   </span>
                   {selectedTicket.driver?.name && (
-                    <span className="bg-blue-50 border border-blue-200 text-blue-700 px-2.5 py-0.5 rounded-full text-xs font-semibold" title="Uploaded by Driver">
+                    <span className="bg-ink/[0.05] border border-line text-brand px-2.5 py-0.5 rounded-full text-xs font-semibold" title="Uploaded by Driver">
                       Driver: {selectedTicket.driver.name}
                     </span>
                   )}
@@ -896,14 +891,14 @@ export default function TicketsPage() {
                     <button
                       type="button"
                       onClick={() => handleDownloadTicketImage(selectedTicket.imageUrl, selectedTicket.ticketNumber)}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white border border-gray-200 hover:border-green-300 text-gray-700 hover:text-green-700 rounded-lg text-xs font-semibold shadow-sm transition-all"
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-surface border border-line hover:border-brand/40 text-ink hover:text-brand rounded-lg text-xs font-semibold shadow-sm transition-all"
                       title="Download Ticket File"
                     >
-                      <Download className="w-3.5 h-3.5 text-green-600" />
+                      <Download className="w-3.5 h-3.5 text-brand" />
                       Download
                     </button>
                   )}
-                  <button onClick={handleCloseReviewModal} className="text-gray-400 hover:text-gray-600 transition-colors p-1 rounded-full hover:bg-gray-100">
+                  <button onClick={handleCloseReviewModal} className="text-muted hover:text-ink transition-colors p-1 rounded-full hover:bg-ink/[0.06]">
                     <X className="w-6 h-6" />
                   </button>
                 </div>
@@ -911,12 +906,12 @@ export default function TicketsPage() {
 
               <div className="flex flex-1 overflow-hidden">
                 {/* Image Side */}
-                <div className="flex-[1.2] bg-gray-900 p-4 flex items-center justify-center overflow-hidden border-r relative group">
+                <div className="flex-[1.2] bg-ink p-4 flex items-center justify-center overflow-hidden border-r relative group">
                   {selectedTicket.imageUrl ? (
                     selectedTicket.imageUrl.toLowerCase().endsWith('.pdf') ? (
                       <iframe
                         src={selectedTicket.imageUrl.startsWith('http') ? selectedTicket.imageUrl : `${import.meta.env.VITE_API_URL || 'http://localhost:4000'}${selectedTicket.imageUrl}`}
-                        className="w-full h-full border-0 bg-white"
+                        className="w-full h-full border-0 bg-surface"
                         title="PDF Ticket"
                       />
                     ) : (
@@ -927,7 +922,7 @@ export default function TicketsPage() {
                       />
                     )
                   ) : (
-                    <div className="text-gray-500 flex flex-col items-center">
+                    <div className="text-muted flex flex-col items-center">
                        <FileText className="w-16 h-16 mb-2 opacity-20" />
                        No image available
                     </div>
@@ -935,69 +930,69 @@ export default function TicketsPage() {
                 </div>
 
                 {/* Data & Linking Side */}
-                <div className="flex-1 overflow-y-auto p-6 bg-white space-y-8">
+                <div className="flex-1 overflow-y-auto p-6 bg-surface space-y-8">
                   
                   {/* OCR Data Section */}
                   <section>
                     <div className="flex items-center justify-between mb-4">
-                      <h4 className="text-sm font-bold text-gray-900 uppercase tracking-widest flex items-center gap-2">
-                        <FileText className="w-4 h-4 text-green-600" /> Extracted Information
+                      <h4 className="text-sm font-bold text-ink uppercase tracking-widest flex items-center gap-2">
+                        <FileText className="w-4 h-4 text-brand" /> Extracted Information
                       </h4>
-                      <p className="text-[10px] text-gray-400 font-medium">VALUES CAN BE MANUALLY OVERRIDDEN</p>
+                      <p className="text-[10px] text-muted font-medium">VALUES CAN BE MANUALLY OVERRIDDEN</p>
                     </div>
                     
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-1">
-                        <label className="text-[10px] font-bold text-gray-500 uppercase px-1">Supplier</label>
+                        <label className="text-[10px] font-bold text-muted uppercase px-1">Supplier</label>
                         <input 
                           type="text" 
-                          className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-green-500 outline-none transition-all"
+                          className="w-full p-2.5 bg-ink/[0.03] border border-line rounded-lg text-sm focus:ring-2 focus:ring-brand outline-none transition-all"
                           defaultValue={selectedTicket.supplier?.name || selectedTicket.supplierName}
                           onBlur={(e) => handleUpdateTicket(selectedTicket.id, { supplierName: e.target.value })}
                         />
                       </div>
                       <div className="space-y-1">
-                        <label className="text-[10px] font-bold text-gray-500 uppercase px-1">Ticket Date</label>
+                        <label className="text-[10px] font-bold text-muted uppercase px-1">Ticket Date</label>
                         <input 
                           type="date" 
-                          className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-green-500 outline-none"
+                          className="w-full p-2.5 bg-ink/[0.03] border border-line rounded-lg text-sm focus:ring-2 focus:ring-brand outline-none"
                           defaultValue={selectedTicket.ticketDate ? new Date(selectedTicket.ticketDate).toISOString().split('T')[0] : ''}
                           onBlur={(e) => handleUpdateTicket(selectedTicket.id, { ticketDate: e.target.value })}
                         />
                       </div>
                       <div className="space-y-1">
-                        <label className="text-[10px] font-bold text-gray-500 uppercase px-1">Ticket Number</label>
+                        <label className="text-[10px] font-bold text-muted uppercase px-1">Ticket Number</label>
                         <input 
                           type="text" 
-                          className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-green-500 outline-none"
+                          className="w-full p-2.5 bg-ink/[0.03] border border-line rounded-lg text-sm focus:ring-2 focus:ring-brand outline-none"
                           defaultValue={selectedTicket.ticketNumber}
                           onBlur={(e) => handleUpdateTicket(selectedTicket.id, { ticketNumber: e.target.value })}
                         />
                       </div>
                       <div className="space-y-1">
-                        <label className="text-[10px] font-bold text-gray-500 uppercase px-1">PO Number</label>
+                        <label className="text-[10px] font-bold text-muted uppercase px-1">PO Number</label>
                         <input 
                           type="text" 
-                          className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-green-500 outline-none"
+                          className="w-full p-2.5 bg-ink/[0.03] border border-line rounded-lg text-sm focus:ring-2 focus:ring-brand outline-none"
                           defaultValue={selectedTicket.poNumber}
                           onBlur={(e) => handleUpdateTicket(selectedTicket.id, { poNumber: e.target.value })}
                         />
                       </div>
                       <div className="space-y-1">
-                        <label className="text-[10px] font-bold text-gray-500 uppercase px-1">Material</label>
+                        <label className="text-[10px] font-bold text-muted uppercase px-1">Material</label>
                         <input 
                           type="text" 
-                          className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-green-500 outline-none"
+                          className="w-full p-2.5 bg-ink/[0.03] border border-line rounded-lg text-sm focus:ring-2 focus:ring-brand outline-none"
                           defaultValue={selectedTicket.material}
                           onBlur={(e) => handleUpdateTicket(selectedTicket.id, { material: e.target.value })}
                         />
                       </div>
                       <div className="space-y-1">
-                        <label className="text-[10px] font-bold text-gray-500 uppercase px-1">Quantity</label>
+                        <label className="text-[10px] font-bold text-muted uppercase px-1">Quantity</label>
                         <div className="relative">
                           <input 
                             type="number" 
-                            className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-green-500 outline-none"
+                            className="w-full p-2.5 bg-ink/[0.03] border border-line rounded-lg text-sm focus:ring-2 focus:ring-brand outline-none"
                             defaultValue={selectedTicket.quantity}
                             onBlur={(e) => handleUpdateTicket(selectedTicket.id, { quantity: parseFloat(e.target.value) })}
                           />
@@ -1006,13 +1001,13 @@ export default function TicketsPage() {
                     </div>
                   </section>
 
-                  <hr className="border-gray-100" />
+                  <hr className="border-line" />
 
                   {/* Linking Section */}
-                  <section className="bg-green-50/50 p-6 rounded-2xl border border-green-100">
+                  <section className="bg-brand/10 p-6 rounded-card border border-brand/20">
                     <div className="flex items-center justify-between mb-4">
-                      <h4 className="text-sm font-bold text-gray-900 uppercase tracking-widest flex items-center gap-2">
-                        <LinkIcon className="w-4 h-4 text-green-600" /> Linked Orders
+                      <h4 className="text-sm font-bold text-ink uppercase tracking-widest flex items-center gap-2">
+                        <LinkIcon className="w-4 h-4 text-brand" /> Linked Orders
                       </h4>
                     </div>
 
@@ -1020,19 +1015,19 @@ export default function TicketsPage() {
                       {/* List of currently linked orders */}
                       {(selectedTicket.orderMatches?.length > 0 || selectedTicket.linkedOrder) ? (
                         <div className="space-y-2">
-                          <p className="text-[10px] font-bold text-gray-400 uppercase px-1">Linked Records</p>
+                          <p className="text-[10px] font-bold text-muted uppercase px-1">Linked Records</p>
                           
                           {/* Many-to-many matches */}
                           {selectedTicket.orderMatches?.map(match => (
-                            <div key={match.id} className="bg-white p-3 rounded-xl border border-green-200 flex items-center justify-between shadow-sm">
+                            <div key={match.id} className="bg-surface p-3 rounded-xl border border-brand/30 flex items-center justify-between shadow-sm">
                                <div>
-                                  <p className="text-sm font-bold text-gray-900">Spruce ID: {match.order?.spruceOrderId || 'N/A'}</p>
-                                  <p className="text-[10px] text-gray-500 uppercase">Customer: {match.order?.customerName || 'Unknown'}</p>
-                                  <p className="text-[10px] text-gray-400">Method: {match.matchMethod}</p>
+                                  <p className="text-sm font-bold text-ink">Spruce ID: {match.order?.spruceOrderId || 'N/A'}</p>
+                                  <p className="text-[10px] text-muted uppercase">Customer: {match.order?.customerName || 'Unknown'}</p>
+                                  <p className="text-[10px] text-muted">Method: {match.matchMethod}</p>
                                </div>
                                <button 
                                 onClick={() => handleUnlinkOrder(selectedTicket.id, match.orderId)}
-                                className="text-xs text-red-600 hover:bg-red-50 p-2 rounded-lg font-bold transition-colors"
+                                className="text-xs text-clay hover:bg-clay/10 p-2 rounded-lg font-bold transition-colors"
                                 title="Unlink Order"
                                >
                                   <X className="w-4 h-4" />
@@ -1042,15 +1037,15 @@ export default function TicketsPage() {
 
                           {/* Fallback for legacy single-order link if no matches records exist */}
                           {(!selectedTicket.orderMatches || selectedTicket.orderMatches.length === 0) && selectedTicket.linkedOrder && (
-                            <div className="bg-white p-3 rounded-xl border border-yellow-200 flex items-center justify-between shadow-sm">
+                            <div className="bg-surface p-3 rounded-xl border border-ochre/30 flex items-center justify-between shadow-sm">
                                <div>
-                                  <p className="text-sm font-bold text-gray-900">Spruce ID: {selectedTicket.linkedOrder.spruceOrderId}</p>
-                                  <p className="text-[10px] text-gray-500 uppercase">Customer: {selectedTicket.linkedOrder.customerName}</p>
-                                  <p className="text-[10px] text-gray-400">Method: {selectedTicket.linkMethod} (Legacy)</p>
+                                  <p className="text-sm font-bold text-ink">Spruce ID: {selectedTicket.linkedOrder.spruceOrderId}</p>
+                                  <p className="text-[10px] text-muted uppercase">Customer: {selectedTicket.linkedOrder.customerName}</p>
+                                  <p className="text-[10px] text-muted">Method: {selectedTicket.linkMethod} (Legacy)</p>
                                </div>
                                <button 
                                 onClick={() => handleUnlinkOrder(selectedTicket.id, selectedTicket.linkedOrderId)}
-                                className="text-xs text-red-600 hover:bg-red-50 p-2 rounded-lg font-bold transition-colors"
+                                className="text-xs text-clay hover:bg-clay/10 p-2 rounded-lg font-bold transition-colors"
                                 title="Unlink Order"
                                >
                                   <X className="w-4 h-4" />
@@ -1061,14 +1056,14 @@ export default function TicketsPage() {
                       ) : null}
 
                       {/* Search for more orders to link */}
-                      <div className="space-y-3 pt-4 border-t border-gray-100">
-                         <p className="text-[10px] font-bold text-gray-400 uppercase px-1">Link {selectedTicket.orderMatches?.length > 0 ? 'Another' : 'an'} Order</p>
+                      <div className="space-y-3 pt-4 border-t border-line">
+                         <p className="text-[10px] font-bold text-muted uppercase px-1">Link {selectedTicket.orderMatches?.length > 0 ? 'Another' : 'an'} Order</p>
                          <div className="relative">
-                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted" />
                             <input 
                               type="text" 
                               placeholder="Search Order by PO, Customer, ID..."
-                              className="w-full pl-10 pr-4 py-3 bg-white border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-green-500 outline-none shadow-sm"
+                              className="w-full pl-10 pr-4 py-3 bg-surface border border-line rounded-xl text-sm focus:ring-2 focus:ring-brand outline-none shadow-sm"
                               value={orderSearch}
                               onChange={(e) => {
                                 setOrderSearch(e.target.value);
@@ -1079,19 +1074,19 @@ export default function TicketsPage() {
 
                          <div className="space-y-2 max-h-48 overflow-y-auto pr-2 custom-scrollbar">
                             {searchingOrders ? (
-                              <div className="text-center py-4 text-gray-400 text-xs italic">Searching available orders...</div>
+                              <div className="text-center py-4 text-muted text-xs italic">Searching available orders...</div>
                             ) : orderResults.length > 0 ? (
                                orderResults.map(order => (
-                                 <div key={order.id} className="bg-white p-3 rounded-xl border border-gray-100 flex items-center justify-between hover:border-green-300 transition-all shadow-sm group">
+                                 <div key={order.id} className="bg-surface p-3 rounded-xl border border-line flex items-center justify-between hover:border-brand/40 transition-all shadow-sm group">
                                     <div className="flex-1">
-                                       <p className="text-sm font-bold text-gray-900">{order.customerName}</p>
-                                       <p className="text-[10px] text-gray-500 uppercase tracking-tighter">ID: {order.spruceOrderId} | PO: {order.poNumber || 'N/A'}</p>
+                                       <p className="text-sm font-bold text-ink">{order.customerName}</p>
+                                       <p className="text-[10px] text-muted uppercase tracking-tighter">ID: {order.spruceOrderId} | PO: {order.poNumber || 'N/A'}</p>
                                     </div>
                                     <div className="flex items-center gap-3">
-                                       <span className="text-xs font-bold text-gray-500">{order.product}</span>
+                                       <span className="text-xs font-bold text-muted">{order.product}</span>
                                        <button 
                                           onClick={() => handleLinkToOrder(selectedTicket.id, order.id)}
-                                          className="bg-green-600 text-white p-2 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity"
+                                          className="bg-brand text-on-brand p-2 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity"
                                           disabled={selectedTicket.orderMatches?.some(m => m.orderId === order.id)}
                                        >
                                           {selectedTicket.orderMatches?.some(m => m.orderId === order.id) ? <CheckCircle className="w-4 h-4" /> : <LinkIcon className="w-4 h-4" />}
@@ -1100,9 +1095,9 @@ export default function TicketsPage() {
                                  </div>
                                ))
                             ) : orderSearch ? (
-                               <div className="text-center py-4 text-gray-400 text-xs italic">No matching orders found</div>
+                               <div className="text-center py-4 text-muted text-xs italic">No matching orders found</div>
                             ) : (
-                               <div className="text-center py-4 text-gray-400 text-xs italic">Enter search criteria above</div>
+                               <div className="text-center py-4 text-muted text-xs italic">Enter search criteria above</div>
                             )}
                          </div>
                       </div>

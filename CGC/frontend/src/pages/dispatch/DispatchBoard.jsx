@@ -481,7 +481,7 @@ export default function DispatchBoard() {
         <div className="bg-ink/[0.03] px-6 py-4 border-b border-line flex justify-between items-center select-none">
           <div>
             <h3 className="text-sm font-bold text-ink flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full bg-brand/100 animate-pulse"></span>
+              <span className="w-2 h-2 rounded-full bg-brand animate-pulse"></span>
               Active Drivers
             </h3>
           </div>
