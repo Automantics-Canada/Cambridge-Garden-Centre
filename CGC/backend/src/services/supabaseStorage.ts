@@ -36,18 +36,15 @@ function getContentType(fileExtension: string): string {
 }
 
 /**
- * Upload ticket image to Supabase Storage
- */
-/**
  * Supabase Storage's `cacheControl` option takes a number of seconds, not a
  * complete Cache-Control header: the SDK emits `max-age=<value>` itself. Passing
  * a full header string produced `max-age=public, max-age=31536000, immutable`,
- * which is malformed and would be discarded.
+ * which is malformed and would have been discarded.
  *
- * Every upload below writes to a key containing a uuid and a timestamp, so a
- * given URL never points at different bytes and a one-year max age is safe.
- * Hourly revalidation was costing a round trip per image on list screens that
- * render dozens of them.
+ * Every upload below writes to a versioned key containing a uuid and a
+ * timestamp, so a given URL never points at different bytes and a one-year max
+ * age is safe. Hourly revalidation was costing a round trip per image on list
+ * screens that render dozens of them.
  */
 const LONG_CACHE_SECONDS = '31536000';
 
@@ -95,6 +92,42 @@ export async function uploadTicketImage(
 /**
  * Upload invoice image to Supabase Storage
  */
+/**
+ * Upload a derived thumbnail at a caller-supplied deterministic path.
+ *
+ * `upsert: true` deliberately differs from the originals above: the path is a
+ * pure function of the original object, so a repeat write is the same bytes for
+ * the same source. That is what makes the backfill safe to re-run.
+ */
+export async function uploadTicketThumbnail(
+  buffer: Buffer,
+  path: string,
+  contentType: string,
+): Promise<UploadResult> {
+  const { data, error } = await supabase.storage
+    .from(env.supabaseStorageBucket)
+    .upload(path, buffer, {
+      cacheControl: LONG_CACHE_SECONDS,
+      upsert: true,
+      contentType,
+    });
+
+  if (error) {
+    throw new Error(`Supabase thumbnail upload error: ${error.message}`);
+  }
+
+  const { data: publicUrlData } = supabase.storage
+    .from(env.supabaseStorageBucket)
+    .getPublicUrl(path);
+
+  return {
+    path: data.path,
+    publicUrl: publicUrlData.publicUrl,
+    size: buffer.length,
+    timestamp: new Date().toISOString(),
+  };
+}
+
 export async function uploadInvoiceImage(
   buffer: Buffer,
   invoiceId: string,

@@ -7,6 +7,7 @@ import toast from 'react-hot-toast';
 import { Skeleton } from '../../components/Skeleton';
 import Loader from '../../components/Loader';
 import { FadeInUp, StaggerContainer, StaggerItem } from '../../components/Animated';
+import { ticketThumbnailSrc } from '../../utils/ticketImage';
 
 export default function OrdersPage() {
   const [searchParams] = useSearchParams();
@@ -503,7 +504,7 @@ export default function OrdersPage() {
                               >
                                 {match.ticket.imageUrl ? (
                                   <img 
-                                    src={match.ticket.imageUrl.startsWith('http') ? match.ticket.imageUrl : `https://cambridge-garden-centre-1.onrender.com${match.ticket.imageUrl}`} 
+                                    src={ticketThumbnailSrc(match.ticket)}
                                     className="h-full w-full object-cover" 
                                     alt="Ticket"
                                   />

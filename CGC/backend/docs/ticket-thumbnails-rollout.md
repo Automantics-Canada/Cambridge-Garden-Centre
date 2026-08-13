@@ -1,0 +1,174 @@
+# Ticket thumbnails — rollout runbook
+
+Nothing in this document has been executed. No migration was applied and no
+backfill was run against any environment.
+
+## Why
+
+Proof-of-delivery photos arrive from phone cameras at full resolution — a
+sample measured in production is **615 KB at 1800×2391** — and the tickets list
+rendered them into a 48 CSS px box. A 50-row page therefore transferred roughly
+**30 MB**. Supabase's `render/image` transform endpoint returns **403** on the
+current plan, so the resize is done in the backend instead.
+
+Measured on synthetic fixtures (`npx tsx tests/fixtures/measure.ts`):
+
+| fixture | source dims | source bytes | thumb bytes | thumb dims | reduction |
+|---|---|---:|---:|---|---:|
+| phone photo, portrait (JPEG q90) | 1800x2391 | 99,129 | 368 | 128x128 | 99.6% |
+| phone photo, landscape (JPEG q90) | 2391x1800 | 123,260 | 876 | 128x128 | 99.3% |
+| flatbed scan (PNG) | 1010x752 | 38,125 | 988 | 128x128 | 97.4% |
+| small photo (JPEG q90) | 747x827 | 34,423 | 772 | 128x128 | 97.8% |
+| already WebP | 1800x2391 | 26,378 | 400 | 128x128 | 98.5% |
+| **all five** | | **321,315** | **3,404** | | **98.9%** |
+
+These are synthetic. Real production photographs will compress differently.
+Re-measure after rollout; do not quote these as production figures.
+
+## Order of operations
+
+### 0. Railway preflight
+
+The repository still tracks legacy `CGC/backend/dist/` files even though that
+directory is now ignored. A Railway deployment that only runs `npm start` can
+therefore execute stale JavaScript and silently omit every backend change in
+this stack.
+
+Verified read-only against the production service on 2026-08-13:
+
+- Root Directory is `/CGC/backend`.
+- Builder is the default Railpack builder and Custom Build Command is unset.
+- The latest successful Linux build log ran `npm install`, `npm run build`
+  (`tsc`), then `npm run start`.
+
+That proves TypeScript is rebuilt rather than stale tracked `dist/` files being
+started directly. The first build containing this PR must additionally show
+Sharp installing/loading successfully on Linux.
+
+**Region: resolved.** An earlier check found Railway rejecting the configured
+region `us-east4-eqdc4a` as invalid and blocking deployments. Settings → Scale
+now shows **US East (Virginia, USA), 1 replica**, with no invalid-region
+warning. Deployments are no longer blocked on this.
+
+With a single replica, note that the in-process rate limiter and the background
+jobs both behave as documented. Adding replicas later multiplies the effective
+rate limit and double-runs the pollers.
+
+### 1. Apply the migration
+
+```bash
+cd CGC/backend
+npx prisma migrate deploy
+```
+
+Adds `Ticket.thumbnailUrl TEXT NULL`. Additive and nullable — existing rows are
+untouched and the application already falls back to `imageUrl` when the column
+is null. Safe to deploy before the application code.
+
+**Rollback:**
+
+```sql
+ALTER TABLE "public"."Ticket" DROP COLUMN "thumbnailUrl";
+```
+
+Dropping the column loses only the pointers. The thumbnail objects remain in
+storage under `ticket-thumbnails/` and would be recreated at the same
+deterministic keys if the column is re-added and the backfill re-run.
+
+### 2. Deploy the backend
+
+New uploads generate a thumbnail automatically. Generation is best-effort: if
+it fails, the original is still stored, `thumbnailUrl` stays null, the upload
+still succeeds, and a line is logged naming the object and the retry command.
+
+### 3. Deploy the frontend
+
+List and grid views prefer `thumbnailUrl` and fall back to `imageUrl`. The
+review modal and the download action always use the original.
+
+### 4. Deploy the changed Edge Function
+
+The driver and fallback data paths receive `thumbnailUrl` from
+`fetch-cgc-data`. Deploy that function after the database migration and before
+verifying the driver flow. This is a separate Supabase rollout target from the
+Railway backend and Vercel frontend.
+
+```bash
+npx supabase functions deploy fetch-cgc-data \
+  --project-ref "$SUPABASE_PROJECT_REF" \
+  --workdir ../supabase
+```
+
+### 5. Backfill existing tickets
+
+Dry run first. This is the default; it writes nothing.
+
+```bash
+cd CGC/backend
+npm run backfill:thumbnails
+```
+
+Then apply, starting small:
+
+```bash
+npm run backfill:thumbnails -- --apply --limit=25 --concurrency=3
+```
+
+Inspect the output, then continue. Re-running is safe — it only selects rows
+where `thumbnailUrl IS NULL`, so completed rows are skipped and an interrupted
+run resumes where it stopped.
+
+```bash
+npm run backfill:thumbnails -- --apply --limit=500 --concurrency=3
+```
+
+**Flags**
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--apply` | off | Required to write. Without it the run is a dry run. |
+| `--limit=N` | 500 | Maximum rows considered in one run. |
+| `--concurrency=N` | 3 | Parallel workers, capped at 8. |
+
+**Failure behaviour**
+
+- A failing ticket is recorded and the run continues; it does not abort the batch.
+- Failed ids are printed at the end and the process exits non-zero.
+- Failed rows keep `thumbnailUrl = NULL`, so the next run retries them.
+- The row is updated **only after** the thumbnail upload succeeds, so a
+  `thumbnailUrl` never points at bytes that do not exist.
+- The update is scoped to rows still null, so two concurrent runs cannot
+  double-write the same row.
+- Originals are never modified, moved or deleted by any path in this feature.
+
+**Bounds**
+
+- Downloads: 20s timeout, 25 MB ceiling, redirects refused.
+- Source URLs must match the configured Supabase origin; anything else is refused.
+- Decoding is capped at 40 megapixels to bound the worst-case allocation.
+
+### 6. Verify
+
+- A newly uploaded ticket has a non-null `thumbnailUrl`.
+- The tickets list renders thumbnails and the transferred bytes drop sharply.
+- The review modal still shows the full-resolution original.
+- Download still returns the original file.
+- Rows that failed backfill still display via the `imageUrl` fallback.
+- Re-measure the Tickets page with the Resource Timing API and compare against
+  the pre-change capture.
+
+## Notes
+
+- `sharp` is the image library. Its Linux binaries (`@img/sharp-linux-x64`,
+  `@img/sharp-linuxmusl-x64`, and arm variants) are present in
+  `package-lock.json` as optional dependencies, so `npm ci` on Railway resolves
+  the correct platform build. Verified: lockfile v3 carries all 16 Linux entries.
+- Supabase's client accepts cache duration as seconds and emits the header. The
+  upload uses `cacheControl: '31536000'`, producing a one-year max age. Do not
+  pass a complete header string to that option: the SDK prepends `max-age=`.
+- Roll the application and Edge Function back before dropping `thumbnailUrl`.
+  The safest database rollback is normally to leave this additive nullable
+  column in place; dropping it while newer code still selects it breaks reads.
+- EXIF is applied then dropped: orientation is baked into the pixels, and no
+  metadata — including any GPS coordinates from the driver's phone — survives
+  into the thumbnail.
