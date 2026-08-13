@@ -571,7 +571,7 @@ export default function TicketsPage() {
             disabled={isUploading}
             className="flex items-center gap-2 bg-brand hover:brightness-110 text-on-brand px-4 py-2 rounded-pill font-medium text-[13px] transition-all shadow-card disabled:opacity-50"
           >
-            {isUploading ? <Loader className="w-4 h-4" /> : <Upload className="w-4 h-4" />}
+            {isUploading ? <Loader size="inline" /> : <Upload className="w-4 h-4" />}
             {isUploading ? 'Processing...' : 'Upload Ticket Image'}
           </button>
           <button
@@ -579,7 +579,7 @@ export default function TicketsPage() {
             disabled={isUploading}
             className="flex items-center gap-2 bg-brand hover:brightness-110 text-on-brand px-4 py-2 rounded-lg font-medium text-xs transition-all shadow-md disabled:opacity-50"
           >
-            {isUploading ? <Loader className="w-4 h-4" /> : <Upload className="w-4 h-4" />}
+            {isUploading ? <Loader size="inline" /> : <Upload className="w-4 h-4" />}
             {isUploading ? 'Processing...' : 'Upload ticket PDF'}
           </button>
 
