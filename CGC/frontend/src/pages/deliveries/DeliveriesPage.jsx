@@ -10,6 +10,7 @@ import { toast } from 'react-hot-toast';
 import { Badge, Card, EmptyState, Input, PageHeader, Select, StatusBadge } from '../../components/ui';
 import StatusTimeline from '../../components/deliveries/StatusTimeline';
 import { cn } from '../../lib/cn';
+import { formatDate } from '../../lib/date';
 
 export default function DeliveriesPage() {
   const [searchParams] = useSearchParams();
@@ -280,7 +281,7 @@ export default function DeliveriesPage() {
                     <p className="text-[12.5px] font-medium text-muted leading-none mb-1">Scheduled</p>
                     <div className="flex items-center gap-1.5 text-ink font-semibold text-sm tabular">
                       <Calendar size={14} className="text-muted" />
-                      {new Date(del.createdAt).toLocaleDateString()}
+                      {formatDate(del.createdAt)}
                     </div>
                   </div>
 

@@ -22,6 +22,7 @@ import {
   Select,
   Textarea,
 } from '../../components/ui';
+import { formatDate } from '../../lib/date';
 
 const INITIAL_FORM = {
   supplierId: '',
@@ -225,7 +226,7 @@ export default function RatesPage() {
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-muted">{rate.unit}</td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         <div className="tabular text-[13px] text-ink">
-                          {new Date(rate.effectiveFrom).toLocaleDateString()} to {rate.effectiveTo ? new Date(rate.effectiveTo).toLocaleDateString() : 'Present'}
+                          {formatDate(rate.effectiveFrom)} to {rate.effectiveTo ? formatDate(rate.effectiveTo) : 'Present'}
                         </div>
                         {!isActive && <Badge tone="bad" className="mt-1">Expired</Badge>}
                       </td>

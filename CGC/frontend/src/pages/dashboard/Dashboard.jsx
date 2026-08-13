@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { supabase } from '../../supabaseClient';
 import { ChevronRight, Users, Inbox } from 'lucide-react';
 import { Skeleton } from '../../components/Skeleton';
+import { formatDate } from '../../lib/date';
 import {
   PageHeader,
   StatTile,
@@ -136,7 +137,7 @@ export default function Dashboard() {
                     <p className="text-[13px] text-muted truncate">
                       {inv.supplier?.name || 'Unknown supplier'}
                       {inv.receivedAt &&
-                        ` · ${new Date(inv.receivedAt).toLocaleDateString('en-CA')}`}
+                        ` · ${formatDate(inv.receivedAt, 'en-CA')}`}
                     </p>
                   </div>
                   <p className="tabular text-[15px] font-semibold text-ink text-right min-w-[92px]">

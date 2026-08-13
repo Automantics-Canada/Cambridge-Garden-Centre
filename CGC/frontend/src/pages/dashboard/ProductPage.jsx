@@ -6,6 +6,7 @@ import toast from 'react-hot-toast';
 import { fetchProducts, createProduct, updateProduct, deleteProduct, fetchUnits, createCustomUnit, deleteCustomUnit, clearSuccess, clearError } from '../../store/productSlice';
 import Modal from '../../components/Modal';
 import { Skeleton } from '../../components/Skeleton';
+import { formatDate } from '../../lib/date';
 import {
   Badge,
   Button,
@@ -220,7 +221,7 @@ export default function ProductPage() {
                         <Badge tone="neutral">{product.unit || 'ton'}</Badge>
                       </td>
                       <td className="px-6 py-4">
-                        <p className="tabular text-muted text-sm">{new Date(product.createdAt).toLocaleDateString()}</p>
+                        <p className="tabular text-muted text-sm">{formatDate(product.createdAt)}</p>
                       </td>
                       <td className="px-6 py-4">
                         <div className="flex justify-end gap-3">

@@ -18,6 +18,7 @@ import {
   Select,
 } from '../../components/ui';
 import { cn } from '../../lib/cn';
+import { formatDate } from '../../lib/date';
 
 const formatTypeLabel = (str) => {
   if (!str) return '';
@@ -295,7 +296,7 @@ export default function SupplierPage() {
                                       <div key={rate.id} className="bg-surface border border-line rounded-control p-3 flex justify-between items-center group hover:shadow-lift transition-shadow">
                                         <div>
                                           <p className="text-sm font-semibold text-ink">{rate.productName}</p>
-                                          <p className="tabular text-[12.5px] text-muted">{rate.unit} · Effective {new Date(rate.effectiveFrom).toLocaleDateString()}</p>
+                                          <p className="tabular text-[12.5px] text-muted">{rate.unit} · Effective {formatDate(rate.effectiveFrom)}</p>
                                         </div>
                                         <div className="flex items-center gap-4">
                                           <div className="text-right">

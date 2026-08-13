@@ -26,6 +26,7 @@ import Loader from '../../components/Loader';
 import { useIntervalRefresh } from '../../hooks/useIntervalRefresh';
 import { ticketThumbnailSrc } from '../../utils/ticketImage';
 import { EmptyState, PageHeader, StatusBadge } from '../../components/ui';
+import { formatDate } from '../../lib/date';
 
 // Each row renders a full-resolution ticket photo. Halving the page halves the
 // number of images requested and the rows the list query projects. This is an
@@ -779,7 +780,7 @@ export default function TicketsPage() {
                           </button>
                         )}
                       </div>
-                      <div className="text-xs text-muted">{new Date(ticket.receivedAt).toLocaleDateString()}</div>
+                      <div className="text-xs text-muted">{formatDate(ticket.receivedAt)}</div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-ink">
                       {ticket.supplier?.name || ticket.supplierName || '-'}

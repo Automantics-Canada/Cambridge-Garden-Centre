@@ -24,6 +24,7 @@ import {
   StatusBadge,
 } from '../../components/ui';
 import { cn } from '../../lib/cn';
+import { formatDate } from '../../lib/date';
 
 const STATUS_TABS = [
   { id: 'ALL', name: 'All invoices' },
@@ -358,7 +359,7 @@ export default function InvoicesPage() {
                         {inv.supplier?.name || '-'}
                       </td>
                       <td className="tabular px-6 py-4 whitespace-nowrap text-sm text-muted">
-                        {new Date(inv.invoiceDate).toLocaleDateString()}
+                        {formatDate(inv.invoiceDate)}
                       </td>
                       <td className="tabular px-6 py-4 whitespace-nowrap text-sm font-semibold text-ink">
                         ${Number(inv.totalAmount).toFixed(2)}

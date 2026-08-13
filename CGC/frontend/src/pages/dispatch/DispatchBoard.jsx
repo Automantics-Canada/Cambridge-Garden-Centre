@@ -7,6 +7,7 @@ import { toast } from 'react-hot-toast';
 import { FadeInUp } from '../../components/Animated';
 import { Badge, Button, EmptyState, Input, PageHeader, StatusBadge } from '../../components/ui';
 import { useIntervalRefresh } from '../../hooks/useIntervalRefresh';
+import { formatDate } from '../../lib/date';
 
 export default function DispatchBoard() {
   const [board, setBoard] = useState({ unassignedOrders: [], unassignedDeliveries: [], drivers: [] });
@@ -834,7 +835,7 @@ export default function DispatchBoard() {
 
                     {/* Date Column */}
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-muted select-none">
-                      {new Date(order.createdAt).toLocaleDateString()}
+                      {formatDate(order.createdAt)}
                     </td>
 
                     {/* Status Column */}

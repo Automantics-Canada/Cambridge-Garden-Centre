@@ -16,6 +16,7 @@ import {
   Select,
 } from '../../components/ui';
 import { cn } from '../../lib/cn';
+import { formatDate } from '../../lib/date';
 
 export default function OrdersPage() {
   const [searchParams] = useSearchParams();
@@ -219,7 +220,7 @@ export default function OrdersPage() {
       : uploadFilter === 'yesterday'
       ? 'No orders uploaded yesterday'
       : selectedUploadDate
-      ? `No orders uploaded on ${new Date(selectedUploadDate + 'T00:00:00').toLocaleDateString(undefined, { dateStyle: 'long' })}`
+      ? `No orders uploaded on ${formatDate(selectedUploadDate + 'T00:00:00', { dateStyle: 'long' })}`
       : 'No orders uploaded on this date';
 
   return (
@@ -458,7 +459,7 @@ export default function OrdersPage() {
                       </td>
 
                       <td className="tabular whitespace-nowrap px-3 py-4 text-sm text-muted">
-                        {order.orderDate ? new Date(order.orderDate).toLocaleDateString() : '-'}
+                        {formatDate(order.orderDate)}
                       </td>
 
                       <td className="whitespace-nowrap px-3 py-4 text-sm">

@@ -1,6 +1,7 @@
 import React from 'react';
 import { CheckCircle2, Circle, Clock, Package } from 'lucide-react';
 import { StatusBadge } from '../ui';
+import { formatDate } from '../../lib/date';
 
 const icons = {
   PLACED: <Package size={14} className="text-muted" />,
@@ -31,7 +32,7 @@ export default function StatusTimeline({ history }) {
               <span className="tabular text-[12.5px] text-muted">
                 {new Date(event.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                 {' · '}
-                {new Date(event.createdAt).toLocaleDateString()}
+                {formatDate(event.createdAt)}
               </span>
             </div>
             {event.notes && (
