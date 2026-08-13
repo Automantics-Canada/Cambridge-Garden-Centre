@@ -122,6 +122,32 @@ export const InvoiceController = {
         catch (error) {
             next(error);
         }
+    },
+    async unlinkOrderFromLineItem(req, res, next) {
+        try {
+            const userId = req.user?.id;
+            if (!userId)
+                return res.status(401).json({ error: 'Unauthorized' });
+            const { lineItemId } = req.body;
+            const updated = await InvoiceService.unlinkOrderFromLineItem(lineItemId, userId);
+            res.json(updated);
+        }
+        catch (error) {
+            next(error);
+        }
+    },
+    async unlinkTicketFromLineItem(req, res, next) {
+        try {
+            const userId = req.user?.id;
+            if (!userId)
+                return res.status(401).json({ error: 'Unauthorized' });
+            const { lineItemId, ticketId } = req.body;
+            const updated = await InvoiceService.unlinkTicketFromLineItem(lineItemId, ticketId, userId);
+            res.json(updated);
+        }
+        catch (error) {
+            next(error);
+        }
     }
 };
 //# sourceMappingURL=invoice.controller.js.map

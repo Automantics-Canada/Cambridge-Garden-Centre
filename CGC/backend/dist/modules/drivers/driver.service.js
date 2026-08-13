@@ -146,7 +146,7 @@ export const DriverService = {
             <div style="background-color: #f7f9fa; border-radius: 16px; padding: 30px; text-align: left; border: 1px solid #eaeaea;">
               <div style="margin-bottom: 20px;">
                 <div style="font-size: 11px; font-weight: bold; color: #8e9bae; margin-bottom: 5px; text-transform: uppercase; letter-spacing: 0.5px;">LOGIN LINK</div>
-                <a href="https://cambridge-garden.vercel.app/login" style="color: #2b704d; font-size: 16px; font-weight: bold; text-decoration: none;">https://cambridge-garden.vercel.app/login</a>
+                <a href="https://www.cambridgegardencentre.net/login/driver" style="color: #2b704d; font-size: 16px; font-weight: bold; text-decoration: none;">https://www.cambridgegardencentre.net/login/driver</a>
               </div>
               
               <div style="border-top: 1px solid #eaeaea; margin: 20px 0;"></div>
@@ -362,6 +362,44 @@ export const DriverService = {
             },
             currentTask: currentTask || null
         };
+    },
+    async deleteDriver(id) {
+        return prisma.$transaction(async (tx) => {
+            const driver = await tx.driver.findUnique({
+                where: { id },
+                include: { user: true }
+            });
+            if (!driver)
+                throw new Error('Driver not found');
+            // Set driverId to null in related records
+            await tx.delivery.updateMany({
+                where: { driverId: id },
+                data: { driverId: null }
+            });
+            await tx.order.updateMany({
+                where: { driverId: id },
+                data: { driverId: null }
+            });
+            await tx.ticket.updateMany({
+                where: { driverId: id },
+                data: { driverId: null }
+            });
+            await tx.whatsAppMessage.updateMany({
+                where: { driverId: id },
+                data: { driverId: null }
+            });
+            // Delete the driver record
+            await tx.driver.delete({
+                where: { id }
+            });
+            // If there is an associated User record, delete it as well
+            if (driver.userId) {
+                await tx.user.delete({
+                    where: { id: driver.userId }
+                });
+            }
+            return driver;
+        });
     }
 };
 //# sourceMappingURL=driver.service.js.map

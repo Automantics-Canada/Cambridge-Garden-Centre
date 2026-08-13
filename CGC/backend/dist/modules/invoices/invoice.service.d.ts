@@ -420,5 +420,87 @@ export declare const InvoiceService: {
         isOverridden: boolean;
         overrideNote: string | null;
     }>;
+    unlinkOrderFromLineItem(lineItemId: string, userId: string): Promise<{
+        invoice: {
+            id: string;
+            supplierId: string;
+            invoiceNumber: string;
+            status: import("@prisma/client").$Enums.InvoiceStatus;
+            ocrRawText: string | null;
+            receivedAt: Date;
+            senderType: import("@prisma/client").$Enums.SenderType;
+            invoiceDate: Date;
+            dueDate: Date | null;
+            totalAmount: import("@prisma/client/runtime/library").Decimal;
+            currency: string;
+            fileUrl: string;
+            emailFrom: string;
+            emailSubject: string;
+            gmailMessageId: string;
+            verifiedById: string | null;
+            verifiedAt: Date | null;
+            disputeNote: string | null;
+            OcrJobStatus: import("@prisma/client").$Enums.OcrJobStatus;
+        };
+    } & {
+        id: string;
+        poNumber: string | null;
+        quantity: import("@prisma/client/runtime/library").Decimal;
+        unit: string;
+        invoiceId: string;
+        lineNumber: number;
+        description: string;
+        unitRate: import("@prisma/client/runtime/library").Decimal;
+        lineTotal: import("@prisma/client/runtime/library").Decimal;
+        matchedOrderId: string | null;
+        negotiatedRate: import("@prisma/client/runtime/library").Decimal | null;
+        rateDiscrepancy: import("@prisma/client/runtime/library").Decimal | null;
+        qtyDiscrepancy: import("@prisma/client/runtime/library").Decimal | null;
+        approvedTotal: import("@prisma/client/runtime/library").Decimal | null;
+        flag: import("@prisma/client").$Enums.LineItemFlag;
+        isOverridden: boolean;
+        overrideNote: string | null;
+    }>;
+    unlinkTicketFromLineItem(lineItemId: string, ticketId: string, userId: string): Promise<{
+        invoice: {
+            id: string;
+            supplierId: string;
+            invoiceNumber: string;
+            status: import("@prisma/client").$Enums.InvoiceStatus;
+            ocrRawText: string | null;
+            receivedAt: Date;
+            senderType: import("@prisma/client").$Enums.SenderType;
+            invoiceDate: Date;
+            dueDate: Date | null;
+            totalAmount: import("@prisma/client/runtime/library").Decimal;
+            currency: string;
+            fileUrl: string;
+            emailFrom: string;
+            emailSubject: string;
+            gmailMessageId: string;
+            verifiedById: string | null;
+            verifiedAt: Date | null;
+            disputeNote: string | null;
+            OcrJobStatus: import("@prisma/client").$Enums.OcrJobStatus;
+        };
+    } & {
+        id: string;
+        poNumber: string | null;
+        quantity: import("@prisma/client/runtime/library").Decimal;
+        unit: string;
+        invoiceId: string;
+        lineNumber: number;
+        description: string;
+        unitRate: import("@prisma/client/runtime/library").Decimal;
+        lineTotal: import("@prisma/client/runtime/library").Decimal;
+        matchedOrderId: string | null;
+        negotiatedRate: import("@prisma/client/runtime/library").Decimal | null;
+        rateDiscrepancy: import("@prisma/client/runtime/library").Decimal | null;
+        qtyDiscrepancy: import("@prisma/client/runtime/library").Decimal | null;
+        approvedTotal: import("@prisma/client/runtime/library").Decimal | null;
+        flag: import("@prisma/client").$Enums.LineItemFlag;
+        isOverridden: boolean;
+        overrideNote: string | null;
+    }>;
 };
 //# sourceMappingURL=invoice.service.d.ts.map

@@ -8,5 +8,7 @@ export declare const InvoiceController: {
     reopenInvoice(req: Request, res: Response, next: NextFunction): Promise<Response<any, Record<string, any>> | undefined>;
     linkOrderToLineItem(req: Request, res: Response, next: NextFunction): Promise<Response<any, Record<string, any>> | undefined>;
     linkTicketsToLineItem(req: Request, res: Response, next: NextFunction): Promise<Response<any, Record<string, any>> | undefined>;
+    unlinkOrderFromLineItem(req: Request, res: Response, next: NextFunction): Promise<Response<any, Record<string, any>> | undefined>;
+    unlinkTicketFromLineItem(req: Request, res: Response, next: NextFunction): Promise<Response<any, Record<string, any>> | undefined>;
 };
 //# sourceMappingURL=invoice.controller.d.ts.map

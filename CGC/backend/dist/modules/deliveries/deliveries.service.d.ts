@@ -92,6 +92,43 @@ export declare const DeliveriesService: {
     })[]>;
     updateStatus(id: string, status: DeliveryStatus, notes?: string): Promise<{
         order: {
+            supplier: {
+                name: string;
+                id: string;
+                phone: string | null;
+                active: boolean;
+                type: import("@prisma/client").$Enums.SupplierType;
+                emailDomains: string[];
+                contactName: string | null;
+                contactEmail: string | null;
+                address: string | null;
+                keywords: string[];
+            } | null;
+            tickets: {
+                id: string;
+                poNumber: string | null;
+                quantity: import("@prisma/client/runtime/library").Decimal | null;
+                unit: string | null;
+                supplierId: string | null;
+                deliveryStatus: import("@prisma/client").$Enums.DriverTaskStatus;
+                driverId: string | null;
+                status: import("@prisma/client").$Enums.TicketStatus;
+                ticketNumber: string | null;
+                source: import("@prisma/client").$Enums.TicketSource;
+                supplierName: string | null;
+                material: string | null;
+                rateOnTicket: import("@prisma/client/runtime/library").Decimal | null;
+                ticketDate: Date | null;
+                imageUrl: string;
+                ocrRawText: string;
+                ocrConfidence: number;
+                linkedOrderId: string | null;
+                linkMethod: string | null;
+                linkedById: string | null;
+                receivedAt: Date;
+                spruceMatched: boolean;
+            }[];
+        } & {
             id: string;
             spruceOrderId: string;
             poNumber: string | null;
@@ -123,6 +160,13 @@ export declare const DeliveriesService: {
             companyName: string | null;
             userId: string | null;
         } | null;
+        history: {
+            id: string;
+            createdAt: Date;
+            status: import("@prisma/client").$Enums.DeliveryStatus;
+            notes: string | null;
+            deliveryId: string;
+        }[];
     } & {
         id: string;
         createdAt: Date;

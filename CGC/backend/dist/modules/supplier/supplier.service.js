@@ -85,9 +85,33 @@ export const SupplierService = {
         });
     },
     async addNegotiatedRate(supplierId, data) {
+        const trimmedProduct = data.productName.trim();
+        const existingRate = await prisma.negotiatedRate.findFirst({
+            where: {
+                supplierId,
+                productName: {
+                    equals: trimmedProduct,
+                    mode: 'insensitive'
+                }
+            }
+        });
+        if (existingRate) {
+            return prisma.negotiatedRate.update({
+                where: { id: existingRate.id },
+                data: {
+                    productName: trimmedProduct,
+                    rate: data.rate,
+                    unit: data.unit,
+                    effectiveFrom: data.effectiveFrom,
+                    ...(data.effectiveTo !== undefined ? { effectiveTo: data.effectiveTo } : {}),
+                    ...(data.notes !== undefined ? { notes: data.notes } : {}),
+                }
+            });
+        }
         return prisma.negotiatedRate.create({
             data: {
                 ...data,
+                productName: trimmedProduct,
                 supplierId,
             }
         });

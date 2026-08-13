@@ -300,5 +300,29 @@ export declare const DriverService: {
         companyName: string | null;
         userId: string | null;
     } | null>;
+    deleteDriver(id: string): Promise<{
+        user: {
+            name: string;
+            id: string;
+            createdAt: Date;
+            phone: string | null;
+            active: boolean;
+            email: string;
+            passwordHash: string;
+            role: import("@prisma/client").$Enums.UserRole;
+        } | null;
+    } & {
+        name: string;
+        id: string;
+        createdAt: Date;
+        phone: string;
+        active: boolean;
+        email: string | null;
+        ratePerDelivery: import("@prisma/client/runtime/library").Decimal;
+        ratePerTrip: import("@prisma/client/runtime/library").Decimal | null;
+        type: import("@prisma/client").$Enums.DriverType;
+        companyName: string | null;
+        userId: string | null;
+    }>;
 };
 //# sourceMappingURL=driver.service.d.ts.map

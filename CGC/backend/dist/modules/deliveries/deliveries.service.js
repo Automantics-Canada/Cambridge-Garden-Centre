@@ -33,17 +33,28 @@ export const DeliveriesService = {
         else if (status === 'DELIVERED') {
             updateData.completedAt = new Date();
         }
-        const updated = await prisma.delivery.update({
-            where: { id },
-            data: updateData,
-            include: { driver: true, order: true }
-        });
         // Record history
         await prisma.deliveryHistory.create({
             data: {
                 deliveryId: id,
                 status,
                 notes: notes || `Status updated to ${status}`
+            }
+        });
+        const updated = await prisma.delivery.update({
+            where: { id },
+            data: updateData,
+            include: {
+                driver: true,
+                order: {
+                    include: {
+                        supplier: true,
+                        tickets: true
+                    }
+                },
+                history: {
+                    orderBy: { createdAt: 'desc' }
+                }
             }
         });
         return updated;
