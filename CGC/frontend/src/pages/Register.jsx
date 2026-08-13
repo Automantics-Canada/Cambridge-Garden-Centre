@@ -3,6 +3,7 @@ import { useDispatch, useSelector } from 'react-redux';
 import { useNavigate, Link } from 'react-router-dom';
 import { registerAsync, clearError } from '../store/authSlice';
 import { Eye, EyeOff } from 'lucide-react';
+import { Button, Card, CardBody, Field, Input, Select, ThemeToggle } from '../components/ui';
 
 export default function Register() {
   const [name, setName] = useState('');
@@ -11,10 +12,10 @@ export default function Register() {
   const [showPassword, setShowPassword] = useState(false);
   const [role, setRole] = useState('ADMIN'); // Default to AP_USER or ADMIN based on backend roles
   const [successMsg, setSuccessMsg] = useState('');
-  
+
   const dispatch = useDispatch();
   const navigate = useNavigate();
-  
+
   const { loading, error, isAuthenticated } = useSelector((state) => state.auth);
 
   useEffect(() => {
@@ -36,95 +37,102 @@ export default function Register() {
   };
 
   return (
-    <div className="min-h-screen bg-[#1D5333] flex items-center justify-center p-4">
-      <div className="bg-white rounded-xl shadow-2xl p-8 w-full max-w-md">
-        <div className="text-center mb-8">
-          <h1 className="text-3xl font-bold text-[#1B4332]">Create Account</h1>
-          <p className="text-gray-500 mt-2">Join Operations</p>
-        </div>
-        
-        {successMsg && (
-          <div className="mb-4 bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded-md text-sm">
-            {successMsg}
+    <div className="min-h-screen bg-canvas flex items-center justify-center p-4">
+      <div className="absolute top-4 right-4">
+        <ThemeToggle />
+      </div>
+      <Card className="w-full max-w-md">
+        <CardBody className="pt-8">
+          <div className="text-center mb-8">
+            <h1 className="text-[30px] font-bold text-ink tracking-[-0.015em] leading-tight">
+              Create an account
+            </h1>
+            <p className="text-sm text-muted mt-1.5">
+              Join Cambridge Garden Centre operations.
+            </p>
           </div>
-        )}
 
-        {error && (
-          <div className="mb-4 bg-red-50 border border-red-200 text-red-600 px-4 py-3 rounded-md text-sm">
-            {error}
-          </div>
-        )}
+          {successMsg && (
+            <div className="mb-4 bg-brand/12 border border-brand/30 text-brand px-4 py-3 rounded-control text-sm">
+              {successMsg}
+            </div>
+          )}
 
-        <form onSubmit={handleRegister} className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700">Full Name</label>
-            <input
-              type="text"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-[#1D5333] focus:ring-[#1D5333] p-3 border"
-              placeholder="Sarah K."
-              required
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700">Email Address</label>
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-[#1D5333] focus:ring-[#1D5333] p-3 border"
-              placeholder="sarah@example.com"
-              required
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700">Password</label>
-            <div className="relative mt-1">
-              <input
-                type={showPassword ? "text" : "password"}
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className="block w-full rounded-md border-gray-300 shadow-sm focus:border-[#1D5333] focus:ring-[#1D5333] p-3 pr-10 border"
-                placeholder="••••••••"
+          {error && (
+            <div className="mb-4 bg-clay/14 border border-clay/30 text-clay px-4 py-3 rounded-control text-sm">
+              {error}
+            </div>
+          )}
+
+          <form onSubmit={handleRegister} className="space-y-4">
+            <Field label="Full name" htmlFor="register-name">
+              <Input
+                id="register-name"
+                type="text"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="Sarah K."
                 required
               />
-              <button
-                type="button"
-                onClick={() => setShowPassword(!showPassword)}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 focus:outline-none"
+            </Field>
+            <Field label="Email" htmlFor="register-email">
+              <Input
+                id="register-email"
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="sarah@example.com"
+                required
+              />
+            </Field>
+            <Field label="Password" htmlFor="register-password">
+              <div className="relative">
+                <Input
+                  id="register-password"
+                  type={showPassword ? 'text' : 'password'}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="pr-10"
+                  placeholder="••••••••"
+                  required
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted hover:text-ink focus:outline-none"
+                >
+                  {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                </button>
+              </div>
+            </Field>
+            <Field label="Role" htmlFor="register-role">
+              <Select
+                id="register-role"
+                value={role}
+                onChange={(e) => setRole(e.target.value)}
               >
-                {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
-              </button>
-            </div>
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700">Role</label>
-            <select
-              value={role}
-              onChange={(e) => setRole(e.target.value)}
-              className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-[#1D5333] focus:ring-[#1D5333] p-3 border"
+                <option value="AP_USER">AP User</option>
+                <option value="ADMIN">Admin</option>
+                <option value="OWNER">Owner</option>
+              </Select>
+            </Field>
+            <Button
+              type="submit"
+              variant="primary"
+              disabled={loading || successMsg !== ''}
+              className="w-full mt-2"
             >
-              <option value="AP_USER">AP User</option>
-              <option value="ADMIN">Admin</option>
-              <option value="OWNER">Owner</option>
-            </select>
-          </div>
-          <button
-            type="submit"
-            disabled={loading || successMsg !== ''}
-            className="w-full flex justify-center py-3 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-[#1D5333] hover:bg-[#153e26] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#1D5333] disabled:opacity-50 mt-4"
-          >
-            {loading ? 'Registering...' : 'Register'}
-          </button>
-        </form>
-        <p className="mt-6 text-center text-sm text-gray-600">
-          Already have an account?{' '}
-          <Link to="/login" className="font-medium text-[#1D5333] hover:text-[#11311e]">
-            Sign in
-          </Link>
-        </p>
-      </div>
+              {loading ? 'Registering...' : 'Register'}
+            </Button>
+          </form>
+          <p className="mt-6 text-center text-sm text-muted">
+            Already have an account?{' '}
+            <Link to="/login" className="font-semibold text-brand hover:underline">
+              Sign in
+            </Link>
+          </p>
+        </CardBody>
+      </Card>
     </div>
   );
 }
