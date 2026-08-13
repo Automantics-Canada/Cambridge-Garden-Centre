@@ -19,7 +19,10 @@
 
   /* -- text ------------------------------------------------------------ */
   --c-ink: 26 31 28;          /* #1A1F1C  primary text                      */
-  --c-muted: 107 117 111;     /* #6B756F  secondary text                    */
+  /* #626C66. Was #6B756F, which measured 4.77:1 on pure white but fell to
+     4.20:1 as soon as it sat on a tinted panel — under the 4.5 minimum.
+     This value clears 4.5 on every surface in the system, tint included. */
+  --c-muted: 98 108 102;      /* #626C66  secondary text                    */
   --c-rail-ink: 60 74 66;     /* #3C4A42  sidebar text                      */
 
   /* -- accents --------------------------------------------------------- */
