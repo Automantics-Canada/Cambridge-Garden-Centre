@@ -2,19 +2,19 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useSelector } from 'react-redux';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../../supabaseClient';
-import { 
-  FileCheck, 
-  AlertCircle, 
-  Clock, 
-  TrendingUp, 
-  Search, 
-  ChevronRight,
-  Filter,
-  Users
-} from 'lucide-react';
+import { ChevronRight, Users, Inbox } from 'lucide-react';
 import { Skeleton } from '../../components/Skeleton';
-import Loader from '../../components/Loader';
-import { FadeInUp, StaggerContainer, StaggerItem } from '../../components/Animated';
+import {
+  PageHeader,
+  StatTile,
+  Card,
+  CardHeader,
+  CardBody,
+  CardDivider,
+  StatusBadge,
+  Button,
+  EmptyState,
+} from '../../components/ui';
 
 export default function Dashboard() {
   const user = useSelector((state) => state.auth.user);
@@ -23,7 +23,7 @@ export default function Dashboard() {
     totalMonthly: 0,
     pendingCount: 0,
     disputedCount: 0,
-    savingsDetected: 0
+    savingsDetected: 0,
   });
   const [recentInvoices, setRecentInvoices] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -60,220 +60,185 @@ export default function Dashboard() {
 
   if (loading) return <DashboardSkeleton />;
 
+  const firstName = (user?.name || 'there').split(' ')[0];
+
   return (
-    <div className="max-w-7xl mx-auto space-y-8 pb-12">
-      {/* Header */}
-      <FadeInUp className="flex flex-col md:flex-row md:items-end justify-between gap-4">
-        <div>
-          <h1 className="text-3xl font-extrabold text-gray-900 tracking-tight flex items-center gap-2">
-            Dashboard
-          </h1>
-          <p className="text-gray-500 mt-1 font-medium">
-            Welcome back, <span className="text-[#1B4332] font-bold">{user?.name || 'User'}</span>. Here is what's happening today.
-          </p>
-        </div>
-      </FadeInUp>
+    <div className="max-w-6xl mx-auto space-y-8">
+      <PageHeader
+        title={`Good to see you, ${firstName}`}
+        subtitle="Everything waiting on you today, in one place."
+      />
 
-      {/* KPI Widgets */}
-      <StaggerContainer className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-        <StaggerItem className="bg-white p-6 rounded-3xl border border-gray-200 shadow-sm hover:shadow-md transition-all group">
-          <div className="flex items-center justify-between mb-4">
-            <div className="p-3 bg-blue-50 rounded-2xl group-hover:bg-blue-600 transition-colors">
-              <Clock className="w-6 h-6 text-blue-600 group-hover:text-white" />
-            </div>
-            <span className="text-xs font-bold text-blue-600 bg-blue-50 px-2 py-1 rounded-full">{stats.pendingCount} ACTIVE</span>
-          </div>
-          <p className="text-gray-500 text-sm font-medium">Pending Review</p>
-          <p className="text-3xl font-black text-gray-900 mt-1">{stats.pendingCount}</p>
-        </StaggerItem>
+      {/* The numbers that matter. Big, quiet, scannable.
+          A money tile belongs here too, but dashboard-summary returns
+          savingsDetected: 0 by design — showing it would be a fake figure. */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-5">
+        <StatTile
+          label="Waiting for review"
+          value={stats.pendingCount}
+          tone={stats.pendingCount > 0 ? 'warn' : 'default'}
+          hint="Invoices nobody has checked yet"
+          onClick={() => navigate('/dashboard/invoices')}
+        />
+        <StatTile
+          label="Disputed"
+          value={stats.disputedCount}
+          tone={stats.disputedCount > 0 ? 'bad' : 'default'}
+          hint="Charges that don't match the agreed rate"
+          onClick={() => navigate('/dashboard/invoices')}
+        />
+        <StatTile
+          label="Processed this month"
+          value={stats.totalMonthly}
+          hint="Invoices received since the 1st"
+        />
+      </div>
 
-        <StaggerItem className="bg-white p-6 rounded-3xl border border-gray-200 shadow-sm hover:shadow-md transition-all group">
-          <div className="flex items-center justify-between mb-4">
-            <div className="p-3 bg-red-50 rounded-2xl group-hover:bg-red-600 transition-colors">
-              <AlertCircle className="w-6 h-6 text-red-600 group-hover:text-white" />
-            </div>
-          </div>
-          <p className="text-gray-500 text-sm font-medium">Disputed Invoices</p>
-          <p className="text-3xl font-black text-gray-900 mt-1">{stats.disputedCount}</p>
-        </StaggerItem>
-
-        <StaggerItem className="bg-white p-6 rounded-3xl border border-gray-200 shadow-sm hover:shadow-md transition-all group">
-          <div className="flex items-center justify-between mb-4">
-            <div className="p-3 bg-green-50 rounded-2xl group-hover:bg-green-600 transition-colors">
-              <FileCheck className="w-6 h-6 text-green-600 group-hover:text-white" />
-            </div>
-          </div>
-          <p className="text-gray-500 text-sm font-medium">Monthly Processed</p>
-          <p className="text-3xl font-black text-gray-900 mt-1">{stats.totalMonthly}</p>
-        </StaggerItem>
-      </StaggerContainer>
-
-      {/* Main Grid: Recent Invoices & Supplier Status */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-         {/* Recent Invoices */}
-         <div className="lg:col-span-2 bg-white rounded-3xl border border-gray-200 shadow-sm overflow-hidden flex flex-col">
-            <div className="p-6 border-b flex items-center justify-between">
-               <h3 className="text-xl font-bold text-gray-900">Recent Verification Activity</h3>
-               <button 
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
+        {/* Recent activity */}
+        <Card className="lg:col-span-2 overflow-hidden">
+          <CardHeader
+            title="Recent activity"
+            subtitle="The last five invoices to arrive"
+            action={
+              <Button
+                variant="ghost"
+                size="sm"
                 onClick={() => navigate('/dashboard/invoices')}
-                className="text-sm font-bold text-blue-600 hover:underline"
-               >
-                 View all
-               </button>
-            </div>
-            <div className="flex-1 overflow-y-auto">
-               <table className="w-full text-left">
-                  <thead className="bg-gray-50/50 text-[10px] font-bold text-gray-400 uppercase tracking-widest border-b">
-                     <tr>
-                        <th className="px-6 py-3">Invoice</th>
-                        <th className="px-6 py-3">Supplier</th>
-                        <th className="px-6 py-3">Amount</th>
-                        <th className="px-6 py-3">Status</th>
-                     </tr>
-                  </thead>
-                  <tbody className="divide-y">
-                     {recentInvoices.map(inv => (
-                        <tr 
-                          key={inv.id} 
-                          className="hover:bg-gray-50 transition-colors cursor-pointer group"
-                          onClick={() => navigate(`/dashboard/invoices/${inv.id}`)}
-                        >
-                           <td className="px-6 py-4">
-                              <p className="text-sm font-bold text-gray-900 group-hover:text-blue-600 transition-colors">{inv.invoiceNumber}</p>
-                              <p className="text-[10px] text-gray-400 uppercase font-medium">{new Date(inv.receivedAt).toLocaleDateString()}</p>
-                           </td>
-                           <td className="px-6 py-4">
-                              <p className="text-sm text-gray-700 font-medium">{inv.supplier?.name}</p>
-                           </td>
-                           <td className="px-6 py-4">
-                              <p className="text-sm font-bold text-gray-900">${Number(inv.totalAmount).toFixed(2)}</p>
-                           </td>
-                           <td className="px-6 py-4">
-                              <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[9px] font-black uppercase tracking-tighter shadow-sm border ${
-                                inv.status === 'VERIFIED' ? 'bg-green-100 text-green-800 border-green-200' :
-                                inv.status === 'DISPUTED' ? 'bg-red-100 text-red-800 border-red-200' :
-                                'bg-yellow-100 text-yellow-800 border-yellow-200'
-                              }`}>
-                                {inv.status}
-                              </span>
-                           </td>
-                        </tr>
-                     ))}
-                  </tbody>
-               </table>
-            </div>
-         </div>
+              >
+                View all
+                <ChevronRight size={15} />
+              </Button>
+            }
+          />
 
-         {/* Supplier Quick Links */}
-         <div className="bg-white rounded-3xl border border-gray-200 shadow-sm p-6 flex flex-col space-y-6">
-            <h3 className="text-xl font-bold text-gray-900">Management Links</h3>
-            
-            <div className="space-y-3">
-               {/* <button 
-                onClick={() => navigate('/dashboard/rates')}
-                className="w-full flex items-center justify-between p-4 rounded-2xl bg-gray-50 hover:bg-gray-100 transition-all group"
-               >
-                  <div className="flex items-center gap-3">
-                     <div className="p-2 bg-white rounded-xl shadow-sm border border-gray-100 group-hover:bg-blue-600 transition-colors">
-                        <TrendingUp className="w-5 h-5 text-blue-600 group-hover:text-white" />
-                     </div>
-                     <div className="text-left">
-                        <p className="text-sm font-bold text-gray-900">Negotiated Rates</p>
-                        <p className="text-xs text-gray-500">Update supplier pricing</p>
-                     </div>
+          {recentInvoices.length === 0 ? (
+            <>
+              <CardDivider />
+              <EmptyState
+                icon={Inbox}
+                title="Nothing has come in yet"
+                message="Invoices appear here as soon as they are received and read."
+              />
+            </>
+          ) : (
+            <div>
+              {recentInvoices.map((inv) => (
+                <button
+                  key={inv.id}
+                  onClick={() => navigate(`/dashboard/invoices/${inv.id}`)}
+                  className="w-full flex items-center gap-4 px-6 py-4 border-t border-line text-left hover:bg-brand/[0.04] transition-colors"
+                >
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[14.5px] font-semibold text-ink truncate">
+                      {inv.invoiceNumber || 'Untitled invoice'}
+                    </p>
+                    <p className="text-[13px] text-muted truncate">
+                      {inv.supplier?.name || 'Unknown supplier'}
+                      {inv.receivedAt &&
+                        ` · ${new Date(inv.receivedAt).toLocaleDateString('en-CA')}`}
+                    </p>
                   </div>
-                  <ChevronRight className="w-4 h-4 text-gray-300" />
-               </button> */}
+                  <p className="tabular text-[15px] font-semibold text-ink text-right min-w-[92px]">
+                    ${Number(inv.totalAmount || 0).toFixed(2)}
+                  </p>
+                  <StatusBadge status={inv.status} />
+                </button>
+              ))}
+            </div>
+          )}
+        </Card>
 
-               <button 
+        {/* Side column */}
+        <div className="space-y-6">
+          <Card>
+            <CardHeader title="Shortcuts" />
+            <CardBody className="space-y-2">
+              <button
                 onClick={() => navigate('/dashboard/supplier')}
-                className="w-full flex items-center justify-between p-4 rounded-2xl bg-gray-50 hover:bg-gray-100 transition-all group"
-               >
-                  <div className="flex items-center gap-3">
-                     <div className="p-2 bg-white rounded-xl shadow-sm border border-gray-100 group-hover:bg-indigo-600 transition-colors">
-                        <Users className="w-5 h-5 text-indigo-600 group-hover:text-white" />
-                     </div>
-                     <div className="text-left">
-                        <p className="text-sm font-bold text-gray-900">Manage Suppliers</p>
-                        <p className="text-xs text-gray-500">Directory & identifiers</p>
-                     </div>
-                  </div>
-                  <ChevronRight className="w-4 h-4 text-gray-300" />
-               </button>
-            </div>
+                className="w-full flex items-center gap-3 p-3.5 rounded-control border border-line hover:border-brand/40 hover:bg-brand/[0.04] transition-colors text-left"
+              >
+                <div className="w-9 h-9 rounded-control bg-brand/10 flex items-center justify-center flex-none">
+                  <Users size={17} className="text-brand" strokeWidth={1.75} />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-[13.5px] font-semibold text-ink">
+                    Manage suppliers
+                  </p>
+                  <p className="text-[12.5px] text-muted">
+                    Names, codes and contacts
+                  </p>
+                </div>
+                <ChevronRight size={16} className="text-muted flex-none" />
+              </button>
+            </CardBody>
+          </Card>
 
-            <div className="bg-blue-50/50 p-4 rounded-2xl border border-blue-100">
-               <p className="text-blue-900 font-bold text-sm mb-1 italic px-1">"Efficiency Tip"</p>
-               <p className="text-xs text-blue-700 leading-relaxed px-1">
-                 Ensure all Spruce orders are imported before verifying invoices tomaximize automated matching accuracy.
-               </p>
-            </div>
-         </div>
+          <Card className="bg-brand/[0.06] border-brand/20">
+            <CardBody className="pt-5">
+              <p className="text-[13.5px] font-semibold text-ink">
+                Import orders first
+              </p>
+              <p className="text-[13px] text-muted mt-1.5 leading-relaxed">
+                Bring in Spruce orders before you verify invoices. The system can
+                only match a charge against an order it already has.
+              </p>
+            </CardBody>
+          </Card>
+        </div>
       </div>
     </div>
   );
 }
+
 function DashboardSkeleton() {
   return (
-    <div className="max-w-7xl mx-auto space-y-8 pb-12">
-      <div className="flex flex-col gap-2">
-        <Skeleton variant="text" width="200px" height="32px" />
-        <Skeleton variant="text" width="300px" height="20px" />
+    <div className="max-w-6xl mx-auto space-y-8">
+      <div className="space-y-2">
+        <Skeleton variant="text" width="280px" height="34px" />
+        <Skeleton variant="text" width="320px" height="18px" />
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-5">
         {[...Array(3)].map((_, i) => (
-          <div key={i} className="bg-white p-6 rounded-3xl border border-gray-200 shadow-sm space-y-4">
-            <div className="flex items-center justify-between">
-              <Skeleton variant="rectangle" width="48px" height="48px" className="rounded-2xl" />
-              <Skeleton variant="rectangle" width="80px" height="24px" className="rounded-full" />
-            </div>
-            <div className="space-y-2">
-              <Skeleton variant="text" width="100px" height="14px" />
-              <Skeleton variant="text" width="60px" height="32px" />
-            </div>
-          </div>
+          <Card key={i} className="px-6 py-6 space-y-3">
+            <Skeleton variant="text" width="110px" height="14px" />
+            <Skeleton variant="text" width="80px" height="42px" />
+            <Skeleton variant="text" width="140px" height="13px" />
+          </Card>
         ))}
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        <div className="lg:col-span-2 bg-white rounded-3xl border border-gray-200 shadow-sm overflow-hidden">
-          <div className="p-6 border-b flex justify-between">
-            <Skeleton variant="text" width="250px" height="24px" />
-            <Skeleton variant="text" width="60px" height="16px" />
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
+        <Card className="lg:col-span-2 overflow-hidden">
+          <div className="px-6 pt-5 pb-4 space-y-2">
+            <Skeleton variant="text" width="160px" height="20px" />
+            <Skeleton variant="text" width="220px" height="14px" />
           </div>
-          <div className="p-6 space-y-4">
-            {[...Array(5)].map((_, i) => (
-              <div key={i} className="flex justify-between items-center py-2 border-b border-gray-50 last:border-0">
-                <div className="space-y-2">
-                  <Skeleton variant="text" width="120px" height="16px" />
-                  <Skeleton variant="text" width="80px" height="12px" />
-                </div>
-                <Skeleton variant="text" width="100px" height="16px" />
-                <Skeleton variant="text" width="80px" height="16px" />
-                <Skeleton variant="rectangle" width="70px" height="20px" className="rounded-full" />
+          {[...Array(5)].map((_, i) => (
+            <div
+              key={i}
+              className="flex items-center gap-4 px-6 py-4 border-t border-line"
+            >
+              <div className="flex-1 space-y-2">
+                <Skeleton variant="text" width="140px" height="15px" />
+                <Skeleton variant="text" width="180px" height="13px" />
               </div>
-            ))}
-          </div>
-        </div>
+              <Skeleton variant="text" width="80px" height="15px" />
+              <Skeleton variant="rectangle" width="86px" height="24px" className="rounded-full" />
+            </div>
+          ))}
+        </Card>
 
-        <div className="bg-white rounded-3xl border border-gray-200 shadow-sm p-6 space-y-6">
-          <Skeleton variant="text" width="180px" height="24px" />
-          <div className="space-y-4">
-            {[...Array(2)].map((_, i) => (
-              <div key={i} className="flex items-center justify-between p-4 rounded-2xl bg-gray-50">
-                <div className="flex items-center gap-3">
-                  <Skeleton variant="rectangle" width="40px" height="40px" className="rounded-xl" />
-                  <div className="space-y-2">
-                    <Skeleton variant="text" width="120px" height="16px" />
-                    <Skeleton variant="text" width="100px" height="12px" />
-                  </div>
-                </div>
-                <Skeleton variant="rectangle" width="16px" height="16px" />
-              </div>
-            ))}
-          </div>
-          <Skeleton variant="rectangle" height="100px" className="rounded-2xl" />
+        <div className="space-y-6">
+          <Card className="px-6 py-5 space-y-4">
+            <Skeleton variant="text" width="110px" height="20px" />
+            <Skeleton variant="rectangle" height="64px" className="rounded-control" />
+          </Card>
+          <Card className="px-6 py-5 space-y-2">
+            <Skeleton variant="text" width="150px" height="16px" />
+            <Skeleton variant="rectangle" height="52px" className="rounded-control" />
+          </Card>
         </div>
       </div>
     </div>

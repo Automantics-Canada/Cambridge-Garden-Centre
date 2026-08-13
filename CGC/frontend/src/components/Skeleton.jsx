@@ -10,7 +10,8 @@ export function Skeleton({
   height,
   animate = 'pulse' // 'pulse', 'wave', 'none'
 }) {
-  const baseStyles = "bg-gray-200 relative overflow-hidden";
+  // Token-based so the placeholder stays subtle in both light and dark.
+  const baseStyles = "bg-ink/[0.07] relative overflow-hidden";
   
   const variantStyles = {
     text: "rounded-md h-4 w-full mb-2",

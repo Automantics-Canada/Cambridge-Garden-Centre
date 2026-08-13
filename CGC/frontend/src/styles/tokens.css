@@ -1,0 +1,81 @@
+/* ==========================================================================
+   Cambridge Garden Centre — "Greenhouse" design tokens
+   --------------------------------------------------------------------------
+   Every colour, radius and shadow in the app comes from this file. Nothing
+   else should hard-code a hex value. Change a token here and the whole
+   interface follows.
+
+   Colours are stored as space-separated RGB channels so Tailwind can apply
+   opacity to them (e.g. `bg-brand/10`). The matching `--x-hex` values exist
+   for the few places raw CSS needs them.
+   ========================================================================== */
+
+:root {
+  /* -- surfaces -------------------------------------------------------- */
+  --c-canvas: 251 250 246;    /* #FBFAF6  page background, warm off-white   */
+  --c-surface: 255 255 255;   /* #FFFFFF  cards and panels                  */
+  --c-rail: 243 245 241;      /* #F3F5F1  sidebar — light, not dark         */
+  --c-line: 233 231 223;      /* #E9E7DF  hairline borders                  */
+
+  /* -- text ------------------------------------------------------------ */
+  --c-ink: 26 31 28;          /* #1A1F1C  primary text                      */
+  --c-muted: 107 117 111;     /* #6B756F  secondary text                    */
+  --c-rail-ink: 60 74 66;     /* #3C4A42  sidebar text                      */
+
+  /* -- accents --------------------------------------------------------- */
+  --c-brand: 45 106 79;       /* #2D6A4F  the CGC green                     */
+  --c-clay: 176 84 44;        /* #B0542C  problems: disputed, failed        */
+  --c-ochre: 201 154 62;      /* #C99A3E  attention: pending, waiting       */
+
+  /* -- shape ----------------------------------------------------------- */
+  --r-card: 20px;             /* panels and stat tiles                      */
+  --r-control: 12px;          /* inputs, buttons, small surfaces            */
+  --r-pill: 999px;            /* nav items, status chips                    */
+
+  /* -- elevation ------------------------------------------------------- */
+  /* Greenhouse leans on space and hairlines, not shadow. These are soft
+     on purpose — a card should sit on the page, not float above it.        */
+  --sh-card: 0 1px 2px rgb(26 31 28 / 0.04);
+  --sh-lift: 0 6px 20px rgb(26 31 28 / 0.07);
+}
+
+/* Dark theme. Two selectors on purpose:
+   - the media query covers the "System" setting, which stamps no attribute
+   - the attribute selector lets an explicit toggle win in both directions   */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --c-canvas: 18 20 15;     /* #12140F */
+    --c-surface: 26 29 23;    /* #1A1D17 */
+    --c-rail: 25 28 21;       /* #191C15 */
+    --c-line: 42 46 37;       /* #2A2E25 */
+
+    --c-ink: 237 239 231;     /* #EDEFE7 */
+    --c-muted: 154 162 148;   /* #9AA294 */
+    --c-rail-ink: 211 218 203;/* #D3DACB */
+
+    --c-brand: 111 180 141;   /* #6FB48D  lifted for contrast on dark    */
+    --c-clay: 217 127 78;     /* #D97F4E */
+    --c-ochre: 221 176 90;    /* #DDB05A */
+
+    --sh-card: 0 1px 2px rgb(0 0 0 / 0.4);
+    --sh-lift: 0 6px 20px rgb(0 0 0 / 0.5);
+  }
+}
+
+:root[data-theme="dark"] {
+  --c-canvas: 18 20 15;
+  --c-surface: 26 29 23;
+  --c-rail: 25 28 21;
+  --c-line: 42 46 37;
+
+  --c-ink: 237 239 231;
+  --c-muted: 154 162 148;
+  --c-rail-ink: 211 218 203;
+
+  --c-brand: 111 180 141;
+  --c-clay: 217 127 78;
+  --c-ochre: 221 176 90;
+
+  --sh-card: 0 1px 2px rgb(0 0 0 / 0.4);
+  --sh-lift: 0 6px 20px rgb(0 0 0 / 0.5);
+}
