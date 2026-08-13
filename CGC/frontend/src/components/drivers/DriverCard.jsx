@@ -5,6 +5,7 @@ import { Badge, Button, Card, StatusBadge } from '../ui';
 
 export default function DriverCard({ driver, onEdit, onDelete }) {
   const { name, phone, email, ratePerTrip, type, stats, currentTask } = driver;
+  const isActive = driver.active !== false;
 
   const initials = name.split(' ').map(n => n[0]).join('').toUpperCase();
 
@@ -28,7 +29,9 @@ export default function DriverCard({ driver, onEdit, onDelete }) {
                   {' · '}${ratePerTrip}/trip
                 </p>
                 <div className="mt-1.5">
-                  <Badge tone="good">Active</Badge>
+                  <Badge tone={isActive ? 'good' : 'neutral'}>
+                    {isActive ? 'Active' : 'Inactive'}
+                  </Badge>
                 </div>
               </div>
             </div>
