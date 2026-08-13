@@ -166,7 +166,7 @@ export default function InvoiceDetailPage() {
                 onClick={() => setShowReopenDialog(true)}
                 className="px-4 py-2 text-sm font-medium text-ink bg-surface border border-line rounded-pill hover:bg-ink/[0.03] flex items-center gap-2 transition-all"
               >
-                {/* <History className="w-4 h-4" /> Reopen */}
+                <History className="w-4 h-4" /> Reopen
               </button>
             )}
           </div>
