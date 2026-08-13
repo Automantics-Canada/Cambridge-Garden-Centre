@@ -247,7 +247,7 @@ export default function RatesPage() {
       </Card>
 
       {isModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm transition-all">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-scrim/50 backdrop-blur-sm transition-all">
           <div className="bg-surface rounded-card shadow-lift border border-line w-full max-w-lg overflow-hidden animate-in fade-in zoom-in duration-150">
             <div className="px-6 py-4 border-b border-line flex justify-between items-center">
               <h3 className="text-lg font-bold text-ink">{editingRate ? 'Edit negotiated rate' : 'Add negotiated rate'}</h3>

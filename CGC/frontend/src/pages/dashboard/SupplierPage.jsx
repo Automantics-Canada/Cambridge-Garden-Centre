@@ -369,7 +369,7 @@ export default function SupplierPage() {
 
       <AnimatePresence>
         {deleteConfirm && (
-          <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center">
+          <div className="fixed inset-0 bg-scrim/50 z-50 flex items-center justify-center">
             <Motion.div
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
@@ -410,7 +410,7 @@ export default function SupplierPage() {
 
       <AnimatePresence>
         {rateDeleteConfirm && (
-          <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center">
+          <div className="fixed inset-0 bg-scrim/50 z-50 flex items-center justify-center">
             <Motion.div
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}

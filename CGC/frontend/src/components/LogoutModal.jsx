@@ -15,7 +15,7 @@ export default function LogoutModal({ isOpen, onClose, onConfirm }) {
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             onClick={onClose}
-            className="fixed inset-0 bg-black/50 backdrop-blur-xs"
+            className="fixed inset-0 bg-scrim/50 backdrop-blur-xs"
           />
 
           <motion.div

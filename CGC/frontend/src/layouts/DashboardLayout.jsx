@@ -110,7 +110,7 @@ export default function DashboardLayout() {
       <nav className="flex-1 overflow-y-auto custom-scrollbar px-3 pb-4 space-y-6">
         {NAV_GROUPS.map((group) => (
           <div key={group.title}>
-            <p className="px-4 pb-2 text-[10.5px] font-semibold uppercase tracking-[0.09em] text-muted/80">
+            <p className="px-4 pb-2 text-[12.5px] font-semibold text-muted/80">
               {group.title}
             </p>
             <div className="space-y-1">
@@ -131,7 +131,7 @@ export default function DashboardLayout() {
           <p className="text-[13px] font-semibold text-ink truncate">
             {user?.name || 'User'}
           </p>
-          <p className="text-[11.5px] text-muted truncate">
+          <p className="text-[12.5px] text-muted truncate">
             {user?.role?.replace(/_/g, ' ').toLowerCase() || 'staff'}
           </p>
         </div>
@@ -162,7 +162,7 @@ export default function DashboardLayout() {
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               onClick={closeDrawer}
-              className="fixed inset-0 z-40 bg-ink/40 lg:hidden"
+              className="fixed inset-0 z-40 bg-scrim/50 lg:hidden"
             />
             <motion.aside
               initial={{ x: -280 }}

@@ -130,7 +130,7 @@ export default function DriversPage() {
       )}
 
       {deletingDriver && (
-        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/40 backdrop-blur-[2px] transition-all">
+        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-scrim/50 backdrop-blur-[2px] transition-all">
           <div className="bg-surface rounded-card w-full max-w-md overflow-hidden shadow-lift p-6 space-y-6 animate-in fade-in zoom-in duration-200 border border-line">
             <div className="flex flex-col items-center text-center space-y-3">
               <div className="w-12 h-12 rounded-pill bg-clay/14 text-clay flex items-center justify-center">

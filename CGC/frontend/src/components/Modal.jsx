@@ -11,7 +11,7 @@ export default function Modal({ isOpen, onClose, title, children }) {
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             onClick={onClose}
-            className="fixed inset-0 bg-black/50 z-40"
+            className="fixed inset-0 bg-scrim/50 z-40"
           />
 
           <motion.div

@@ -428,7 +428,7 @@ export default function InvoiceDetailPage() {
       </div>
 
       {showReopenDialog && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm transition-all">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-scrim/50 backdrop-blur-sm transition-all">
           <div className="bg-surface rounded-card p-6 shadow-lift border border-line w-full max-w-md animate-in fade-in zoom-in duration-200">
             <h3 className="text-lg font-bold text-ink mb-2">Reopen invoice?</h3>
             <p className="text-sm text-muted mb-4">This will unlock the invoice for further changes and record your reason in the audit trail.</p>

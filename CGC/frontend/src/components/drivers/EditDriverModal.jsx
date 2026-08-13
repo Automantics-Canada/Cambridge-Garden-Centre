@@ -78,7 +78,7 @@ export default function EditDriverModal({ isOpen, onClose, onSuccess, driver }) 
   if (!isOpen || !driver) return null;
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 backdrop-blur-[2px] transition-all">
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-scrim/50 backdrop-blur-[2px] transition-all">
       <div className="bg-surface rounded-card w-full max-w-md overflow-hidden shadow-lift border border-line animate-in fade-in zoom-in duration-200">
         <div className="flex justify-between items-center p-6 border-b border-line">
           <h2 className="text-xl font-bold text-ink">Edit driver</h2>
