@@ -23,6 +23,8 @@ export default {
         // Use these for text sitting on a filled brand/clay background.
         'on-brand': 'rgb(var(--c-on-brand) / <alpha-value>)',
         'on-clay': 'rgb(var(--c-on-clay) / <alpha-value>)',
+        // Backdrop for modals and photo plates. Dark in both themes.
+        scrim: 'rgb(var(--c-scrim) / <alpha-value>)',
       },
       borderRadius: {
         card: 'var(--r-card)',
@@ -32,6 +34,7 @@ export default {
       boxShadow: {
         card: 'var(--sh-card)',
         lift: 'var(--sh-lift)',
+        overlay: 'var(--sh-overlay)',
       },
       fontFamily: {
         // Outfit is the rounded geometric face that gives direction C its
