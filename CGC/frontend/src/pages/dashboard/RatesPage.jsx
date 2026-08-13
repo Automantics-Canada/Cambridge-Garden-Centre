@@ -186,7 +186,7 @@ export default function RatesPage() {
         </div>
         <div className="bg-surface px-3 py-1.5 rounded-pill border border-line text-[13px] font-semibold text-muted flex items-center gap-2">
           <Check className="w-3 h-3 text-brand" />
-          <span className="tabular">{rates.length}</span> rates
+          <span className="tabular">{filteredRates.length}</span> rates
         </div>
       </div>
 
