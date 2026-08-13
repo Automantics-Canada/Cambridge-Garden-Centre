@@ -94,7 +94,7 @@ export default function DashboardLayout() {
           <p className="text-[15px] font-bold text-rail-ink leading-tight">
             Cambridge
           </p>
-          <p className="text-[11px] text-muted leading-tight">Garden Centre</p>
+          <p className="text-[12.5px] text-muted leading-tight">Garden Centre</p>
         </div>
         <button
           type="button"
