@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { X, Eye, EyeOff, Copy, Check, ShieldCheck } from 'lucide-react';
 import api from '../../api/axios';
+import { Button, Field, Input, Select } from '../ui';
 
 export default function AddDriverModal({ isOpen, onClose, onSuccess }) {
   const [formData, setFormData] = useState({
@@ -31,14 +32,14 @@ export default function AddDriverModal({ isOpen, onClose, onSuccess }) {
       setLoading(false);
       return;
     }
-    
+
     try {
       const payload = { ...formData };
       if (payload.type !== 'INDEPENDENT') {
         payload.companyName = undefined;
       }
       await api.post('/api/drivers', payload);
-      
+
       // Save created details to display on success screen
       setCreatedDriver({
         name: formData.name,
@@ -66,141 +67,138 @@ export default function AddDriverModal({ isOpen, onClose, onSuccess }) {
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 backdrop-blur-[2px] transition-all">
-      <div className="bg-white rounded-2xl w-full max-w-md overflow-hidden shadow-2xl animate-in fade-in zoom-in duration-200">
-        
+      <div className="bg-surface rounded-card w-full max-w-md overflow-hidden shadow-lift border border-line animate-in fade-in zoom-in duration-200">
+
         {createdDriver ? (
-          // Success Screen
           <div className="p-6 text-center space-y-6 animate-in fade-in duration-300">
-            <div className="mx-auto w-16 h-16 bg-green-50 text-[#2D6A4F] rounded-full flex items-center justify-center">
+            <div className="mx-auto w-16 h-16 bg-brand/10 text-brand rounded-pill flex items-center justify-center">
               <ShieldCheck size={36} />
             </div>
-            
+
             <div className="space-y-2">
-              <h2 className="text-2xl font-bold text-gray-900">Driver Created Successfully!</h2>
-              <p className="text-sm text-gray-500">
-                Please make sure to save or share these login details before closing.
+              <h2 className="text-2xl font-bold text-ink">Driver created</h2>
+              <p className="text-sm text-muted">
+                Save or share these login details before closing.
               </p>
             </div>
 
-            <div className="bg-gray-50 border border-gray-100 rounded-2xl p-4 text-left space-y-3.5 shadow-inner">
+            <div className="bg-ink/[0.03] border border-line rounded-card p-4 text-left space-y-3.5">
               <div>
-                <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block">Full Name</span>
-                <span className="text-sm font-semibold text-gray-900">{createdDriver.name}</span>
+                <span className="text-[12.5px] font-medium text-muted block">Full name</span>
+                <span className="text-sm font-semibold text-ink">{createdDriver.name}</span>
               </div>
               <div>
-                <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block">Phone Number</span>
-                <span className="text-sm font-semibold text-gray-900">{createdDriver.phone}</span>
+                <span className="text-[12.5px] font-medium text-muted block">Phone number</span>
+                <span className="tabular text-sm font-semibold text-ink">{createdDriver.phone}</span>
               </div>
               {createdDriver.email ? (
                 <>
                   <div>
-                    <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block">Username / Email</span>
-                    <span className="text-sm font-semibold text-gray-900">{createdDriver.email}</span>
+                    <span className="text-[12.5px] font-medium text-muted block">Username / email</span>
+                    <span className="text-sm font-semibold text-ink">{createdDriver.email}</span>
                   </div>
                   <div>
-                    <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block">Password</span>
-                    <span className="text-sm font-bold text-gray-900 bg-gray-200/60 px-2.5 py-1 rounded-md font-mono inline-block">
+                    <span className="text-[12.5px] font-medium text-muted block">Password</span>
+                    <span className="text-sm font-semibold text-ink bg-ink/[0.06] px-2.5 py-1 rounded-control font-mono inline-block">
                       {createdDriver.password}
                     </span>
                   </div>
                 </>
               ) : (
-                <div className="text-xs text-amber-600 bg-amber-50/50 border border-amber-100 p-2.5 rounded-lg font-medium">
+                <div className="text-[13px] text-ink bg-ochre/15 border border-ochre/30 p-2.5 rounded-control">
                   No portal credentials created because no email was provided.
                 </div>
               )}
             </div>
 
             <div className="flex gap-3 pt-2">
-              <button
+              <Button
                 type="button"
                 onClick={handleCopy}
-                className="flex-1 flex items-center justify-center gap-2 border border-gray-200 text-gray-700 py-3 rounded-xl font-bold hover:bg-gray-50 transition-colors"
+                className="flex-1"
               >
                 {copied ? (
                   <>
-                    <Check size={16} className="text-green-600" />
-                    <span className="text-green-600">Copied!</span>
+                    <Check size={16} className="text-brand" />
+                    <span className="text-brand">Copied</span>
                   </>
                 ) : (
                   <>
                     <Copy size={16} />
-                    <span>Copy Info</span>
+                    <span>Copy info</span>
                   </>
                 )}
-              </button>
-              <button
+              </Button>
+              <Button
                 type="button"
+                variant="primary"
                 onClick={onClose}
-                className="flex-1 py-3 rounded-xl bg-[#2D6A4F] text-white font-bold hover:bg-[#1B4332] transition-colors shadow-lg shadow-[#2D6A4F]/20"
+                className="flex-1"
               >
                 Close
-              </button>
+              </Button>
             </div>
           </div>
         ) : (
-          // Form Screen
           <>
-            <div className="flex justify-between items-center p-6 border-b border-gray-100 bg-gray-50/50">
-              <h2 className="text-xl font-bold text-gray-900">Add New Driver</h2>
-              <button onClick={onClose} className="text-gray-400 hover:text-gray-600 transition-colors p-1 hover:bg-gray-100 rounded-full">
+            <div className="flex justify-between items-center p-6 border-b border-line">
+              <h2 className="text-xl font-bold text-ink">Add a driver</h2>
+              <button onClick={onClose} className="text-muted hover:text-ink transition-colors p-1 hover:bg-ink/[0.05] rounded-pill">
                 <X size={20} />
               </button>
             </div>
 
             <form onSubmit={handleSubmit} className="p-6 space-y-5 h-[70vh] overflow-y-auto">
               {error && (
-                <div className="bg-red-50 border border-red-100 text-red-600 p-3 rounded-xl text-sm font-medium">
+                <div className="bg-clay/14 border border-clay/30 text-clay p-3 rounded-control text-sm font-medium">
                   {error}
                 </div>
               )}
-              
-              <div className="space-y-1.5">
-                <label className="text-xs font-bold text-gray-500 uppercase tracking-wider ml-1">Full Name</label>
-                <input
+
+              <Field label="Full name" htmlFor="add-driver-name">
+                <Input
+                  id="add-driver-name"
                   type="text"
                   required
-                  className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-[#2D6A4F] focus:ring-4 focus:ring-[#2D6A4F]/10 outline-none transition-all placeholder:text-gray-300"
                   placeholder="e.g. Dave Mitchell"
                   value={formData.name}
                   onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                 />
-              </div>
+              </Field>
 
-              <div className="space-y-1.5">
-                <label className="text-xs font-bold text-gray-500 uppercase tracking-wider ml-1">Phone Number (10 Digits)</label>
-                <input
+              <Field label="Phone number (10 digits)" htmlFor="add-driver-phone">
+                <Input
+                  id="add-driver-phone"
                   type="tel"
                   required
-                  className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-[#2D6A4F] focus:ring-4 focus:ring-[#2D6A4F]/10 outline-none transition-all placeholder:text-gray-300"
                   placeholder="e.g. 5551234567"
                   value={formData.phone}
                   onChange={(e) => {
                     const val = e.target.value.replace(/\D/g, '');
                     setFormData({ ...formData, phone: val });
                   }}
+                  className="tabular"
                 />
-              </div>
+              </Field>
 
-              <div className="space-y-1.5">
-                <label className="text-xs font-bold text-gray-500 uppercase tracking-wider ml-1">Email</label>
-                <input
+              <Field label="Email" htmlFor="add-driver-email">
+                <Input
+                  id="add-driver-email"
                   type="email"
-                  className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-[#2D6A4F] focus:ring-4 focus:ring-[#2D6A4F]/10 outline-none transition-all placeholder:text-gray-300"
                   placeholder="e.g. dave@example.com"
                   value={formData.email}
                   onChange={(e) => setFormData({ ...formData, email: e.target.value })}
                 />
-              </div>
+              </Field>
 
               {formData.email && (
-                <div className="space-y-1.5 animate-in fade-in slide-in-from-top-2 duration-200">
-                  <label className="text-xs font-bold text-gray-500 uppercase tracking-wider ml-1">Password</label>
+                <Field label="Password" htmlFor="add-driver-password">
                   <div className="relative">
-                    <input
-                      type={showPassword ? "text" : "password"}
+                    <Input
+                      id="add-driver-password"
+                      type={showPassword ? 'text' : 'password'}
                       required={!!formData.email}
-                      className="w-full pl-4 pr-10 py-3 rounded-xl border border-gray-200 focus:border-[#2D6A4F] focus:ring-4 focus:ring-[#2D6A4F]/10 outline-none transition-all placeholder:text-gray-300"
+                      className="pr-10"
                       placeholder="Set credentials password"
                       value={formData.password}
                       onChange={(e) => setFormData({ ...formData, password: e.target.value })}
@@ -208,70 +206,69 @@ export default function AddDriverModal({ isOpen, onClose, onSuccess }) {
                     <button
                       type="button"
                       onClick={() => setShowPassword(!showPassword)}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 focus:outline-none"
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-muted hover:text-ink focus:outline-none"
                     >
                       {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
                     </button>
                   </div>
-                </div>
+                </Field>
               )}
 
-              <div className="space-y-1.5">
-                <label className="text-xs font-bold text-gray-500 uppercase tracking-wider ml-1">Driver Type</label>
-                <select
-                  className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-[#2D6A4F] focus:ring-4 focus:ring-[#2D6A4F]/10 outline-none transition-all bg-white"
+              <Field label="Driver type" htmlFor="add-driver-type">
+                <Select
+                  id="add-driver-type"
                   value={formData.type}
                   onChange={(e) => setFormData({ ...formData, type: e.target.value })}
                 >
                   <option value="CGC_FLEET">CGC Fleet</option>
                   <option value="INDEPENDENT">Independent</option>
-                </select>
-              </div>
+                </Select>
+              </Field>
 
               {formData.type === 'INDEPENDENT' && (
-                <div className="space-y-1.5 animate-in fade-in slide-in-from-top-2 duration-200">
-                  <label className="text-xs font-bold text-gray-500 uppercase tracking-wider ml-1">Company Name</label>
-                  <input
+                <Field label="Company name" htmlFor="add-driver-company">
+                  <Input
+                    id="add-driver-company"
                     type="text"
-                    className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-[#2D6A4F] focus:ring-4 focus:ring-[#2D6A4F]/10 outline-none transition-all placeholder:text-gray-300"
                     placeholder="e.g. Mitchell Trucking"
                     value={formData.companyName}
                     onChange={(e) => setFormData({ ...formData, companyName: e.target.value })}
                   />
-                </div>
+                </Field>
               )}
 
-              <div className="space-y-1.5">
-                <label className="text-xs font-bold text-gray-500 uppercase tracking-wider ml-1">Rate per Trip ($)</label>
+              <Field label="Rate per trip ($)" htmlFor="add-driver-rate">
                 <div className="relative">
-                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 font-medium">$</span>
-                  <input
+                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-muted font-medium">$</span>
+                  <Input
+                    id="add-driver-rate"
                     type="number"
                     step="0.01"
                     required
-                    className="w-full pl-8 pr-4 py-3 rounded-xl border border-gray-200 focus:border-[#2D6A4F] focus:ring-4 focus:ring-[#2D6A4F]/10 outline-none transition-all placeholder:text-gray-300"
+                    className="pl-8 tabular"
                     placeholder="0.00"
                     value={formData.ratePerTrip}
                     onChange={(e) => setFormData({ ...formData, ratePerTrip: e.target.value })}
                   />
                 </div>
-              </div>
+              </Field>
 
               <div className="pt-4 flex gap-3">
-                <button
+                <Button
                   type="button"
                   onClick={onClose}
-                  className="flex-1 px-4 py-3 rounded-xl border border-gray-200 text-gray-700 font-bold hover:bg-gray-50 transition-colors"
+                  className="flex-1"
                 >
                   Cancel
-                </button>
-                <button
+                </Button>
+                <Button
                   type="submit"
+                  variant="primary"
                   disabled={loading}
-                  className="flex-1 px-4 py-3 rounded-xl bg-[#2D6A4F] text-white font-bold hover:bg-[#1B4332] transition-colors shadow-lg shadow-[#2D6A4F]/20 disabled:opacity-50"
+                  className="flex-1"
                 >
-                  {loading ? 'Adding...' : 'Add Driver'}
-                </button>
+                  {loading ? 'Adding...' : 'Add driver'}
+                </Button>
               </div>
             </form>
           </>

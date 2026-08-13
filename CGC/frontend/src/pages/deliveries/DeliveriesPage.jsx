@@ -7,7 +7,7 @@ import { DeliveryTableSkeleton } from '../../components/Skeleton';
 import { FadeInUp, StaggerContainer, StaggerItem } from '../../components/Animated';
 import { Reorder, motion, AnimatePresence } from 'framer-motion';
 import { toast } from 'react-hot-toast';
-import StatusBadge from '../../components/deliveries/StatusBadge';
+import { StatusBadge } from '../../components/ui';
 import StatusTimeline from '../../components/deliveries/StatusTimeline';
 
 export default function DeliveriesPage() {

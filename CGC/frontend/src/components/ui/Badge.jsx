@@ -34,17 +34,28 @@ const STATUS_MAP = {
   MATCHED: { tone: 'good', label: 'Matched' },
   DELIVERED: { tone: 'good', label: 'Delivered' },
   COMPLETED: { tone: 'good', label: 'Completed' },
+  LINKED: { tone: 'good', label: 'Linked' },
 
   PENDING_REVIEW: { tone: 'warn', label: 'Pending review' },
   PENDING: { tone: 'warn', label: 'Pending' },
   IN_TRANSIT: { tone: 'warn', label: 'In transit' },
   PROCESSING: { tone: 'warn', label: 'Processing' },
   ASSIGNED: { tone: 'warn', label: 'Assigned' },
+  UNLINKED: { tone: 'warn', label: 'Unlinked' },
+  UNASSIGNED: { tone: 'warn', label: 'Unassigned' },
+  RATE_UNKNOWN: { tone: 'warn', label: 'Rate unknown' },
+  NO_TICKET: { tone: 'warn', label: 'No ticket' },
+  NO_ORDER: { tone: 'warn', label: 'No order' },
 
   DISPUTED: { tone: 'bad', label: 'Disputed' },
   FAILED: { tone: 'bad', label: 'Failed' },
   REJECTED: { tone: 'bad', label: 'Rejected' },
   CANCELLED: { tone: 'bad', label: 'Cancelled' },
+  RATE_MISMATCH: { tone: 'bad', label: 'Rate mismatch' },
+  QTY_MISMATCH: { tone: 'bad', label: 'Qty mismatch' },
+  MULTIPLE_FLAGS: { tone: 'bad', label: 'Multiple flags' },
+
+  PLACED: { tone: 'neutral', label: 'Placed' },
 };
 
 /** Turns `PENDING_REVIEW` into a readable, correctly coloured chip. */
