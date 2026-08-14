@@ -15,6 +15,45 @@ import {
   AuditActionType,
 } from '@prisma/client';
 
+/**
+ * Field projections for relations serialized straight back to the client.
+ *
+ * `include: { x: true }` returns every scalar on `x`. On `User` that includes
+ * `passwordHash`; on `Driver` it includes `ratePerDelivery` / `ratePerTrip`
+ * and personal contact details. Neither belongs in an invoice response, so
+ * every user- or driver-facing include below goes through these projections.
+ *
+ * Only widen these if the UI genuinely needs the field.
+ */
+export const VERIFIED_BY_PUBLIC_FIELDS = { id: true, name: true } as const;
+export const DRIVER_PUBLIC_FIELDS = { id: true, name: true } as const;
+
+/** Relations returned by `getInvoices`. Exported so the projection is testable. */
+export const INVOICE_LIST_INCLUDE = {
+  supplier: true,
+  lineItems: true,
+  verifiedBy: { select: VERIFIED_BY_PUBLIC_FIELDS },
+} as const;
+
+/** Relations returned by `getInvoiceById`. Exported so the projection is testable. */
+export const INVOICE_DETAIL_INCLUDE = {
+  supplier: true,
+  lineItems: {
+    include: {
+      matchedOrder: {
+        include: {
+          deliveries: {
+            include: { driver: { select: DRIVER_PUBLIC_FIELDS } },
+          },
+        },
+      },
+      matchedTickets: true,
+    },
+  },
+  verifiedBy: { select: VERIFIED_BY_PUBLIC_FIELDS },
+  ocrJobs: { orderBy: { startedAt: 'desc' } },
+} as const;
+
 
 
 /**
@@ -323,30 +362,14 @@ export const InvoiceService = {
         { receivedAt: 'desc' },
         { invoiceDate: 'desc' },
       ],
-      include: {
-        supplier: true,
-        lineItems: true,
-        verifiedBy: true,
-      },
+      include: INVOICE_LIST_INCLUDE,
     });
   },
 
   async getInvoiceById(id: string) {
     return prisma.invoice.findUnique({
       where: { id },
-      include: {
-        supplier: true,
-        lineItems: {
-          include: { 
-            matchedOrder: {
-              include: { deliveries: { include: { driver: true } } }
-            }, 
-            matchedTickets: true 
-          }
-        },
-        verifiedBy: true,
-        ocrJobs: { orderBy: { startedAt: 'desc' } },
-      },
+      include: INVOICE_DETAIL_INCLUDE,
     });
   },
 
