@@ -28,12 +28,132 @@ import {
 export const VERIFIED_BY_PUBLIC_FIELDS = { id: true, name: true } as const;
 export const DRIVER_PUBLIC_FIELDS = { id: true, name: true } as const;
 
-/** Relations returned by `getInvoices`. Exported so the projection is testable. */
-export const INVOICE_LIST_INCLUDE = {
-  supplier: true,
-  lineItems: true,
+/**
+ * Projection returned by `getInvoices`. Exported so the shape is testable.
+ *
+ * This used to be `include: { supplier: true, lineItems: true, ... }`, which
+ * shipped every column of every line item of every invoice to a list screen
+ * that only renders a count and a flagged badge. The two `_count` aggregates
+ * below replace the whole line-item array with two integers; the full graph is
+ * still available from `getInvoiceById` once the user opens a row.
+ */
+export const INVOICE_LIST_SELECT = {
+  id: true,
+  invoiceNumber: true,
+  senderType: true,
+  supplierId: true,
+  invoiceDate: true,
+  totalAmount: true,
+  currency: true,
+  status: true,
+  receivedAt: true,
+  emailFrom: true,
+  verifiedAt: true,
+  supplier: { select: { id: true, name: true } },
   verifiedBy: { select: VERIFIED_BY_PUBLIC_FIELDS },
+  // Total line count comes from the aggregate; the flagged rows are fetched as
+  // bare ids because a filtered `_count` cannot coexist with an unfiltered one
+  // on the same relation. Both collapse to integers in `toInvoiceListRow`.
+  _count: { select: { lineItems: true } },
+  lineItems: {
+    where: { flag: { not: LineItemFlag.OK } },
+    select: { id: true },
+  },
 } as const;
+
+export const DEFAULT_INVOICE_PAGE_SIZE = 25;
+/** Ceiling on `?limit=`, so one caller cannot ask for the whole ledger again. */
+export const MAX_INVOICE_PAGE_SIZE = 100;
+
+// `exactOptionalPropertyTypes` is on, and the controller builds this object by
+// spreading parsed query params — so each field must accept an explicit
+// undefined rather than merely being absent.
+export interface InvoiceListFilters {
+  page?: number | undefined;
+  limit?: number | undefined;
+  status?: InvoiceStatus | undefined;
+  supplierId?: string | undefined;
+  senderType?: SenderType | undefined;
+  search?: string | undefined;
+  flaggedOnly?: boolean | undefined;
+  startDate?: Date | undefined;
+  endDate?: Date | undefined;
+}
+
+/**
+ * Clamped page/limit.
+ *
+ * `limit` has a hard ceiling so no caller — including a stale frontend still
+ * asking for `limit=1000` — can turn the list endpoint back into a full-ledger
+ * download.
+ */
+export function resolveInvoicePaging(filters: InvoiceListFilters = {}) {
+  const page = Math.max(1, Math.trunc(Number(filters.page) || 1));
+  const requested = Math.trunc(Number(filters.limit) || DEFAULT_INVOICE_PAGE_SIZE);
+  const limit = Math.min(MAX_INVOICE_PAGE_SIZE, Math.max(1, requested));
+  return { page, limit, skip: (page - 1) * limit };
+}
+
+/**
+ * Shared predicate for the list and its count.
+ *
+ * Both call sites use this one builder; if they drifted apart the reported
+ * total would disagree with the rows returned — the same property
+ * `buildTicketWhere` protects on the tickets endpoint.
+ */
+export function buildInvoiceWhere(filters: InvoiceListFilters = {}): Record<string, any> {
+  const where: Record<string, any> = {};
+  if (filters.status) where.status = filters.status;
+  if (filters.supplierId) where.supplierId = filters.supplierId;
+  if (filters.senderType) where.senderType = filters.senderType;
+  if (filters.flaggedOnly) {
+    where.lineItems = { some: { flag: { not: LineItemFlag.OK } } };
+  }
+  if (filters.startDate || filters.endDate) {
+    const invoiceDate: Record<string, Date> = {};
+    if (filters.startDate) invoiceDate.gte = filters.startDate;
+    if (filters.endDate) invoiceDate.lte = filters.endDate;
+    where.invoiceDate = invoiceDate;
+  }
+  const search = filters.search?.trim();
+  if (search) {
+    where.OR = [
+      { invoiceNumber: { contains: search, mode: 'insensitive' } },
+      { emailFrom: { contains: search, mode: 'insensitive' } },
+      { supplier: { is: { name: { contains: search, mode: 'insensitive' } } } },
+    ];
+  }
+  return where;
+}
+
+/** Row shape the invoice list screens actually render. */
+export interface InvoiceListRow {
+  id: string;
+  invoiceNumber: string;
+  senderType: SenderType;
+  supplierId: string;
+  invoiceDate: Date;
+  totalAmount: unknown;
+  currency: string;
+  status: InvoiceStatus;
+  receivedAt: Date;
+  emailFrom: string;
+  verifiedAt: Date | null;
+  supplier: { id: string; name: string } | null;
+  verifiedBy: { id: string; name: string } | null;
+  lineItemCount: number;
+  flaggedCount: number;
+}
+
+/** Collapses the two line-item aggregates into plain counters. */
+export function toInvoiceListRow(row: any): InvoiceListRow {
+  const { _count, lineItems, ...rest } = row;
+  return {
+    ...rest,
+    lineItemCount: _count?.lineItems ?? 0,
+    flaggedCount: Array.isArray(lineItems) ? lineItems.length : 0,
+  };
+}
 
 /** Minimal invoice fields rendered by the Dashboard's five recent rows. */
 export const DASHBOARD_INVOICE_SELECT = {
@@ -367,15 +487,41 @@ export const InvoiceService = {
     }
   },
 
-  async getInvoices(filters?: { status?: InvoiceStatus; supplierId?: string }) {
-    return prisma.invoice.findMany({
-      where: filters || {},
-      orderBy: [
-        { receivedAt: 'desc' },
-        { invoiceDate: 'desc' },
-      ],
-      include: INVOICE_LIST_INCLUDE,
-    });
+  /**
+   * Paginated, server-filtered invoice list.
+   *
+   * Every list screen previously pulled the entire ledger and filtered/paged in
+   * the browser. Filtering and paging now happen in Postgres against the
+   * `[status, receivedAt desc]` index, so the response is bounded by `limit`
+   * regardless of how many invoices exist.
+   */
+  async getInvoices(filters: InvoiceListFilters = {}) {
+    const { page, limit, skip } = resolveInvoicePaging(filters);
+    const where = buildInvoiceWhere(filters);
+
+    const [rows, totalCount] = await Promise.all([
+      prisma.invoice.findMany({
+        where,
+        orderBy: [
+          { receivedAt: 'desc' },
+          { invoiceDate: 'desc' },
+        ],
+        skip,
+        take: limit,
+        select: INVOICE_LIST_SELECT,
+      }),
+      prisma.invoice.count({ where }),
+    ]);
+
+    return {
+      data: rows.map(toInvoiceListRow),
+      pagination: {
+        page,
+        limit,
+        totalCount,
+        totalPages: Math.max(1, Math.ceil(totalCount / limit)),
+      },
+    };
   },
 
   async getDashboardSummary() {

@@ -17,9 +17,10 @@ import { describe, it } from 'node:test';
 import {
   VERIFIED_BY_PUBLIC_FIELDS,
   DRIVER_PUBLIC_FIELDS,
-  INVOICE_LIST_INCLUDE,
+  INVOICE_LIST_SELECT,
   INVOICE_DETAIL_INCLUDE,
   DASHBOARD_INVOICE_SELECT,
+  toInvoiceListRow,
 } from '../src/modules/invoices/invoice.service.js';
 
 /** Every scalar on `User` that must never reach a client. */
@@ -84,11 +85,42 @@ describe('invoice response projections', () => {
 
   it('projects verifiedBy on the list query', () => {
     assert.notEqual(
-      (INVOICE_LIST_INCLUDE as Record<string, unknown>).verifiedBy,
+      (INVOICE_LIST_SELECT as Record<string, unknown>).verifiedBy,
       true,
       'verifiedBy: true re-introduces the passwordHash leak'
     );
-    assert.deepEqual(INVOICE_LIST_INCLUDE.verifiedBy.select, VERIFIED_BY_PUBLIC_FIELDS);
+    assert.deepEqual(INVOICE_LIST_SELECT.verifiedBy.select, VERIFIED_BY_PUBLIC_FIELDS);
+  });
+
+  it('keeps the list rows off the full line-item graph', () => {
+    // The list screens render a count and a flagged badge. Selecting the line
+    // items themselves is what made GET /api/invoices a 6.9 MB response.
+    assert.deepEqual(INVOICE_LIST_SELECT._count.select, { lineItems: true });
+    assert.deepEqual(INVOICE_LIST_SELECT.lineItems.select, { id: true });
+    assert.ok(
+      INVOICE_LIST_SELECT.lineItems.where,
+      'the line-item select must stay filtered to flagged rows only'
+    );
+    assert.equal((INVOICE_LIST_SELECT as Record<string, unknown>).ocrRawText, undefined);
+  });
+
+  it('collapses the line-item aggregates into counters', () => {
+    const row = toInvoiceListRow({
+      id: 'inv-1',
+      invoiceNumber: 'INV-1',
+      _count: { lineItems: 7 },
+      lineItems: [{ id: 'a' }, { id: 'b' }],
+    });
+    assert.equal(row.lineItemCount, 7);
+    assert.equal(row.flaggedCount, 2);
+    assert.equal('_count' in row, false, 'the Prisma aggregate must not reach the client');
+    assert.equal('lineItems' in row, false, 'raw line items must not reach the list client');
+  });
+
+  it('reports zero counters when a row has no line items', () => {
+    const row = toInvoiceListRow({ id: 'inv-2', _count: { lineItems: 0 }, lineItems: [] });
+    assert.equal(row.lineItemCount, 0);
+    assert.equal(row.flaggedCount, 0);
   });
 
   it('projects verifiedBy on the detail query', () => {
@@ -109,7 +141,7 @@ describe('invoice response projections', () => {
 
   it('expands no user- or driver-typed relation with a bare true', () => {
     // Guards the whole tree, including relations added later.
-    for (const include of [INVOICE_LIST_INCLUDE, INVOICE_DETAIL_INCLUDE]) {
+    for (const include of [INVOICE_LIST_SELECT, INVOICE_DETAIL_INCLUDE]) {
       const bare = bareTrueRelations(include);
       for (const relation of bare) {
         const leaf = relation.split('.').pop() ?? '';

@@ -1,8 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   clearRouteDataCache,
+  isRouteDataStale,
   loadRouteData,
   readRouteDataCache,
+  readStaleRouteDataCache,
   writeRouteDataCache,
 } from './routeDataCache';
 
@@ -37,6 +39,41 @@ describe('authenticated route data cache', () => {
     const later = Date.now() + 10;
     vi.spyOn(Date, 'now').mockReturnValue(later);
     expect(readRouteDataCache('user-a', 'dashboard')).toBeNull();
+    vi.restoreAllMocks();
+  });
+
+  it('keeps an expired entry readable while it is being revalidated', () => {
+    // The screens render this on mount so a refresh shows the previous rows
+    // rather than dropping the whole table back to a skeleton.
+    writeRouteDataCache('user-a', 'invoices:page=1', { rows: [1, 2] }, 1);
+    const justExpired = Date.now() + 10;
+    vi.spyOn(Date, 'now').mockReturnValue(justExpired);
+
+    expect(readRouteDataCache('user-a', 'invoices:page=1')).toBeNull();
+    expect(readStaleRouteDataCache('user-a', 'invoices:page=1')).toEqual({ rows: [1, 2] });
+    expect(isRouteDataStale('user-a', 'invoices:page=1')).toBe(true);
+    vi.restoreAllMocks();
+  });
+
+  it('stops serving a stale entry once the stale window closes', () => {
+    writeRouteDataCache('user-a', 'dashboard', { count: 3 }, 1);
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 31 * 60 * 1000);
+    expect(readStaleRouteDataCache('user-a', 'dashboard')).toBeNull();
+    vi.restoreAllMocks();
+  });
+
+  it('does not leak a stale entry across users', () => {
+    writeRouteDataCache('user-a', 'dashboard', { count: 3 }, 1);
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 10);
+    expect(readStaleRouteDataCache('user-b', 'dashboard')).toBeNull();
+    vi.restoreAllMocks();
+  });
+
+  it('drops stale entries on logout too', () => {
+    writeRouteDataCache('user-a', 'dashboard', { count: 3 }, 1);
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 10);
+    clearRouteDataCache('user-a');
+    expect(readStaleRouteDataCache('user-a', 'dashboard')).toBeNull();
     vi.restoreAllMocks();
   });
 

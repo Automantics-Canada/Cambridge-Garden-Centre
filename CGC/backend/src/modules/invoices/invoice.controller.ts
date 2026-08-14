@@ -1,7 +1,35 @@
 import type { Request, Response, NextFunction } from 'express';
 import { v4 as uuidv4 } from 'uuid';
+import type { InvoiceStatus, SenderType } from '@prisma/client';
 import { InvoiceService } from './invoice.service.js';
 import { triggerOcrProcessing } from '../../services/ocrJobProcessor.js';
+
+/** Signals a malformed query parameter, answered as 400 rather than 500. */
+export class BadRequestError extends Error {}
+
+/** `?page=` / `?limit=`; absent stays undefined so the service default applies. */
+export function parseIntParam(value: unknown): number | undefined {
+  if (value === undefined || value === null || value === '') return undefined;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) throw new BadRequestError('page and limit must be numbers');
+  return parsed;
+}
+
+export function parseDateParam(value: unknown, name: string): Date | undefined {
+  if (value === undefined || value === null || value === '') return undefined;
+  const parsed = new Date(String(value));
+  if (Number.isNaN(parsed.getTime())) throw new BadRequestError(`${name} is not a valid date`);
+  return parsed;
+}
+
+/**
+ * Cached pre-pagination frontend bundles call the endpoint with no query and
+ * expect a bare array. Keep that bounded legacy shape during the rollout; all
+ * current callers send page/limit and receive the paginated envelope.
+ */
+export function wantsLegacyInvoiceListShape(query: Request['query']): boolean {
+  return Object.keys(query).length === 0;
+}
 
 /**
  * `Invoice.gmailMessageId` is @unique. Synthesising it from `Date.now()` meant
@@ -90,15 +118,30 @@ export const InvoiceController = {
 
   async getInvoices(req: Request, res: Response, next: NextFunction) {
     try {
-      const { status, supplierId } = req.query;
-      const filters: any = {};
-      
-      if (status) filters.status = status;
-      if (supplierId) filters.supplierId = supplierId;
+      const { status, supplierId, senderType, search, flaggedOnly, startDate, endDate, page, limit } =
+        req.query;
 
-      const invoices = await InvoiceService.getInvoices(filters);
-      res.json(invoices);
+      // An unparseable date must not silently widen the result set to the whole
+      // ledger, so anything non-numeric/non-date is rejected rather than ignored.
+      const parsedStart = parseDateParam(startDate, 'startDate');
+      const parsedEnd = parseDateParam(endDate, 'endDate');
+
+      const invoices = await InvoiceService.getInvoices({
+        page: parseIntParam(page),
+        limit: parseIntParam(limit),
+        status: status ? (String(status) as InvoiceStatus) : undefined,
+        supplierId: supplierId ? String(supplierId) : undefined,
+        senderType: senderType ? (String(senderType) as SenderType) : undefined,
+        search: search ? String(search) : undefined,
+        flaggedOnly: flaggedOnly === 'true' || flaggedOnly === '1',
+        startDate: parsedStart,
+        endDate: parsedEnd,
+      });
+      res.json(wantsLegacyInvoiceListShape(req.query) ? invoices.data : invoices);
     } catch (error) {
+      if (error instanceof BadRequestError) {
+        return res.status(400).json({ error: error.message });
+      }
       next(error);
     }
   },

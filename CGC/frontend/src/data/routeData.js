@@ -1,33 +1,70 @@
 import api from '../api/axios';
-import { supabase } from '../supabaseClient';
-import { loadRouteData, readRouteDataCache } from '../lib/routeDataCache';
+import { loadRouteData, readRouteDataCache, readStaleRouteDataCache } from '../lib/routeDataCache';
+
+/**
+ * One canonical authenticated read path per resource.
+ *
+ * The previous revision raced the Express API against the Supabase Edge
+ * function (and, on the Dashboard, against the legacy full-ledger endpoint),
+ * taking whichever resolved first. Measured in production that turned three
+ * pieces of data on the tickets screen into seven requests, and every dashboard
+ * visit into two full invoice-ledger downloads. A race also cannot make a
+ * missing route appear: the losing branches were failing deployments, not
+ * healthy alternatives, so the fan-out bought latency and database load and
+ * nothing else.
+ *
+ * Each read below therefore has exactly one source. When it fails, it fails
+ * visibly — see `RouteDataError` — instead of being masked by a slower branch.
+ */
 
 const DASHBOARD_KEY = 'dashboard';
 const TICKET_STATS_KEY = 'ticket-stats';
 const SUPPLIER_OPTIONS_KEY = 'supplier-options';
 const DEFAULT_TICKET_QUERY = { page: 1, limit: 25 };
+const DEFAULT_INVOICE_QUERY = { page: 1, limit: 25 };
 
-function tokenHeaders() {
-  const token = localStorage.getItem('token');
-  return token ? { Authorization: `Bearer ${token}` } : {};
+/** Carries the failing resource so a screen can name it in an error banner. */
+export class RouteDataError extends Error {
+  constructor(resource, cause) {
+    const status = cause?.response?.status;
+    super(
+      status
+        ? `Could not load ${resource} (server returned ${status}).`
+        : `Could not load ${resource}. The server did not respond.`,
+    );
+    this.name = 'RouteDataError';
+    this.resource = resource;
+    this.status = status;
+    this.cause = cause;
+  }
 }
 
-function dashboardFromInvoices(invoices) {
-  const safeInvoices = Array.isArray(invoices) ? invoices : [];
-  const now = new Date();
-  return {
-    recentInvoices: safeInvoices.slice(0, 5),
-    stats: {
-      totalMonthly: safeInvoices.filter((invoice) => {
-        const receivedAt = new Date(invoice.receivedAt);
-        return receivedAt.getMonth() === now.getMonth()
-          && receivedAt.getFullYear() === now.getFullYear();
-      }).length,
-      pendingCount: safeInvoices.filter((invoice) => invoice.status === 'PENDING_REVIEW').length,
-      disputedCount: safeInvoices.filter((invoice) => invoice.status === 'DISPUTED').length,
-      savingsDetected: 0,
-    },
-  };
+async function get(resource, url, config) {
+  try {
+    const response = await api.get(url, config);
+    return response.data;
+  } catch (error) {
+    throw new RouteDataError(resource, error);
+  }
+}
+
+/** Drops empty values so they never become `?status=` and widen a query. */
+function toParams(query) {
+  const params = {};
+  Object.entries(query || {}).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== '' && value !== false) {
+      params[key] = value;
+    }
+  });
+  return params;
+}
+
+function cacheKey(prefix, query) {
+  const params = new URLSearchParams(
+    Object.entries(toParams(query)).map(([k, v]) => [k, String(v)]),
+  );
+  params.sort();
+  return `${prefix}:${params.toString()}`;
 }
 
 function assertDashboardPayload(data) {
@@ -37,168 +74,134 @@ function assertDashboardPayload(data) {
   return data;
 }
 
-async function invokeEdge(params) {
-  const { data, error } = await supabase.functions.invoke(
-    `fetch-cgc-data?${params.toString()}`,
-    { method: 'GET', headers: tokenHeaders() },
-  );
-  if (error) throw error;
-  return data;
-}
-
-async function firstSuccessful(sources) {
-  const result = await Promise.any(
-    sources.map(async ([source, request]) => ({ source, data: await request })),
-  );
-  return result;
-}
-
-async function requestDashboard() {
-  const controller = new AbortController();
-  const fastBackend = api.get('/api/invoices/dashboard-summary', {
-    signal: controller.signal,
-    timeout: 8_000,
-  }).then((response) => assertDashboardPayload(response.data));
-
-  const edgeSummary = invokeEdge(new URLSearchParams({ resource: 'dashboard-summary' }))
-    .then(assertDashboardPayload)
-    .catch(async () => {
-      // The Edge function is deployed separately. Older revisions still have
-      // the bounded invoices resource even when dashboard-summary is missing.
-      const fallback = await invokeEdge(new URLSearchParams({
-        resource: 'invoices', page: '1', limit: '1000',
-      }));
-      return dashboardFromInvoices(fallback?.data || fallback);
-    });
-
-  const legacyBackend = api.get('/api/invoices', {
-    signal: controller.signal,
-    timeout: 20_000,
-  }).then((response) => dashboardFromInvoices(response.data));
-
-  const winner = await firstSuccessful([
-    ['backend-summary', fastBackend],
-    ['edge', edgeSummary],
-    ['legacy-backend', legacyBackend],
-  ]);
-  if (winner.source === 'edge') controller.abort();
-  return winner.data;
-}
-
-function ticketCacheKey(query) {
-  const params = new URLSearchParams();
-  Object.entries(query).forEach(([key, value]) => {
-    if (value !== undefined && value !== null && value !== '') {
-      params.set(key, String(value));
-    }
-  });
-  params.sort();
-  return `tickets:${params.toString()}`;
-}
-
-function normalizeTicketPage(data) {
-  if (Array.isArray(data)) {
-    return { data, pagination: { page: 1, totalPages: 1, totalCount: data.length } };
+function normalizePage(data, resource) {
+  if (!data || !Array.isArray(data.data)) {
+    throw new RouteDataError(resource, null);
   }
-  if (!data || !Array.isArray(data.data)) throw new Error('Invalid tickets response');
   return {
     data: data.data,
     pagination: {
       page: data.pagination?.page || 1,
+      limit: data.pagination?.limit || data.data.length,
       totalPages: data.pagination?.totalPages || 1,
       totalCount: data.pagination?.totalCount ?? data.data.length,
     },
   };
 }
 
-async function requestTicketPage(query) {
-  const controller = new AbortController();
-  const params = new URLSearchParams();
-  Object.entries(query).forEach(([key, value]) => {
-    if (value !== undefined && value !== null && value !== '') {
-      params.set(key, String(value));
-    }
-  });
-  params.set('resource', 'tickets');
+/* -------------------------------------------------------------- dashboard */
 
-  const backend = api.get('/api/tickets', {
-    params: query,
-    signal: controller.signal,
-    timeout: 15_000,
-  }).then((response) => normalizeTicketPage(response.data));
-  const edge = invokeEdge(params).then(normalizeTicketPage);
-
-  const winner = await firstSuccessful([
-    ['backend', backend],
-    ['edge', edge],
-  ]);
-  if (winner.source === 'edge') controller.abort();
-  return winner.data;
-}
-
-async function requestTicketStats() {
-  const backend = api.get('/api/tickets/stats', { timeout: 10_000 })
-    .then((response) => ({ unlinkedCount: response.data?.unlinkedCount || 0 }));
-  const edge = invokeEdge(new URLSearchParams({
-    resource: 'tickets', status: 'UNLINKED', page: '1', limit: '1',
-  })).then((data) => ({
-    unlinkedCount: data?.pagination?.totalCount ?? data?.data?.length ?? 0,
-  }));
-  return (await firstSuccessful([['backend', backend], ['edge', edge]])).data;
-}
-
-function supplierOptionsFrom(data) {
-  const suppliers = Array.isArray(data) ? data : data?.data;
-  if (!Array.isArray(suppliers)) throw new Error('Invalid suppliers response');
-  return suppliers.map(({ id, name }) => ({ id, name }));
-}
-
-async function requestSupplierOptions() {
-  const options = api.get('/api/suppliers/options', { timeout: 8_000 })
-    .then((response) => supplierOptionsFrom(response.data));
-  const legacy = api.get('/api/suppliers', { timeout: 12_000 })
-    .then((response) => supplierOptionsFrom(response.data));
-  const edge = invokeEdge(new URLSearchParams({
-    resource: 'suppliers', page: '1', limit: '1000',
-  })).then(supplierOptionsFrom);
-  return (await firstSuccessful([
-    ['options', options],
-    ['legacy', legacy],
-    ['edge', edge],
-  ])).data;
+async function requestDashboard() {
+  const data = await get('the dashboard', '/api/invoices/dashboard-summary', { timeout: 15_000 });
+  return assertDashboardPayload(data);
 }
 
 export function getCachedDashboardData(userId) {
-  return readRouteDataCache(userId, DASHBOARD_KEY);
+  return readStaleRouteDataCache(userId, DASHBOARD_KEY);
 }
 
 export function loadDashboardData(userId, options) {
   return loadRouteData(userId, DASHBOARD_KEY, requestDashboard, options);
 }
 
+/* --------------------------------------------------------------- invoices */
+
+async function requestInvoicePage(query) {
+  const data = await get('invoices', '/api/invoices', {
+    params: toParams(query),
+    timeout: 15_000,
+  });
+  // Keep the Vercel/Railway rollout order harmless. The backend returned a
+  // bare array before server-side pagination landed, so a frontend deployment
+  // that wins the race must remain usable until Railway finishes. This branch
+  // disappears naturally once the paginated backend is live.
+  if (Array.isArray(data)) {
+    return {
+      data,
+      pagination: { page: 1, limit: data.length, totalPages: 1, totalCount: data.length },
+    };
+  }
+  return normalizePage(data, 'invoices');
+}
+
+export function getCachedInvoicePage(userId, query = DEFAULT_INVOICE_QUERY) {
+  return readStaleRouteDataCache(userId, cacheKey('invoices', query));
+}
+
+export function loadInvoicePage(userId, query = DEFAULT_INVOICE_QUERY, options) {
+  return loadRouteData(
+    userId,
+    cacheKey('invoices', query),
+    () => requestInvoicePage(query),
+    options,
+  );
+}
+
+/* ---------------------------------------------------------------- tickets */
+
+async function requestTicketPage(query) {
+  const data = await get('tickets', '/api/tickets', {
+    params: toParams(query),
+    timeout: 15_000,
+  });
+  // The tickets endpoint returned a bare array before it was paginated.
+  if (Array.isArray(data)) {
+    return {
+      data,
+      pagination: { page: 1, limit: data.length, totalPages: 1, totalCount: data.length },
+    };
+  }
+  return normalizePage(data, 'tickets');
+}
+
 export function getCachedTicketPage(userId, query = DEFAULT_TICKET_QUERY) {
-  return readRouteDataCache(userId, ticketCacheKey(query));
+  return readStaleRouteDataCache(userId, cacheKey('tickets', query));
 }
 
 export function loadTicketPage(userId, query = DEFAULT_TICKET_QUERY, options) {
-  return loadRouteData(userId, ticketCacheKey(query), () => requestTicketPage(query), options);
+  return loadRouteData(
+    userId,
+    cacheKey('tickets', query),
+    () => requestTicketPage(query),
+    options,
+  );
+}
+
+async function requestTicketStats() {
+  const data = await get('ticket counts', '/api/tickets/stats', { timeout: 10_000 });
+  return { unlinkedCount: data?.unlinkedCount || 0 };
 }
 
 export function getCachedTicketStats(userId) {
-  return readRouteDataCache(userId, TICKET_STATS_KEY);
+  return readStaleRouteDataCache(userId, TICKET_STATS_KEY);
 }
 
 export function loadTicketStats(userId, options) {
   return loadRouteData(userId, TICKET_STATS_KEY, requestTicketStats, options);
 }
 
+/* -------------------------------------------------------------- suppliers */
+
+async function requestSupplierOptions() {
+  const data = await get('the supplier list', '/api/suppliers/options', { timeout: 10_000 });
+  const suppliers = Array.isArray(data) ? data : data?.data;
+  if (!Array.isArray(suppliers)) throw new RouteDataError('the supplier list', null);
+  return suppliers.map(({ id, name }) => ({ id, name }));
+}
+
 export function getCachedSupplierOptions(userId) {
-  return readRouteDataCache(userId, SUPPLIER_OPTIONS_KEY);
+  return readStaleRouteDataCache(userId, SUPPLIER_OPTIONS_KEY);
 }
 
 export function loadSupplierOptions(userId, options) {
-  return loadRouteData(userId, SUPPLIER_OPTIONS_KEY, requestSupplierOptions, options);
+  // Dropdown contents change rarely; a longer TTL keeps filter bars instant.
+  return loadRouteData(userId, SUPPLIER_OPTIONS_KEY, requestSupplierOptions, {
+    ttlMs: 10 * 60 * 1000,
+    ...options,
+  });
 }
+
+/* --------------------------------------------------------------- preload  */
 
 export function preloadRouteData(path, userId) {
   if (!userId) return;
@@ -207,5 +210,11 @@ export function preloadRouteData(path, userId) {
   }
   if (path === '/dashboard/tickets') {
     void loadTicketPage(userId, DEFAULT_TICKET_QUERY).catch(() => {});
+    void loadSupplierOptions(userId).catch(() => {});
+  }
+  if (path === '/dashboard/verification-desk' || path === '/dashboard/invoices') {
+    void loadInvoicePage(userId, DEFAULT_INVOICE_QUERY).catch(() => {});
   }
 }
+
+export { DEFAULT_TICKET_QUERY, DEFAULT_INVOICE_QUERY, readRouteDataCache };

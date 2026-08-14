@@ -1,5 +1,8 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useSelector } from 'react-redux';
 import api from '../../api/axios';
+import { getCachedInvoicePage, loadInvoicePage } from '../../data/routeData';
+import { useDebouncedValue } from '../../hooks/useDebouncedValue';
 import { 
   FileText, 
   Truck, 
@@ -29,10 +32,14 @@ import { EmptyState, PageHeader, StatusBadge } from '../../components/ui';
 const INVOICES_PER_PAGE = 25;
 
 export default function VerificationDesk() {
+  const userId = useSelector((state) => state.auth.user?.id);
   const [invoices, setInvoices] = useState([]);
+  const [pagination, setPagination] = useState({ page: 1, totalPages: 1, totalCount: 0 });
+  const [loadError, setLoadError] = useState(null);
   const [selectedInvoice, setSelectedInvoice] = useState(null);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
+  const debouncedSearch = useDebouncedValue(search, 350);
   const [filterStatus, setFilterStatus] = useState('ALL');
   const [page, setPage] = useState(1);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -50,21 +57,51 @@ export default function VerificationDesk() {
   const [isDocPreviewExpanded, setIsDocPreviewExpanded] = useState(true);
   const [expandedLineItems, setExpandedLineItems] = useState({});
 
+  // Reset synchronously before the query is committed. An effect would first
+  // request the old page with the new filter, then request page one.
+  const filterSignature = JSON.stringify([filterStatus, debouncedSearch]);
+  const [lastFilterSignature, setLastFilterSignature] = useState(filterSignature);
+  if (filterSignature !== lastFilterSignature) {
+    setLastFilterSignature(filterSignature);
+    setPage(1);
+  }
+
+  // Server-side query. Status, search and page all round-trip so the browser
+  // never holds more than one page of invoices; this screen used to download
+  // the entire ledger — every invoice with every line item, ~6.9 MB — and slice
+  // it locally.
+  const query = useMemo(() => ({
+    page,
+    limit: INVOICES_PER_PAGE,
+    status: filterStatus === 'ALL' ? undefined : filterStatus,
+    search: debouncedSearch || undefined,
+  }), [page, filterStatus, debouncedSearch]);
+
   const fetchInvoices = useCallback(async () => {
-    setLoading(true);
+    const cached = getCachedInvoicePage(userId, query);
+    if (cached) {
+      // Keep the previous page on screen while the new one is fetched.
+      setInvoices(cached.data);
+      setPagination(cached.pagination);
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
+
+    setLoadError(null);
     try {
-      const response = await api.get('/api/invoices');
-      const nextInvoices = Array.isArray(response.data) ? response.data : [];
-      setInvoices(nextInvoices);
+      const result = await loadInvoicePage(userId, query, { force: true });
+      setInvoices(result.data);
+      setPagination(result.pagination);
       setSelectedInvoice(current => (
-        current && nextInvoices.some(invoice => invoice.id === current.id) ? current : null
+        current && result.data.some(invoice => invoice.id === current.id) ? current : null
       ));
-    } catch {
-      toast.error('Failed to load invoices');
+    } catch (error) {
+      setLoadError(error);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [userId, query]);
 
   const fetchInvoiceDetails = async (id) => {
     try {
@@ -239,29 +276,17 @@ export default function VerificationDesk() {
     }, 300);
   };
 
-  const filteredInvoices = useMemo(() => {
-    const normalizedSearch = search.trim().toLowerCase();
-    return invoices.filter(invoice => {
-      const matchesStatus = filterStatus === 'ALL' || invoice.status === filterStatus;
-      const matchesSearch = !normalizedSearch
-        || invoice.invoiceNumber?.toLowerCase().includes(normalizedSearch)
-        || invoice.supplier?.name?.toLowerCase().includes(normalizedSearch)
-        || invoice.emailFrom?.toLowerCase().includes(normalizedSearch);
-      return matchesStatus && matchesSearch;
-    });
-  }, [filterStatus, invoices, search]);
-
-  const totalPages = Math.max(Math.ceil(filteredInvoices.length / INVOICES_PER_PAGE), 1);
-  const visibleInvoices = filteredInvoices.slice(
-    (page - 1) * INVOICES_PER_PAGE,
-    page * INVOICES_PER_PAGE,
-  );
+  // Filtering and paging are the server's job now; this page renders exactly
+  // what came back.
+  const visibleInvoices = invoices;
+  const totalPages = Math.max(pagination.totalPages || 1, 1);
+  const totalCount = pagination.totalCount ?? invoices.length;
 
   useEffect(() => {
     if (page > totalPages) setPage(totalPages);
   }, [page, totalPages]);
 
-  if (loading && invoices.length === 0) return <VerificationDeskSkeleton />;
+  if (loading && invoices.length === 0 && !loadError) return <VerificationDeskSkeleton />;
 
   const getFullUrl = (url) => {
     if (!url) return '';
@@ -314,6 +339,27 @@ export default function VerificationDesk() {
           </div>
         </div>
       </div>
+
+      {/* A failed read must say so. Previously a rejected request left the
+          skeleton on screen indefinitely with only a toast that had faded. */}
+      {loadError && (
+        <div
+          role="alert"
+          className="mb-6 flex flex-wrap items-center gap-3 rounded-card border border-clay/30 bg-clay/[0.06] px-5 py-4"
+        >
+          <AlertTriangle className="h-5 w-5 flex-none text-clay" />
+          <p className="flex-1 text-[13.5px] text-ink">
+            {loadError.message} {invoices.length > 0 && 'Showing the last loaded page.'}
+          </p>
+          <button
+            type="button"
+            onClick={fetchInvoices}
+            className="rounded-control border border-line px-3 py-2 text-[12.5px] font-semibold text-ink transition-colors hover:border-brand/40 hover:bg-brand/[0.04]"
+          >
+            Try again
+          </button>
+        </div>
+      )}
 
       {/* 2. Invoices Dropdown List */}
       <div className="space-y-4">
@@ -796,10 +842,10 @@ export default function VerificationDesk() {
         )}
       </div>
 
-      {filteredInvoices.length > 0 && (
+      {totalCount > 0 && (
         <div className="mt-6 min-h-12 flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-card border border-line bg-surface px-5 py-3 shadow-card">
           <p className="text-[12.5px] text-muted" aria-live="polite">
-            Showing {(page - 1) * INVOICES_PER_PAGE + 1}–{Math.min(page * INVOICES_PER_PAGE, filteredInvoices.length)} of {filteredInvoices.length} invoices
+            Showing {(page - 1) * INVOICES_PER_PAGE + 1}–{Math.min((page - 1) * INVOICES_PER_PAGE + invoices.length, totalCount)} of {totalCount} invoices
           </p>
           <div className="flex items-center gap-2">
             <button
