@@ -111,6 +111,16 @@ async function requestInvoicePage(query) {
     params: toParams(query),
     timeout: 15_000,
   });
+  // Keep the Vercel/Railway rollout order harmless. The backend returned a
+  // bare array before server-side pagination landed, so a frontend deployment
+  // that wins the race must remain usable until Railway finishes. This branch
+  // disappears naturally once the paginated backend is live.
+  if (Array.isArray(data)) {
+    return {
+      data,
+      pagination: { page: 1, limit: data.length, totalPages: 1, totalCount: data.length },
+    };
+  }
   return normalizePage(data, 'invoices');
 }
 

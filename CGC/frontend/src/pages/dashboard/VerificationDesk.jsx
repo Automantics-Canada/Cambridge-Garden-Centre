@@ -57,6 +57,15 @@ export default function VerificationDesk() {
   const [isDocPreviewExpanded, setIsDocPreviewExpanded] = useState(true);
   const [expandedLineItems, setExpandedLineItems] = useState({});
 
+  // Reset synchronously before the query is committed. An effect would first
+  // request the old page with the new filter, then request page one.
+  const filterSignature = JSON.stringify([filterStatus, debouncedSearch]);
+  const [lastFilterSignature, setLastFilterSignature] = useState(filterSignature);
+  if (filterSignature !== lastFilterSignature) {
+    setLastFilterSignature(filterSignature);
+    setPage(1);
+  }
+
   // Server-side query. Status, search and page all round-trip so the browser
   // never holds more than one page of invoices; this screen used to download
   // the entire ledger — every invoice with every line item, ~6.9 MB — and slice

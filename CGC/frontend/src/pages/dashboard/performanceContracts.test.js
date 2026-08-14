@@ -51,6 +51,15 @@ describe('authenticated route performance contracts', () => {
     expect(code).not.toContain('supabase.functions.invoke');
   });
 
+  it('resets Verification Desk pagination before a changed filter can request the old page', () => {
+    const code = codeOnly(verificationDeskSource);
+    const reset = code.indexOf('const filterSignature = JSON.stringify([filterStatus, debouncedSearch])');
+    const query = code.indexOf('const query = useMemo');
+    expect(reset).toBeGreaterThan(-1);
+    expect(code.slice(reset, query)).toContain('setPage(1)');
+    expect(reset).toBeLessThan(query);
+  });
+
   it('sends Invoices page filters to the server instead of filtering locally', () => {
     const code = codeOnly(invoicesPageSource);
     expect(code).toContain('loadInvoicePage');
