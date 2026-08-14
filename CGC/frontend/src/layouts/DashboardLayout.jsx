@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { Suspense, useEffect, useState } from 'react';
 import { Outlet, NavLink, useLocation } from 'react-router-dom';
 import { useDispatch, useSelector } from 'react-redux';
 import {
@@ -10,6 +10,10 @@ import { logout } from '../store/authSlice';
 import LogoutModal from '../components/LogoutModal';
 import { ThemeToggle } from '../components/ui';
 import { cn } from '../lib/cn';
+import {
+  preloadAllDashboardRoutes,
+  preloadDashboardRoute,
+} from '../routes/dashboardRouteLoaders';
 
 const NAV_GROUPS = [
   {
@@ -51,6 +55,8 @@ function NavItem({ item, onNavigate }) {
       to={item.path}
       end={item.end}
       onClick={onNavigate}
+      onPointerEnter={() => preloadDashboardRoute(item.path)}
+      onFocus={() => preloadDashboardRoute(item.path)}
       className={({ isActive }) =>
         cn(
           'flex items-center gap-3 rounded-pill px-4 py-2.5 text-[13.5px]',
@@ -81,6 +87,16 @@ export default function DashboardLayout() {
   const location = useLocation();
   const dispatch = useDispatch();
   const user = useSelector((state) => state.auth.user);
+
+  useEffect(() => {
+    const preload = () => preloadAllDashboardRoutes();
+    if ('requestIdleCallback' in window) {
+      const idleId = window.requestIdleCallback(preload, { timeout: 2000 });
+      return () => window.cancelIdleCallback(idleId);
+    }
+    const timerId = window.setTimeout(preload, 500);
+    return () => window.clearTimeout(timerId);
+  }, []);
 
   // Tapping a link should never leave the mobile drawer hanging open.
   const closeDrawer = () => setDrawerOpen(false);
@@ -201,7 +217,15 @@ export default function DashboardLayout() {
               exit={{ opacity: 0, y: -10 }}
               transition={{ duration: 0.2, ease: 'easeOut' }}
             >
-              <Outlet />
+              <Suspense
+                fallback={(
+                  <div className="min-h-[240px] flex items-center justify-center text-sm font-semibold text-brand" role="status">
+                    Loading view…
+                  </div>
+                )}
+              >
+                <Outlet />
+              </Suspense>
             </motion.div>
           </AnimatePresence>
         </main>
