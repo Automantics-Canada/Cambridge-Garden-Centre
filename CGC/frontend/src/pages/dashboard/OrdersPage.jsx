@@ -479,7 +479,7 @@ export default function OrdersPage() {
                                   />
                                 ) : (
                                   <div className="h-full w-full flex items-center justify-center bg-ink/[0.08]">
-                                    <span className="text-[12px] font-semibold text-muted">T</span>
+                                    <span className="text-[12.5px] font-semibold text-muted">T</span>
                                   </div>
                                 )}
                               </div>

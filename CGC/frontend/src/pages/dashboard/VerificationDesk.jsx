@@ -655,7 +655,7 @@ export default function VerificationDesk() {
                                                           <div className="flex items-center gap-1.5">
                                                             <p className="text-[12.5px] font-semibold text-ink truncate">T-{t.ticketNumber || t.id.substring(0,6)}</p>
                                                             {t.spruceMatched && (
-                                                              <span className="bg-brand/12 text-brand px-1 py-0.2 rounded text-[12px] font-bold flex items-center gap-0.5"><CheckCircle className="w-2 h-2"/> MATCHED</span>
+                                                              <span className="bg-brand/12 text-brand px-1 py-0.5 rounded text-[12.5px] font-bold flex items-center gap-0.5"><CheckCircle className="w-2 h-2"/> MATCHED</span>
                                                             )}
                                                           </div>
                                                           <p className="text-[12.5px] font-bold text-brand mt-0.5">{Number(t.quantity)} {t.unit}</p>
@@ -705,7 +705,7 @@ export default function VerificationDesk() {
                                                   <div className="space-y-3">
                                                     <div className="bg-brand rounded-control p-4 text-on-brand relative overflow-hidden group shadow-card">
                                                       <div className="relative z-10">
-                                                        <p className="text-[12px] font-bold text-on-brand mb-0.5">Authorization ID</p>
+                                                        <p className="text-[12.5px] font-bold text-on-brand mb-0.5">Authorization ID</p>
                                                         <p className="text-sm font-semibold tracking-tight">{li.matchedOrder?.spruceOrderId}</p>
                                                         <div className="flex items-center justify-between mt-3 border-t border-line pt-2 text-[12.5px]">
                                                           <span className="opacity-75">Order Qty</span>
@@ -730,7 +730,7 @@ export default function VerificationDesk() {
                                                             <Truck className="w-3.5 h-3.5 text-muted" />
                                                             <span className="text-[12.5px] font-bold text-ink truncate">{del.driver?.name || 'Unassigned'}</span>
                                                           </div>
-                                                          <span className={`text-[12px] font-bold px-2 py-0.5 rounded-full ${del.status === 'DELIVERED' ? 'bg-brand/12 text-brand' : 'bg-ink/[0.08] text-muted'}`}>
+                                                          <span className={`text-[12.5px] font-bold px-2 py-0.5 rounded-full ${del.status === 'DELIVERED' ? 'bg-brand/12 text-brand' : 'bg-ink/[0.08] text-muted'}`}>
                                                             {del.status.replace('_', ' ')}
                                                           </span>
                                                         </div>
@@ -739,17 +739,17 @@ export default function VerificationDesk() {
                                                             {del.pickupPhotoUrl ? (
                                                               <img src={getFullUrl(del.pickupPhotoUrl)} className="absolute inset-0 w-full h-full object-cover cursor-pointer hover:opacity-90 transition-opacity" alt="Pickup Photo" onClick={() => setZoomedImage(getFullUrl(del.pickupPhotoUrl))} />
                                                             ) : (
-                                                              <span className="text-[12px] text-muted absolute inset-0 flex items-center justify-center font-semibold text-center leading-none p-1">No Photo</span>
+                                                              <span className="text-[12.5px] text-muted absolute inset-0 flex items-center justify-center font-semibold text-center leading-none p-1">No Photo</span>
                                                             )}
-                                                            <div className="bg-scrim/40 p-1 relative z-10"><p className="text-[12px] text-on-brand font-bold text-center">Pickup</p></div>
+                                                            <div className="bg-scrim/40 p-1 relative z-10"><p className="text-[12.5px] text-on-brand font-bold text-center">Pickup</p></div>
                                                           </div>
                                                           <div className="border border-line rounded-control overflow-hidden group/img relative bg-surface aspect-video flex flex-col justify-end">
                                                             {del.deliveryPhotoUrl ? (
                                                               <img src={getFullUrl(del.deliveryPhotoUrl)} className="absolute inset-0 w-full h-full object-cover cursor-pointer hover:opacity-90 transition-opacity" alt="Delivery Photo" onClick={() => setZoomedImage(getFullUrl(del.deliveryPhotoUrl))} />
                                                             ) : (
-                                                              <span className="text-[12px] text-muted absolute inset-0 flex items-center justify-center font-semibold text-center leading-none p-1">No Photo</span>
+                                                              <span className="text-[12.5px] text-muted absolute inset-0 flex items-center justify-center font-semibold text-center leading-none p-1">No Photo</span>
                                                             )}
-                                                            <div className="bg-scrim/40 p-1 relative z-10"><p className="text-[12px] text-on-brand font-bold text-center">Delivery</p></div>
+                                                            <div className="bg-scrim/40 p-1 relative z-10"><p className="text-[12.5px] text-on-brand font-bold text-center">Delivery</p></div>
                                                           </div>
                                                         </div>
                                                       </div>

@@ -209,7 +209,7 @@ export default function DriverMobileView() {
 
                     <div className="flex items-start gap-4 mb-6">
                       <div className="w-12 h-12 rounded-control flex flex-col items-center justify-center border bg-brand border-brand text-on-brand">
-                        <span className="text-[12px] font-semibold uppercase leading-none opacity-80 mb-0.5">Stop</span>
+                        <span className="text-[12.5px] font-semibold uppercase leading-none opacity-80 mb-0.5">Stop</span>
                         <span className="tabular text-lg font-semibold leading-none">1</span>
                       </div>
                       <div className="flex-1 pt-1">
