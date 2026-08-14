@@ -23,6 +23,15 @@ export function parseDateParam(value: unknown, name: string): Date | undefined {
 }
 
 /**
+ * Cached pre-pagination frontend bundles call the endpoint with no query and
+ * expect a bare array. Keep that bounded legacy shape during the rollout; all
+ * current callers send page/limit and receive the paginated envelope.
+ */
+export function wantsLegacyInvoiceListShape(query: Request['query']): boolean {
+  return Object.keys(query).length === 0;
+}
+
+/**
  * `Invoice.gmailMessageId` is @unique. Synthesising it from `Date.now()` meant
  * two uploads landing in the same millisecond collided on the constraint and
  * surfaced as an opaque 500, so locally-generated ids use a UUID instead.
@@ -128,7 +137,7 @@ export const InvoiceController = {
         startDate: parsedStart,
         endDate: parsedEnd,
       });
-      res.json(invoices);
+      res.json(wantsLegacyInvoiceListShape(req.query) ? invoices.data : invoices);
     } catch (error) {
       if (error instanceof BadRequestError) {
         return res.status(400).json({ error: error.message });

@@ -17,6 +17,18 @@ import {
   DEFAULT_INVOICE_PAGE_SIZE,
   MAX_INVOICE_PAGE_SIZE,
 } from '../src/modules/invoices/invoice.service.js';
+import { wantsLegacyInvoiceListShape } from '../src/modules/invoices/invoice.controller.js';
+
+describe('invoice list rollout shape', () => {
+  it('keeps an old no-query frontend functional during deployment', () => {
+    assert.equal(wantsLegacyInvoiceListShape({}), true);
+  });
+
+  it('uses the paginated envelope for every current list request', () => {
+    assert.equal(wantsLegacyInvoiceListShape({ page: '1', limit: '25' }), false);
+    assert.equal(wantsLegacyInvoiceListShape({ status: 'DISPUTED' }), false);
+  });
+});
 
 describe('resolveInvoicePaging', () => {
   it('bounds an unparameterised request', () => {
