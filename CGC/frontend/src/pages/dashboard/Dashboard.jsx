@@ -21,7 +21,7 @@ export default function Dashboard() {
   const user = useSelector((state) => state.auth.user);
   const navigate = useNavigate();
   const [stats, setStats] = useState({
-    totalMonthly: 0,
+    totalInvoices: 0,
     pendingCount: 0,
     disputedCount: 0,
     savingsDetected: 0,
@@ -35,17 +35,33 @@ export default function Dashboard() {
       const token = localStorage.getItem('token');
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
 
-      const summaryResponse = await supabase.functions.invoke('fetch-cgc-data?resource=dashboard-summary', {
-        method: 'GET',
-        headers
-      });
+      // The live Supabase deployment does not yet expose dashboard-summary.
+      // Keep the route fast and compatible by requesting only the seven rows
+      // needed for recent activity and exact status counts.
+      const [recentResponse, pendingResponse, disputedResponse] = await Promise.all([
+        supabase.functions.invoke('fetch-cgc-data?resource=invoices&limit=5&page=1', {
+          method: 'GET',
+          headers
+        }),
+        supabase.functions.invoke('fetch-cgc-data?resource=invoices&status=PENDING_REVIEW&limit=1&page=1', {
+          method: 'GET',
+          headers
+        }),
+        supabase.functions.invoke('fetch-cgc-data?resource=invoices&status=DISPUTED&limit=1&page=1', {
+          method: 'GET',
+          headers
+        })
+      ]);
 
-      if (summaryResponse.error) throw summaryResponse.error;
+      const requestError = recentResponse.error || pendingResponse.error || disputedResponse.error;
+      if (requestError) throw requestError;
 
-      setRecentInvoices(summaryResponse.data?.recentInvoices || []);
+      setRecentInvoices(recentResponse.data?.data || []);
       setStats(current => ({
         ...current,
-        ...summaryResponse.data?.stats
+        totalInvoices: recentResponse.data?.pagination?.totalCount || 0,
+        pendingCount: pendingResponse.data?.pagination?.totalCount || 0,
+        disputedCount: disputedResponse.data?.pagination?.totalCount || 0,
       }));
 
     } catch (err) {
@@ -59,9 +75,9 @@ export default function Dashboard() {
     fetchDashboardData();
   }, [fetchDashboardData]);
 
-  if (loading) return <DashboardSkeleton />;
-
   const firstName = (user?.name || 'there').split(' ')[0];
+
+  if (loading) return <DashboardSkeleton firstName={firstName} />;
 
   return (
     <div className="max-w-6xl mx-auto space-y-8">
@@ -70,9 +86,7 @@ export default function Dashboard() {
         subtitle="Everything waiting on you today, in one place."
       />
 
-      {/* The numbers that matter. Big, quiet, scannable.
-          A money tile belongs here too, but dashboard-summary returns
-          savingsDetected: 0 by design — showing it would be a fake figure. */}
+      {/* The numbers that matter. Big, quiet, scannable. */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-5">
         <StatTile
           label="Waiting for review"
@@ -89,9 +103,9 @@ export default function Dashboard() {
           onClick={() => navigate('/dashboard/invoices')}
         />
         <StatTile
-          label="Processed this month"
-          value={stats.totalMonthly}
-          hint="Invoices received since the 1st"
+          label="Invoices on record"
+          value={stats.totalInvoices}
+          hint="All invoices received so far"
         />
       </div>
 
@@ -192,13 +206,13 @@ export default function Dashboard() {
   );
 }
 
-function DashboardSkeleton() {
+function DashboardSkeleton({ firstName }) {
   return (
     <div className="max-w-6xl mx-auto space-y-8">
-      <div className="space-y-2">
-        <Skeleton variant="text" width="280px" height="34px" />
-        <Skeleton variant="text" width="320px" height="18px" />
-      </div>
+      <PageHeader
+        title={`Good to see you, ${firstName}`}
+        subtitle="Everything waiting on you today, in one place."
+      />
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-5">
         {[...Array(3)].map((_, i) => (
