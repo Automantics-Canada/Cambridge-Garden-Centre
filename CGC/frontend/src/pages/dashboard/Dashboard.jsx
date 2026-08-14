@@ -1,10 +1,13 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useSelector } from 'react-redux';
 import { useNavigate } from 'react-router-dom';
-import api from '../../api/axios';
 import { ChevronRight, Users, Inbox } from 'lucide-react';
 import { Skeleton } from '../../components/Skeleton';
 import { formatDate } from '../../lib/date';
+import {
+  getCachedDashboardData,
+  loadDashboardData,
+} from '../../data/routeData';
 import {
   PageHeader,
   StatTile,
@@ -20,43 +23,42 @@ import {
 export default function Dashboard() {
   const user = useSelector((state) => state.auth.user);
   const navigate = useNavigate();
-  const [stats, setStats] = useState({
-    totalMonthly: 0,
-    pendingCount: 0,
-    disputedCount: 0,
-    savingsDetected: 0,
-  });
-  const [recentInvoices, setRecentInvoices] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const userId = user?.id;
+  const cachedDashboard = getCachedDashboardData(userId);
+  const [stats, setStats] = useState(() => cachedDashboard?.stats || {
+      totalMonthly: 0,
+      pendingCount: 0,
+      disputedCount: 0,
+      savingsDetected: 0,
+    });
+  const [recentInvoices, setRecentInvoices] = useState(
+    () => cachedDashboard?.recentInvoices || [],
+  );
+  const [loading, setLoading] = useState(() => !cachedDashboard);
 
   const fetchDashboardData = useCallback(async () => {
-    setLoading(true);
+    const cached = getCachedDashboardData(userId);
+    if (cached) {
+      setStats(cached.stats);
+      setRecentInvoices(cached.recentInvoices);
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
+
     try {
-      // Use the same Railway API as the authenticated write flows. The Edge
-      // function adds a multi-second floor to every dashboard visit and has a
-      // separate deployment lifecycle that already drifted from the frontend.
-      const response = await api.get('/api/invoices');
-      const invoices = Array.isArray(response.data) ? response.data : [];
-      const now = new Date();
-
-      setRecentInvoices(invoices.slice(0, 5));
-      setStats(current => ({
-        ...current,
-        totalMonthly: invoices.filter(invoice => {
-          const receivedAt = new Date(invoice.receivedAt);
-          return receivedAt.getMonth() === now.getMonth()
-            && receivedAt.getFullYear() === now.getFullYear();
-        }).length,
-        pendingCount: invoices.filter(invoice => invoice.status === 'PENDING_REVIEW').length,
-        disputedCount: invoices.filter(invoice => invoice.status === 'DISPUTED').length,
-      }));
-
+      // Revalidate in the background when a short-lived session cache exists.
+      // Cold loads race the compact API/Edge reads against the legacy endpoint
+      // so a stale Railway deployment cannot impose its 10+ second wait.
+      const data = await loadDashboardData(userId, { force: true });
+      setRecentInvoices(data.recentInvoices);
+      setStats(data.stats);
     } catch (err) {
       console.error('Error fetching dashboard data:', err);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [userId]);
 
   useEffect(() => {
     fetchDashboardData();

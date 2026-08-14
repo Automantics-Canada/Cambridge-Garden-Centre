@@ -103,6 +103,15 @@ export const InvoiceController = {
     }
   },
 
+  async getDashboardSummary(_req: Request, res: Response, next: NextFunction) {
+    try {
+      const summary = await InvoiceService.getDashboardSummary();
+      res.json(summary);
+    } catch (error) {
+      next(error);
+    }
+  },
+
   async getInvoiceById(req: Request, res: Response, next: NextFunction) {
     try {
       const id = req.params.id as string;

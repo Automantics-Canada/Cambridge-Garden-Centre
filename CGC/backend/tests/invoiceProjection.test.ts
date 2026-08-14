@@ -19,6 +19,7 @@ import {
   DRIVER_PUBLIC_FIELDS,
   INVOICE_LIST_INCLUDE,
   INVOICE_DETAIL_INCLUDE,
+  DASHBOARD_INVOICE_SELECT,
 } from '../src/modules/invoices/invoice.service.js';
 
 /** Every scalar on `User` that must never reach a client. */
@@ -47,6 +48,12 @@ function bareTrueRelations(node: unknown, path = ''): string[] {
 }
 
 describe('invoice response projections', () => {
+  it('keeps Dashboard recent rows on a minimal projection', () => {
+    assert.equal('lineItems' in DASHBOARD_INVOICE_SELECT, false);
+    assert.equal('verifiedBy' in DASHBOARD_INVOICE_SELECT, false);
+    assert.deepEqual(DASHBOARD_INVOICE_SELECT.supplier.select, { id: true, name: true });
+  });
+
   it('never selects a User secret', () => {
     for (const secret of USER_SECRETS) {
       assert.equal(

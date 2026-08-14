@@ -35,6 +35,18 @@ export const INVOICE_LIST_INCLUDE = {
   verifiedBy: { select: VERIFIED_BY_PUBLIC_FIELDS },
 } as const;
 
+/** Minimal invoice fields rendered by the Dashboard's five recent rows. */
+export const DASHBOARD_INVOICE_SELECT = {
+  id: true,
+  invoiceNumber: true,
+  invoiceDate: true,
+  totalAmount: true,
+  currency: true,
+  status: true,
+  receivedAt: true,
+  supplier: { select: { id: true, name: true } },
+} as const;
+
 /** Relations returned by `getInvoiceById`. Exported so the projection is testable. */
 export const INVOICE_DETAIL_INCLUDE = {
   supplier: true,
@@ -364,6 +376,34 @@ export const InvoiceService = {
       ],
       include: INVOICE_LIST_INCLUDE,
     });
+  },
+
+  async getDashboardSummary() {
+    const now = new Date();
+    const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+    const [recentInvoices, pendingCount, disputedCount, totalMonthly] = await Promise.all([
+      prisma.invoice.findMany({
+        orderBy: [
+          { receivedAt: 'desc' },
+          { invoiceDate: 'desc' },
+        ],
+        take: 5,
+        select: DASHBOARD_INVOICE_SELECT,
+      }),
+      prisma.invoice.count({ where: { status: InvoiceStatus.PENDING_REVIEW } }),
+      prisma.invoice.count({ where: { status: InvoiceStatus.DISPUTED } }),
+      prisma.invoice.count({ where: { receivedAt: { gte: monthStart } } }),
+    ]);
+
+    return {
+      recentInvoices,
+      stats: {
+        pendingCount,
+        disputedCount,
+        totalMonthly,
+        savingsDetected: 0,
+      },
+    };
   },
 
   async getInvoiceById(id: string) {

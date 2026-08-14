@@ -130,6 +130,7 @@ describe('invoice routes', () => {
 
   const routes: Array<[string, string]> = [
     ['get', '/'],
+    ['get', '/dashboard-summary'],
     ['get', '/:id'],
     ['post', '/:id/verify'],
     ['post', '/:id/dispute'],
@@ -269,6 +270,7 @@ describe('GET routes that operations staff use', () => {
   const cases: Array<[any, string, string, UserRole[] | null]> = [
     [dispatchRouter, 'get', '/', OPERATIONS],
     [invoiceRouter, 'get', '/', OPERATIONS],
+    [invoiceRouter, 'get', '/dashboard-summary', OPERATIONS],
     [invoiceRouter, 'get', '/:id', OPERATIONS],
     [ticketRouter, 'get', '/', OPERATIONS],
     [ticketRouter, 'get', '/stats', OPERATIONS],

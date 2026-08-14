@@ -77,8 +77,11 @@ describe('polling replacement does not reintroduce anon table access', () => {
   });
 
   it('TicketsPage loads unlinked stats from the authenticated API', () => {
-    const source = readPage('pages/dashboard/TicketsPage.jsx');
-    assert.match(source, /\/api\/tickets\/stats/);
+    const pageSource = readPage('pages/dashboard/TicketsPage.jsx');
+    const dataSource = readPage('data/routeData.js');
+    assert.match(pageSource, /loadTicketStats/);
+    assert.match(dataSource, /\/api\/tickets\/stats/);
+    assert.match(dataSource, /Authorization/);
   });
 
   it('InvoicesPage staff upload hits the operations endpoint, not the ADMIN simulator', () => {

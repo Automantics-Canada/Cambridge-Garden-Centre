@@ -35,6 +35,7 @@ router.post(
   InvoiceController.ingestStaffUpload
 );
 router.get('/', InvoiceController.getInvoices);
+router.get('/dashboard-summary', InvoiceController.getDashboardSummary);
 router.get('/:id', InvoiceController.getInvoiceById);
 router.post('/:id/verify', InvoiceController.verifyInvoice);
 router.post('/:id/dispute', InvoiceController.disputeInvoice);
