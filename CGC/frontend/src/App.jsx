@@ -1,22 +1,23 @@
 import { lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { useSelector } from 'react-redux';
+import { dashboardRouteLoaders } from './routes/dashboardRouteLoaders';
 import './App.css';
 
 const DashboardLayout = lazy(() => import('./layouts/DashboardLayout'));
-const Dashboard = lazy(() => import('./pages/dashboard/Dashboard'));
-const OrdersPage = lazy(() => import('./pages/dashboard/OrdersPage'));
-const InvoicesPage = lazy(() => import('./pages/dashboard/InvoicesPage'));
-const InvoiceDetailPage = lazy(() => import('./pages/dashboard/InvoiceDetailPage'));
-const TicketsPage = lazy(() => import('./pages/dashboard/TicketsPage'));
+const Dashboard = lazy(dashboardRouteLoaders.dashboard);
+const OrdersPage = lazy(dashboardRouteLoaders.orders);
+const InvoicesPage = lazy(dashboardRouteLoaders.invoices);
+const InvoiceDetailPage = lazy(dashboardRouteLoaders.invoiceDetail);
+const TicketsPage = lazy(dashboardRouteLoaders.tickets);
 const Login = lazy(() => import('./pages/Login'));
-const SupplierPage = lazy(() => import('./pages/dashboard/SupplierPage'));
-const RatesPage = lazy(() => import('./pages/dashboard/RatesPage'));
-const ProductPage = lazy(() => import('./pages/dashboard/ProductPage'));
-const VerificationDesk = lazy(() => import('./pages/dashboard/VerificationDesk'));
-const DriversPage = lazy(() => import('./pages/drivers/DriversPage'));
-const DispatchBoard = lazy(() => import('./pages/dispatch/DispatchBoard'));
-const DeliveriesPage = lazy(() => import('./pages/deliveries/DeliveriesPage'));
+const SupplierPage = lazy(dashboardRouteLoaders.supplier);
+const RatesPage = lazy(dashboardRouteLoaders.rates);
+const ProductPage = lazy(dashboardRouteLoaders.products);
+const VerificationDesk = lazy(dashboardRouteLoaders.verificationDesk);
+const DriversPage = lazy(dashboardRouteLoaders.drivers);
+const DispatchBoard = lazy(dashboardRouteLoaders.dispatch);
+const DeliveriesPage = lazy(dashboardRouteLoaders.deliveries);
 const DriverMobileView = lazy(() => import('./pages/driver/DriverMobileView'));
 
 const RouteFallback = () => (

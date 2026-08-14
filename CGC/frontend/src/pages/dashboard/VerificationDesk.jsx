@@ -1,6 +1,5 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import api from '../../api/axios';
-import { supabase } from '../../supabaseClient';
 import { 
   FileText, 
   Truck, 
@@ -35,9 +34,7 @@ export default function VerificationDesk() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [filterStatus, setFilterStatus] = useState('ALL');
-  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [page, setPage] = useState(1);
-  const [pagination, setPagination] = useState({ totalPages: 1, totalCount: 0 });
   const [isProcessing, setIsProcessing] = useState(false);
   const [detailsLoadingId, setDetailsLoadingId] = useState(null);
   
@@ -56,29 +53,9 @@ export default function VerificationDesk() {
   const fetchInvoices = useCallback(async () => {
     setLoading(true);
     try {
-      const token = localStorage.getItem('token');
-      const headers = token ? { Authorization: `Bearer ${token}` } : {};
-      const params = new URLSearchParams({
-        resource: 'invoices',
-        limit: String(INVOICES_PER_PAGE),
-        page: String(page),
-      });
-      if (filterStatus !== 'ALL') params.set('status', filterStatus);
-      if (debouncedSearch) params.set('search', debouncedSearch);
-
-      const { data, error } = await supabase.functions.invoke(`fetch-cgc-data?${params.toString()}`, {
-        method: 'GET',
-        headers
-      });
-
-      if (error) throw error;
-
-      const nextInvoices = data?.data || [];
+      const response = await api.get('/api/invoices');
+      const nextInvoices = Array.isArray(response.data) ? response.data : [];
       setInvoices(nextInvoices);
-      setPagination({
-        totalPages: Math.max(data?.pagination?.totalPages || 1, 1),
-        totalCount: data?.pagination?.totalCount || 0,
-      });
       setSelectedInvoice(current => (
         current && nextInvoices.some(invoice => invoice.id === current.id) ? current : null
       ));
@@ -87,19 +64,12 @@ export default function VerificationDesk() {
     } finally {
       setLoading(false);
     }
-  }, [debouncedSearch, filterStatus, page]);
+  }, []);
 
   const fetchInvoiceDetails = async (id) => {
     try {
-      const token = localStorage.getItem('token');
-      const headers = token ? { Authorization: `Bearer ${token}` } : {};
-
-      const { data, error } = await supabase.functions.invoke(`fetch-cgc-data?resource=invoice-details&id=${id}`, {
-        method: 'GET',
-        headers
-      });
-
-      if (error) throw error;
+      const response = await api.get(`/api/invoices/${id}`);
+      const data = response.data;
 
       setSelectedInvoice(data);
       setDisputeNote(data?.disputeNote || '');
@@ -112,14 +82,6 @@ export default function VerificationDesk() {
   useEffect(() => {
     fetchInvoices();
   }, [fetchInvoices]);
-
-  useEffect(() => {
-    const timer = window.setTimeout(() => {
-      setPage(1);
-      setDebouncedSearch(search.trim());
-    }, 300);
-    return () => window.clearTimeout(timer);
-  }, [search]);
 
   // Auto-expand first line item on select
   useEffect(() => {
@@ -277,6 +239,28 @@ export default function VerificationDesk() {
     }, 300);
   };
 
+  const filteredInvoices = useMemo(() => {
+    const normalizedSearch = search.trim().toLowerCase();
+    return invoices.filter(invoice => {
+      const matchesStatus = filterStatus === 'ALL' || invoice.status === filterStatus;
+      const matchesSearch = !normalizedSearch
+        || invoice.invoiceNumber?.toLowerCase().includes(normalizedSearch)
+        || invoice.supplier?.name?.toLowerCase().includes(normalizedSearch)
+        || invoice.emailFrom?.toLowerCase().includes(normalizedSearch);
+      return matchesStatus && matchesSearch;
+    });
+  }, [filterStatus, invoices, search]);
+
+  const totalPages = Math.max(Math.ceil(filteredInvoices.length / INVOICES_PER_PAGE), 1);
+  const visibleInvoices = filteredInvoices.slice(
+    (page - 1) * INVOICES_PER_PAGE,
+    page * INVOICES_PER_PAGE,
+  );
+
+  useEffect(() => {
+    if (page > totalPages) setPage(totalPages);
+  }, [page, totalPages]);
+
   if (loading && invoices.length === 0) return <VerificationDeskSkeleton />;
 
   const getFullUrl = (url) => {
@@ -299,10 +283,13 @@ export default function VerificationDesk() {
             <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted" />
             <input 
               type="text" 
-              placeholder="Search invoice number or sender..."
+              placeholder="Search invoices or suppliers..."
               className="w-full pl-10 pr-4 py-2.5 bg-ink/[0.03] border border-line rounded-control text-sm focus:ring-2 focus:ring-brand outline-none transition-all placeholder:text-muted font-light"
               value={search}
-              onChange={e => setSearch(e.target.value)}
+              onChange={e => {
+                setPage(1);
+                setSearch(e.target.value);
+              }}
             />
           </div>
 
@@ -330,14 +317,14 @@ export default function VerificationDesk() {
 
       {/* 2. Invoices Dropdown List */}
       <div className="space-y-4">
-        {invoices.length === 0 ? (
+        {visibleInvoices.length === 0 ? (
           <EmptyState
             icon={History}
             title="No invoices match"
             message="Try another status or search. Invoices appear here once they have been received."
           />
         ) : (
-          invoices.map((inv) => {
+          visibleInvoices.map((inv) => {
             const isExpanded = selectedInvoice?.id === inv.id;
             const isDetailLoading = detailsLoadingId === inv.id;
 
@@ -809,10 +796,10 @@ export default function VerificationDesk() {
         )}
       </div>
 
-      {pagination.totalCount > 0 && (
+      {filteredInvoices.length > 0 && (
         <div className="mt-6 min-h-12 flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-card border border-line bg-surface px-5 py-3 shadow-card">
           <p className="text-[12.5px] text-muted" aria-live="polite">
-            Showing {(page - 1) * INVOICES_PER_PAGE + 1}–{Math.min(page * INVOICES_PER_PAGE, pagination.totalCount)} of {pagination.totalCount} invoices
+            Showing {(page - 1) * INVOICES_PER_PAGE + 1}–{Math.min(page * INVOICES_PER_PAGE, filteredInvoices.length)} of {filteredInvoices.length} invoices
           </p>
           <div className="flex items-center gap-2">
             <button
@@ -824,12 +811,12 @@ export default function VerificationDesk() {
               <ChevronLeft className="h-4 w-4" /> Previous
             </button>
             <span className="min-w-20 text-center text-[12.5px] font-medium text-muted">
-              {loading ? 'Loading…' : `${page} / ${pagination.totalPages}`}
+              {loading ? 'Loading…' : `${page} / ${totalPages}`}
             </span>
             <button
               type="button"
-              onClick={() => setPage(current => Math.min(pagination.totalPages, current + 1))}
-              disabled={page >= pagination.totalPages || loading}
+              onClick={() => setPage(current => Math.min(totalPages, current + 1))}
+              disabled={page >= totalPages || loading}
               className="inline-flex items-center gap-1.5 rounded-control border border-line px-3 py-2 text-[12.5px] font-semibold text-ink transition-colors hover:border-brand/40 hover:bg-brand/[0.04] disabled:cursor-not-allowed disabled:opacity-45"
             >
               Next <ChevronRight className="h-4 w-4" />

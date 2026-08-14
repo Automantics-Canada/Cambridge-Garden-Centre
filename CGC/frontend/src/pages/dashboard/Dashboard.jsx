@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useSelector } from 'react-redux';
 import { useNavigate } from 'react-router-dom';
-import { supabase } from '../../supabaseClient';
+import api from '../../api/axios';
 import { ChevronRight, Users, Inbox } from 'lucide-react';
 import { Skeleton } from '../../components/Skeleton';
 import { formatDate } from '../../lib/date';
@@ -21,7 +21,7 @@ export default function Dashboard() {
   const user = useSelector((state) => state.auth.user);
   const navigate = useNavigate();
   const [stats, setStats] = useState({
-    totalInvoices: 0,
+    totalMonthly: 0,
     pendingCount: 0,
     disputedCount: 0,
     savingsDetected: 0,
@@ -32,36 +32,23 @@ export default function Dashboard() {
   const fetchDashboardData = useCallback(async () => {
     setLoading(true);
     try {
-      const token = localStorage.getItem('token');
-      const headers = token ? { Authorization: `Bearer ${token}` } : {};
+      // Use the same Railway API as the authenticated write flows. The Edge
+      // function adds a multi-second floor to every dashboard visit and has a
+      // separate deployment lifecycle that already drifted from the frontend.
+      const response = await api.get('/api/invoices');
+      const invoices = Array.isArray(response.data) ? response.data : [];
+      const now = new Date();
 
-      // The live Supabase deployment does not yet expose dashboard-summary.
-      // Keep the route fast and compatible by requesting only the seven rows
-      // needed for recent activity and exact status counts.
-      const [recentResponse, pendingResponse, disputedResponse] = await Promise.all([
-        supabase.functions.invoke('fetch-cgc-data?resource=invoices&limit=5&page=1', {
-          method: 'GET',
-          headers
-        }),
-        supabase.functions.invoke('fetch-cgc-data?resource=invoices&status=PENDING_REVIEW&limit=1&page=1', {
-          method: 'GET',
-          headers
-        }),
-        supabase.functions.invoke('fetch-cgc-data?resource=invoices&status=DISPUTED&limit=1&page=1', {
-          method: 'GET',
-          headers
-        })
-      ]);
-
-      const requestError = recentResponse.error || pendingResponse.error || disputedResponse.error;
-      if (requestError) throw requestError;
-
-      setRecentInvoices(recentResponse.data?.data || []);
+      setRecentInvoices(invoices.slice(0, 5));
       setStats(current => ({
         ...current,
-        totalInvoices: recentResponse.data?.pagination?.totalCount || 0,
-        pendingCount: pendingResponse.data?.pagination?.totalCount || 0,
-        disputedCount: disputedResponse.data?.pagination?.totalCount || 0,
+        totalMonthly: invoices.filter(invoice => {
+          const receivedAt = new Date(invoice.receivedAt);
+          return receivedAt.getMonth() === now.getMonth()
+            && receivedAt.getFullYear() === now.getFullYear();
+        }).length,
+        pendingCount: invoices.filter(invoice => invoice.status === 'PENDING_REVIEW').length,
+        disputedCount: invoices.filter(invoice => invoice.status === 'DISPUTED').length,
       }));
 
     } catch (err) {
@@ -103,9 +90,9 @@ export default function Dashboard() {
           onClick={() => navigate('/dashboard/invoices')}
         />
         <StatTile
-          label="Invoices on record"
-          value={stats.totalInvoices}
-          hint="All invoices received so far"
+          label="Processed this month"
+          value={stats.totalMonthly}
+          hint="Invoices received since the 1st"
         />
       </div>
 
