@@ -15,6 +15,7 @@ import {
   X,
   Link,
   ChevronRight,
+  ChevronLeft,
   ExternalLink,
   ChevronDown,
   ChevronUp
@@ -26,12 +27,17 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { ticketThumbnailSrc } from '../../utils/ticketImage';
 import { EmptyState, PageHeader, StatusBadge } from '../../components/ui';
 
+const INVOICES_PER_PAGE = 25;
+
 export default function VerificationDesk() {
   const [invoices, setInvoices] = useState([]);
   const [selectedInvoice, setSelectedInvoice] = useState(null);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [filterStatus, setFilterStatus] = useState('ALL');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [page, setPage] = useState(1);
+  const [pagination, setPagination] = useState({ totalPages: 1, totalCount: 0 });
   const [isProcessing, setIsProcessing] = useState(false);
   const [detailsLoadingId, setDetailsLoadingId] = useState(null);
   
@@ -52,28 +58,36 @@ export default function VerificationDesk() {
     try {
       const token = localStorage.getItem('token');
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
+      const params = new URLSearchParams({
+        resource: 'invoices',
+        limit: String(INVOICES_PER_PAGE),
+        page: String(page),
+      });
+      if (filterStatus !== 'ALL') params.set('status', filterStatus);
+      if (debouncedSearch) params.set('search', debouncedSearch);
 
-      const { data, error } = await supabase.functions.invoke('fetch-cgc-data?resource=invoices&limit=1000', {
+      const { data, error } = await supabase.functions.invoke(`fetch-cgc-data?${params.toString()}`, {
         method: 'GET',
         headers
       });
 
       if (error) throw error;
 
-      setInvoices(data?.data || []);
-      // Auto-select and expand first if none selected
-      if (data?.data?.length > 0 && !selectedInvoice) {
-        const firstId = data.data[0].id;
-        setDetailsLoadingId(firstId);
-        await fetchInvoiceDetails(firstId);
-      }
-    } catch (err) {
+      const nextInvoices = data?.data || [];
+      setInvoices(nextInvoices);
+      setPagination({
+        totalPages: Math.max(data?.pagination?.totalPages || 1, 1),
+        totalCount: data?.pagination?.totalCount || 0,
+      });
+      setSelectedInvoice(current => (
+        current && nextInvoices.some(invoice => invoice.id === current.id) ? current : null
+      ));
+    } catch {
       toast.error('Failed to load invoices');
     } finally {
       setLoading(false);
-      setDetailsLoadingId(null);
     }
-  }, [selectedInvoice]);
+  }, [debouncedSearch, filterStatus, page]);
 
   const fetchInvoiceDetails = async (id) => {
     try {
@@ -90,14 +104,22 @@ export default function VerificationDesk() {
       setSelectedInvoice(data);
       setDisputeNote(data?.disputeNote || '');
       setShowDisputeInput(false);
-    } catch (err) {
+    } catch {
       toast.error('Failed to load invoice details');
     }
   };
 
   useEffect(() => {
     fetchInvoices();
-  }, []);
+  }, [fetchInvoices]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setPage(1);
+      setDebouncedSearch(search.trim());
+    }, 300);
+    return () => window.clearTimeout(timer);
+  }, [search]);
 
   // Auto-expand first line item on select
   useEffect(() => {
@@ -173,7 +195,7 @@ export default function VerificationDesk() {
       toast.success('Order linked successfully');
       setLinkingLineItem(null);
       fetchInvoiceDetails(selectedInvoice.id);
-    } catch (err) {
+    } catch {
       toast.error('Linking failed');
     } finally {
       setIsProcessing(false);
@@ -190,7 +212,7 @@ export default function VerificationDesk() {
       toast.success('Ticket linked successfully');
       setLinkingLineItem(null);
       fetchInvoiceDetails(selectedInvoice.id);
-    } catch (err) {
+    } catch {
       toast.error('Ticket linking failed');
     } finally {
       setIsProcessing(false);
@@ -205,7 +227,7 @@ export default function VerificationDesk() {
       });
       toast.success('Order unlinked successfully');
       fetchInvoiceDetails(selectedInvoice.id);
-    } catch (err) {
+    } catch {
       toast.error('Failed to unlink order');
     } finally {
       setIsProcessing(false);
@@ -221,7 +243,7 @@ export default function VerificationDesk() {
       });
       toast.success('Ticket unlinked successfully');
       fetchInvoiceDetails(selectedInvoice.id);
-    } catch (err) {
+    } catch {
       toast.error('Failed to unlink ticket');
     } finally {
       setIsProcessing(false);
@@ -255,13 +277,6 @@ export default function VerificationDesk() {
     }, 300);
   };
 
-  const filteredInvoices = invoices.filter(inv => {
-    const matchesSearch = inv.invoiceNumber.toLowerCase().includes(search.toLowerCase()) || 
-                         inv.supplier?.name.toLowerCase().includes(search.toLowerCase());
-    if (filterStatus === 'ALL') return matchesSearch;
-    return matchesSearch && inv.status === filterStatus;
-  });
-
   if (loading && invoices.length === 0) return <VerificationDeskSkeleton />;
 
   const getFullUrl = (url) => {
@@ -284,7 +299,7 @@ export default function VerificationDesk() {
             <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted" />
             <input 
               type="text" 
-              placeholder="Search invoices or suppliers..."
+              placeholder="Search invoice number or sender..."
               className="w-full pl-10 pr-4 py-2.5 bg-ink/[0.03] border border-line rounded-control text-sm focus:ring-2 focus:ring-brand outline-none transition-all placeholder:text-muted font-light"
               value={search}
               onChange={e => setSearch(e.target.value)}
@@ -296,7 +311,10 @@ export default function VerificationDesk() {
             {['ALL', 'PENDING_REVIEW', 'VERIFIED', 'DISPUTED'].map((status) => (
               <button
                 key={status}
-                onClick={() => setFilterStatus(status)}
+                onClick={() => {
+                  setPage(1);
+                  setFilterStatus(status);
+                }}
                 className={`px-4 py-2 rounded-control text-[12.5px] font-medium whitespace-nowrap transition-all ${
                   filterStatus === status 
                     ? 'bg-surface text-brand shadow-card font-semibold' 
@@ -312,14 +330,14 @@ export default function VerificationDesk() {
 
       {/* 2. Invoices Dropdown List */}
       <div className="space-y-4">
-        {filteredInvoices.length === 0 ? (
+        {invoices.length === 0 ? (
           <EmptyState
             icon={History}
             title="No invoices match"
             message="Try another status or search. Invoices appear here once they have been received."
           />
         ) : (
-          filteredInvoices.map((inv) => {
+          invoices.map((inv) => {
             const isExpanded = selectedInvoice?.id === inv.id;
             const isDetailLoading = detailsLoadingId === inv.id;
 
@@ -791,6 +809,35 @@ export default function VerificationDesk() {
         )}
       </div>
 
+      {pagination.totalCount > 0 && (
+        <div className="mt-6 min-h-12 flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-card border border-line bg-surface px-5 py-3 shadow-card">
+          <p className="text-[12.5px] text-muted" aria-live="polite">
+            Showing {(page - 1) * INVOICES_PER_PAGE + 1}–{Math.min(page * INVOICES_PER_PAGE, pagination.totalCount)} of {pagination.totalCount} invoices
+          </p>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setPage(current => Math.max(1, current - 1))}
+              disabled={page <= 1 || loading}
+              className="inline-flex items-center gap-1.5 rounded-control border border-line px-3 py-2 text-[12.5px] font-semibold text-ink transition-colors hover:border-brand/40 hover:bg-brand/[0.04] disabled:cursor-not-allowed disabled:opacity-45"
+            >
+              <ChevronLeft className="h-4 w-4" /> Previous
+            </button>
+            <span className="min-w-20 text-center text-[12.5px] font-medium text-muted">
+              {loading ? 'Loading…' : `${page} / ${pagination.totalPages}`}
+            </span>
+            <button
+              type="button"
+              onClick={() => setPage(current => Math.min(pagination.totalPages, current + 1))}
+              disabled={page >= pagination.totalPages || loading}
+              className="inline-flex items-center gap-1.5 rounded-control border border-line px-3 py-2 text-[12.5px] font-semibold text-ink transition-colors hover:border-brand/40 hover:bg-brand/[0.04] disabled:cursor-not-allowed disabled:opacity-45"
+            >
+              Next <ChevronRight className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* 3. Manual Link Search Overlay Modal */}
       {linkingLineItem && (
         <div className="fixed inset-0 bg-scrim/50 z-[100] flex items-center justify-center p-6 backdrop-blur-sm">
@@ -892,10 +939,10 @@ function VerificationDeskSkeleton() {
     <div className="flex flex-col h-full bg-canvas -m-8 p-8 overflow-y-auto">
       {/* Skeleton Header Toolbar */}
       <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4 mb-8 bg-surface p-6 rounded-card border border-line shadow-card animate-pulse">
-        <div className="space-y-2">
-          <Skeleton variant="text" width="180px" height="28px" />
-          <Skeleton variant="text" width="320px" height="16px" />
-        </div>
+        <PageHeader
+          title="Verification desk"
+          subtitle="Open an invoice, check the tickets and orders against it, then verify or dispute."
+        />
         <div className="flex items-center gap-3">
           <Skeleton variant="rectangle" width="240px" height="42px" className="rounded-control" />
           <Skeleton variant="rectangle" width="300px" height="42px" className="rounded-control" />
