@@ -15,7 +15,14 @@
   --c-canvas: 251 250 246;    /* #FBFAF6  page background, warm off-white   */
   --c-surface: 255 255 255;   /* #FFFFFF  cards and panels                  */
   --c-rail: 243 245 241;      /* #F3F5F1  sidebar — light, not dark         */
-  --c-line: 233 231 223;      /* #E9E7DF  hairline borders                  */
+  /* #D6D2C6. Was #E9E7DF, which measured 1.24:1 against the white card fill.
+     WCAG 1.4.11 wants 3:1 for anything that identifies a UI component, and at
+     that value the card edge and every input outline were invisible on a real
+     monitor — the login form read as floating text with no fields. */
+  --c-line: 214 210 198;      /* #D6D2C6  hairline borders, dividers        */
+  /* Form controls need to clear 3:1 on their own fill, which a decorative
+     hairline does not. Inputs, selects and textareas use this instead. */
+  --c-control-line: 148 146 138; /* #94928A  3.12:1 on white                */
 
   /* -- text ------------------------------------------------------------ */
   --c-ink: 26 31 28;          /* #1A1F1C  primary text                      */
@@ -63,7 +70,8 @@
     --c-canvas: 18 20 15;     /* #12140F */
     --c-surface: 26 29 23;    /* #1A1D17 */
     --c-rail: 25 28 21;       /* #191C15 */
-    --c-line: 42 46 37;       /* #2A2E25 */
+    --c-line: 62 68 56;       /* #3E4438 */
+    --c-control-line: 100 105 95; /* #64695F  3.03:1 on dark surface */
 
     --c-ink: 237 239 231;     /* #EDEFE7 */
     --c-muted: 154 162 148;   /* #9AA294 */
@@ -89,7 +97,8 @@
   --c-canvas: 18 20 15;
   --c-surface: 26 29 23;
   --c-rail: 25 28 21;
-  --c-line: 42 46 37;
+  --c-line: 62 68 56;
+  --c-control-line: 100 105 95;
 
   --c-ink: 237 239 231;
   --c-muted: 154 162 148;

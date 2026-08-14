@@ -14,6 +14,7 @@ export default {
         surface: 'rgb(var(--c-surface) / <alpha-value>)',
         rail: 'rgb(var(--c-rail) / <alpha-value>)',
         line: 'rgb(var(--c-line) / <alpha-value>)',
+        'control-line': 'rgb(var(--c-control-line) / <alpha-value>)',
         ink: 'rgb(var(--c-ink) / <alpha-value>)',
         muted: 'rgb(var(--c-muted) / <alpha-value>)',
         'rail-ink': 'rgb(var(--c-rail-ink) / <alpha-value>)',
