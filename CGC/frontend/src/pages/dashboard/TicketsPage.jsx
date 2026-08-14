@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { useSelector } from 'react-redux';
 import { useSearchParams } from 'react-router-dom';
 import api from '../../api/axios';
-import { supabase } from '../../supabaseClient';
 import { 
   Search, 
   Eye, 
@@ -27,6 +27,14 @@ import { useIntervalRefresh } from '../../hooks/useIntervalRefresh';
 import { ticketThumbnailSrc } from '../../utils/ticketImage';
 import { EmptyState, PageHeader, StatusBadge } from '../../components/ui';
 import { formatDate } from '../../lib/date';
+import {
+  getCachedSupplierOptions,
+  getCachedTicketPage,
+  getCachedTicketStats,
+  loadSupplierOptions,
+  loadTicketPage,
+  loadTicketStats,
+} from '../../data/routeData';
 
 // Each row renders a full-resolution ticket photo. Halving the page halves the
 // number of images requested and the rows the list query projects. This is an
@@ -35,37 +43,16 @@ const PAGE_SIZE = 25;
 
 // Bounded per request rather than on the shared Axios instance, which is also
 // used for uploads and OCR triggers that legitimately take longer.
-const TICKETS_REQUEST_TIMEOUT_MS = 15_000;
-
-function isAbortError(error) {
-  return (
-    error?.code === 'ERR_CANCELED' ||
-    error?.name === 'CanceledError' ||
-    error?.name === 'AbortError'
-  );
-}
-
-/**
- * Whether a failed backend call is worth retrying through the Edge function.
- *
- * Only transport-level failures and server faults are. A 4xx is a definitive
- * answer — retrying an auth or validation failure doubles the latency and hides
- * the real cause behind a second, unrelated error.
- */
-function shouldFallBackToEdge(error) {
-  if (isAbortError(error)) return false;
-  if (error?.code === 'ECONNABORTED' || error?.code === 'ETIMEDOUT') return true;
-  const status = error?.response?.status;
-  if (status === undefined) return true; // network error, no response received
-  return status >= 500;
-}
-
 export default function TicketsPage() {
+  const userId = useSelector((state) => state.auth.user?.id);
+  const cachedFirstPage = getCachedTicketPage(userId, { page: 1, limit: PAGE_SIZE });
+  const cachedStats = getCachedTicketStats(userId);
+  const cachedSuppliers = getCachedSupplierOptions(userId);
   const [searchParams, setSearchParams] = useSearchParams();
   const ticketIdParam = searchParams.get('ticketId');
-  const [tickets, setTickets] = useState([]);
-  const [stats, setStats] = useState({ unlinkedCount: 0 });
-  const [loading, setLoading] = useState(false);
+  const [tickets, setTickets] = useState(() => cachedFirstPage?.data || []);
+  const [stats, setStats] = useState(() => cachedStats || { unlinkedCount: 0 });
+  const [loading, setLoading] = useState(() => !cachedFirstPage);
   const [selectedTicket, setSelectedTicket] = useState(null);
   const [activeTab, setActiveTab] = useState('ALL'); // ALL, UNLINKED, LINKED
   
@@ -75,15 +62,14 @@ export default function TicketsPage() {
   const [isUploading, setIsUploading] = useState(false);
   const imageInputRef = useRef(null);
   const pdfInputRef = useRef(null);
-  // Cancels the in-flight tickets request; the id guards against a superseded
-  // response still reaching setState if it resolves before the abort lands.
-  const requestAbortRef = useRef(null);
+  // The id prevents a slow response for an earlier filter from replacing a
+  // newer result. The data layer deduplicates identical in-flight reads.
   const latestRequestIdRef = useRef(0);
   const [supplierId, setSupplierId] = useState('');
   const [source, setSource] = useState('');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
-  const [suppliers, setSuppliers] = useState([]);
+  const [suppliers, setSuppliers] = useState(() => cachedSuppliers || []);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -92,12 +78,11 @@ export default function TicketsPage() {
     return () => clearTimeout(timer);
   }, [search]);
 
-  // Drop any in-flight tickets request when the page unmounts.
-  useEffect(() => () => requestAbortRef.current?.abort(), []);
-
   // Pagination
   const [page, setPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(1);
+  const [totalPages, setTotalPages] = useState(
+    () => cachedFirstPage?.pagination?.totalPages || 1,
+  );
 
   const renderPageNumbers = () => {
     const pages = [];
@@ -189,109 +174,58 @@ export default function TicketsPage() {
 
   const fetchSuppliers = useCallback(async () => {
     try {
-      // Only id and name are needed to populate the filter dropdown. Fetching
-      // 1000 complete supplier records for this cost ~2.7s in production.
-      const res = await api.get('/api/suppliers/options');
-      setSuppliers(res.data || []);
+      const data = await loadSupplierOptions(userId, { force: true });
+      setSuppliers(data);
     } catch (err) {
       console.error('Error fetching suppliers:', err);
     }
-  }, []);
+  }, [userId]);
 
   const fetchStats = useCallback(async () => {
     try {
-      const res = await api.get('/api/tickets/stats');
-      setStats({ unlinkedCount: res.data?.unlinkedCount || 0 });
+      const data = await loadTicketStats(userId, { force: true });
+      setStats(data);
     } catch (err) {
       console.error('Error fetching ticket stats:', err);
     }
-  }, []);
+  }, [userId]);
 
   const fetchTickets = useCallback(async (silent = false) => {
-    // Supersede any in-flight request. Without this, a slow response for an
-    // earlier filter could resolve after a newer one and overwrite the list
-    // with stale rows.
-    requestAbortRef.current?.abort();
-    const controller = new AbortController();
-    requestAbortRef.current = controller;
-
     const requestId = ++latestRequestIdRef.current;
     const isCurrent = () => requestId === latestRequestIdRef.current;
+    const queryParams = { page, limit: PAGE_SIZE };
+    if (activeTab !== 'ALL') queryParams.status = activeTab;
+    if (debouncedSearch && debouncedSearch.trim()) queryParams.search = debouncedSearch.trim();
+    if (supplierId) queryParams.supplierId = supplierId;
+    if (source) queryParams.source = source;
+    if (startDate) queryParams.startDate = startDate;
+    if (endDate) queryParams.endDate = endDate;
 
-    if (!silent) setLoading(true);
+    const cached = getCachedTicketPage(userId, queryParams);
+    if (!silent && cached) {
+      setTickets(cached.data);
+      setTotalPages(cached.pagination?.totalPages || 1);
+      setLoading(false);
+    } else if (!silent) {
+      setLoading(true);
+    }
+
     try {
-      const queryParams = {
-        page,
-        limit: PAGE_SIZE,
-      };
-      if (activeTab !== 'ALL') queryParams.status = activeTab;
-      if (debouncedSearch && debouncedSearch.trim()) queryParams.search = debouncedSearch.trim();
-      if (supplierId) queryParams.supplierId = supplierId;
-      if (source) queryParams.source = source;
-      if (startDate) queryParams.startDate = startDate;
-      if (endDate) queryParams.endDate = endDate;
-
-      let resultData = null;
-      try {
-        const res = await api.get('/api/tickets', {
-          params: queryParams,
-          signal: controller.signal,
-          // Bounded per request rather than globally: the shared Axios instance
-          // is used by uploads and OCR triggers that legitimately run longer.
-          timeout: TICKETS_REQUEST_TIMEOUT_MS,
-        });
-        resultData = res.data;
-      } catch (backendErr) {
-        if (isAbortError(backendErr)) return;
-        // Only retry through the Edge function when the backend was unreachable
-        // or failed server-side. A 400/401/403 is a definitive answer and
-        // retrying it just doubles the latency and hides the real cause.
-        if (!shouldFallBackToEdge(backendErr)) throw backendErr;
-
-        console.warn('Backend tickets call failed, falling back to edge function:', backendErr);
-        const params = new URLSearchParams({
-          resource: 'tickets',
-          page: String(page),
-          limit: String(PAGE_SIZE)
-        });
-        if (activeTab !== 'ALL') params.append('status', activeTab);
-        if (debouncedSearch && debouncedSearch.trim()) params.append('search', debouncedSearch.trim());
-        if (supplierId) params.append('supplierId', supplierId);
-        if (source) params.append('source', source);
-        if (startDate) params.append('startDate', startDate);
-        if (endDate) params.append('endDate', endDate);
-
-        const token = localStorage.getItem('token');
-        const headers = token ? { Authorization: `Bearer ${token}` } : {};
-
-        const { data, error } = await supabase.functions.invoke(`fetch-cgc-data?${params.toString()}`, {
-          method: 'GET',
-          headers
-        });
-        if (error) throw error;
-        resultData = data;
-      }
-
+      // Railway and the Edge function deploy independently. Race their
+      // read-only paginated endpoints so either healthy source can render the
+      // table, while the session cache removes repeat-route waits.
+      const resultData = await loadTicketPage(userId, queryParams, { force: true });
       if (!isCurrent()) return;
-
-      if (resultData && resultData.data) {
-        setTickets(resultData.data);
-        setTotalPages(resultData.pagination?.totalPages || 1);
-      } else if (Array.isArray(resultData)) {
-        setTickets(resultData);
-        setTotalPages(1);
-      } else {
-        setTickets([]);
-        setTotalPages(1);
-      }
+      setTickets(resultData.data);
+      setTotalPages(resultData.pagination?.totalPages || 1);
     } catch (err) {
-      if (isAbortError(err) || !isCurrent()) return;
+      if (!isCurrent()) return;
       console.error('Error fetching tickets:', err);
-      if (!silent) toast.error('Failed to load tickets');
+      if (!silent && !cached) toast.error('Failed to load tickets');
     } finally {
       if (!silent && isCurrent()) setLoading(false);
     }
-  }, [activeTab, debouncedSearch, supplierId, source, startDate, endDate, page]);
+  }, [activeTab, debouncedSearch, supplierId, source, startDate, endDate, page, userId]);
 
   // Reset to page 1 on filter changes
   useEffect(() => {
@@ -343,7 +277,7 @@ export default function TicketsPage() {
         const res = await api.get(`/api/tickets/${id}`);
         setSelectedTicket(res.data);
       }
-    } catch (err) {
+    } catch {
       toast.error('Failed to update ticket');
     }
   };
@@ -373,7 +307,7 @@ export default function TicketsPage() {
       toast.success(isImage ? 'Ticket uploaded and processing!' : 'PDF split and tickets queued for OCR!');
       fetchTickets();
       fetchStats();
-    } catch (err) {
+    } catch {
       toast.error('Upload failed');
     } finally {
       setIsUploading(false);
@@ -495,7 +429,7 @@ export default function TicketsPage() {
       }
       fetchTickets();
       fetchStats();
-    } catch (err) {
+    } catch {
       toast.error('Failed to link ticket');
     }
   };
@@ -513,7 +447,7 @@ export default function TicketsPage() {
       }
       fetchTickets();
       fetchStats();
-    } catch (err) {
+    } catch {
       toast.error('Failed to unlink ticket');
     }
   };

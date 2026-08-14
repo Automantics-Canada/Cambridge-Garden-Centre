@@ -10,6 +10,8 @@ import { logout } from '../store/authSlice';
 import LogoutModal from '../components/LogoutModal';
 import { ThemeToggle } from '../components/ui';
 import { cn } from '../lib/cn';
+import { clearRouteDataCache } from '../lib/routeDataCache';
+import { preloadRouteData } from '../data/routeData';
 import {
   preloadAllDashboardRoutes,
   preloadDashboardRoute,
@@ -48,15 +50,21 @@ const NAV_GROUPS = [
   },
 ];
 
-function NavItem({ item, onNavigate }) {
+function NavItem({ item, onNavigate, userId }) {
   const Icon = item.icon;
   return (
     <NavLink
       to={item.path}
       end={item.end}
       onClick={onNavigate}
-      onPointerEnter={() => preloadDashboardRoute(item.path)}
-      onFocus={() => preloadDashboardRoute(item.path)}
+      onPointerEnter={() => {
+        preloadDashboardRoute(item.path);
+        preloadRouteData(item.path, userId);
+      }}
+      onFocus={() => {
+        preloadDashboardRoute(item.path);
+        preloadRouteData(item.path, userId);
+      }}
       className={({ isActive }) =>
         cn(
           'flex items-center gap-3 rounded-pill px-4 py-2.5 text-[13.5px]',
@@ -98,6 +106,23 @@ export default function DashboardLayout() {
     return () => window.clearTimeout(timerId);
   }, []);
 
+  useEffect(() => {
+    if (!user?.id) return undefined;
+    preloadRouteData(location.pathname, user.id);
+
+    // Most sessions land on Dashboard and visit Tickets next. Warm only that
+    // one paginated read after the current route has started, rather than
+    // flooding the API with requests for every navigation item.
+    if (location.pathname === '/dashboard') {
+      const timerId = window.setTimeout(
+        () => preloadRouteData('/dashboard/tickets', user.id),
+        1_000,
+      );
+      return () => window.clearTimeout(timerId);
+    }
+    return undefined;
+  }, [location.pathname, user?.id]);
+
   // Tapping a link should never leave the mobile drawer hanging open.
   const closeDrawer = () => setDrawerOpen(false);
 
@@ -131,7 +156,12 @@ export default function DashboardLayout() {
             </p>
             <div className="space-y-1">
               {group.items.map((item) => (
-                <NavItem key={item.path} item={item} onNavigate={closeDrawer} />
+                <NavItem
+                  key={item.path}
+                  item={item}
+                  onNavigate={closeDrawer}
+                  userId={user?.id}
+                />
               ))}
             </div>
           </div>
@@ -234,7 +264,10 @@ export default function DashboardLayout() {
       <LogoutModal
         isOpen={showLogoutModal}
         onClose={() => setShowLogoutModal(false)}
-        onConfirm={() => dispatch(logout())}
+        onConfirm={() => {
+          clearRouteDataCache(user?.id);
+          dispatch(logout());
+        }}
       />
     </div>
   );
