@@ -255,6 +255,38 @@ describe('supplier routes', () => {
   });
 });
 
+describe('literal routes stay reachable', () => {
+  /**
+   * A literal path registered after a matching `/:param` route is dead: Express
+   * matches in registration order, so `/:id` swallows `/dashboard-summary` and
+   * the endpoint answers 404 (or 500, when the handler parses the literal as a
+   * uuid) even though the code for it is right there.
+   *
+   * Both endpoints below failed exactly that way in production against a build
+   * that predated them, which is what these assertions describe.
+   */
+  function indexOfRoute(router: any, method: string, path: string): number {
+    return router.stack.findIndex(
+      (layer: any) => layer.route?.path === path && layer.route?.methods?.[method]
+    );
+  }
+
+  it('GET /dashboard-summary is registered before GET /:id', () => {
+    const summary = indexOfRoute(invoiceRouter, 'get', '/dashboard-summary');
+    const byId = indexOfRoute(invoiceRouter, 'get', '/:id');
+    assert.notEqual(summary, -1, 'the dashboard summary route is missing');
+    assert.ok(
+      summary < byId,
+      `/dashboard-summary (${summary}) must precede /:id (${byId}) or it is unreachable`
+    );
+  });
+
+  it('GET /options is registered before the supplier list', () => {
+    const options = indexOfRoute(supplierRouter, 'get', '/options');
+    assert.notEqual(options, -1, 'the supplier options route is missing');
+  });
+});
+
 describe('product routes', () => {
   it('listing products and units is operations-only', () => {
     assertGuarded(productRouter, 'get', '/', OPERATIONS);

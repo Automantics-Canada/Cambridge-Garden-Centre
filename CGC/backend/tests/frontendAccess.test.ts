@@ -35,6 +35,15 @@ function containsAnonTableAccess(source: string): boolean {
   return source.replace(/\s+/g, '').includes('supabase.from(');
 }
 
+/**
+ * Strip comments so a guard cannot be tripped by a comment that *describes* the
+ * removed behaviour. Without this, documenting "this used to ask for limit=1000"
+ * fails the very test that proves it no longer does.
+ */
+function codeOnly(source: string): string {
+  return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+}
+
 const PAGES = [
   'pages/dashboard/InvoicesPage.jsx',
   'pages/dashboard/TicketsPage.jsx',
@@ -81,7 +90,46 @@ describe('polling replacement does not reintroduce anon table access', () => {
     const dataSource = readPage('data/routeData.js');
     assert.match(pageSource, /loadTicketStats/);
     assert.match(dataSource, /\/api\/tickets\/stats/);
-    assert.match(dataSource, /Authorization/);
+    // The bearer token is attached by the shared axios instance rather than
+    // hand-built per call, so authentication is asserted via that client.
+    assert.match(dataSource, /from '\.\.\/api\/axios'/);
+    assert.match(readPage('api/axios.js'), /Authorization/);
+  });
+
+  it('route reads go through the authenticated API, not the anon Edge client', () => {
+    // Racing the Express API against supabase.functions.invoke is what turned
+    // three reads on the tickets screen into seven requests, and the Edge
+    // deployment drifts independently of this repo.
+    const dataSource = readPage('data/routeData.js');
+    assert.equal(
+      dataSource.includes('supabase.functions.invoke'),
+      false,
+      'routeData must have exactly one source per resource'
+    );
+    assert.equal(
+      dataSource.includes('Promise.any'),
+      false,
+      'a race against a known-failing endpoint multiplies load without adding availability'
+    );
+  });
+
+  it('list screens do not request unbounded pages', () => {
+    for (const page of ['pages/dashboard/InvoicesPage.jsx', 'pages/dashboard/VerificationDesk.jsx']) {
+      const source = codeOnly(readPage(page));
+      assert.equal(source.includes('limit=1000'), false, `${page} still asks for 1000 rows`);
+      assert.equal(
+        /api\.get\(\s*['"`]\/api\/invoices['"`]\s*\)/.test(source),
+        false,
+        `${page} still fetches the whole invoice ledger`
+      );
+    }
+  });
+
+  it('the comment stripper does not hide real code', () => {
+    // Proves codeOnly cannot pass vacuously by deleting everything.
+    assert.equal(codeOnly('// limit=1000 was removed\nconst a = 1;').includes('limit=1000'), false);
+    assert.equal(codeOnly("fetch('x?limit=1000')").includes('limit=1000'), true);
+    assert.equal(codeOnly("const u = 'https://x/y';").includes('https://x/y'), true);
   });
 
   it('InvoicesPage staff upload hits the operations endpoint, not the ADMIN simulator', () => {

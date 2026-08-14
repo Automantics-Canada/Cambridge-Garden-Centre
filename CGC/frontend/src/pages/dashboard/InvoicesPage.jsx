@@ -1,7 +1,13 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useSelector } from 'react-redux';
 import api from '../../api/axios';
-import { supabase } from '../../supabaseClient';
+import {
+  getCachedInvoicePage,
+  loadInvoicePage,
+  loadSupplierOptions,
+} from '../../data/routeData';
+import { useDebouncedValue } from '../../hooks/useDebouncedValue';
 import {
   Search,
   Upload,
@@ -33,16 +39,23 @@ const STATUS_TABS = [
   { id: 'DISPUTED', name: 'Disputed' }
 ];
 
+const INVOICES_PER_PAGE = 25;
+
 export default function InvoicesPage() {
   const navigate = useNavigate();
+  const userId = useSelector((state) => state.auth.user?.id);
   const [searchParams, setSearchParams] = useSearchParams();
   const activeTab = searchParams.get('status') || 'ALL';
   const [invoices, setInvoices] = useState([]);
+  const [pagination, setPagination] = useState({ page: 1, totalPages: 1, totalCount: 0 });
+  const [page, setPage] = useState(1);
+  const [loadError, setLoadError] = useState(null);
   const [loading, setLoading] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef(null);
   const [suppliers, setSuppliers] = useState([]);
   const [search, setSearch] = useState('');
+  const debouncedSearch = useDebouncedValue(search, 350);
   const [filters, setFilters] = useState({
     supplierId: 'ALL',
     senderType: 'ALL',
@@ -51,52 +64,65 @@ export default function InvoicesPage() {
     dateEnd: ''
   });
 
+  // Narrowing the result set can leave the current page out of range, so the
+  // page resets whenever a filter changes. This is done during render rather
+  // than in an effect: an effect would let one render commit with the old page
+  // and the new filter, firing a request for a page the user never asked for.
+  const filterSignature = JSON.stringify([activeTab, filters, debouncedSearch]);
+  const [lastFilterSignature, setLastFilterSignature] = useState(filterSignature);
+  if (filterSignature !== lastFilterSignature) {
+    setLastFilterSignature(filterSignature);
+    setPage(1);
+  }
+
+  // Every filter is a server-side parameter. This screen previously pulled
+  // `limit=1000` invoices plus every supplier and negotiated rate from the Edge
+  // function and filtered them in the browser, then repeated the whole download
+  // every 20 seconds.
+  const query = useMemo(() => ({
+    page,
+    limit: INVOICES_PER_PAGE,
+    status: activeTab === 'ALL' ? undefined : activeTab,
+    supplierId: filters.supplierId === 'ALL' ? undefined : filters.supplierId,
+    senderType: filters.senderType === 'ALL' ? undefined : filters.senderType,
+    flaggedOnly: filters.hasDiscrepancies || undefined,
+    startDate: filters.dateStart || undefined,
+    endDate: filters.dateEnd || undefined,
+    search: debouncedSearch || undefined,
+  }), [page, activeTab, filters, debouncedSearch]);
+
   const fetchInvoices = useCallback(async (silent = false) => {
-    if (!silent) setLoading(true);
-    try {
-      const params = new URLSearchParams({
-        resource: 'invoices',
-        limit: '1000'
-      });
-      if (activeTab !== 'ALL') params.append('status', activeTab);
-
-      const token = localStorage.getItem('token');
-      const headers = token ? { Authorization: `Bearer ${token}` } : {};
-
-      const { data, error } = await supabase.functions.invoke(`fetch-cgc-data?${params.toString()}`, {
-        method: 'GET',
-        headers
-      });
-
-      if (error) {
-        throw error;
-      }
-
-      setInvoices(data && data.data ? data.data : []);
-    } catch (err) {
-      console.error('Error fetching invoices via Edge Function:', err);
-      if (!silent) toast.error('Failed to load invoices');
-    } finally {
-      if (!silent) setLoading(false);
+    const cached = getCachedInvoicePage(userId, query);
+    if (cached) {
+      setInvoices(cached.data);
+      setPagination(cached.pagination);
+      setLoading(false);
+    } else if (!silent) {
+      setLoading(true);
     }
-  }, [activeTab]);
+
+    try {
+      const result = await loadInvoicePage(userId, query, { force: true });
+      setInvoices(result.data);
+      setPagination(result.pagination);
+      setLoadError(null);
+    } catch (err) {
+      // A background refresh that fails must not blank the table the user is
+      // reading; it only surfaces the banner.
+      setLoadError(err);
+    } finally {
+      setLoading(false);
+    }
+  }, [userId, query]);
 
   const fetchSuppliers = useCallback(async () => {
     try {
-      const token = localStorage.getItem('token');
-      const headers = token ? { Authorization: `Bearer ${token}` } : {};
-
-      const { data, error } = await supabase.functions.invoke('fetch-cgc-data?resource=suppliers&limit=1000', {
-        method: 'GET',
-        headers
-      });
-
-      if (error) throw error;
-      setSuppliers(data?.data || []);
+      setSuppliers(await loadSupplierOptions(userId));
     } catch (err) {
-      console.error('Error fetching suppliers:', err);
+      // The dropdown degrades to "All suppliers"; the table is still usable.
+      console.error('Error fetching supplier options:', err);
     }
-  }, []);
+  }, [userId]);
 
   useEffect(() => {
     fetchInvoices();
@@ -116,7 +142,7 @@ export default function InvoicesPage() {
     () => {
       fetchInvoicesRef.current(true);
     },
-    20_000,
+    60_000,
     { enabled: !isUploading }
   );
 
@@ -143,7 +169,7 @@ export default function InvoicesPage() {
       if (res.data.invoice?.id) {
          navigate(`/dashboard/invoices/${res.data.invoice.id}`);
       }
-    } catch (err) {
+    } catch {
       toast.error('Upload failed');
     } finally {
       setIsUploading(false);
@@ -151,37 +177,10 @@ export default function InvoicesPage() {
     }
   };
 
-  const filteredInvoices = invoices
-    .filter(inv => {
-      const matchesSearch = inv.invoiceNumber?.toLowerCase().includes(search.toLowerCase()) ||
-                           inv.supplier?.name?.toLowerCase().includes(search.toLowerCase());
-
-      const matchesSupplier = filters.supplierId === 'ALL' || inv.supplierId === filters.supplierId;
-      const matchesType = filters.senderType === 'ALL' || inv.senderType === filters.senderType;
-      const flaggedCount = inv.lineItems?.filter(li => li.flag !== 'OK').length || 0;
-      const matchesDiscrepancy = !filters.hasDiscrepancies || flaggedCount > 0;
-
-      let matchesDate = true;
-      if (filters.dateStart) {
-        matchesDate = matchesDate && new Date(inv.invoiceDate || inv.receivedAt) >= new Date(filters.dateStart);
-      }
-      if (filters.dateEnd) {
-        matchesDate = matchesDate && new Date(inv.invoiceDate || inv.receivedAt) <= new Date(filters.dateEnd);
-      }
-
-      return matchesSearch && matchesSupplier && matchesType && matchesDiscrepancy && matchesDate;
-    })
-    .sort((a, b) => {
-      const timeA = new Date(a.receivedAt || a.invoiceDate || a.createdAt || 0).getTime();
-      const timeB = new Date(b.receivedAt || b.invoiceDate || b.createdAt || 0).getTime();
-      if (timeB !== timeA) return timeB - timeA;
-
-      const docTimeA = new Date(a.invoiceDate || 0).getTime();
-      const docTimeB = new Date(b.invoiceDate || 0).getTime();
-      if (docTimeB !== docTimeA) return docTimeB - docTimeA;
-
-      return String(b.id || '').localeCompare(String(a.id || ''));
-    });
+  // Filtered, sorted and paged by Postgres — see InvoiceService.getInvoices.
+  const filteredInvoices = invoices;
+  const totalPages = Math.max(pagination.totalPages || 1, 1);
+  const totalCount = pagination.totalCount ?? invoices.length;
 
   return (
     <div className="flex flex-col h-full space-y-6">
@@ -311,6 +310,25 @@ export default function InvoicesPage() {
         </div>
       </Card>
 
+      {loadError && (
+        <div
+          role="alert"
+          className="flex flex-wrap items-center gap-3 rounded-card border border-clay/30 bg-clay/[0.06] px-5 py-4"
+        >
+          <AlertTriangle className="h-5 w-5 flex-none text-clay" />
+          <p className="flex-1 text-[13.5px] text-ink">
+            {loadError.message} {invoices.length > 0 && 'Showing the last loaded page.'}
+          </p>
+          <button
+            type="button"
+            onClick={() => fetchInvoices()}
+            className="rounded-control border border-line px-3 py-2 text-[12.5px] font-semibold text-ink transition-colors hover:border-brand/40 hover:bg-brand/[0.04]"
+          >
+            Try again
+          </button>
+        </div>
+      )}
+
       <Card className="flex-1 overflow-hidden flex flex-col">
         <div className="overflow-x-auto">
           <table className="min-w-full divide-y divide-line">
@@ -326,7 +344,7 @@ export default function InvoicesPage() {
               </tr>
             </thead>
             <tbody className="bg-surface divide-y divide-line">
-              {loading ? (
+              {loading && filteredInvoices.length === 0 ? (
                 <InvoicesTableSkeleton />
               ) : filteredInvoices.length === 0 ? (
                 <tr>
@@ -340,7 +358,7 @@ export default function InvoicesPage() {
                 </tr>
               ) : (
                 filteredInvoices.map((inv) => {
-                  const flaggedCount = inv.lineItems?.filter(li => li.flag !== 'OK').length || 0;
+                  const flaggedCount = inv.flaggedCount || 0;
                   return (
                     <tr
                       key={inv.id}
@@ -366,7 +384,7 @@ export default function InvoicesPage() {
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-center">
                         <div className="flex items-center justify-center gap-2">
-                           <span className="tabular text-[13px] font-medium text-ink">{inv.lineItems?.length || 0}</span>
+                           <span className="tabular text-[13px] font-medium text-ink">{inv.lineItemCount || 0}</span>
                            {flaggedCount > 0 && (
                              <Badge tone="bad" className="gap-1">
                                <AlertTriangle className="w-3 h-3" /> {flaggedCount}
@@ -389,6 +407,36 @@ export default function InvoicesPage() {
             </tbody>
           </table>
         </div>
+
+        {totalCount > 0 && (
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-t border-line px-5 py-3">
+            <p className="text-[12.5px] text-muted" aria-live="polite">
+              Showing {(page - 1) * INVOICES_PER_PAGE + 1}–
+              {Math.min((page - 1) * INVOICES_PER_PAGE + invoices.length, totalCount)} of {totalCount} invoices
+            </p>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setPage(current => Math.max(1, current - 1))}
+                disabled={page <= 1 || loading}
+              >
+                Previous
+              </Button>
+              <span className="min-w-20 text-center text-[12.5px] font-medium text-muted">
+                {loading ? 'Loading…' : `${page} / ${totalPages}`}
+              </span>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setPage(current => Math.min(totalPages, current + 1))}
+                disabled={page >= totalPages || loading}
+              >
+                Next
+              </Button>
+            </div>
+          </div>
+        )}
       </Card>
     </div>
   );

@@ -1,5 +1,13 @@
-const CACHE_PREFIX = 'cgc-route-data-v1';
+const CACHE_PREFIX = 'cgc-route-data-v2';
 const DEFAULT_TTL_MS = 5 * 60 * 1000;
+/**
+ * How long past `expiresAt` an entry may still be shown while a fresh copy is
+ * being fetched. Without this the UI drops to a full skeleton the moment the
+ * TTL lapses, which is the "route replaced by skeleton rows" behaviour the
+ * cache was added to prevent. Reads that must not serve stale data keep using
+ * `readRouteDataCache`.
+ */
+const STALE_WINDOW_MS = 30 * 60 * 1000;
 
 const memoryCache = new Map();
 const inFlightRequests = new Map();
@@ -25,18 +33,50 @@ function readEntry(key) {
   }
 }
 
+function evict(keyWithScope) {
+  memoryCache.delete(keyWithScope);
+  if (typeof window !== 'undefined') {
+    window.sessionStorage.removeItem(keyWithScope);
+  }
+}
+
 export function readRouteDataCache(userId, key) {
   const keyWithScope = storageKey(userId, key);
   const entry = readEntry(keyWithScope);
   if (!entry) return null;
   if (!entry.expiresAt || entry.expiresAt <= Date.now()) {
-    memoryCache.delete(keyWithScope);
-    if (typeof window !== 'undefined') {
-      window.sessionStorage.removeItem(keyWithScope);
+    // Keep the payload readable by readStaleRouteDataCache until the stale
+    // window also lapses; only then is it actually dropped.
+    if (!entry.expiresAt || entry.expiresAt + STALE_WINDOW_MS <= Date.now()) {
+      evict(keyWithScope);
     }
     return null;
   }
   return entry.data;
+}
+
+/**
+ * Last known-good payload, fresh or recently expired.
+ *
+ * Screens render this immediately on mount so a revalidation shows the
+ * previous rows rather than a skeleton. Returns `null` once the entry is older
+ * than the stale window, so genuinely old data is never presented as current.
+ */
+export function readStaleRouteDataCache(userId, key) {
+  const keyWithScope = storageKey(userId, key);
+  const entry = readEntry(keyWithScope);
+  if (!entry || !entry.expiresAt) return null;
+  if (entry.expiresAt + STALE_WINDOW_MS <= Date.now()) {
+    evict(keyWithScope);
+    return null;
+  }
+  return entry.data;
+}
+
+/** True when the cached copy exists but has passed its TTL. */
+export function isRouteDataStale(userId, key) {
+  const entry = readEntry(storageKey(userId, key));
+  return Boolean(entry?.expiresAt && entry.expiresAt <= Date.now());
 }
 
 export function writeRouteDataCache(userId, key, data, ttlMs = DEFAULT_TTL_MS) {

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useSelector } from 'react-redux';
 import { useNavigate } from 'react-router-dom';
-import { ChevronRight, Users, Inbox } from 'lucide-react';
+import { ChevronRight, Users, Inbox, AlertTriangle } from 'lucide-react';
 import { Skeleton } from '../../components/Skeleton';
 import { formatDate } from '../../lib/date';
 import {
@@ -35,6 +35,7 @@ export default function Dashboard() {
     () => cachedDashboard?.recentInvoices || [],
   );
   const [loading, setLoading] = useState(() => !cachedDashboard);
+  const [loadError, setLoadError] = useState(null);
 
   const fetchDashboardData = useCallback(async () => {
     const cached = getCachedDashboardData(userId);
@@ -46,15 +47,15 @@ export default function Dashboard() {
       setLoading(true);
     }
 
+    setLoadError(null);
     try {
-      // Revalidate in the background when a short-lived session cache exists.
-      // Cold loads race the compact API/Edge reads against the legacy endpoint
-      // so a stale Railway deployment cannot impose its 10+ second wait.
+      // Single source: the compact summary endpoint. Revalidates in the
+      // background whenever a cached copy is already on screen.
       const data = await loadDashboardData(userId, { force: true });
       setRecentInvoices(data.recentInvoices);
       setStats(data.stats);
     } catch (err) {
-      console.error('Error fetching dashboard data:', err);
+      setLoadError(err);
     } finally {
       setLoading(false);
     }
@@ -74,6 +75,22 @@ export default function Dashboard() {
         title={`Good to see you, ${firstName}`}
         subtitle="Everything waiting on you today, in one place."
       />
+
+      {loadError && (
+        <div
+          role="alert"
+          className="flex flex-wrap items-center gap-3 rounded-card border border-clay/30 bg-clay/[0.06] px-5 py-4"
+        >
+          <AlertTriangle className="h-5 w-5 flex-none text-clay" />
+          <p className="flex-1 text-[13.5px] text-ink">
+            {loadError.message}
+            {recentInvoices.length > 0 && ' Showing the last figures loaded.'}
+          </p>
+          <Button variant="ghost" size="sm" onClick={fetchDashboardData}>
+            Try again
+          </Button>
+        </div>
+      )}
 
       {/* The numbers that matter. Big, quiet, scannable. */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-5">
