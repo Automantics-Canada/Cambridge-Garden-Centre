@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { X, Eye, EyeOff } from 'lucide-react';
 import api from '../../api/axios';
+import { Button, Field, Input, Select } from '../ui';
 
 export default function EditDriverModal({ isOpen, onClose, onSuccess, driver }) {
   const [formData, setFormData] = useState({
@@ -47,9 +48,9 @@ export default function EditDriverModal({ isOpen, onClose, onSuccess, driver }) 
       setLoading(false);
       return;
     }
-    
+
     try {
-      const payload = { 
+      const payload = {
         name: formData.name,
         phone: formData.phone,
         email: formData.email || null,
@@ -77,68 +78,68 @@ export default function EditDriverModal({ isOpen, onClose, onSuccess, driver }) 
   if (!isOpen || !driver) return null;
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 backdrop-blur-[2px] transition-all">
-      <div className="bg-white rounded-2xl w-full max-w-md overflow-hidden shadow-2xl animate-in fade-in zoom-in duration-200">
-        <div className="flex justify-between items-center p-6 border-b border-gray-100 bg-gray-50/50">
-          <h2 className="text-xl font-bold text-gray-900">Edit Driver Details</h2>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 transition-colors p-1 hover:bg-gray-100 rounded-full">
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-scrim/50 backdrop-blur-[2px] transition-all">
+      <div className="bg-surface rounded-card w-full max-w-md overflow-hidden shadow-lift border border-line animate-in fade-in zoom-in duration-200">
+        <div className="flex justify-between items-center p-6 border-b border-line">
+          <h2 className="text-xl font-bold text-ink">Edit driver</h2>
+          <button onClick={onClose} className="text-muted hover:text-ink transition-colors p-1 hover:bg-ink/[0.05] rounded-pill">
             <X size={20} />
           </button>
         </div>
 
         <form onSubmit={handleSubmit} className="p-6 space-y-5 h-[70vh] overflow-y-auto">
           {error && (
-            <div className="bg-red-50 border border-red-100 text-red-600 p-3 rounded-xl text-sm font-medium">
+            <div className="bg-clay/14 border border-clay/30 text-clay p-3 rounded-control text-sm font-medium">
               {error}
             </div>
           )}
-          
-          <div className="space-y-1.5">
-            <label className="text-xs font-bold text-gray-500 uppercase tracking-wider ml-1">Full Name</label>
-            <input
+
+          <Field label="Full name" htmlFor="edit-driver-name">
+            <Input
+              id="edit-driver-name"
               type="text"
               required
-              className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-[#2D6A4F] focus:ring-4 focus:ring-[#2D6A4F]/10 outline-none transition-all placeholder:text-gray-300"
               placeholder="e.g. Dave Mitchell"
               value={formData.name}
               onChange={(e) => setFormData({ ...formData, name: e.target.value })}
             />
-          </div>
+          </Field>
 
-          <div className="space-y-1.5">
-            <label className="text-xs font-bold text-gray-500 uppercase tracking-wider ml-1">Phone Number (10 Digits)</label>
-            <input
+          <Field label="Phone number (10 digits)" htmlFor="edit-driver-phone">
+            <Input
+              id="edit-driver-phone"
               type="tel"
               required
-              className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-[#2D6A4F] focus:ring-4 focus:ring-[#2D6A4F]/10 outline-none transition-all placeholder:text-gray-300"
               placeholder="e.g. 5551234567"
               value={formData.phone}
               onChange={(e) => {
                 const val = e.target.value.replace(/\D/g, '');
                 setFormData({ ...formData, phone: val });
               }}
+              className="tabular"
             />
-          </div>
+          </Field>
 
-          <div className="space-y-1.5">
-            <label className="text-xs font-bold text-gray-500 uppercase tracking-wider ml-1">Email</label>
-            <input
+          <Field label="Email" htmlFor="edit-driver-email">
+            <Input
+              id="edit-driver-email"
               type="email"
-              className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-[#2D6A4F] focus:ring-4 focus:ring-[#2D6A4F]/10 outline-none transition-all placeholder:text-gray-300"
               placeholder="e.g. dave@example.com"
               value={formData.email}
               onChange={(e) => setFormData({ ...formData, email: e.target.value })}
             />
-          </div>
+          </Field>
 
-          <div className="space-y-1.5">
-            <label className="text-xs font-bold text-gray-500 uppercase tracking-wider ml-1 block">
-              Change Password <span className="text-[10px] text-gray-400 normal-case">(Leave blank to keep current)</span>
-            </label>
+          <Field
+            label="Change password"
+            hint="Leave blank to keep the current password"
+            htmlFor="edit-driver-password"
+          >
             <div className="relative">
-              <input
-                type={showPassword ? "text" : "password"}
-                className="w-full pl-4 pr-10 py-3 rounded-xl border border-gray-200 focus:border-[#2D6A4F] focus:ring-4 focus:ring-[#2D6A4F]/10 outline-none transition-all placeholder:text-gray-300"
+              <Input
+                id="edit-driver-password"
+                type={showPassword ? 'text' : 'password'}
+                className="pr-10"
                 placeholder="Enter new password"
                 value={formData.password}
                 onChange={(e) => setFormData({ ...formData, password: e.target.value })}
@@ -146,85 +147,83 @@ export default function EditDriverModal({ isOpen, onClose, onSuccess, driver }) 
               <button
                 type="button"
                 onClick={() => setShowPassword(!showPassword)}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 focus:outline-none"
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-muted hover:text-ink focus:outline-none"
               >
                 {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
               </button>
             </div>
-          </div>
+          </Field>
 
-          <div className="space-y-1.5">
-            <label className="text-xs font-bold text-gray-500 uppercase tracking-wider ml-1">Driver Type</label>
-            <select
-              className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-[#2D6A4F] focus:ring-4 focus:ring-[#2D6A4F]/10 outline-none transition-all bg-white"
+          <Field label="Driver type" htmlFor="edit-driver-type">
+            <Select
+              id="edit-driver-type"
               value={formData.type}
               onChange={(e) => setFormData({ ...formData, type: e.target.value })}
             >
               <option value="CGC_FLEET">CGC Fleet</option>
               <option value="INDEPENDENT">Independent</option>
-            </select>
-          </div>
+            </Select>
+          </Field>
 
           {formData.type === 'INDEPENDENT' && (
-            <div className="space-y-1.5 animate-in fade-in slide-in-from-top-2 duration-200">
-              <label className="text-xs font-bold text-gray-500 uppercase tracking-wider ml-1">Company Name</label>
-              <input
+            <Field label="Company name" htmlFor="edit-driver-company">
+              <Input
+                id="edit-driver-company"
                 type="text"
-                className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-[#2D6A4F] focus:ring-4 focus:ring-[#2D6A4F]/10 outline-none transition-all placeholder:text-gray-300"
                 placeholder="e.g. Mitchell Trucking"
                 value={formData.companyName}
                 onChange={(e) => setFormData({ ...formData, companyName: e.target.value })}
               />
-            </div>
+            </Field>
           )}
 
-          <div className="space-y-1.5">
-            <label className="text-xs font-bold text-gray-500 uppercase tracking-wider ml-1">Rate per Trip ($)</label>
+          <Field label="Rate per trip ($)" htmlFor="edit-driver-rate">
             <div className="relative">
-              <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 font-medium">$</span>
-              <input
+              <span className="absolute left-4 top-1/2 -translate-y-1/2 text-muted font-medium">$</span>
+              <Input
+                id="edit-driver-rate"
                 type="number"
                 step="0.01"
                 required
-                className="w-full pl-8 pr-4 py-3 rounded-xl border border-gray-200 focus:border-[#2D6A4F] focus:ring-4 focus:ring-[#2D6A4F]/10 outline-none transition-all placeholder:text-gray-300"
+                className="pl-8 tabular"
                 placeholder="0.00"
                 value={formData.ratePerTrip}
                 onChange={(e) => setFormData({ ...formData, ratePerTrip: e.target.value })}
               />
             </div>
-          </div>
+          </Field>
 
-          <div className="space-y-1.5">
-            <label className="text-xs font-bold text-gray-500 uppercase tracking-wider ml-1">Status</label>
-            <div className="flex items-center gap-3 bg-gray-50 border border-gray-100 rounded-xl p-3">
+          <Field label="Status" htmlFor="active-status">
+            <div className="flex items-center gap-3 bg-ink/[0.03] border border-line rounded-control p-3">
               <input
                 type="checkbox"
                 id="active-status"
-                className="w-5 h-5 rounded border-gray-300 text-[#2D6A4F] focus:ring-[#2D6A4F]/20 cursor-pointer"
+                className="w-5 h-5 rounded border-line text-brand accent-brand cursor-pointer"
                 checked={formData.active}
                 onChange={(e) => setFormData({ ...formData, active: e.target.checked })}
               />
-              <label htmlFor="active-status" className="text-sm font-semibold text-gray-700 cursor-pointer select-none">
-                Active (Driver is visible & available for dispatch)
+              <label htmlFor="active-status" className="text-sm font-semibold text-ink cursor-pointer select-none">
+                Active (driver is visible and available for dispatch)
               </label>
             </div>
-          </div>
+          </Field>
 
           <div className="pt-4 flex gap-3">
-            <button
+            <Button
               type="button"
               onClick={onClose}
-              className="flex-1 px-4 py-3 rounded-xl border border-gray-200 text-gray-700 font-bold hover:bg-gray-50 transition-colors"
+              className="flex-1"
             >
               Cancel
-            </button>
-            <button
+            </Button>
+            <Button
               type="submit"
+              variant="primary"
               disabled={loading}
-              className="flex-1 px-4 py-3 rounded-xl bg-[#2D6A4F] text-white font-bold hover:bg-[#1B4332] transition-colors shadow-lg shadow-[#2D6A4F]/20 disabled:opacity-50"
+              className="flex-1"
             >
-              {loading ? 'Saving...' : 'Save Changes'}
-            </button>
+              {loading ? 'Saving...' : 'Save changes'}
+            </Button>
           </div>
         </form>
       </div>

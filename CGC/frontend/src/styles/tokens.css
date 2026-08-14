@@ -1,0 +1,110 @@
+/* ==========================================================================
+   Cambridge Garden Centre — "Greenhouse" design tokens
+   --------------------------------------------------------------------------
+   Every colour, radius and shadow in the app comes from this file. Nothing
+   else should hard-code a hex value. Change a token here and the whole
+   interface follows.
+
+   Colours are stored as space-separated RGB channels so Tailwind can apply
+   opacity to them (e.g. `bg-brand/10`). The matching `--x-hex` values exist
+   for the few places raw CSS needs them.
+   ========================================================================== */
+
+:root {
+  /* -- surfaces -------------------------------------------------------- */
+  --c-canvas: 251 250 246;    /* #FBFAF6  page background, warm off-white   */
+  --c-surface: 255 255 255;   /* #FFFFFF  cards and panels                  */
+  --c-rail: 243 245 241;      /* #F3F5F1  sidebar — light, not dark         */
+  --c-line: 233 231 223;      /* #E9E7DF  hairline borders                  */
+
+  /* -- text ------------------------------------------------------------ */
+  --c-ink: 26 31 28;          /* #1A1F1C  primary text                      */
+  /* #626C66. Was #6B756F, which measured 4.77:1 on pure white but fell to
+     4.20:1 as soon as it sat on a tinted panel — under the 4.5 minimum.
+     This value clears 4.5 on every surface in the system, tint included. */
+  --c-muted: 98 108 102;      /* #626C66  secondary text                    */
+  --c-rail-ink: 60 74 66;     /* #3C4A42  sidebar text                      */
+
+  /* -- accents --------------------------------------------------------- */
+  --c-brand: 45 106 79;       /* #2D6A4F  the CGC green                     */
+  --c-clay: 176 84 44;        /* #B0542C  problems: disputed, failed        */
+  --c-ochre: 201 154 62;      /* #C99A3E  attention: pending, waiting       */
+
+  /* Text drawn ON TOP of a filled accent. These flip in dark mode, where the
+     accents lighten — white on light green is unreadable. Never hard-code
+     `text-white` on a brand/clay background; use these. */
+  --c-on-brand: 255 255 255;
+  --c-on-clay: 255 255 255;
+
+  /* Modal and photo backdrop. Stays dark in both themes — unlike ink, which
+     flips to near-white in dark mode and would wash the page instead of dimming it. */
+  --c-scrim: 12 14 11;        /* #0C0E0B */
+
+  /* -- shape ----------------------------------------------------------- */
+  --r-card: 20px;             /* panels and stat tiles                      */
+  --r-control: 12px;          /* inputs, buttons, small surfaces            */
+  --r-pill: 999px;            /* nav items, status chips                    */
+
+  /* -- elevation ------------------------------------------------------- */
+  /* Greenhouse leans on space and hairlines, not shadow. These are soft
+     on purpose — a card should sit on the page, not float above it.        */
+  --sh-card: 0 1px 2px rgb(26 31 28 / 0.04);
+  --sh-lift: 0 6px 20px rgb(26 31 28 / 0.07);
+  /* Modals and lightboxes only. Heavier than card/lift so the dialog sits
+     above the dimmed page. */
+  --sh-overlay: 0 16px 48px rgb(26 31 28 / 0.18);
+}
+
+/* Dark theme. Two selectors on purpose:
+   - the media query covers the "System" setting, which stamps no attribute
+   - the attribute selector lets an explicit toggle win in both directions   */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --c-canvas: 18 20 15;     /* #12140F */
+    --c-surface: 26 29 23;    /* #1A1D17 */
+    --c-rail: 25 28 21;       /* #191C15 */
+    --c-line: 42 46 37;       /* #2A2E25 */
+
+    --c-ink: 237 239 231;     /* #EDEFE7 */
+    --c-muted: 154 162 148;   /* #9AA294 */
+    --c-rail-ink: 211 218 203;/* #D3DACB */
+
+    --c-brand: 111 180 141;   /* #6FB48D  lifted for contrast on dark    */
+    --c-clay: 217 127 78;     /* #D97F4E */
+    --c-ochre: 221 176 90;    /* #DDB05A */
+
+    /* The accents are light here, so text on them must be dark. */
+    --c-on-brand: 18 20 15;
+    --c-on-clay: 18 20 15;
+
+    --sh-card: 0 1px 2px rgb(0 0 0 / 0.4);
+    --sh-lift: 0 6px 20px rgb(0 0 0 / 0.5);
+    --sh-overlay: 0 16px 48px rgb(0 0 0 / 0.65);
+
+    --c-scrim: 12 14 11;
+  }
+}
+
+:root[data-theme="dark"] {
+  --c-canvas: 18 20 15;
+  --c-surface: 26 29 23;
+  --c-rail: 25 28 21;
+  --c-line: 42 46 37;
+
+  --c-ink: 237 239 231;
+  --c-muted: 154 162 148;
+  --c-rail-ink: 211 218 203;
+
+  --c-brand: 111 180 141;
+  --c-clay: 217 127 78;
+  --c-ochre: 221 176 90;
+
+  --c-on-brand: 18 20 15;
+  --c-on-clay: 18 20 15;
+
+  --sh-card: 0 1px 2px rgb(0 0 0 / 0.4);
+  --sh-lift: 0 6px 20px rgb(0 0 0 / 0.5);
+  --sh-overlay: 0 16px 48px rgb(0 0 0 / 0.65);
+
+  --c-scrim: 12 14 11;
+}

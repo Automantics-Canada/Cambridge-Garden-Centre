@@ -20,7 +20,7 @@ const DeliveriesPage = lazy(() => import('./pages/deliveries/DeliveriesPage'));
 const DriverMobileView = lazy(() => import('./pages/driver/DriverMobileView'));
 
 const RouteFallback = () => (
-  <div className="min-h-screen bg-gray-50 flex items-center justify-center text-sm font-semibold text-[#1B4332]">
+  <div className="min-h-screen bg-canvas flex items-center justify-center text-sm font-semibold text-brand">
     Loading Cambridge Garden Centre…
   </div>
 );

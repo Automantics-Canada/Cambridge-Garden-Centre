@@ -4,6 +4,8 @@ import { motion as Motion } from 'framer-motion';
 import toast from 'react-hot-toast';
 import { addSupplierRate, updateSupplierRate } from '../store/supplierSlice';
 import { fetchProducts, fetchUnits } from '../store/productSlice';
+import { Button, Field, Input, Select, Textarea } from './ui';
+import { cn } from '../lib/cn';
 
 export default function RateForm({ supplierId, rate, onClose }) {
   const dispatch = useDispatch();
@@ -55,7 +57,7 @@ export default function RateForm({ supplierId, rate, onClose }) {
     if (!formData.rate || formData.rate <= 0) newErrors.rate = 'Valid rate is required';
     if (!formData.unit.trim()) newErrors.unit = 'Unit is required';
     if (!formData.effectiveFrom) newErrors.effectiveFrom = 'Effective date is required';
-    
+
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
@@ -67,23 +69,23 @@ export default function RateForm({ supplierId, rate, onClose }) {
     try {
       if (rate) {
         // Update mode
-        await dispatch(updateSupplierRate({ 
-          supplierId, 
+        await dispatch(updateSupplierRate({
+          supplierId,
           rateId: rate.id,
           data: {
             ...formData,
             rate: Number(formData.rate)
-          } 
+          }
         })).unwrap();
         toast.success('Rate updated successfully');
       } else {
         // Add / Update mode
-        await dispatch(addSupplierRate({ 
-          supplierId, 
+        await dispatch(addSupplierRate({
+          supplierId,
           data: {
             ...formData,
             rate: Number(formData.rate)
-          } 
+          }
         })).unwrap();
         toast.success(existingRateFound ? 'Existing rate updated' : 'Rate added successfully');
       }
@@ -95,7 +97,7 @@ export default function RateForm({ supplierId, rate, onClose }) {
 
    const handleChange = (e) => {
     const { name, value } = e.target;
-    
+
     if (name === 'productName') {
       const selectedProduct = products.find(p => p.name === value);
       const existingRate = currentSupplier?.negotiatedRates?.find(
@@ -151,122 +153,112 @@ export default function RateForm({ supplierId, rate, onClose }) {
       animate="visible"
     >
       <Motion.div variants={itemVariants}>
-        <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">
-          Product *
-        </label>
-        <select
-          name="productName"
-          value={formData.productName}
-          onChange={handleChange}
-          className={`w-full border rounded-xl p-2.5 text-sm outline-none focus:ring-2 focus:ring-green-100 transition-all ${
-            errors.productName ? 'border-red-500' : 'border-gray-200'
-          }`}
-        >
-          <option value="">Select a product</option>
-          {rate && rate.productName && !products.find(p => p.name === rate.productName) && (
-            <option value={rate.productName}>{rate.productName}</option>
-          )}
-          {products.map(p => (
-            <option key={p.id} value={p.name}>{p.name}</option>
-          ))}
-        </select>
-        {errors.productName && <p className="text-red-500 text-[10px] mt-1">{errors.productName}</p>}
+        <Field label="Product" htmlFor="rate-product" error={errors.productName}>
+          <Select
+            id="rate-product"
+            name="productName"
+            value={formData.productName}
+            onChange={handleChange}
+            className={cn(errors.productName && 'border-clay')}
+          >
+            <option value="">Select a product</option>
+            {rate && rate.productName && !products.find(p => p.name === rate.productName) && (
+              <option value={rate.productName}>{rate.productName}</option>
+            )}
+            {products.map(p => (
+              <option key={p.id} value={p.name}>{p.name}</option>
+            ))}
+          </Select>
+        </Field>
         {existingRateFound && (
-          <p className="text-[10px] text-blue-600 font-semibold mt-1">
-            ℹ️ An existing rate for this product was found and loaded. Submitting will update it.
+          <p className="text-[12.5px] text-brand font-medium mt-1.5">
+            An existing rate for this product was found and loaded. Submitting will update it.
           </p>
         )}
         {products.length === 0 && (
-          <p className="text-[10px] text-amber-600 mt-1">
-            No products found. Please add products in the Products section first.
+          <p className="text-[12.5px] text-muted mt-1.5">
+            No products found. Add products in the Products section first.
           </p>
         )}
       </Motion.div>
 
       <div className="grid grid-cols-2 gap-4">
         <Motion.div variants={itemVariants}>
-          <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">
-            Rate ($) *
-          </label>
-          <input
-            type="number"
-            name="rate"
-            step="0.01"
-            value={formData.rate}
-            onChange={handleChange}
-            placeholder="0.00"
-            className={`w-full border rounded-xl p-2.5 text-sm outline-none focus:ring-2 focus:ring-green-100 transition-all ${
-              errors.rate ? 'border-red-500' : 'border-gray-200'
-            }`}
-          />
-          {errors.rate && <p className="text-red-500 text-[10px] mt-1">{errors.rate}</p>}
+          <Field label="Rate ($)" htmlFor="rate-amount" error={errors.rate}>
+            <Input
+              id="rate-amount"
+              type="number"
+              name="rate"
+              step="0.01"
+              value={formData.rate}
+              onChange={handleChange}
+              placeholder="0.00"
+              className={cn('tabular', errors.rate && 'border-clay')}
+            />
+          </Field>
         </Motion.div>
 
          <Motion.div variants={itemVariants}>
-          <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">
-            Unit *
-          </label>
-          <select
-            name="unit"
-            value={formData.unit}
-            onChange={handleChange}
-            className={`w-full border rounded-xl p-2.5 text-sm outline-none focus:ring-2 focus:ring-green-100 transition-all ${
-              errors.unit ? 'border-red-500' : 'border-gray-200'
-            }`}
-          >
-            {units?.allUnits?.map(unit => (
-              <option key={unit} value={unit}>{unit.toUpperCase()}</option>
-            ))}
-          </select>
-          {errors.unit && <p className="text-red-500 text-[10px] mt-1">{errors.unit}</p>}
+          <Field label="Unit" htmlFor="rate-unit" error={errors.unit}>
+            <Select
+              id="rate-unit"
+              name="unit"
+              value={formData.unit}
+              onChange={handleChange}
+              className={cn(errors.unit && 'border-clay')}
+            >
+              {units?.allUnits?.map(unit => (
+                <option key={unit} value={unit}>{unit.toUpperCase()}</option>
+              ))}
+            </Select>
+          </Field>
         </Motion.div>
       </div>
 
       <Motion.div variants={itemVariants}>
-        <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">
-          Effective From *
-        </label>
-        <input
-          type="date"
-          name="effectiveFrom"
-          value={formData.effectiveFrom}
-          onChange={handleChange}
-          className={`w-full border rounded-xl p-2.5 text-sm outline-none focus:ring-2 focus:ring-green-100 transition-all ${
-            errors.effectiveFrom ? 'border-red-500' : 'border-gray-200'
-          }`}
-        />
-        {errors.effectiveFrom && <p className="text-red-500 text-[10px] mt-1">{errors.effectiveFrom}</p>}
+        <Field label="Effective from" htmlFor="rate-effective" error={errors.effectiveFrom}>
+          <Input
+            id="rate-effective"
+            type="date"
+            name="effectiveFrom"
+            value={formData.effectiveFrom}
+            onChange={handleChange}
+            className={cn('tabular', errors.effectiveFrom && 'border-clay')}
+          />
+        </Field>
       </Motion.div>
 
       <Motion.div variants={itemVariants}>
-        <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">
-          Notes
-        </label>
-        <textarea
-          name="notes"
-          value={formData.notes}
-          onChange={handleChange}
-          placeholder="Optional notes..."
-          className="w-full border border-gray-200 rounded-xl p-2.5 text-sm outline-none focus:ring-2 focus:ring-green-100 transition-all h-20 resize-none"
-        />
+        <Field label="Notes" htmlFor="rate-notes">
+          <Textarea
+            id="rate-notes"
+            name="notes"
+            value={formData.notes}
+            onChange={handleChange}
+            placeholder="Optional notes..."
+            rows={3}
+            className="resize-none"
+          />
+        </Field>
       </Motion.div>
 
       <Motion.div variants={itemVariants} className="pt-4 flex gap-3">
-        <button
+        <Button
           type="button"
           onClick={onClose}
-          className="flex-1 py-2.5 text-sm font-bold text-gray-500 hover:bg-gray-100 rounded-xl transition-all"
+          className="flex-1"
         >
           Cancel
-        </button>
-        <button
+        </Button>
+        <Button
           type="submit"
+          variant="primary"
           disabled={loading}
-          className="flex-1 py-2.5 text-sm font-bold text-white bg-green-600 hover:bg-green-700 rounded-xl transition-all shadow-lg shadow-green-100 disabled:opacity-50 flex items-center justify-center gap-2"
+          className="flex-1"
         >
-          {loading && <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
-          {rate ? 'Update Rate' : 'Add Rate'}
-        </button>
+          {loading && <div className="w-4 h-4 border-2 border-on-brand border-t-transparent rounded-pill animate-spin" />}
+          {rate ? 'Update rate' : 'Add rate'}
+        </Button>
       </Motion.div>
     </Motion.form>
   );

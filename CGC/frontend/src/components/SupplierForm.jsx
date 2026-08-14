@@ -3,6 +3,8 @@ import { useDispatch, useSelector } from 'react-redux';
 import { motion as Motion } from 'framer-motion';
 import toast from 'react-hot-toast';
 import { createSupplier, updateSupplier, clearError } from '../store/supplierSlice';
+import { Button, Field, Input, Select, Textarea } from './ui';
+import { cn } from '../lib/cn';
 
 const SUPPLIER_TYPES = ['SUPPLIER', 'TRUCKING_COMPANY'];
 
@@ -14,7 +16,7 @@ const formatTypeLabel = (str) => {
 export default function SupplierForm({ supplier = null, onClose }) {
   const dispatch = useDispatch();
   const { loading, error } = useSelector((state) => state.suppliers);
-  
+
   const [formData, setFormData] = useState({
     name: supplier?.name || '',
     type: SUPPLIER_TYPES.includes(supplier?.type) ? supplier.type : 'SUPPLIER',
@@ -38,11 +40,11 @@ export default function SupplierForm({ supplier = null, onClose }) {
 
   const validateForm = () => {
     const errors = {};
-    
+
     if (!formData.name.trim()) {
       errors.name = 'Supplier name is required';
     }
-    
+
     if (!formData.type) {
       errors.type = 'Supplier type is required';
     }
@@ -81,7 +83,7 @@ export default function SupplierForm({ supplier = null, onClose }) {
 
   const handleChange = (e) => {
     const { name, value } = e.target;
-    
+
     let finalValue = value;
     if (name === 'phone') {
       finalValue = value.replace(/\D/g, '');
@@ -101,7 +103,7 @@ export default function SupplierForm({ supplier = null, onClose }) {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    
+
     const errors = validateForm();
     const errorKeys = Object.keys(errors);
     if (errorKeys.length > 0) {
@@ -152,172 +154,146 @@ export default function SupplierForm({ supplier = null, onClose }) {
       initial="hidden"
       animate="visible"
     >
-      {/* Name */}
       <Motion.div variants={itemVariants}>
-        <label className="block text-sm font-medium text-gray-700 mb-2">
-          Supplier Name *
-        </label>
-        <input
-          type="text"
-          name="name"
-          value={formData.name}
-          onChange={handleChange}
-          placeholder="Enter supplier name"
-          className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition ${
-            validationErrors.name ? 'border-red-500' : 'border-gray-300'
-          }`}
-        />
-        {validationErrors.name && (
-          <p className="text-red-500 text-sm mt-1">{validationErrors.name}</p>
-        )}
+        <Field label="Supplier name" htmlFor="supplier-name" error={validationErrors.name}>
+          <Input
+            id="supplier-name"
+            type="text"
+            name="name"
+            value={formData.name}
+            onChange={handleChange}
+            placeholder="Enter supplier name"
+            className={cn(validationErrors.name && 'border-clay')}
+          />
+        </Field>
       </Motion.div>
 
-      {/* Type */}
       <Motion.div variants={itemVariants}>
-        <label className="block text-sm font-medium text-gray-700 mb-2">
-          Supplier Type *
-        </label>
-        <select
-          name="type"
-          value={formData.type}
-          onChange={handleChange}
-          className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition ${
-            validationErrors.type ? 'border-red-500' : 'border-gray-300'
-          }`}
+        <Field label="Supplier type" htmlFor="supplier-type" error={validationErrors.type}>
+          <Select
+            id="supplier-type"
+            name="type"
+            value={formData.type}
+            onChange={handleChange}
+            className={cn(validationErrors.type && 'border-clay')}
+          >
+            {SUPPLIER_TYPES.map(type => (
+              <option key={type} value={type}>{formatTypeLabel(type)}</option>
+            ))}
+          </Select>
+        </Field>
+      </Motion.div>
+
+      <Motion.div variants={itemVariants}>
+        <Field
+          label="Email domains"
+          hint="Comma separated"
+          htmlFor="supplier-email-domains"
+          error={validationErrors.emailDomains}
         >
-          {SUPPLIER_TYPES.map(type => (
-            <option key={type} value={type}>{formatTypeLabel(type)}</option>
-          ))}
-        </select>
-        {validationErrors.type && (
-          <p className="text-red-500 text-sm mt-1">{validationErrors.type}</p>
-        )}
+          <Input
+            id="supplier-email-domains"
+            type="text"
+            name="emailDomains"
+            value={formData.emailDomains}
+            onChange={handleChange}
+            placeholder="example.com, supplier.example.com"
+            className={cn(validationErrors.emailDomains && 'border-clay')}
+          />
+        </Field>
       </Motion.div>
 
-      {/* Email Domains */}
       <Motion.div variants={itemVariants}>
-        <label className="block text-sm font-medium text-gray-700 mb-2">
-          Email Domains <span className="text-xs text-gray-500">(comma separated)</span>
-        </label>
-        <input
-          type="text"
-          name="emailDomains"
-          value={formData.emailDomains}
-          onChange={handleChange}
-          placeholder="example.com, supplier.example.com"
-          className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition ${
-            validationErrors.emailDomains ? 'border-red-500' : 'border-gray-300'
-          }`}
-        />
-        {validationErrors.emailDomains && (
-          <p className="text-red-500 text-sm mt-1">{validationErrors.emailDomains}</p>
-        )}
+        <Field
+          label="Identification keywords"
+          hint="Comma separated, used when reading tickets"
+          htmlFor="supplier-keywords"
+        >
+          <Input
+            id="supplier-keywords"
+            type="text"
+            name="keywords"
+            value={formData.keywords}
+            onChange={handleChange}
+            placeholder="e.g. DUFFERIN, CGC, Miller Paving"
+          />
+        </Field>
       </Motion.div>
 
-      {/* Keywords */}
       <Motion.div variants={itemVariants}>
-        <label className="block text-sm font-medium text-gray-700 mb-2">
-          Identification Keywords <span className="text-xs text-gray-500">(comma separated, for OCR)</span>
-        </label>
-        <input
-          type="text"
-          name="keywords"
-          value={formData.keywords}
-          onChange={handleChange}
-          placeholder="e.g. DUFFERIN, CGC, Miller Paving"
-          className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition"
-        />
+        <Field label="Contact name" htmlFor="supplier-contact-name">
+          <Input
+            id="supplier-contact-name"
+            type="text"
+            name="contactName"
+            value={formData.contactName}
+            onChange={handleChange}
+            placeholder="Enter contact name"
+          />
+        </Field>
       </Motion.div>
 
-      {/* Contact Name */}
       <Motion.div variants={itemVariants}>
-        <label className="block text-sm font-medium text-gray-700 mb-2">
-          Contact Name
-        </label>
-        <input
-          type="text"
-          name="contactName"
-          value={formData.contactName}
-          onChange={handleChange}
-          placeholder="Enter contact name"
-          className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition"
-        />
+        <Field label="Contact email" htmlFor="supplier-contact-email" error={validationErrors.contactEmail}>
+          <Input
+            id="supplier-contact-email"
+            type="email"
+            name="contactEmail"
+            value={formData.contactEmail}
+            onChange={handleChange}
+            placeholder="Enter contact email"
+            className={cn(validationErrors.contactEmail && 'border-clay')}
+          />
+        </Field>
       </Motion.div>
 
-      {/* Contact Email */}
       <Motion.div variants={itemVariants}>
-        <label className="block text-sm font-medium text-gray-700 mb-2">
-          Contact Email
-        </label>
-        <input
-          type="email"
-          name="contactEmail"
-          value={formData.contactEmail}
-          onChange={handleChange}
-          placeholder="Enter contact email"
-          className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition ${
-            validationErrors.contactEmail ? 'border-red-500' : 'border-gray-300'
-          }`}
-        />
-        {validationErrors.contactEmail && (
-          <p className="text-red-500 text-sm mt-1">{validationErrors.contactEmail}</p>
-        )}
+        <Field label="Phone" htmlFor="supplier-phone" error={validationErrors.phone}>
+          <Input
+            id="supplier-phone"
+            type="tel"
+            name="phone"
+            value={formData.phone}
+            onChange={handleChange}
+            placeholder="Enter phone number"
+            className={cn(validationErrors.phone && 'border-clay')}
+          />
+        </Field>
       </Motion.div>
 
-      {/* Phone */}
       <Motion.div variants={itemVariants}>
-        <label className="block text-sm font-medium text-gray-700 mb-2">
-          Phone
-        </label>
-        <input
-          type="tel"
-          name="phone"
-          value={formData.phone}
-          onChange={handleChange}
-          placeholder="Enter phone number"
-          className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition ${
-            validationErrors.phone ? 'border-red-500' : 'border-gray-300'
-          }`}
-        />
-        {validationErrors.phone && (
-          <p className="text-red-500 text-sm mt-1">{validationErrors.phone}</p>
-        )}
+        <Field label="Address" htmlFor="supplier-address">
+          <Textarea
+            id="supplier-address"
+            name="address"
+            value={formData.address}
+            onChange={handleChange}
+            placeholder="Enter address"
+            rows={3}
+            className="resize-none"
+          />
+        </Field>
       </Motion.div>
 
-      {/* Address */}
-      <Motion.div variants={itemVariants}>
-        <label className="block text-sm font-medium text-gray-700 mb-2">
-          Address
-        </label>
-        <textarea
-          name="address"
-          value={formData.address}
-          onChange={handleChange}
-          placeholder="Enter address"
-          rows="3"
-          className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition resize-none"
-        />
-      </Motion.div>
-
-      {/* Submit Button */}
       <Motion.div variants={itemVariants} className="flex gap-3 pt-4">
-        <button
+        <Button
           type="submit"
+          variant="primary"
           disabled={loading}
-          className="flex-1 bg-blue-600 text-white py-2 rounded-lg font-medium hover:bg-blue-700 disabled:bg-gray-400 transition-colors flex items-center justify-center gap-2"
+          className="flex-1"
         >
           {loading && (
-            <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+            <div className="w-4 h-4 border-2 border-on-brand border-t-transparent rounded-pill animate-spin" />
           )}
-          {supplier ? 'Update Supplier Details' : 'Create Supplier'}
-        </button>
-        <button
+          {supplier ? 'Update supplier details' : 'Create supplier'}
+        </Button>
+        <Button
           type="button"
           onClick={onClose}
-          className="flex-1 bg-gray-200 text-gray-700 py-2 rounded-lg font-medium hover:bg-gray-300 transition-colors"
+          className="flex-1"
         >
           Close
-        </button>
+        </Button>
       </Motion.div>
     </Motion.form>
   );

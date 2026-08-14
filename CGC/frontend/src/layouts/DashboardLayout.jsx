@@ -1,169 +1,205 @@
 import React, { useState } from 'react';
-import { Outlet, Link, useLocation } from 'react-router-dom';
+import { Outlet, NavLink, useLocation } from 'react-router-dom';
 import { useDispatch, useSelector } from 'react-redux';
-import { 
-  LayoutDashboard, ShoppingCart, Truck, Users, 
-  MapPin, UserSquare, Briefcase, Calculator, 
-  BarChart, Settings, Menu, Search, Eye, Bell, LogOut, ChevronLeft, ChevronRight, Package,
-  File
+import {
+  LayoutDashboard, ShoppingCart, Truck, MapPin, UserSquare,
+  Briefcase, Calculator, LogOut, Package, FileText, Menu, X,
 } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { logout } from '../store/authSlice';
 import LogoutModal from '../components/LogoutModal';
-import clsx from 'clsx';
+import { ThemeToggle } from '../components/ui';
+import { cn } from '../lib/cn';
 
-import { motion, AnimatePresence } from 'framer-motion';
+const NAV_GROUPS = [
+  {
+    title: 'Overview',
+    items: [
+      { name: 'Dashboard', path: '/dashboard', icon: LayoutDashboard, end: true },
+    ],
+  },
+  {
+    title: 'Orders',
+    items: [
+      { name: 'Verification Desk', path: '/dashboard/verification-desk', icon: FileText },
+      { name: 'Tickets', path: '/dashboard/tickets', icon: Briefcase },
+      { name: 'Orders', path: '/dashboard/orders', icon: ShoppingCart },
+      { name: 'Invoices', path: '/dashboard/invoices', icon: Calculator },
+    ],
+  },
+  {
+    title: 'Fleet & delivery',
+    items: [
+      { name: 'Drivers', path: '/dashboard/drivers', icon: UserSquare },
+      { name: 'Dispatch board', path: '/dashboard/dispatch', icon: MapPin },
+      { name: 'Deliveries', path: '/dashboard/deliveries', icon: Truck },
+    ],
+  },
+  {
+    title: 'Resources',
+    items: [
+      { name: 'Suppliers', path: '/dashboard/supplier', icon: Truck },
+      { name: 'Products', path: '/dashboard/products', icon: Package },
+    ],
+  },
+];
+
+function NavItem({ item, onNavigate }) {
+  const Icon = item.icon;
+  return (
+    <NavLink
+      to={item.path}
+      end={item.end}
+      onClick={onNavigate}
+      className={({ isActive }) =>
+        cn(
+          'flex items-center gap-3 rounded-pill px-4 py-2.5 text-[13.5px]',
+          'transition-colors duration-150',
+          isActive
+            ? 'bg-brand text-on-brand font-semibold'
+            : 'text-rail-ink font-medium hover:bg-brand/10'
+        )
+      }
+    >
+      {({ isActive }) => (
+        <>
+          <Icon
+            size={18}
+            strokeWidth={isActive ? 2.2 : 1.75}
+            className="flex-none"
+          />
+          <span className="truncate">{item.name}</span>
+        </>
+      )}
+    </NavLink>
+  );
+}
 
 export default function DashboardLayout() {
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const [showLogoutModal, setShowLogoutModal] = useState(false);
   const location = useLocation();
   const dispatch = useDispatch();
-  const user = useSelector(state => state.auth.user);
+  const user = useSelector((state) => state.auth.user);
 
-  const navGroups = [
-    {
-      title: 'Overview',
-      items: [
-        { name: 'Dashboard', path: '/dashboard', icon: <LayoutDashboard size={20} /> },
-      ]
-    },
-    {
-      title: 'Order Management',
-      items: [
-        { name: 'Verification Desk', path: '/dashboard/verification-desk', icon: <File size={20} /> },
-        { name: 'Tickets', path: '/dashboard/tickets', icon: <Briefcase size={20} /> },
-        { name: 'Orders', path: '/dashboard/orders', icon: <ShoppingCart size={20} /> },
-        { name: 'Invoices', path: '/dashboard/invoices', icon: <Calculator size={20} /> },
-      ]
-    },
-    {
-      title: 'Fleet & Delivery',
-      items: [
-        { name: 'Drivers', path: '/dashboard/drivers', icon: <UserSquare size={20} /> },
-        { name: 'Dispatch Board', path: '/dashboard/dispatch', icon: <MapPin size={20} /> },
-        { name: 'Deliveries', path: '/dashboard/deliveries', icon: <Truck size={20} /> },
-      ]
-    },
-    {
-      title: 'Resources',
-      items: [
-        { name: 'Suppliers', path: '/dashboard/supplier', icon: <Truck size={20} /> },
-        { name: 'Products', path: '/dashboard/products', icon: <Package size={20} /> },
-      ]
-    }
-  ];
+  // Tapping a link should never leave the mobile drawer hanging open.
+  const closeDrawer = () => setDrawerOpen(false);
+
+  const sidebar = (
+    <div className="flex flex-col h-full bg-rail border-r border-line">
+      {/* Brand */}
+      <div className="flex items-center gap-3 px-6 pt-7 pb-8">
+        <div className="w-9 h-9 rounded-control bg-brand flex-none" />
+        <div className="min-w-0">
+          <p className="text-[15px] font-bold text-rail-ink leading-tight">
+            Cambridge
+          </p>
+          <p className="text-[12.5px] text-muted leading-tight">Garden Centre</p>
+        </div>
+        <button
+          type="button"
+          onClick={closeDrawer}
+          className="ml-auto lg:hidden text-muted hover:text-ink p-1"
+          aria-label="Close menu"
+        >
+          <X size={20} />
+        </button>
+      </div>
+
+      {/* Navigation */}
+      <nav className="flex-1 overflow-y-auto custom-scrollbar px-3 pb-4 space-y-6">
+        {NAV_GROUPS.map((group) => (
+          <div key={group.title}>
+            <p className="px-4 pb-2 text-[12.5px] font-semibold text-muted/80">
+              {group.title}
+            </p>
+            <div className="space-y-1">
+              {group.items.map((item) => (
+                <NavItem key={item.path} item={item} onNavigate={closeDrawer} />
+              ))}
+            </div>
+          </div>
+        ))}
+      </nav>
+
+      {/* Signed-in user */}
+      <div className="border-t border-line px-4 py-4 flex items-center gap-3">
+        <div className="w-9 h-9 rounded-pill bg-brand/15 text-brand flex items-center justify-center font-bold text-[13px] flex-none">
+          {user?.name ? user.name.charAt(0).toUpperCase() : 'U'}
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="text-[13px] font-semibold text-ink truncate">
+            {user?.name || 'User'}
+          </p>
+          <p className="text-[12.5px] text-muted truncate">
+            {user?.role?.replace(/_/g, ' ').toLowerCase() || 'staff'}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => setShowLogoutModal(true)}
+          title="Sign out"
+          aria-label="Sign out"
+          className="w-9 h-9 rounded-pill flex items-center justify-center text-muted hover:text-clay hover:bg-clay/10 transition-colors flex-none"
+        >
+          <LogOut size={17} strokeWidth={1.75} />
+        </button>
+      </div>
+    </div>
+  );
 
   return (
-    <div className="flex h-screen bg-gray-50 overflow-hidden font-sans">
-      {/* Sidebar */}
-      <aside className={clsx(
-        "bg-[#1B4332] text-white flex flex-col transition-all duration-300 relative",
-        sidebarOpen ? "w-64" : "w-16"
-      )}>
-        {/* Toggle Button */}
-        <button 
-          onClick={() => setSidebarOpen(!sidebarOpen)}
-          className="absolute -right-3 top-6 bg-white text-[#1B4332] rounded-full p-1 shadow-md border border-gray-200 z-10"
-        >
-          {sidebarOpen ? <ChevronLeft size={16} /> : <ChevronRight size={16} />}
-        </button>
+    <div className="flex h-screen overflow-hidden bg-canvas">
+      {/* Sidebar — fixed on desktop */}
+      <aside className="hidden lg:block w-[248px] flex-none">{sidebar}</aside>
 
-        <div className="p-4 mb-4 mt-2">
-          {sidebarOpen ? (
+      {/* Sidebar — drawer on mobile */}
+      <AnimatePresence>
+        {drawerOpen && (
+          <>
             <motion.div
-              initial={{ opacity: 0, x: -20 }}
-              animate={{ opacity: 1, x: 0 }}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={closeDrawer}
+              className="fixed inset-0 z-40 bg-scrim/50 lg:hidden"
+            />
+            <motion.aside
+              initial={{ x: -280 }}
+              animate={{ x: 0 }}
+              exit={{ x: -280 }}
+              transition={{ type: 'tween', duration: 0.2, ease: 'easeOut' }}
+              className="fixed inset-y-0 left-0 z-50 w-[264px] lg:hidden"
             >
-              <h1 className="text-2xl font-bold tracking-tight">CGC</h1>
-              <p className="text-xs text-green-300">Operations</p>
-            </motion.div>
-          ) : (
-            <h1 className="text-2xl font-bold text-center">C</h1>
-          )}
-        </div>
+              {sidebar}
+            </motion.aside>
+          </>
+        )}
+      </AnimatePresence>
 
-        <nav className="flex-1 overflow-y-auto px-3 py-2 space-y-2">
-          {navGroups.map((group, idx) => (
-            <div key={idx} className={clsx(idx > 0 && "pt-4")}>
-              {sidebarOpen && <div className="text-[10px] font-bold text-green-400/60 mb-2 uppercase tracking-[0.1em] px-3">{group.title}</div>}
-              <ul className="space-y-1">
-                {group.items.map((item, i) => {
-                  const isActive = location.pathname === item.path;
-                  return (
-                    <motion.li 
-                      key={item.name}
-                      initial={{ opacity: 0, x: -10 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      transition={{ delay: i * 0.05 }}
-                    >
-                      <Link
-                        to={item.path}
-                        className={clsx(
-                          "flex items-center rounded-lg px-3 py-2.5 transition-colors",
-                          isActive ? "bg-[#2D6A4F] text-white" : "text-green-100 hover:bg-[#2D6A4F]/50",
-                          !sidebarOpen && "justify-center"
-                        )}
-                        title={!sidebarOpen ? item.name : undefined}
-                      >
-                        {item.icon}
-                        {sidebarOpen && <span className="ml-3 font-medium">{item.name}</span>}
-                      </Link>
-                    </motion.li>
-                  )
-                })}
-              </ul>
-            </div>
-          ))}
-        </nav>
-
-        {/* User Profile Area */}
-        <div className="p-4 border-t border-[#2D6A4F] mt-auto">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-full bg-[#2D6A4F] flex items-center justify-center font-bold text-sm flex-shrink-0">
-              {user?.name ? user.name.charAt(0).toUpperCase() : "U"}
-            </div>
-            {sidebarOpen && (
-              <div className="flex-1 overflow-hidden">
-                <div className="text-sm font-semibold truncate text-white">{user?.name || 'User'}</div>
-                <div className="text-xs text-green-300 truncate font-medium uppercase tracking-wider">
-                  {user?.role?.replace('_', ' ') || 'Staff'}
-                </div>
-              </div>
-            )}
-            <button 
-              onClick={() => setShowLogoutModal(true)} 
-              className={clsx(
-                "text-green-300 hover:text-white transition-colors",
-                !sidebarOpen && "hidden"
-              )}
-              title="Logout"
-            >
-              <LogOut size={18} />
-            </button>
-          </div>
-          {!sidebarOpen && (
-            <button 
-              onClick={() => setShowLogoutModal(true)} 
-              className="mt-4 w-full flex justify-center text-green-300 hover:text-white transition-colors"
-              title="Logout"
-            >
-              <LogOut size={18} />
-            </button>
-          )}
-        </div>
-      </aside>
-
-      {/* Main Content */}
+      {/* Main column */}
       <div className="flex-1 flex flex-col h-screen overflow-hidden">
-        {/* Page Content */}
-        <main className="flex-1 overflow-auto bg-[#F9FBF9] p-6 lg:p-8">
+        {/* Slim bar: menu button on mobile, theme toggle always */}
+        <div className="flex items-center gap-2 px-4 lg:px-8 pt-4 flex-none">
+          <button
+            type="button"
+            onClick={() => setDrawerOpen(true)}
+            className="lg:hidden w-10 h-10 rounded-pill flex items-center justify-center text-muted hover:text-ink hover:bg-ink/[0.05] transition-colors"
+            aria-label="Open menu"
+          >
+            <Menu size={20} />
+          </button>
+          <ThemeToggle className="ml-auto" />
+        </div>
+
+        <main className="flex-1 overflow-auto custom-scrollbar px-4 lg:px-8 pb-12 pt-2">
           <AnimatePresence mode="wait">
             <motion.div
               key={location.pathname}
-              initial={{ opacity: 0, y: 15 }}
+              initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -15 }}
-              transition={{ duration: 0.25, ease: "easeOut" }}
+              exit={{ opacity: 0, y: -10 }}
+              transition={{ duration: 0.2, ease: 'easeOut' }}
             >
               <Outlet />
             </motion.div>
@@ -171,7 +207,6 @@ export default function DashboardLayout() {
         </main>
       </div>
 
-      {/* Logout Confirmation Modal */}
       <LogoutModal
         isOpen={showLogoutModal}
         onClose={() => setShowLogoutModal(false)}
