@@ -405,9 +405,11 @@ export const DriverService = {
 
   async deleteDriver(id: string) {
     return prisma.$transaction(async (tx) => {
+      // No `include: { user: true }` here. This record is returned straight to
+      // the client by the controller, and the linked User carries passwordHash.
+      // The cleanup below only needs the `userId` scalar, which Driver already has.
       const driver = await tx.driver.findUnique({
-        where: { id },
-        include: { user: true }
+        where: { id }
       });
       if (!driver) throw new Error('Driver not found');
 
