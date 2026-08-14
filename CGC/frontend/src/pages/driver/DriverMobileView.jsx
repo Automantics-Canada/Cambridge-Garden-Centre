@@ -103,8 +103,15 @@ export default function DriverMobileView() {
       await api.patch(url, { status: newStatus, notes });
       toast.success(`Status: ${newStatus.replace(/_/g, ' ')}`);
       await fetchMobileData(true);
-    } catch (e) {
-      toast.error("Failed to update status");
+    } catch (err) {
+      // The server now refuses illegal transitions, forbidden roles and
+      // missing proof of delivery with a specific reason. Show it — a blanket
+      // "Failed to update status" leaves the driver with no way to proceed.
+      const reason = err?.response?.data?.error;
+      toast.error(reason || 'Failed to update status');
+      // Someone else may have moved this delivery on; re-read so the buttons
+      // reflect the real state rather than the one we just failed against.
+      await fetchMobileData(true);
     } finally {
       setUpdatingStatus(false);
     }
@@ -124,8 +131,9 @@ export default function DriverMobileView() {
       await api.post(url, formData);
       toast.success(`${type === 'pickup' ? 'Pickup' : type === 'delivery' ? 'Delivery' : 'Ticket'} photo uploaded!`);
       await fetchMobileData(true);
-    } catch (e) {
-      toast.error(`Failed to upload photo`);
+    } catch (err) {
+      const reason = err?.response?.data?.error;
+      toast.error(reason || 'Failed to upload photo');
     } finally {
       setUploadingType(null);
     }
@@ -341,13 +349,22 @@ export default function DriverMobileView() {
 
                           </div>
 
+                          {/* The server refuses DELIVERED without a delivery
+                              photo (422 MISSING_EVIDENCE). Mirror that here so
+                              the driver sees why the button is unavailable
+                              instead of tapping it and getting an error. */}
                           <button
                             onClick={() => handleStatusChange(currentDelivery.id, 'DELIVERED', 'Delivered by driver')}
-                            disabled={uploadingType !== null || updatingStatus}
+                            disabled={uploadingType !== null || updatingStatus || !currentDelivery.deliveryPhotoUrl}
                             className="w-full min-h-11 py-4 rounded-pill font-semibold bg-brand hover:brightness-110 text-on-brand transition-all active:scale-[0.98] text-[15px] disabled:opacity-50 disabled:cursor-not-allowed"
                           >
                             {updatingStatus ? 'Completing...' : 'Complete delivery'}
                           </button>
+                          {!currentDelivery.deliveryPhotoUrl && (
+                            <p className="text-[12.5px] text-muted text-center mt-2">
+                              Add a delivery photo to complete this stop.
+                            </p>
+                          )}
                         </>
                       )}
                     </div>

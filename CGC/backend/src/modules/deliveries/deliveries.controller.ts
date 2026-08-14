@@ -3,6 +3,7 @@ import type { AuthRequest } from '../../middleware/authMiddleware.js';
 import { DeliveriesService } from './deliveries.service.js';
 import { prisma } from '../../db/prisma.js';
 import { canAccessDelivery, findDriverIdForUser } from '../../services/authorization.js';
+import { evaluateTransition, DENIAL_HTTP_STATUS } from './deliveryTransitions.js';
 
 export const getDeliveries = async (req: AuthRequest, res: Response) => {
   try {
@@ -37,9 +38,45 @@ export const updateStatus = async (req: AuthRequest, res: Response) => {
       return res.status(403).json({ error: 'Forbidden' });
     }
     const { status, notes } = req.body;
-    const delivery = await DeliveriesService.updateStatus(id, status, notes);
+
+    // The state machine needs the current record. Reading it here rather than
+    // inside the service keeps the denial an HTTP concern and avoids a second
+    // lookup: the service re-reads inside its transaction to close the race.
+    const current = await prisma.delivery.findUnique({
+      where: { id },
+      select: { status: true, pickupPhotoUrl: true, deliveryPhotoUrl: true },
+    });
+    if (!current) {
+      return res.status(404).json({ error: 'Delivery not found' });
+    }
+
+    const decision = evaluateTransition({
+      from: current.status,
+      to: status,
+      role: req.user!.role,
+      evidence: {
+        pickupPhotoUrl: current.pickupPhotoUrl,
+        deliveryPhotoUrl: current.deliveryPhotoUrl,
+      },
+    });
+
+    if (!decision.allowed) {
+      return res
+        .status(DENIAL_HTTP_STATUS[decision.code])
+        .json({ error: decision.reason, code: decision.code });
+    }
+
+    const delivery = await DeliveriesService.updateStatus(
+      id,
+      decision.to,
+      notes,
+      current.status
+    );
     res.json(delivery);
   } catch (error: any) {
+    if (error?.code === 'DELIVERY_TRANSITION_CONFLICT') {
+      return res.status(409).json({ error: error.message, code: 'ILLEGAL_TRANSITION' });
+    }
     res.status(500).json({ error: error.message });
   }
 };
