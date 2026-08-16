@@ -75,9 +75,6 @@ async function extractInvoiceWithTextract(localPath: string): Promise<InvoiceOcr
   const response = await textractClient.send(command);
   const rawText = getRawTextFromExpenseResponse(response);
 
-  const logPath = path.join(process.cwd(), 'ocr_debug.log');
-  fs.appendFileSync(logPath, `\n--- RAW OCR TEXT ---\n${rawText}\n--------------------\n`);
-
   const extraction = await extractStructuredData(rawText, 'INVOICE');
 
   // Debug: log what Bedrock returned

@@ -37,5 +37,19 @@ export const env = {
     gmailClientId: process.env.GMAIL_CLIENT_ID || '',
     gmailClientSecret: process.env.GMAIL_CLIENT_SECRET || '',
     gmailRefreshToken: process.env.GMAIL_REFRESH_TOKEN || '',
+    /**
+     * Scope for the invoice inbox poller. Both are required before any polling
+     * happens: without them the poller treated every unread message carrying an
+     * attachment as a supplier invoice, including delivery tickets and unrelated
+     * personal mail.
+     *
+     * GMAIL_INVOICE_LABEL      a Gmail label applied to supplier invoice mail
+     * GMAIL_SENDER_ALLOWLIST   comma-separated sender domains or addresses
+     */
+    gmailInvoiceLabel: process.env.GMAIL_INVOICE_LABEL || '',
+    gmailSenderAllowlist: (process.env.GMAIL_SENDER_ALLOWLIST || '')
+        .split(',')
+        .map(entry => entry.trim().toLowerCase())
+        .filter(Boolean),
     internalSharedSecret: process.env.INTERNAL_SHARED_SECRET || process.env.JWT_SECRET!,
 }

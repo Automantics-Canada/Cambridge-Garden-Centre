@@ -4,10 +4,14 @@ import { NotificationService } from '../../services/notification.service.js';
 
 export const getDispatchBoard = async (req: Request, res: Response) => {
   try {
-    const board = await DispatchService.getDispatchBoard();
+    const day = typeof req.query.date === 'string' ? req.query.date : undefined;
+    const board = await DispatchService.getDispatchBoard(day);
     res.json(board);
   } catch (error: any) {
-    res.status(500).json({ error: error.message });
+    // A bad `date` is a 400. Reporting it as a 500 would send the caller
+    // looking for a server fault instead of fixing the parameter.
+    const status = Number(error?.status) || 500;
+    res.status(status).json({ error: error.message });
   }
 };
 

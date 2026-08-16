@@ -8,12 +8,55 @@ datasource db {
   directUrl = env("DIRECT_URL")
 }
 
+/// One Spruce document — what the yard calls an order.
+///
+/// `Order` is a single line item, keyed by `spruceOrderId`, which is
+/// synthesised from where the row happened to sit in the uploaded PDF
+/// (`123456-P2-T2-4`). Two consequences followed from that: the delivery report
+/// and the PO report could not be joined, because neither stores the document
+/// number as a key; and re-importing a regenerated report shifted every row
+/// below an insertion onto a new key, duplicating orders that already existed.
+///
+/// This model holds the document number itself, so there is something real to
+/// join on and something stable to re-import against. It is additive: `Order`
+/// keeps its own id and every existing foreign key still resolves.
+model OrderDocument {
+  id              String    @id @default(uuid()) @db.Uuid
+  /// The Spruce document number, as printed. The join key for both reports.
+  documentNumber  String    @unique
+  customerName    String
+  /// Filled by the delivery report, or later by the PO report merge.
+  poNumber        String?
+  buyerType       BuyerType @default(CONTRACTOR)
+  orderDate       DateTime  @db.Date
+  deliveryDate    DateTime? @db.Date
+  shippingAddress String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  lines           Order[]
+
+  @@index([orderDate])
+  @@index([poNumber])
+}
+
 model Order {
   id             String             @id @default(uuid()) @db.Uuid
   spruceOrderId  String             @unique
+  /// Owning document. Nullable while the backfill runs and for rows imported
+  /// by the legacy path; new imports always set it.
+  documentId     String?            @db.Uuid
+  /// Position of this line within its document, 1-based. Together with
+  /// `documentId` this is the stable identity a re-import matches on, replacing
+  /// the PDF-position key held in `spruceOrderId`.
+  lineNumber     Int?
   poNumber       String?
   customerName   String
-  buyerType      BuyerType
+  /// Spruce's delivery report does not distinguish a contractor sale from a
+  /// walk-in, and the importer stamped CONTRACTOR on every row — so the B2C
+  /// side of the business appeared nowhere. Defaulted rather than asserted:
+  /// B2B is roughly 90% of volume, so this is the right guess, but it is a
+  /// default to be corrected, not a fact read off the report.
+  buyerType      BuyerType          @default(CONTRACTOR)
   product        String
   quantity       Decimal            @db.Decimal
   unit           String
@@ -30,12 +73,16 @@ model Order {
   lineItems      InvoiceLineItem[]
   driver         Driver?            @relation(fields: [driverId], references: [id])
   supplier       Supplier?          @relation(fields: [supplierId], references: [id])
+  document       OrderDocument?     @relation(fields: [documentId], references: [id])
   tickets        Ticket[]
   ticketMatches  TicketOrderMatch[]
 
+  /// The identity a re-import matches on, once the document layer is populated.
+  @@unique([documentId, lineNumber])
   @@index([poNumber])
   @@index([supplierId])
   @@index([orderDate])
+  @@index([documentId])
 }
 
 
@@ -194,7 +241,31 @@ model Supplier {
   invoices        Invoice[]
   negotiatedRates NegotiatedRate[]
   orders          Order[]
+  productAliases  SupplierProductAlias[]
   tickets         Ticket[]
+}
+
+/// Maps the wording a supplier prints on their paperwork to the product name
+/// used in that supplier's negotiated rates.
+///
+/// Rates were matched to invoice lines by string similarity, where a 0.6 score
+/// or a substring hit counted as the same product. "A Gravel" and "B Gravel"
+/// score far above that, so the wrong rate could be applied to real money. An
+/// alias is recorded once by a person and is exact thereafter; fuzzy matching
+/// stays only as the fallback for text nobody has mapped yet.
+model SupplierProductAlias {
+  id          String   @id @default(uuid()) @db.Uuid
+  supplierId  String   @db.Uuid
+  /// Supplier's wording, normalised (lower case, punctuation collapsed).
+  aliasText   String
+  /// Must equal a NegotiatedRate.productName for the same supplier.
+  productName String
+  createdAt   DateTime @default(now())
+  createdById String?  @db.Uuid
+  supplier    Supplier @relation(fields: [supplierId], references: [id])
+
+  @@unique([supplierId, aliasText])
+  @@index([supplierId])
 }
 
 model User {
@@ -298,8 +369,17 @@ model OcrJob {
   invoiceId    String?      @db.Uuid
   type         OcrJobType
   status       OcrJobStatus @default(PENDING)
+  /// How many times this job has been attempted. The worker only picked up
+  /// PENDING jobs, so a single Textract timeout left the document FAILED and
+  /// unprocessed forever, with nothing on any screen to say so.
+  attempts     Int          @default(0)
+  /// Earliest time the worker may try again; spaces out retries after a failure.
+  nextAttemptAt DateTime?
   invoice      Invoice?     @relation("InvoiceOcrJobs", fields: [invoiceId], references: [id])
   ticket       Ticket?      @relation("TicketOcrJobs", fields: [ticketId], references: [id])
+
+  /// The worker's claim query: status plus when the job is next due.
+  @@index([status, nextAttemptAt])
 }
 
 model EmailIngestionEvent {
@@ -405,6 +485,11 @@ enum LineItemFlag {
   NO_TICKET
   NO_ORDER
   RATE_UNKNOWN
+  // An agreed rate was found, but it is priced per a different unit than the
+  // invoice line, so the two numbers cannot be compared. Distinct from
+  // RATE_UNKNOWN, where no rate was found at all: this one is resolved by
+  // correcting a unit, not by adding a rate.
+  UNIT_MISMATCH
   MULTIPLE_FLAGS
 }
 

@@ -5,6 +5,7 @@ import { prisma } from '../../db/prisma.js';
 import type { Prisma } from '@prisma/client';
 import { orderEventEmitter, OrderEvents } from './order.events.js';
 import { buildSpruceOrderKey } from './orderImportKey.js';
+import { parseSpruceDate } from '../../lib/spruceDate.js';
 
 const textractClient = new TextractClient({
   region: process.env.AWS_REGION || 'us-east-1',
@@ -21,6 +22,62 @@ export interface ImportSummary {
   errors: Array<{ rowNumber: number; error: string }>;
 }
 
+/**
+ * Unit of measure for a line, read from its description.
+ *
+ * This was `descLower.includes('mt')` and `includes('cy')`, which match inside
+ * ordinary words — "Fancy Mulch" contains "cy", so it was priced by the cubic
+ * yard. Matching is now on whole tokens, and an unrecognised description keeps
+ * the previous 'EA' default rather than inventing a measure.
+ */
+export function inferUnitFromDescription(description: string): string {
+  const tokens = description.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+
+  if (tokens.some(t => t === 'mt' || t === 'tonne' || t === 'tonnes')) return 'MT';
+  if (tokens.some(t => t === 'cy' || t === 'yd' || t === 'yds')) return 'CY';
+  if (tokens.some(t => t === 'skid' || t === 'skids' || t === 'pallet' || t === 'pallets')) return 'Skid';
+  if (tokens.some(t => t === 'ton' || t === 'tons')) return 'TON';
+
+  return 'EA';
+}
+
+/**
+ * Finds or creates the OrderDocument for a Spruce document number.
+ *
+ * The document number is the join key between the delivery report and the PO
+ * report, so it is created on first sight and its header fields are refreshed
+ * from whichever report supplies them. `poNumber` is only ever widened — the
+ * delivery report often omits it and the PO report supplies it, and a later
+ * import that lacks it must not erase what an earlier one established.
+ */
+async function upsertOrderDocument(input: {
+  documentNumber: string;
+  customerName: string;
+  poNumber: string | null;
+  orderDate: Date;
+  deliveryDate: Date | null;
+}) {
+  const { documentNumber, customerName, poNumber, orderDate, deliveryDate } = input;
+
+  return prisma.orderDocument.upsert({
+    where: { documentNumber },
+    update: {
+      customerName,
+      orderDate,
+      ...(deliveryDate ? { deliveryDate } : {}),
+      ...(poNumber ? { poNumber } : {}),
+    },
+    create: {
+      documentNumber,
+      customerName,
+      poNumber,
+      orderDate,
+      deliveryDate,
+    },
+    select: { id: true },
+  });
+}
+
 export const OrderPdfImportService = {
   async importFromPdf(buffer: Buffer, jobId: string): Promise<ImportSummary> {
     let created = 0;
@@ -34,9 +91,8 @@ export const OrderPdfImportService = {
       const pageCount = pdfDoc.getPageCount();
       console.log(`[OrderPdfImport] Processing ${pageCount} pages...`);
 
-      const suppliers = await prisma.supplier.findMany({
-        select: { id: true, name: true },
-      });
+      // The supplier list was loaded here to guess an order's supplier from the
+      // customer's name. That inference is gone, so the query is too.
 
       // Splitting is local and fast. OCR is the expensive network operation, so
       // process a few pages concurrently while keeping parsing in page order.
@@ -68,6 +124,11 @@ export const OrderPdfImportService = {
         }
       }));
 
+      // Line numbers are assigned per document across the whole upload, so a
+      // document whose lines span a page break keeps numbering continuously
+      // instead of restarting at 1 and colliding with its own earlier lines.
+      const lineCounters = new Map<string, number>();
+
       let lastOrderId: string | undefined = undefined;
       let lastCustomerName: string | undefined = undefined;
       let lastEntryDateRaw: string | undefined = undefined;
@@ -81,17 +142,43 @@ export const OrderPdfImportService = {
           continue;
         }
 
+        // Index the page's blocks once.
+        //
+        // Every lookup below used to be a linear scan of the whole page:
+        // `blocks.find(b => b.Id === wordId)` ran for each word of each cell,
+        // and the cell list was rebuilt by scanning all blocks per table. On a
+        // page whose table holds a few thousand blocks that is millions of
+        // comparisons per page, all of it CPU on the same event loop that
+        // serves the dispatch board.
+        const blocksById = new Map<string, Block>();
+        const cellsByTableId = new Map<string, Block[]>();
+        const tableIdByCellId = new Map<string, string>();
+
+        for (const block of blocks) {
+          if (block.Id) blocksById.set(block.Id, block);
+        }
+
+        for (const block of blocks) {
+          if (block.BlockType !== 'TABLE') continue;
+          cellsByTableId.set(block.Id ?? '', []);
+          for (const rel of block.Relationships ?? []) {
+            for (const id of rel.Ids ?? []) tableIdByCellId.set(id, block.Id ?? '');
+          }
+        }
+
+        for (const block of blocks) {
+          if (block.BlockType !== 'CELL' || !block.Id) continue;
+          const tableId = tableIdByCellId.get(block.Id);
+          if (tableId !== undefined) cellsByTableId.get(tableId)?.push(block);
+        }
+
         const tableBlocks = blocks.filter((block) => block.BlockType === 'TABLE');
         console.log(`[OrderPdfImport] Page ${pageIdx + 1} found ${tableBlocks.length} tables.`);
         if (tableBlocks.length === 0) continue;
 
         for (let tableIdx = 0; tableIdx < tableBlocks.length; tableIdx++) {
           const tableBlock = tableBlocks[tableIdx]!;
-          const cells = blocks.filter(
-            (block) =>
-              block.BlockType === 'CELL' &&
-              tableBlock.Relationships?.some((rel) => rel.Ids?.includes(block.Id || ''))
-          );
+          const cells = cellsByTableId.get(tableBlock.Id ?? '') ?? [];
 
           const rows: { [key: number]: Block[] } = {};
           cells.forEach((cell) => {
@@ -104,24 +191,24 @@ export const OrderPdfImportService = {
             }
           });
 
-          const getText = (cell: Block, blocks: Block[]): string => {
+          const getText = (cell: Block): string => {
             if (!cell.Relationships) return '';
-            let text = '';
-            const words = cell.Relationships.filter((rel) => rel.Type === 'CHILD').flatMap((rel) => rel.Ids || []);
-            words.forEach((wordId) => {
-              const wordBlock = blocks.find((b) => b.Id === wordId);
-              if (wordBlock && wordBlock.BlockType === 'WORD') {
-                text += (wordBlock.Text || '') + ' ';
+            const words: string[] = [];
+            for (const rel of cell.Relationships) {
+              if (rel.Type !== 'CHILD' || !rel.Ids) continue;
+              for (const wordId of rel.Ids) {
+                const wordBlock = blocksById.get(wordId);
+                if (wordBlock?.BlockType === 'WORD' && wordBlock.Text) words.push(wordBlock.Text);
               }
-            });
-            return text.trim();
+            }
+            return words.join(' ').trim();
           };
 
           const headers: { [key: number]: string } = {};
           if (rows[1]) {
             rows[1].forEach((cell) => {
               if (cell.ColumnIndex !== undefined) {
-                const headerText = getText(cell, blocks).toLowerCase().replace(/\s+/g, '');
+                const headerText = getText(cell).toLowerCase().replace(/\s+/g, '');
                 headers[cell.ColumnIndex] = headerText;
               }
             });
@@ -140,7 +227,7 @@ export const OrderPdfImportService = {
               if (colIdx !== undefined) {
                 const headerKey = headers[colIdx];
                 if (headerKey !== undefined) {
-                  rowData[headerKey] = getText(cell, blocks);
+                  rowData[headerKey] = getText(cell);
                 }
               }
             });
@@ -204,37 +291,33 @@ export const OrderPdfImportService = {
               continue;
             }
 
-            let orderDate = new Date();
-            if (entryDateRaw) {
-              const parsedDate = new Date(entryDateRaw);
-              if (!isNaN(parsedDate.getTime())) orderDate = parsedDate;
+            // Explicit parsing: `new Date("05/06/24")` reads month-first in V8,
+            // so a Canadian report saying 5 June was stored as 6 May.
+            const orderDate = parseSpruceDate(entryDateRaw) ?? new Date();
+            if (entryDateRaw && !parseSpruceDate(entryDateRaw)) {
+              errors.push({
+                rowNumber: rowIndex,
+                error: `Page ${pageIdx + 1}, Row ${rowIndex}: unreadable entry date "${entryDateRaw}"; used today's date`,
+              });
             }
 
-            let deliveryDate: Date | null = null;
-            if (deliveryDateRaw) {
-              const parsedDate = new Date(deliveryDateRaw);
-              if (!isNaN(parsedDate.getTime())) deliveryDate = parsedDate;
-            }
+            const deliveryDate = parseSpruceDate(deliveryDateRaw);
 
             const quantity = parseFloat(qtyRaw?.replace(/,/g, '') || '0') || 0;
+            const unit = inferUnitFromDescription(itemDesc);
 
-            let unit = 'EA';
-            const descLower = itemDesc.toLowerCase();
-            if (descLower.includes('mt')) unit = 'MT';
-            else if (descLower.includes('cy')) unit = 'CY';
-            else if (descLower.includes('skid')) unit = 'Skid';
-
-            // Find supplierId if possible
-            let supplierId: string | null = null;
-            if (customerName) {
-              const normalizedCustomer = customerName.toLowerCase();
-              const foundSupplier = suppliers.find(supplier =>
-                supplier.name.toLowerCase().includes(normalizedCustomer)
-              );
-              if (foundSupplier) {
-                supplierId = foundSupplier.id;
-              }
-            }
+            // Supplier is deliberately not inferred here.
+            //
+            // This used to check whether any supplier's name *contained* the
+            // customer's name, which is backwards twice over: the customer is
+            // who buys from the yard, the supplier is who sells to it, and a
+            // short customer name matches half the supplier table by substring.
+            // A wrong supplierId then decides which negotiated rates an invoice
+            // is checked against, so guessing here costs real money.
+            //
+            // The supplier for an order comes from the PO report merge or from
+            // a person, never from the customer's name.
+            const supplierId: string | null = null;
 
             const data: Prisma.OrderUncheckedCreateInput = {
               spruceOrderId: buildSpruceOrderKey({
@@ -246,7 +329,11 @@ export const OrderPdfImportService = {
               poNumber,
               customerName,
               supplierId,
-              buyerType: 'CONTRACTOR',
+              // buyerType is deliberately not set: the report does not say, and
+              // stamping CONTRACTOR on every row hid the B2C side of the
+              // business entirely. The column's default applies instead, which
+              // records it as an assumption rather than something read off the
+              // page. See the schema comment on Order.buyerType.
               product: itemDesc,
               quantity: quantity.toString(),
               unit,
@@ -256,16 +343,43 @@ export const OrderPdfImportService = {
             };
 
             try {
-              const existing = await prisma.order.findUnique({
-                where: { spruceOrderId: data.spruceOrderId },
+              // Attach the row to its Spruce document and number it within that
+              // document. This is the identity a re-import matches on:
+              // `spruceOrderId` encodes the row's position in the PDF, so
+              // inserting one row in Spruce shifts every row below it onto a
+              // new key and duplicates orders that already exist.
+              const document = await upsertOrderDocument({
+                documentNumber: spruceOrderId,
+                customerName,
+                poNumber,
+                orderDate,
+                deliveryDate,
               });
 
+              const lineNumber = (lineCounters.get(document.id) ?? 0) + 1;
+              lineCounters.set(document.id, lineNumber);
+
+              // Prefer the stable identity; fall back to the legacy positional
+              // key so rows imported before this change are adopted and updated
+              // rather than duplicated alongside their replacement.
+              const existing =
+                (await prisma.order.findFirst({
+                  where: { documentId: document.id, lineNumber },
+                  select: { id: true },
+                }))
+                ?? (await prisma.order.findUnique({
+                  where: { spruceOrderId: data.spruceOrderId },
+                  select: { id: true },
+                }));
+
+              const payload = { ...data, documentId: document.id, lineNumber };
+
               if (existing) {
-                const updatedObj = await prisma.order.update({ where: { spruceOrderId: data.spruceOrderId }, data });
+                const updatedObj = await prisma.order.update({ where: { id: existing.id }, data: payload });
                 updated++;
                 orderEventEmitter.emit(OrderEvents.PDF_IMPORT_PROGRESS, { jobId, action: 'updated', order: updatedObj });
               } else {
-                const createdObj = await prisma.order.create({ data });
+                const createdObj = await prisma.order.create({ data: payload });
                 created++;
                 orderEventEmitter.emit(OrderEvents.PDF_IMPORT_PROGRESS, { jobId, action: 'created', order: createdObj });
               }

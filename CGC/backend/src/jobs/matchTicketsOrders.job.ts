@@ -93,22 +93,11 @@ export const startMatchTicketsOrdersJob = () => {
           console.log(`[Cron] Ticket ${ticket.id} has invalid PO format: ${ticket.poNumber}. Skipping PO matching.`);
         }
 
-        // 2. Fallback matching - match to driver's current active delivery order
-        if (matchingOrders.length === 0) {
-          const activeDeliveries = await prisma.delivery.findMany({
-            where: {
-              driverId: ticket.driverId,
-              status: { notIn: ['DELIVERED', 'CANCELLED'] },
-            },
-            orderBy: { priority: 'asc' },
-            include: { order: true },
-          });
-
-          if (activeDeliveries.length > 0) {
-            matchingOrders = [activeDeliveries[0]!.order];
-            matchMethod = 'AUTO_DRIVER_ASSIGNED';
-          }
-        }
+        // No fallback. This previously linked the ticket to whatever sat first
+        // in the driver's queue when the PO did not match — a guess, stored as
+        // fact and used downstream as delivery evidence against invoices. A
+        // ticket that cannot be matched on its PO stays UNLINKED and goes to
+        // the verification desk for a person to resolve.
 
         if (matchingOrders.length === 1) {
           const order = matchingOrders[0];
@@ -133,7 +122,7 @@ export const startMatchTicketsOrdersJob = () => {
               where: { id: ticket.id },
               data: { linkedOrderId: order.id, status: 'LINKED', linkMethod: 'AUTO' },
             });
-            console.log(`[Cron] Automatically linked Ticket ${ticket.id} to driver-assigned order ${order.id} (method: ${matchMethod}).`);
+            console.log(`[Cron] Linked Ticket ${ticket.id} to order ${order.id} on PO ${ticket.poNumber}.`);
           } catch (err) {
             console.error(`[Cron] Error linking Ticket ${ticket.id}:`, err);
           }

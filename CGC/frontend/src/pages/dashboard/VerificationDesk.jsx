@@ -1,3 +1,4 @@
+import { resolveDocumentUrl } from '../../lib/apiBase';
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useSelector } from 'react-redux';
 import api from '../../api/axios';
@@ -288,10 +289,7 @@ export default function VerificationDesk() {
 
   if (loading && invoices.length === 0 && !loadError) return <VerificationDeskSkeleton />;
 
-  const getFullUrl = (url) => {
-    if (!url) return '';
-    return url.startsWith('http') ? url : `https://cambridge-garden-centre-1.onrender.com${url}`;
-  };
+  const getFullUrl = resolveDocumentUrl;
 
   return (
     <div className="flex flex-col h-full bg-canvas -m-8 p-8 overflow-y-auto">
@@ -705,9 +703,11 @@ export default function VerificationDesk() {
                                                         <div className="flex-1 min-w-0">
                                                           <div className="flex items-center gap-1.5">
                                                             <p className="text-[12.5px] font-semibold text-ink truncate">T-{t.ticketNumber || t.id.substring(0,6)}</p>
-                                                            {t.spruceMatched && (
-                                                              <span className="bg-brand/12 text-brand px-1 py-0.5 rounded text-[12.5px] font-bold flex items-center gap-0.5"><CheckCircle className="w-2 h-2"/> MATCHED</span>
-                                                            )}
+                                                            {/* A "MATCHED" badge used to render from `spruceMatched`. Nothing
+                                                                ever computed that flag — the nightly job set it to true
+                                                                unconditionally — so the badge told a reviewer a ticket had
+                                                                been checked against Spruce when it had not. Restore it when
+                                                                a real reconciliation exists to back it. */}
                                                           </div>
                                                           <p className="text-[12.5px] font-bold text-brand mt-0.5">{Number(t.quantity)} {t.unit}</p>
                                                         </div>

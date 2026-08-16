@@ -1,3 +1,4 @@
+import { resolveDocumentUrl } from '../../lib/apiBase';
 import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import api from '../../api/axios';
@@ -185,13 +186,13 @@ export default function InvoiceDetailPage() {
             {invoice.fileUrl ? (
               invoice.fileUrl.toLowerCase().endsWith('.pdf') ? (
                 <iframe
-                  src={invoice.fileUrl.startsWith('http') ? invoice.fileUrl : `https://cambridge-garden-centre-1.onrender.com${invoice.fileUrl}`}
+                  src={resolveDocumentUrl(invoice.fileUrl)}
                   className="w-full h-full border-none rounded-control shadow-card"
                   title="Invoice Document"
                 ></iframe>
               ) : (
                 <img
-                  src={invoice.fileUrl.startsWith('http') ? invoice.fileUrl : `https://cambridge-garden-centre-1.onrender.com${invoice.fileUrl}`}
+                  src={resolveDocumentUrl(invoice.fileUrl)}
                   className="max-w-full max-h-full object-contain shadow-card rounded-control"
                   alt="Invoice Document"
                 />

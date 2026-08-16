@@ -327,22 +327,17 @@ export const TicketService = {
           }
         }
 
-        // 2. Fallback: If no PO match, look for an active delivery order assigned to this driver
-        if (!matchedOrder) {
-          const activeDeliveries = await prisma.delivery.findMany({
-            where: {
-              driverId: ticket.driverId,
-              status: { notIn: ['DELIVERED', 'CANCELLED'] },
-            },
-            orderBy: { priority: 'asc' },
-            include: { order: true },
-          });
-
-          if (activeDeliveries.length > 0) {
-            matchedOrder = activeDeliveries[0]!.order;
-            matchMethod = 'AUTO_DRIVER_ASSIGNED';
-          }
-        }
+        // There is deliberately no fallback here.
+        //
+        // This used to link the ticket to whichever delivery happened to be
+        // first in the driver's queue when the PO did not match, recorded as
+        // AUTO_DRIVER_ASSIGNED. That is a guess, and it was written to the
+        // database indistinguishably from a real PO match — so a ticket for one
+        // customer could end up as evidence against another customer's invoice,
+        // with nothing on screen to say it had been guessed.
+        //
+        // An unmatched ticket now stays UNLINKED and surfaces on the
+        // verification desk, which exists precisely for a human to resolve this.
 
         if (matchedOrder) {
           await prisma.ticketOrderMatch.upsert({
@@ -458,10 +453,16 @@ export const TicketService = {
 
 
   async getTicketStats() {
-    const unlinkedCount = await prisma.ticket.count({
-      where: { status: TicketStatus.UNLINKED },
-    });
-    return { unlinkedCount };
+    // `stuckDocumentCount` is documents whose OCR exhausted its retries. Before
+    // this existed, a permanently failed job was indistinguishable from one not
+    // processed yet — the ticket simply never gained its fields and nothing said
+    // why. Surfaced next to the unlinked count so it is seen the same day.
+    const [unlinkedCount, stuckDocumentCount] = await Promise.all([
+      prisma.ticket.count({ where: { status: TicketStatus.UNLINKED } }),
+      prisma.ocrJob.count({ where: { status: OcrJobStatus.FAILED } }),
+    ]);
+
+    return { unlinkedCount, stuckDocumentCount };
   },
 
   /**

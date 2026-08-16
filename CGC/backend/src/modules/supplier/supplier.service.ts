@@ -1,8 +1,7 @@
 import { prisma } from '../../db/prisma.js';
 import { SupplierType } from '@prisma/client';
 import { compareTwoStrings } from 'string-similarity';
-import path from 'node:path';
-import fs from 'node:fs';
+import { normalizeProductName } from '../../lib/productName.js';
 
 export const SupplierService = {
   async findOrCreateSupplier(name: string | null): Promise<{ id: string; name: string } | null> {
@@ -10,16 +9,13 @@ export const SupplierService = {
     const trimmedName = name.trim();
     if (!trimmedName) return null;
 
-    const logPath = path.join(process.cwd(), 'ocr_debug.log');
-    fs.appendFileSync(logPath, `\n[${new Date().toISOString()}] Attempting match for: "${trimmedName}"\n`);
-
     const supplier = await prisma.supplier.findFirst({
       where: {
         name: { equals: trimmedName, mode: 'insensitive' },
       },
     });
     if (supplier) {
-      fs.appendFileSync(logPath, `Exact match found: ${supplier.name}\n`);
+      console.log(`[Supplier] Exact match for "${trimmedName}": ${supplier.name}`);
       return supplier;
     }
 
@@ -30,19 +26,17 @@ export const SupplierService = {
       },
     });
     if (containsSupplier) {
-      fs.appendFileSync(logPath, `Contains match found: ${containsSupplier.name}\n`);
+      console.log(`[Supplier] Contains match for "${trimmedName}": ${containsSupplier.name}`);
       return containsSupplier;
     }
 
     // Fuzzy match against all active suppliers
-    fs.appendFileSync(logPath, `No direct match. Candidates:\n`);
     const allSuppliers = await prisma.supplier.findMany({ where: { active: true } });
     let bestMatch = null;
     let highestSimilarity = 0;
 
     for (const s of allSuppliers) {
       const similarity = compareTwoStrings(trimmedName.toLowerCase(), s.name.toLowerCase());
-      fs.appendFileSync(logPath, ` - Candidate: "${s.name}" | Score: ${similarity.toFixed(4)}\n`);
       if (similarity > highestSimilarity) {
         highestSimilarity = similarity;
         bestMatch = s;
@@ -50,12 +44,12 @@ export const SupplierService = {
     }
 
     if (bestMatch && highestSimilarity > 0.75) {
-      fs.appendFileSync(logPath, `WINNER: "${bestMatch.name}" (Score: ${highestSimilarity.toFixed(4)})\n`);
+      console.log(`[Supplier] Fuzzy match for "${trimmedName}": ${bestMatch.name} (${highestSimilarity.toFixed(3)})`);
       return bestMatch;
     }
 
     // If no match found, create a new supplier!
-    fs.appendFileSync(logPath, `Creating new supplier: "${trimmedName}"\n`);
+    console.log(`[Supplier] No match for "${trimmedName}" (best ${highestSimilarity.toFixed(3)}). Creating it.`);
     const newSupplier = await prisma.supplier.create({
       data: {
         name: trimmedName,
@@ -65,6 +59,64 @@ export const SupplierService = {
       },
     });
     return newSupplier;
+  },
+
+  /**
+   * Product aliases recorded for a supplier, newest first.
+   */
+  async listProductAliases(supplierId: string) {
+    return prisma.supplierProductAlias.findMany({
+      where: { supplierId },
+      orderBy: { createdAt: 'desc' },
+    });
+  },
+
+  /**
+   * Records "this supplier's wording means this product of ours".
+   *
+   * `productName` must name an existing negotiated rate for the same supplier,
+   * otherwise the alias would point at nothing and the line would still fall
+   * through to fuzzy matching without anyone being told why.
+   *
+   * The alias text is normalised on the way in so lookup is exact regardless of
+   * the casing and punctuation the supplier happens to print.
+   */
+  async addProductAlias(supplierId: string, aliasText: string, productName: string, userId?: string) {
+    const normalised = normalizeProductName(aliasText);
+    if (!normalised) {
+      throw Object.assign(new Error('aliasText is required'), { status: 400 });
+    }
+
+    const rate = await prisma.negotiatedRate.findFirst({
+      where: { supplierId, productName: { equals: productName.trim(), mode: 'insensitive' } },
+      select: { productName: true },
+    });
+
+    if (!rate) {
+      throw Object.assign(
+        new Error(`No negotiated rate named "${productName}" exists for this supplier`),
+        { status: 400 }
+      );
+    }
+
+    return prisma.supplierProductAlias.upsert({
+      where: { supplierId_aliasText: { supplierId, aliasText: normalised } },
+      update: { productName: rate.productName, createdById: userId ?? null },
+      create: {
+        supplierId,
+        aliasText: normalised,
+        productName: rate.productName,
+        createdById: userId ?? null,
+      },
+    });
+  },
+
+  async removeProductAlias(supplierId: string, aliasId: string) {
+    const alias = await prisma.supplierProductAlias.findUnique({ where: { id: aliasId } });
+    if (!alias || alias.supplierId !== supplierId) {
+      throw Object.assign(new Error('Alias not found for this supplier'), { status: 404 });
+    }
+    return prisma.supplierProductAlias.delete({ where: { id: aliasId } });
   },
 
   /**

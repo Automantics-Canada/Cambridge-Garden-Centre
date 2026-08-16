@@ -21,6 +21,8 @@ export default function DriverMobileView() {
   const { isAuthenticated } = useSelector((state) => state.auth);
 
   const [deliveries, setDeliveries] = useState([]);
+  // Reported by the server, because the client only ever holds one stop now.
+  const [stopsRemaining, setStopsRemaining] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [driverInfo, setDriverInfo] = useState(null);
@@ -35,7 +37,7 @@ export default function DriverMobileView() {
         setLoading(true);
       }
 
-      let driverInfoData, deliveriesData;
+      let driverInfoData, deliveriesData, remaining;
       if (token) {
         // Legacy URL token access
         const [driverRes, delRes] = await Promise.all([
@@ -56,24 +58,31 @@ export default function DriverMobileView() {
         if (meError) throw meError;
         driverInfoData = meData;
 
-        const { data: delData, error: delError } = await supabase.functions.invoke(`fetch-cgc-data?resource=deliveries&driverId=${meData.id}&limit=1000`, {
-          method: 'GET',
-          headers
-        });
+        // The server returns the current stop only, and reports how many remain.
+        // This used to ask for limit=1000 and hide all but the first row, which
+        // put the whole day's route — customers, products, quantities — in the
+        // browser of a driver who is only meant to see the stop they are on.
+        const { data: delData, error: delError } = await supabase.functions.invoke(
+          `fetch-cgc-data?resource=deliveries&driverId=${meData.id}`,
+          { method: 'GET', headers }
+        );
         if (delError) throw delError;
         deliveriesData = delData?.data || [];
+        remaining = delData?.pagination?.totalCount;
       } else {
         throw new Error("Missing session or access link");
       }
 
       setDriverInfo(driverInfoData);
 
-      // Sort by priority and filter active
+      // The token path still returns the full list, so the same rule is applied
+      // here for it. The session path is already narrowed server-side.
       const active = (deliveriesData || [])
         .filter(d => d.status !== 'DELIVERED' && d.status !== 'CANCELLED')
         .sort((a, b) => (a.priority || 0) - (b.priority || 0));
 
       setDeliveries(active);
+      setStopsRemaining(typeof remaining === 'number' ? remaining : active.length);
     } catch (e) {
       console.error(e);
       setError("Invalid or expired access session.");
@@ -206,7 +215,7 @@ export default function DriverMobileView() {
                   <div className="px-2 flex items-center justify-between">
                      <h2 className="text-[13px] font-semibold text-muted">Active task</h2>
                      <Badge tone="warn">
-                       {deliveries.length} stop{deliveries.length > 1 ? 's' : ''} remaining
+                       {stopsRemaining} stop{stopsRemaining === 1 ? '' : 's'} remaining
                      </Badge>
                   </div>
 
