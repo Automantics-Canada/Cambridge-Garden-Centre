@@ -39,3 +39,32 @@ export function buildSpruceOrderKey({
   const tableSuffix = tableIndex === 0 ? '' : `-T${tableIndex + 1}`;
   return `${documentId}${pageSuffix}${tableSuffix}-${rowIndex}`;
 }
+
+/**
+ * Recovers the Spruce document number from a synthesised `spruceOrderId`.
+ *
+ * The key format is `<document>[-P<page>][-T<table>]-<row>`, and the text-
+ * extraction fallback produced `<document>-T-<index>`. Everything after the
+ * document number is a coordinate in the source PDF, so stripping those
+ * suffixes leaves the number Spruce actually printed.
+ *
+ * Used by the backfill to group existing rows, and by the importer to adopt a
+ * legacy row instead of creating a duplicate alongside it. Returns null when
+ * the key does not match the known shapes, so the caller can skip rather than
+ * invent a grouping.
+ */
+export function documentNumberFromSpruceOrderKey(spruceOrderId: string): string | null {
+  const trimmed = spruceOrderId.trim();
+  if (!trimmed) return null;
+
+  // Text-extraction fallback: `<document>-T-<index>`. Checked first because its
+  // `-T-` would otherwise be read as an empty table suffix.
+  const textFallback = /^(.+?)-T-\d+$/.exec(trimmed);
+  if (textFallback) return textFallback[1] ?? null;
+
+  // Textract path: `<document>[-P<n>][-T<n>]-<row>`.
+  const textract = /^(.+?)(?:-P\d+)?(?:-T\d+)?-\d+$/.exec(trimmed);
+  if (textract) return textract[1] ?? null;
+
+  return null;
+}

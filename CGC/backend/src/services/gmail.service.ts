@@ -22,8 +22,32 @@ export class GmailService {
   private static gmail = google.gmail({ version: 'v1', auth: this.auth });
   private static isPolling = false;
 
+  /** Message ids already reported as out-of-scope, so the warning logs once per process. */
+  private static rejectedSenders = new Set<string>();
+
   /**
-   * Polls Gmail for new unread messages in ap@cambridgegardencentre.ca
+   * True when the sender is on the configured allowlist, matched on either the
+   * full address or its domain. The allowlist is required, so an empty list
+   * rejects everything rather than waving everything through.
+   */
+  private static isAllowedSender(from: string): boolean {
+    const address = (from.match(/<([^>]+)>/)?.[1] ?? from).trim().toLowerCase();
+    if (!address) return false;
+    const domain = address.split('@')[1] ?? '';
+
+    return env.gmailSenderAllowlist.some(
+      entry => entry === address || entry === domain || (entry.startsWith('@') && entry.slice(1) === domain)
+    );
+  }
+
+  /**
+   * Polls the invoice mailbox for supplier invoices.
+   *
+   * Scope is deliberately narrow. The previous query was `is:unread
+   * has:attachment` with no sender check, which made every unread message
+   * carrying a PDF or image into an `Invoice` row — delivery tickets emailed by
+   * drivers included, and unrelated mail in the same mailbox too. Polling now
+   * requires both a label and a sender allowlist, and does nothing without them.
    */
   static async pollInvoices() {
     if (this.isPolling) {
@@ -39,14 +63,23 @@ export class GmailService {
       return;
     }
 
+    if (!env.gmailInvoiceLabel || env.gmailSenderAllowlist.length === 0) {
+      console.warn(
+        '⚠️ Gmail invoice polling is disabled: set GMAIL_INVOICE_LABEL and ' +
+        'GMAIL_SENDER_ALLOWLIST to enable it. Polling without them ingests every ' +
+        'unread attachment as a supplier invoice.'
+      );
+      return;
+    }
+
     try {
       this.isPolling = true;
-      console.log('📬 Checking Gmail for new unread invoices...');
+      console.log(`📬 Checking Gmail label "${env.gmailInvoiceLabel}" for new unread invoices...`);
 
-      // Look for NEW messages with attachments
+      // Scoped to the invoice label so tickets and unrelated mail are never seen.
       const res = await this.gmail.users.messages.list({
         userId: 'me',
-        q: 'is:unread has:attachment',
+        q: `is:unread has:attachment label:${JSON.stringify(env.gmailInvoiceLabel)}`,
         maxResults: 10
       });
 
@@ -74,6 +107,17 @@ export class GmailService {
       const headers = message.payload?.headers || [];
       const from = headers.find(h => h.name === 'From')?.value || 'Unknown';
       const subject = headers.find(h => h.name === 'Subject')?.value || 'No Subject';
+
+      // The label scopes the query, but a mislabelled message must not become an
+      // invoice on the strength of the label alone. Left unread on purpose so a
+      // human still sees it; warned once per process so the 60s poll stays quiet.
+      if (!this.isAllowedSender(from)) {
+        if (!this.rejectedSenders.has(messageId)) {
+          this.rejectedSenders.add(messageId);
+          console.warn(`Skipping labelled message from non-allowlisted sender ${from}: "${subject}"`);
+        }
+        return;
+      }
 
       console.log(`Processing email from ${from}: "${subject}"`);
 

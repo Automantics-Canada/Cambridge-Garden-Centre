@@ -9,7 +9,7 @@
  */
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { buildSpruceOrderKey } from '../src/modules/orders/orderImportKey.js';
+import { buildSpruceOrderKey, documentNumberFromSpruceOrderKey } from '../src/modules/orders/orderImportKey.js';
 
 describe('buildSpruceOrderKey', () => {
   it('keeps the legacy format for the first table of the first page', () => {
@@ -93,5 +93,40 @@ describe('buildSpruceOrderKey', () => {
     assert.equal(forged, '12-P2-2');
     assert.equal(real, '12-P2-2');
     assert.equal(forged, real, 'known limitation: recorded so it is not mistaken for a fix');
+  });
+});
+
+describe('documentNumberFromSpruceOrderKey', () => {
+  it('recovers the document number from every key shape the importer produces', () => {
+    assert.equal(documentNumberFromSpruceOrderKey('123456-2'), '123456');
+    assert.equal(documentNumberFromSpruceOrderKey('123456-P2-4'), '123456');
+    assert.equal(documentNumberFromSpruceOrderKey('123456-P2-T2-4'), '123456');
+    assert.equal(documentNumberFromSpruceOrderKey('123456-T3-7'), '123456');
+  });
+
+  it('handles the text-extraction fallback format', () => {
+    // `-T-` here is a marker, not an empty table suffix.
+    assert.equal(documentNumberFromSpruceOrderKey('123456-T-9'), '123456');
+  });
+
+  it('keeps non-numeric document numbers intact', () => {
+    assert.equal(documentNumberFromSpruceOrderKey('INV-123-P2-4'), 'INV-123');
+  });
+
+  it('round-trips whatever buildSpruceOrderKey produced', () => {
+    for (const pageIndex of [0, 1, 4]) {
+      for (const tableIndex of [0, 1]) {
+        for (const rowIndex of [2, 11]) {
+          const key = buildSpruceOrderKey({ documentId: '778899', pageIndex, tableIndex, rowIndex });
+          assert.equal(documentNumberFromSpruceOrderKey(key), '778899', `failed for ${key}`);
+        }
+      }
+    }
+  });
+
+  it('returns null rather than guessing at an unrecognised key', () => {
+    assert.equal(documentNumberFromSpruceOrderKey(''), null);
+    assert.equal(documentNumberFromSpruceOrderKey('   '), null);
+    assert.equal(documentNumberFromSpruceOrderKey('no-trailing-row'), null);
   });
 });

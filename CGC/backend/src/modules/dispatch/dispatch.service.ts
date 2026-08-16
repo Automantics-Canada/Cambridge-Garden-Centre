@@ -1,14 +1,27 @@
 import { prisma } from '../../db/prisma.js';
 import { DeliveryStatus } from '@prisma/client';
 import { MailService } from '../../services/mail.service.js';
+import { businessDayOf, businessDayRange } from '../../lib/businessDay.js';
 
 export const DispatchService = {
-  async getDispatchBoard() {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+  /**
+   * @param day 'YYYY-MM-DD' in the yard's timezone. Defaults to today there.
+   */
+  async getDispatchBoard(day?: string) {
+    const requestedDay = day || businessDayOf();
+    const dayRange = businessDayRange(requestedDay);
+    if (!dayRange) {
+      throw Object.assign(new Error(`Invalid date: ${requestedDay}`), { status: 400 });
+    }
 
+    // Scoped to one business day. This used to return every order that had
+    // never been assigned, for all time, so the pool only ever grew and today's
+    // work sat below months of stale rows.
     const unassignedOrders = await prisma.order.findMany({
-      where: { deliveries: { none: {} } },
+      where: {
+        deliveries: { none: {} },
+        createdAt: { gte: dayRange.gte, lte: dayRange.lte },
+      },
       include: {
         supplier: true
       }
@@ -21,8 +34,13 @@ export const DispatchService = {
           orderBy: { priority: 'asc' },
           where: {
             OR: [
+              // Open work always shows: a stop raised on Monday and still not
+              // delivered is live regardless of which day is being viewed.
               { status: { notIn: ['DELIVERED', 'CANCELLED'] } },
-              { completedAt: { gte: today } }
+              // Completed work shows for the day being viewed, so the whole
+              // board describes one day rather than mixing the pool's date with
+              // today's completions.
+              { completedAt: { gte: dayRange.gte, lte: dayRange.lte } }
             ]
           },
           include: {
@@ -64,19 +82,26 @@ export const DispatchService = {
       where: { orderId }
     });
 
-    // Find the current lowest priority for this driver today to put this at the top
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const firstDelivery = await prisma.delivery.findFirst({
-      where: { 
+    // A new assignment joins the end of the driver's run, not the front. The
+    // driver only ever sees their first stop, so inserting at the top silently
+    // redirects someone who may already be moving; dispatch reorders
+    // deliberately by dragging instead.
+    //
+    // Scope is the driver's *open* work, not "created today". A delivery raised
+    // yesterday and still not delivered is part of the run being ordered, and
+    // ordering against `createdAt` skipped it.
+    const lastDelivery = await prisma.delivery.findFirst({
+      where: {
         driverId,
-        createdAt: { gte: today }
+        status: { notIn: [DeliveryStatus.DELIVERED, DeliveryStatus.CANCELLED] },
+        ...(existing ? { id: { not: existing.id } } : {}),
       },
-      orderBy: { priority: 'asc' }
+      orderBy: { priority: 'desc' },
     });
-    
-    // Assign a priority lower than the current lowest to place it at the top
-    const priorityToUse = (firstDelivery?.priority || 0) - 1;
+
+    // `reorderDeliveries` renumbers a run as 1..n, so the next free slot is
+    // max + 1 and the two stay on one scheme.
+    const priorityToUse = (lastDelivery?.priority ?? 0) + 1;
 
     let delivery;
     if (existing) {

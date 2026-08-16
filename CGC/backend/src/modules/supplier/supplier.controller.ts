@@ -93,3 +93,43 @@ export const updateRate = async (req: AuthRequest, res: Response) => {
   const updated = await SupplierService.updateNegotiatedRate(rateId as string, data);
   res.json(updated);
 };
+export const listProductAliases = async (req: AuthRequest, res: Response) => {
+  const { id } = req.params;
+  const aliases = await SupplierService.listProductAliases(id as string);
+  res.json(aliases);
+};
+
+export const addProductAlias = async (req: AuthRequest, res: Response) => {
+  const { id } = req.params;
+  const { aliasText, productName } = req.body;
+
+  if (!aliasText || !productName) {
+    return res.status(400).json({ error: 'aliasText and productName are required' });
+  }
+
+  try {
+    const alias = await SupplierService.addProductAlias(
+      id as string,
+      aliasText,
+      productName,
+      req.user?.id
+    );
+    res.status(201).json(alias);
+  } catch (err: any) {
+    // A mapping to a product that has no rate is the caller's mistake, and the
+    // message names it, so it must not be flattened into a 500.
+    const status = Number(err?.status) || 500;
+    res.status(status).json({ error: err?.message || 'Failed to add alias' });
+  }
+};
+
+export const removeProductAlias = async (req: AuthRequest, res: Response) => {
+  const { id, aliasId } = req.params;
+  try {
+    await SupplierService.removeProductAlias(id as string, aliasId as string);
+    res.json({ success: true });
+  } catch (err: any) {
+    const status = Number(err?.status) || 500;
+    res.status(status).json({ error: err?.message || 'Failed to remove alias' });
+  }
+};
