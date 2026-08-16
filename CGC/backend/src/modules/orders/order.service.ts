@@ -3,6 +3,12 @@ import { parse } from 'csv-parse/sync';
 import type { RawOrderCsvRow } from './orderCsvMapper.js';
 import { mapCsvRowToOrder } from './orderCsvMapper.js';
 import { saveCsvFile } from '../../services/fileStorage.js';
+import { endOfBusinessDay, startOfBusinessDay } from '../../lib/businessDay.js';
+
+/** 400 rather than 500: the request was wrong, not the server. */
+function badRequest(message: string) {
+  return Object.assign(new Error(message), { status: 400 });
+}
 
 export interface ImportSummary {
   created: number;
@@ -31,13 +37,22 @@ export const OrderService = {
       }
     }
 
+    // `createdAt` is a timestamp, so "uploaded on the 16th" has to mean the
+    // 16th in Cambridge. Reading the bare date as UTC midnight put everything
+    // uploaded after 20:00 local into the following day.
     if (uploadStartDate || uploadEndDate) {
       where.createdAt = {};
-      if (uploadStartDate) where.createdAt.gte = new Date(uploadStartDate);
+
+      if (uploadStartDate) {
+        const gte = startOfBusinessDay(String(uploadStartDate));
+        if (!gte) throw badRequest(`Invalid uploadStartDate: ${uploadStartDate}`);
+        where.createdAt.gte = gte;
+      }
+
       if (uploadEndDate) {
-        const end = new Date(uploadEndDate);
-        end.setUTCHours(23, 59, 59, 999);
-        where.createdAt.lte = end;
+        const lte = endOfBusinessDay(String(uploadEndDate));
+        if (!lte) throw badRequest(`Invalid uploadEndDate: ${uploadEndDate}`);
+        where.createdAt.lte = lte;
       }
     }
 
@@ -164,7 +179,10 @@ export const OrderImportService = {
             data: {
               poNumber: data.poNumber ?? null,
               customerName: data.customerName ?? null,
-              buyerType: data.buyerType ?? null,
+              // Only overwritten when the CSV actually states it. Now that the
+              // column has a default, `?? null` would clear a value a person
+              // had corrected by hand.
+              ...(data.buyerType ? { buyerType: data.buyerType } : {}),
               product: data.product ?? null,
               quantity: data.quantity ?? null,
               unit: data.unit ?? null,
