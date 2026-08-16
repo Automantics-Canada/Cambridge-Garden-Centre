@@ -1,3 +1,4 @@
+import { resolveDocumentUrl } from '../../lib/apiBase';
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useSelector } from 'react-redux';
 import { useSearchParams } from 'react-router-dom';
@@ -324,10 +325,7 @@ export default function TicketsPage() {
 
     const toastId = toast.loading('Downloading ticket file...');
     try {
-      const baseUrl = import.meta.env.VITE_API_URL || 'https://cambridge-garden-centre-1.onrender.com';
-      const fullUrl = ticketUrl.startsWith('http') 
-        ? ticketUrl 
-        : `${baseUrl}${ticketUrl}`;
+      const fullUrl = resolveDocumentUrl(ticketUrl);
 
       const response = await fetch(fullUrl);
       if (!response.ok) throw new Error('Network response was not ok');
@@ -356,10 +354,7 @@ export default function TicketsPage() {
       toast.success('Ticket downloaded successfully', { id: toastId });
     } catch (err) {
       console.error('Failed to download ticket image:', err);
-      const baseUrl = import.meta.env.VITE_API_URL || 'https://cambridge-garden-centre-1.onrender.com';
-      const fallbackUrl = ticketUrl.startsWith('http') 
-        ? ticketUrl 
-        : `${baseUrl}${ticketUrl}`;
+      const fallbackUrl = resolveDocumentUrl(ticketUrl);
       window.open(fallbackUrl, '_blank');
       toast.success('Opening file in new tab', { id: toastId });
     }

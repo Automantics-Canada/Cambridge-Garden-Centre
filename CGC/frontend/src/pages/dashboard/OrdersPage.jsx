@@ -16,7 +16,7 @@ import {
   Select,
 } from '../../components/ui';
 import { cn } from '../../lib/cn';
-import { formatDate } from '../../lib/date';
+import { businessDayOffset, formatDate } from '../../lib/date';
 
 export default function OrdersPage() {
   const [searchParams] = useSearchParams();
@@ -38,7 +38,28 @@ export default function OrdersPage() {
   const [uploadFilter, setUploadFilter] = useState('today'); // 'today' | 'yesterday' | 'select'
   const [selectedUploadDate, setSelectedUploadDate] = useState(''); // 'YYYY-MM-DD'
 
+  // Step two of the Spruce import. The PO report is previewed before it is
+  // applied, because the PO number decides which invoice lines match which
+  // orders — a merge run against the wrong report attaches money to the wrong
+  // work, and it is far cheaper to see that than to unpick it.
+  const poInputRef = useRef(null);
+  const [poPreview, setPoPreview] = useState(null);
+  const [poFile, setPoFile] = useState(null);
+  const [poBusy, setPoBusy] = useState(false);
+
+  // "Select date" with nothing chosen used to send no date at all, so the
+  // filter silently fell back to every order ever imported. Nothing is fetched
+  // until a date is picked.
+  const awaitingDateChoice = uploadFilter === 'select' && !selectedUploadDate;
+
   const fetchOrders = useCallback(async () => {
+    if (awaitingDateChoice) {
+      setOrders([]);
+      setTotalPages(1);
+      setLoading(false);
+      return;
+    }
+
     setLoading(true);
     try {
       const apiParams = {
@@ -52,20 +73,15 @@ export default function OrdersPage() {
         page
       };
 
-      if (uploadFilter === 'today') {
-        const today = new Date();
-        const dateStr = today.toISOString().split('T')[0];
+      // Dates are resolved in the yard's timezone, not the browser's or UTC's.
+      const dateStr =
+        uploadFilter === 'today' ? businessDayOffset(0)
+        : uploadFilter === 'yesterday' ? businessDayOffset(-1)
+        : selectedUploadDate;
+
+      if (dateStr) {
         apiParams.uploadStartDate = dateStr;
         apiParams.uploadEndDate = dateStr;
-      } else if (uploadFilter === 'yesterday') {
-        const yesterday = new Date();
-        yesterday.setDate(yesterday.getDate() - 1);
-        const dateStr = yesterday.toISOString().split('T')[0];
-        apiParams.uploadStartDate = dateStr;
-        apiParams.uploadEndDate = dateStr;
-      } else if (uploadFilter === 'select' && selectedUploadDate) {
-        apiParams.uploadStartDate = selectedUploadDate;
-        apiParams.uploadEndDate = selectedUploadDate;
       }
 
       const res = await api.get('/api/orders', { params: apiParams });
@@ -78,7 +94,7 @@ export default function OrdersPage() {
     } finally {
       setLoading(false);
     }
-  }, [search, buyerType, supplierId, driverId, hasInvoice, hasLinkedTickets, uploadFilter, selectedUploadDate, page]);
+  }, [awaitingDateChoice, search, buyerType, supplierId, driverId, hasInvoice, hasLinkedTickets, uploadFilter, selectedUploadDate, page]);
 
   const handleFileUpload = async (event) => {
     const file = event.target.files?.[0];
@@ -200,6 +216,54 @@ export default function OrdersPage() {
     }
   };
 
+  const handlePoReportSelected = async (event) => {
+    const file = event.target.files?.[0];
+    if (poInputRef.current) poInputRef.current.value = '';
+    if (!file) return;
+
+    setPoBusy(true);
+    setPoFile(file);
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      // No ?apply, so this only reports what it would do.
+      const res = await api.post('/api/orders/merge-po-report', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      setPoPreview(res.data);
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Could not read the PO report');
+      setPoFile(null);
+    } finally {
+      setPoBusy(false);
+    }
+  };
+
+  const applyPoReport = async (overwriteConflicts) => {
+    if (!poFile) return;
+    setPoBusy(true);
+    try {
+      const formData = new FormData();
+      formData.append('file', poFile);
+      const res = await api.post(
+        `/api/orders/merge-po-report?apply=true${overwriteConflicts ? '&overwriteConflicts=true' : ''}`,
+        formData,
+        { headers: { 'Content-Type': 'multipart/form-data' } }
+      );
+      toast.success(
+        `Merged ${res.data.documentsUpdated} order${res.data.documentsUpdated === 1 ? '' : 's'} ` +
+        `(${res.data.linesUpdated} line${res.data.linesUpdated === 1 ? '' : 's'}).`
+      );
+      setPoPreview(null);
+      setPoFile(null);
+      fetchOrders();
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Merge failed');
+    } finally {
+      setPoBusy(false);
+    }
+  };
+
   useEffect(() => {
     setPage(1);
   }, [search, buyerType, supplierId, driverId, hasInvoice, hasLinkedTickets, uploadFilter, selectedUploadDate]);
@@ -215,13 +279,19 @@ export default function OrdersPage() {
   const filteredOrders = orders;
 
   const emptyTitle =
-    uploadFilter === 'today'
+    awaitingDateChoice
+      ? 'Pick a date'
+      : uploadFilter === 'today'
       ? 'No orders uploaded today'
       : uploadFilter === 'yesterday'
       ? 'No orders uploaded yesterday'
       : selectedUploadDate
       ? `No orders uploaded on ${formatDate(selectedUploadDate + 'T00:00:00', { dateStyle: 'long' })}`
       : 'No orders uploaded on this date';
+
+  const emptyMessage = awaitingDateChoice
+    ? 'Choose a date above to see the orders imported that day.'
+    : 'Import a Spruce CSV or PDF, or pick a different upload date.';
 
   return (
     <div className="flex flex-col h-full space-y-6">
@@ -258,10 +328,100 @@ export default function OrdersPage() {
               >
                 {isUploading ? 'Processing...' : (<><Upload size={16} /> Import PDF</>)}
               </Button>
+              <input
+                type="file"
+                accept=".pdf"
+                ref={poInputRef}
+                onChange={handlePoReportSelected}
+                className="hidden"
+              />
+              <Button
+                onClick={() => poInputRef.current?.click()}
+                disabled={isUploading || poBusy}
+                title="Step two: merge the Spruce PO report onto orders already imported"
+              >
+                {poBusy ? 'Reading...' : (<><Upload size={16} /> Add PO report</>)}
+              </Button>
             </div>
           }
         />
       </FadeInUp>
+
+      {poPreview && (
+        <FadeInUp>
+          <Card className="p-5 space-y-4 border-brand/30">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h3 className="text-base font-semibold text-ink">PO report — nothing written yet</h3>
+                <p className="text-[13px] text-muted mt-1 max-w-2xl">
+                  Matched on Spruce document number. Review before applying: the PO number
+                  decides which invoice lines match which orders.
+                </p>
+              </div>
+              <Button size="sm" onClick={() => { setPoPreview(null); setPoFile(null); }}>
+                Cancel
+              </Button>
+            </div>
+
+            <div className="flex flex-wrap gap-3">
+              {[
+                ['Will be set', poPreview.toSet?.length ?? 0, 'good'],
+                ['Already correct', poPreview.unchanged?.length ?? 0, 'neutral'],
+                ['Conflicts', poPreview.conflicts?.length ?? 0, 'warn'],
+                ['Order not found', poPreview.unmatched?.length ?? 0, 'warn'],
+                ['Unreadable rows', poPreview.unreadable?.length ?? 0, 'warn'],
+              ].map(([label, count, tone]) => (
+                <div key={label} className="flex items-center gap-2 rounded-control border border-line px-3 py-2">
+                  <span className="tabular text-lg font-semibold text-ink">{count}</span>
+                  <span className="text-[13px] text-muted">{label}</span>
+                  {count > 0 && tone === 'warn' && <Badge tone="warn">check</Badge>}
+                </div>
+              ))}
+            </div>
+
+            {poPreview.conflicts?.length > 0 && (
+              <div className="rounded-control border border-ochre/40 bg-ochre/10 p-3">
+                <p className="text-[13px] font-semibold text-ink mb-2">
+                  These orders already carry a different PO number
+                </p>
+                <ul className="text-[13px] text-muted space-y-1 max-h-40 overflow-y-auto">
+                  {poPreview.conflicts.slice(0, 25).map((c) => (
+                    <li key={c.documentNumber} className="tabular">
+                      {c.documentNumber} — {c.customerName}: {c.existingPoNumber} → {c.poNumber}
+                    </li>
+                  ))}
+                </ul>
+                <p className="text-[12.5px] text-muted mt-2">
+                  Skipped unless you choose to replace them. Replacing re-points any tickets
+                  and invoice lines already matched on the old PO.
+                </p>
+              </div>
+            )}
+
+            {poPreview.unmatched?.length > 0 && (
+              <p className="text-[13px] text-muted">
+                {poPreview.unmatched.length} row(s) reference a document not in the system —
+                import that day&apos;s delivery report first.
+              </p>
+            )}
+
+            <div className="flex flex-wrap gap-2">
+              <Button
+                variant="primary"
+                onClick={() => applyPoReport(false)}
+                disabled={poBusy || (poPreview.toSet?.length ?? 0) === 0}
+              >
+                {poBusy ? 'Merging...' : `Apply to ${poPreview.toSet?.length ?? 0} order(s)`}
+              </Button>
+              {poPreview.conflicts?.length > 0 && (
+                <Button onClick={() => applyPoReport(true)} disabled={poBusy}>
+                  Apply and replace {poPreview.conflicts.length} conflict(s)
+                </Button>
+              )}
+            </div>
+          </Card>
+        </FadeInUp>
+      )}
 
       <FadeInUp delay={0.1}>
         <Card className="p-4 space-y-4">
@@ -412,7 +572,7 @@ export default function OrdersPage() {
                     <EmptyState
                       icon={Inbox}
                       title={emptyTitle}
-                      message="Import a Spruce CSV or PDF, or pick a different upload date."
+                      message={emptyMessage}
                     />
                   </td>
                 </tr>

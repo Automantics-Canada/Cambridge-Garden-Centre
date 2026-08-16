@@ -2,6 +2,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.38.0"
 import { canAccessResource, requiresOwnDriverScope, sessionFromUserRecord } from "../_shared/accessPolicy.ts"
+import { businessDayOf, businessDayRange } from "../_shared/businessDay.ts"
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -316,6 +317,33 @@ serve(async (req) => {
 
     // Handle high-level dispatch board resource
     if (resource === 'dispatch-board') {
+      // The board describes one business day. `?date=` defaults to today in the
+      // yard, and both queries below are bounded by it.
+      const requestedDay = url.searchParams.get('date') || businessDayOf();
+      const dayRange = businessDayRange(requestedDay);
+      if (!dayRange) {
+        return new Response(
+          JSON.stringify({ error: `Invalid date parameter: ${requestedDay}` }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
+      // Embedded deliveries are bounded to the work this board is about: still
+      // open, or completed on the day being viewed. Without this the board
+      // pulled every delivery each driver has ever had — each with its order
+      // and its full status history — and did so again on every 10s refresh.
+      // That is the largest single contributor to how slow this screen feels.
+      //
+      // Completed-on-the-day is kept rather than dropped so the "completed"
+      // counter on each driver row still means something.
+      //
+      // This mirrors DispatchService.getDispatchBoard, which applies the same
+      // two conditions in Prisma.
+      //
+      // NOTE: this embedded `or` filter is the one line in this change that was
+      // not executed against a live PostgREST. If the syntax is rejected the
+      // response is a visible 400 handled below, never silently wrong data. To
+      // revert, delete the `.or(...)` line — the board returns to unbounded.
       const { data: drivers, error: err1 } = await supabaseClient
         .from('Driver')
         .select(`
@@ -327,14 +355,23 @@ serve(async (req) => {
           )
         `)
         .eq('active', true)
+        .or(
+          `status.not.in.(DELIVERED,CANCELLED),completedAt.gte.${dayRange.gte}`,
+          { foreignTable: 'deliveries' }
+        )
         .order('name', { ascending: true });
 
+      // The unassigned pool used to return every order ever imported that had
+      // never been assigned, so it only grew and today's work sat below months
+      // of stale rows.
       const { data: unassignedOrders, error: err2 } = await supabaseClient
         .from('Order')
         .select(`
           id, spruceOrderId, poNumber, customerName, buyerType, product, quantity, unit, supplierId, orderDate, deliveryDate, hasInvoice, invoiceNumber, createdAt, deliveryStatus, driverId, priority
         `)
         .is('driverId', null)
+        .gte('createdAt', dayRange.gte)
+        .lt('createdAt', dayRange.lt)
         .order('createdAt', { ascending: false });
 
       if (err1 || err2) {
@@ -344,8 +381,14 @@ serve(async (req) => {
         );
       }
 
+      // `date` is echoed so the board can show which day it is looking at
+      // rather than assuming its own clock agrees with the server's.
       return new Response(
-        JSON.stringify({ drivers: drivers || [], unassignedOrders: unassignedOrders || [] }),
+        JSON.stringify({
+          date: requestedDay,
+          drivers: drivers || [],
+          unassignedOrders: unassignedOrders || [],
+        }),
         { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
@@ -574,9 +617,26 @@ serve(async (req) => {
           order:Order(id, spruceOrderId, customerName, product, quantity, unit, createdAt, tickets:Ticket(id, ticketNumber, imageUrl, thumbnailUrl, status, driverId)),
           driver:Driver(id, name),
           history:DeliveryHistory(id, status, notes, createdAt)
-        `, { count: 'exact' })
-        .order('createdAt', { ascending: false });
-      
+        `, { count: 'exact' });
+
+      if (enforcedDriverId) {
+        // A driver sees one stop: the next open one by dispatch priority.
+        //
+        // The rule existed only in the browser — the whole route was fetched
+        // and every row but the first was hidden with CSS. Dispatch reorders
+        // the queue while a driver is out, so the hidden rows were both stale
+        // and none of the driver's business; anyone opening devtools saw the
+        // customers, products and quantities for the rest of the day.
+        //
+        // `count: 'exact'` still reports how many stops remain, so the app can
+        // show progress without holding the route.
+        query = query
+          .not('status', 'in', '("DELIVERED","CANCELLED")')
+          .order('priority', { ascending: true });
+      } else {
+        query = query.order('createdAt', { ascending: false });
+      }
+
       if (driverId) {
         query = query.eq('driverId', driverId);
       }
@@ -592,8 +652,14 @@ serve(async (req) => {
       query = query.eq('status', status);
     }
 
-    // Apply pagination ranges
-    const { data, count, error } = await query.range(offset, offset + limit - 1);
+    // Apply pagination ranges. A driver reading deliveries gets exactly one row
+    // regardless of what the caller asked for, so a hand-edited `limit` cannot
+    // widen the single-stop rule back out to the whole route.
+    const singleStop = resource === 'deliveries' && Boolean(enforcedDriverId);
+    const rangeStart = singleStop ? 0 : offset;
+    const rangeEnd = singleStop ? 0 : offset + limit - 1;
+
+    const { data, count, error } = await query.range(rangeStart, rangeEnd);
 
     if (error) {
       return new Response(

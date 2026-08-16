@@ -7,7 +7,8 @@ import { toast } from 'react-hot-toast';
 import { FadeInUp } from '../../components/Animated';
 import { Badge, Button, EmptyState, Input, PageHeader, StatusBadge } from '../../components/ui';
 import { useIntervalRefresh } from '../../hooks/useIntervalRefresh';
-import { formatDate } from '../../lib/date';
+import { businessDayOffset, formatDate } from '../../lib/date';
+import { cn } from '../../lib/cn';
 
 export default function DispatchBoard() {
   const [board, setBoard] = useState({ unassignedOrders: [], unassignedDeliveries: [], drivers: [] });
@@ -20,16 +21,33 @@ export default function DispatchBoard() {
   const [activeDragTargetDriverId, setActiveDragTargetDriverId] = useState(null);
   const [isOverUnassignedDropZone, setIsOverUnassignedDropZone] = useState(false);
 
+  // The pool defaults to today's imports. Older orders are still reachable, but
+  // they no longer sit in the way of the work being dispatched now.
+  const [dateFilter, setDateFilter] = useState('today'); // 'today' | 'yesterday' | 'select'
+  const [selectedDate, setSelectedDate] = useState(''); // 'YYYY-MM-DD'
+
+  const poolDate =
+    dateFilter === 'today' ? businessDayOffset(0)
+    : dateFilter === 'yesterday' ? businessDayOffset(-1)
+    : selectedDate;
+
+  const awaitingDateChoice = dateFilter === 'select' && !selectedDate;
+
   const fetchBoard = async (isBackgroundSync = false) => {
+    if (awaitingDateChoice) {
+      setLoading(false);
+      return;
+    }
+
     try {
       if (!isBackgroundSync) setLoading(true);
       const token = localStorage.getItem('token');
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
 
-      const { data, error } = await supabase.functions.invoke('fetch-cgc-data?resource=dispatch-board', {
-        method: 'GET',
-        headers
-      });
+      const { data, error } = await supabase.functions.invoke(
+        `fetch-cgc-data?resource=dispatch-board&date=${encodeURIComponent(poolDate)}`,
+        { method: 'GET', headers }
+      );
 
       if (error) throw error;
 
@@ -48,7 +66,8 @@ export default function DispatchBoard() {
 
   useEffect(() => {
     fetchBoard();
-  }, []);
+    // Refetch when the day being dispatched changes.
+  }, [poolDate, awaitingDateChoice]);
 
   useIntervalRefresh(
     () => {
@@ -173,16 +192,19 @@ export default function DispatchBoard() {
           if (d.id === targetDriverId) {
             const alreadyAssigned = updatedDeliveries.some(del => del.order.id === orderId);
             if (!alreadyAssigned) {
-              const minPriority = updatedDeliveries.length > 0 
-                ? Math.min(...updatedDeliveries.map(d => d.priority || 0)) 
+              // Mirrors DispatchService.assignDriver: the new stop lands at the
+              // end of the run. If this drifts from the server the row jumps
+              // position on the next refresh.
+              const maxPriority = updatedDeliveries.length > 0
+                ? Math.max(...updatedDeliveries.map(d => d.priority || 0))
                 : 0;
-              
+
               updatedDeliveries.push({
                 id: `temp-${Date.now()}`,
                 orderId,
                 driverId: targetDriverId,
                 status: 'PLACED',
-                priority: minPriority - 1,
+                priority: maxPriority + 1,
                 order: orderObj,
                 history: []
               });
@@ -375,6 +397,11 @@ export default function DispatchBoard() {
 
   const filteredUnassignedOrders = filterOrders(board.unassignedOrders);
 
+  const poolDateLabel =
+    dateFilter === 'today' ? 'today'
+    : dateFilter === 'yesterday' ? 'yesterday'
+    : formatDate(`${selectedDate}T00:00:00`, { dateStyle: 'long' });
+
   // Table Skeletons matching visual guidelines
   function DriversTableSkeleton() {
     return (
@@ -454,7 +481,39 @@ export default function DispatchBoard() {
           title="Dispatch board"
           subtitle="Assign today's orders to drivers. Drag a row onto a driver, or drop it back in the pool."
           actions={
-            <div className="flex items-center gap-3">
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="flex items-center gap-1 bg-ink/[0.05] p-1 rounded-control">
+                {[
+                  ['today', 'Today'],
+                  ['yesterday', 'Yesterday'],
+                  ['select', 'Select date'],
+                ].map(([id, label]) => (
+                  <button
+                    key={id}
+                    type="button"
+                    onClick={() => setDateFilter(id)}
+                    className={cn(
+                      'px-3 py-1.5 rounded-control text-[13px] font-semibold transition-colors',
+                      dateFilter === id
+                        ? 'bg-surface text-brand shadow-card border border-line'
+                        : 'text-muted hover:text-ink'
+                    )}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+
+              {dateFilter === 'select' && (
+                <Input
+                  type="date"
+                  className="tabular w-44"
+                  aria-label="Pool date"
+                  value={selectedDate}
+                  onChange={(e) => setSelectedDate(e.target.value)}
+                />
+              )}
+
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted" />
                 <Input
@@ -756,6 +815,9 @@ export default function DispatchBoard() {
             <h3 className="text-sm font-bold text-ink flex items-center gap-2">
               <span className="w-2 h-2 rounded-full bg-ochre animate-pulse"></span>
               Unassigned Orders Pool
+              {!awaitingDateChoice && (
+                <span className="font-semibold text-muted">— {poolDateLabel}</span>
+              )}
             </h3>
           </div>
           {isOverUnassignedDropZone && (
@@ -790,8 +852,12 @@ export default function DispatchBoard() {
                   <td colSpan="7" className="px-6 py-12 text-center text-muted select-none">
                     <EmptyState
                       icon={Package2}
-                      title="No unassigned orders"
-                      message="Every order is assigned, or none match this search."
+                      title={awaitingDateChoice ? 'Pick a date' : `Nothing waiting for ${poolDateLabel}`}
+                      message={
+                        awaitingDateChoice
+                          ? 'Choose a date above to see the orders imported that day.'
+                          : 'Every order from this day is assigned, or none match this search.'
+                      }
                     />
                   </td>
                 </tr>

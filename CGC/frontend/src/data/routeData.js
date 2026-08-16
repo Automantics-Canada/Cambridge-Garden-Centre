@@ -169,7 +169,10 @@ export function loadTicketPage(userId, query = DEFAULT_TICKET_QUERY, options) {
 
 async function requestTicketStats() {
   const data = await get('ticket counts', '/api/tickets/stats', { timeout: 10_000 });
-  return { unlinkedCount: data?.unlinkedCount || 0 };
+  return {
+    unlinkedCount: data?.unlinkedCount || 0,
+    stuckDocumentCount: data?.stuckDocumentCount || 0,
+  };
 }
 
 export function getCachedTicketStats(userId) {
