@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Plus, Truck, Trash2 } from 'lucide-react';
 import api from '../../api/axios';
-import { supabase } from '../../supabaseClient';
 import DriverCard from '../../components/drivers/DriverCard';
 import AddDriverModal from '../../components/drivers/AddDriverModal';
 import EditDriverModal from '../../components/drivers/EditDriverModal';
@@ -18,19 +17,18 @@ export default function DriversPage() {
   const [deletingDriver, setDeletingDriver] = useState(null);
   const [deletingLoading, setDeletingLoading] = useState(false);
 
+  /**
+   * Reads go to the Express API, not the `fetch-cgc-data` Edge function.
+   *
+   * Measured against production: the Edge hop costs 3-12x the Express latency for
+   * identical data (deliveries 943-1995ms vs 157ms; drivers 419-929ms vs 122ms),
+   * and every Edge call went out twice where Express calls go out once.
+   */
   const fetchDrivers = async () => {
     try {
       setLoading(true);
-      const token = localStorage.getItem('token');
-      const headers = token ? { Authorization: `Bearer ${token}` } : {};
-
-      const { data, error } = await supabase.functions.invoke('fetch-cgc-data?resource=drivers&limit=1000', {
-        method: 'GET',
-        headers
-      });
-
-      if (error) throw error;
-      setDrivers(data && data.data ? data.data : []);
+      const { data } = await api.get('/api/drivers');
+      setDrivers(Array.isArray(data) ? data : data?.data || []);
     } catch (error) {
       console.error('Error fetching drivers:', error);
     } finally {

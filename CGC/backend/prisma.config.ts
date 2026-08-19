@@ -4,6 +4,8 @@
 import "dotenv/config";
 import { defineConfig } from "prisma/config";
 
+const migrationDatabaseUrl = process.env.DIRECT_URL || process.env.DATABASE_URL;
+
 // The datasource URL is intentionally NOT resolved here.
 //
 // `env("DATABASE_URL")` is evaluated as soon as this config loads, which made
@@ -23,4 +25,9 @@ export default defineConfig({
     path: "prisma/migrations",
   },
   engine: "classic",
+  // `generate` remains credential-free, while commands that actually connect
+  // receive the direct database URL required by Prisma's config API.
+  ...(migrationDatabaseUrl
+    ? { datasource: { url: migrationDatabaseUrl } }
+    : {}),
 });

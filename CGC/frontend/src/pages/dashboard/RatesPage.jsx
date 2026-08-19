@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import api from '../../api/axios';
-import { supabase } from '../../supabaseClient';
 import {
   Plus,
   Search,
@@ -47,25 +46,18 @@ export default function RatesPage() {
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      const token = localStorage.getItem('token');
-      const headers = token ? { Authorization: `Bearer ${token}` } : {};
-
+      // Express, not the fetch-cgc-data Edge function. Measured on production,
+      // the Edge hop cost 245-1020ms per resource against 117-123ms here, and
+      // each Edge call went out twice — this page issued four requests for two
+      // pieces of data and took ~1.4s to settle.
       const [resSuppliers, resProducts] = await Promise.all([
-        supabase.functions.invoke('fetch-cgc-data?resource=suppliers&limit=1000', {
-          method: 'GET',
-          headers
-        }),
-        supabase.functions.invoke('fetch-cgc-data?resource=products&limit=1000', {
-          method: 'GET',
-          headers
-        })
+        api.get('/api/suppliers'),
+        api.get('/api/products'),
       ]);
 
-      if (resSuppliers.error) throw resSuppliers.error;
-      if (resProducts.error) throw resProducts.error;
-
-      const suppliersData = resSuppliers.data?.data || [];
-      const productsData = resProducts.data?.data || [];
+      const unwrap = (d) => (Array.isArray(d) ? d : d?.data || []);
+      const suppliersData = unwrap(resSuppliers.data);
+      const productsData = unwrap(resProducts.data);
 
       setSuppliers(suppliersData);
       setProducts(productsData);
@@ -316,6 +308,7 @@ export default function RatesPage() {
                     type="date"
                     className="tabular"
                     value={formData.effectiveFrom}
+                    max={formData.effectiveTo || undefined}
                     onChange={e => setFormData({...formData, effectiveFrom: e.target.value})}
                   />
                 </Field>
@@ -325,6 +318,7 @@ export default function RatesPage() {
                     type="date"
                     className="tabular"
                     value={formData.effectiveTo}
+                    min={formData.effectiveFrom || undefined}
                     onChange={e => setFormData({...formData, effectiveTo: e.target.value})}
                   />
                 </Field>

@@ -109,6 +109,10 @@ describe('documentNumberFromSpruceOrderKey', () => {
     assert.equal(documentNumberFromSpruceOrderKey('123456-T-9'), '123456');
   });
 
+  it('accepts the digits-only document number stored by legacy CSV imports', () => {
+    assert.equal(documentNumberFromSpruceOrderKey('123456'), '123456');
+  });
+
   it('keeps non-numeric document numbers intact', () => {
     assert.equal(documentNumberFromSpruceOrderKey('INV-123-P2-4'), 'INV-123');
   });

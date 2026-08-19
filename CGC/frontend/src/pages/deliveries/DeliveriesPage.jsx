@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import api from '../../api/axios';
-import { supabase } from '../../supabaseClient';
 import { Search, Calendar, ChevronDown, ChevronUp, User, Image as ImageIcon, X } from 'lucide-react';
 import { DeliveryTableSkeleton } from '../../components/Skeleton';
 import { FadeInUp } from '../../components/Animated';
@@ -11,6 +10,7 @@ import { Badge, Card, EmptyState, Input, PageHeader, Select, StatusBadge } from 
 import StatusTimeline from '../../components/deliveries/StatusTimeline';
 import { cn } from '../../lib/cn';
 import { formatDate } from '../../lib/date';
+import { isTerminal, statusErrorMessage, statusOptionsFor } from '../../lib/deliveryTransitions';
 
 export default function DeliveriesPage() {
   const [searchParams] = useSearchParams();
@@ -26,28 +26,31 @@ export default function DeliveriesPage() {
 
   const driverIdParam = searchParams.get('driverId');
 
+  /**
+   * Reads from the Express API rather than the `fetch-cgc-data` Edge function.
+   *
+   * The Edge hop is an extra network round trip into something that can be cold,
+   * which is part of why this page was slow to open.
+   *
+   * It is only part of it. `GET /api/deliveries` is still unbounded — a
+   * `findMany` with no `take`, returning every delivery ever recorded with its
+   * full order, that order's supplier and tickets, and the delivery's complete
+   * status history — and this page then filters the lot in the browser. Making
+   * that query paginated and day-scoped, the way invoices and tickets already
+   * are, is a separate piece of work. Until then this page is faster to open but
+   * still grows with the table.
+   */
   const fetchData = useCallback(async () => {
     try {
       setLoading(true);
-      const token = localStorage.getItem('token');
-      const headers = token ? { Authorization: `Bearer ${token}` } : {};
 
       const [delRes, driverRes] = await Promise.all([
-        supabase.functions.invoke('fetch-cgc-data?resource=deliveries&limit=1000', {
-          method: 'GET',
-          headers
-        }),
-        supabase.functions.invoke('fetch-cgc-data?resource=drivers&limit=1000', {
-          method: 'GET',
-          headers
-        })
+        api.get('/api/deliveries'),
+        api.get('/api/drivers'),
       ]);
 
-      if (delRes.error) throw delRes.error;
-      if (driverRes.error) throw driverRes.error;
-
-      setDeliveries(delRes.data?.data || []);
-      setDrivers(driverRes.data?.data || []);
+      setDeliveries(Array.isArray(delRes.data) ? delRes.data : delRes.data?.data || []);
+      setDrivers(Array.isArray(driverRes.data) ? driverRes.data : driverRes.data?.data || []);
     } catch (e) {
       console.error('Failed to fetch data', e);
       toast.error('Failed to load deliveries');
@@ -99,7 +102,10 @@ export default function DeliveriesPage() {
       }
     } catch (e) {
       console.error(e);
-      toast.error('Failed to update status');
+      // The server explains precisely why it refused — an illegal transition, a
+      // terminal state, a missing delivery photo. Replacing that with "Failed to
+      // update status" left operators with nothing to act on.
+      toast.error(statusErrorMessage(e));
       setDeliveries(originalDeliveries);
     }
   };
@@ -258,14 +264,25 @@ export default function DeliveriesPage() {
                   <div className="flex items-center gap-4">
                     <StatusBadge status={del.status} />
                     <div className="flex items-center gap-2">
+                      {/* Only the moves the server will actually accept from
+                          this delivery's current state, with that state listed
+                          first so the control never misreports it. */}
                       <Select
                         className="h-9 text-[13px] w-auto"
                         value={del.status}
+                        disabled={isTerminal(del.status)}
+                        title={
+                          isTerminal(del.status)
+                            ? `${del.status} is final and cannot be changed here`
+                            : 'Change delivery status'
+                        }
                         onChange={(e) => handleStatusUpdate(del.id, e.target.value)}
                       >
-                        <option value="PLACED">Placed</option>
-                        <option value="IN_TRANSIT">In Transit</option>
-                        <option value="DELIVERED">Delivered</option>
+                        {statusOptionsFor(del).map(option => (
+                          <option key={option.value} value={option.value} disabled={option.disabled}>
+                            {option.label}
+                          </option>
+                        ))}
                       </Select>
                       <button
                         onClick={() => setExpandedDeliveryId(isDelExpanded ? null : del.id)}

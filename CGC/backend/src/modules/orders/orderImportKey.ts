@@ -57,6 +57,12 @@ export function documentNumberFromSpruceOrderKey(spruceOrderId: string): string 
   const trimmed = spruceOrderId.trim();
   if (!trimmed) return null;
 
+  // Legacy CSV imports stored the Spruce document number directly, without a
+  // page/table/row suffix. Production has a small set of these six-digit keys;
+  // digits-only is deliberately narrow so an arbitrary malformed coordinate
+  // is not accepted as a document number.
+  if (/^\d+$/.test(trimmed)) return trimmed;
+
   // Text-extraction fallback: `<document>-T-<index>`. Checked first because its
   // `-T-` would otherwise be read as an empty table suffix.
   const textFallback = /^(.+?)-T-\d+$/.exec(trimmed);

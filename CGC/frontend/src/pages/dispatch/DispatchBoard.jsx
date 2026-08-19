@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import api from '../../api/axios';
-import { supabase } from '../../supabaseClient';
 import { Truck, MapPin, Search, ChevronUp, ChevronDown, ChevronRight, User, GripVertical, Mail, Package2, Image as ImageIcon, Calendar, Info, RefreshCw, FileText } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { toast } from 'react-hot-toast';
@@ -9,6 +8,7 @@ import { Badge, Button, EmptyState, Input, PageHeader, StatusBadge } from '../..
 import { useIntervalRefresh } from '../../hooks/useIntervalRefresh';
 import { businessDayOffset, formatDate } from '../../lib/date';
 import { cn } from '../../lib/cn';
+import { isTerminal, statusErrorMessage, statusOptionsFor } from '../../lib/deliveryTransitions';
 
 export default function DispatchBoard() {
   const [board, setBoard] = useState({ unassignedOrders: [], unassignedDeliveries: [], drivers: [] });
@@ -41,15 +41,17 @@ export default function DispatchBoard() {
 
     try {
       if (!isBackgroundSync) setLoading(true);
-      const token = localStorage.getItem('token');
-      const headers = token ? { Authorization: `Bearer ${token}` } : {};
 
-      const { data, error } = await supabase.functions.invoke(
-        `fetch-cgc-data?resource=dispatch-board&date=${encodeURIComponent(poolDate)}`,
-        { method: 'GET', headers }
-      );
-
-      if (error) throw error;
+      // Express, not the fetch-cgc-data Edge function.
+      //
+      // The deployed Edge function predates the day-scoping change and ignored
+      // the `date` parameter entirely: it returned 1,000 unassigned orders
+      // spanning seven different import days, which the board rendered as
+      // 32,403 DOM nodes including 1,000 selects and 7,000 options. That render,
+      // not the network, is what made this the slowest screen in the app.
+      //
+      // /api/dispatch applies the business-day range server-side.
+      const { data } = await api.get('/api/dispatch', { params: { date: poolDate } });
 
       const drivers = (data?.drivers || []).map(d => ({
         ...d,
@@ -109,12 +111,13 @@ export default function DispatchBoard() {
         })
         .catch((e) => {
           console.error(e);
-          toast.error('Failed to update status');
+          // Surface the server's actual reason rather than a generic failure.
+          toast.error(statusErrorMessage(e));
           fetchBoard(); // Revert optimistic update
         });
     } catch (e) {
       console.error(e);
-      toast.error('Failed to update status');
+      toast.error(statusErrorMessage(e));
       fetchBoard();
     }
   };
@@ -727,17 +730,26 @@ export default function DispatchBoard() {
                                               {/* Actions Inline Column */}
                                               <td className="px-6 py-4 whitespace-nowrap text-right text-[12.5px] font-bold w-64">
                                                 <div className="flex items-center justify-end gap-2">
+                                                  {/* Only the moves the server will
+                                                      accept from this stop's current
+                                                      state, that state listed first. */}
                                                   <select
-                                                    className="text-[12.5px] font-bold border border-line rounded-control px-2 py-1 outline-none focus:ring-1 focus:ring-brand bg-surface cursor-pointer text-ink"
+                                                    className="text-[12.5px] font-bold border border-line rounded-control px-2 py-1 outline-none focus:ring-1 focus:ring-brand bg-surface cursor-pointer text-ink disabled:opacity-50 disabled:cursor-not-allowed"
                                                     value={del.status}
+                                                    disabled={isTerminal(del.status)}
+                                                    title={isTerminal(del.status)
+                                                      ? `${del.status} is final and cannot be changed here`
+                                                      : 'Change delivery status'}
                                                     onChange={(e) => {
                                                       handleStatusUpdate(del.id, e.target.value);
                                                     }}
                                                     onClick={(e) => e.stopPropagation()} // prevent row drag trigger on click
                                                   >
-                                                    <option value="PLACED">Placed</option>
-                                                    <option value="IN_TRANSIT">In Transit</option>
-                                                    <option value="DELIVERED">Delivered</option>
+                                                    {statusOptionsFor(del).map(option => (
+                                                      <option key={option.value} value={option.value} disabled={option.disabled}>
+                                                        {option.label}
+                                                      </option>
+                                                    ))}
                                                   </select>
 
 

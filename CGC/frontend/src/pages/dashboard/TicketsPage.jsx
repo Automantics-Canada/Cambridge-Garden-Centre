@@ -26,8 +26,9 @@ import { Skeleton } from '../../components/Skeleton';
 import Loader from '../../components/Loader';
 import { useIntervalRefresh } from '../../hooks/useIntervalRefresh';
 import { ticketThumbnailSrc } from '../../utils/ticketImage';
-import { EmptyState, PageHeader, StatusBadge } from '../../components/ui';
+import { EmptyState, Input, PageHeader, Select, StatusBadge } from '../../components/ui';
 import { formatDate } from '../../lib/date';
+import { decideReviewCommit, reviewValuesFromTicket } from '../../lib/ticketReviewForm';
 import {
   getCachedSupplierOptions,
   getCachedTicketPage,
@@ -71,6 +72,14 @@ export default function TicketsPage() {
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [suppliers, setSuppliers] = useState(() => cachedSuppliers || []);
+
+  // Review popup form. `savedReviewValuesRef` is what the server last confirmed;
+  // `dirtyReviewFieldsRef` is what the user has touched since. Keeping the two
+  // apart is what lets a background refresh of the ticket update the untouched
+  // fields without throwing away text the user is part-way through typing.
+  const [reviewForm, setReviewForm] = useState(() => reviewValuesFromTicket(null));
+  const savedReviewValuesRef = useRef(reviewValuesFromTicket(null));
+  const dirtyReviewFieldsRef = useRef(new Set());
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -273,14 +282,49 @@ export default function TicketsPage() {
       toast.success('Ticket updated');
       fetchTickets();
       fetchStats();
-      if (selectedTicket?.id === id) {
-        // Refresh details
+      // Guarded like every other async handler on this screen. Without this the
+      // response could land after the popup had been closed and put it straight
+      // back on screen — which is why closing it appeared to need two clicks:
+      // the click on X blurred the focused field, the blur fired a save, and the
+      // save's refresh reopened what the click had just closed.
+      if (activeTicketIdRef.current === id) {
         const res = await api.get(`/api/tickets/${id}`);
-        setSelectedTicket(res.data);
+        if (activeTicketIdRef.current === id) {
+          setSelectedTicket(res.data);
+        }
       }
     } catch {
       toast.error('Failed to update ticket');
     }
+  };
+
+  /** Saves one Review field, but only when it actually changed. */
+  const handleReviewFieldCommit = async (ticketId, field) => {
+    const savedValue = savedReviewValuesRef.current[field];
+    const decision = decideReviewCommit(field, reviewForm[field], savedValue);
+
+    if (decision.action === 'none') return;
+
+    if (decision.action === 'revert') {
+      // Put the field back to the stored value so the popup stops showing
+      // something that was never saved.
+      setReviewForm(current => ({ ...current, [field]: decision.value }));
+      dirtyReviewFieldsRef.current.delete(field);
+      if (decision.message) toast.error(decision.message);
+      return;
+    }
+
+    savedReviewValuesRef.current = {
+      ...savedReviewValuesRef.current,
+      [field]: reviewForm[field],
+    };
+    dirtyReviewFieldsRef.current.delete(field);
+    await handleUpdateTicket(ticketId, { [field]: decision.value });
+  };
+
+  const setReviewField = (field, value) => {
+    dirtyReviewFieldsRef.current.add(field);
+    setReviewForm(current => ({ ...current, [field]: value }));
   };
 
   const handleFileUpload = async (event, uploadType) => {
@@ -361,6 +405,33 @@ export default function TicketsPage() {
   };
 
   const activeTicketIdRef = useRef(null);
+
+  /**
+   * Seeds the Review form from whichever ticket is on screen.
+   *
+   * Runs again whenever the ticket object is replaced — the popup opens with the
+   * list row and is enriched moments later by a detail request, and every
+   * successful save refreshes it. Fields the user has edited but not yet saved
+   * are left alone, so a slow enrichment cannot overwrite what they are typing.
+   */
+  useEffect(() => {
+    const incoming = reviewValuesFromTicket(selectedTicket);
+    savedReviewValuesRef.current = incoming;
+    setReviewForm(current => {
+      const dirty = dirtyReviewFieldsRef.current;
+      if (dirty.size === 0) return incoming;
+      const merged = { ...incoming };
+      dirty.forEach(field => {
+        merged[field] = current[field];
+      });
+      return merged;
+    });
+  }, [selectedTicket]);
+
+  // A closed popup must not carry unsaved edits into the next ticket opened.
+  useEffect(() => {
+    if (!selectedTicket) dirtyReviewFieldsRef.current.clear();
+  }, [selectedTicket]);
 
   const handleCloseReviewModal = useCallback(() => {
     activeTicketIdRef.current = null;
@@ -562,10 +633,15 @@ export default function TicketsPage() {
             <label className="block text-[12.5px] font-medium text-ink mb-1">Search</label>
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted" />
-              <input 
-                type="text" 
+              {/* These four filters were hand-rolled `<input>`/`<select>` elements
+                  carrying neither a background nor a text colour, so the browser
+                  painted them with its own defaults. With the OS set to dark that
+                  produced dark boxes on a white page whenever the app was in Light
+                  mode. The shared primitives carry the themed tokens. */}
+              <Input
+                type="text"
                 placeholder="Ticket #, PO, Material..."
-                className="w-full pl-10 pr-4 py-2 border rounded-control text-sm focus:ring-2 focus:ring-brand focus:border-brand"
+                className="pl-10"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
               />
@@ -574,8 +650,7 @@ export default function TicketsPage() {
 
           <div className="w-48">
             <label className="block text-[12.5px] font-medium text-ink mb-1">Supplier</label>
-            <select 
-              className="w-full p-2 border rounded-control text-sm bg-surface"
+            <Select
               value={supplierId}
               onChange={(e) => setSupplierId(e.target.value)}
             >
@@ -583,13 +658,12 @@ export default function TicketsPage() {
               {suppliers.map(s => (
                 <option key={s.id} value={s.id}>{s.name}</option>
               ))}
-            </select>
+            </Select>
           </div>
 
           <div className="w-40">
             <label className="block text-[12.5px] font-medium text-ink mb-1">Source</label>
-            <select 
-              className="w-full p-2 border rounded-control text-sm"
+            <Select
               value={source}
               onChange={(e) => setSource(e.target.value)}
             >
@@ -597,24 +671,29 @@ export default function TicketsPage() {
               <option value="WHATSAPP">WhatsApp</option>
               <option value="EMAIL">Email</option>
               <option value="MANUAL">Manual Upload</option>
-            </select>
+            </Select>
           </div>
 
           <div className="w-72 md:w-80">
              <label className="block text-[12.5px] font-medium text-ink mb-1">Date Range</label>
              <div className="flex items-center gap-1.5">
-                <input 
-                  type="date" 
-                  className="w-full min-w-0 p-2 border rounded-control text-[12.5px] focus:ring-2 focus:ring-brand focus:border-brand bg-surface" 
-                  value={startDate} 
-                  onChange={e => setStartDate(e.target.value)} 
+                {/* Bounds keep the range from being entered backwards: the picker
+                    greys out the impossible dates rather than accepting a range
+                    that can only ever return nothing. */}
+                <Input
+                  type="date"
+                  className="min-w-0 px-2 text-[12.5px] tabular"
+                  value={startDate}
+                  max={endDate || undefined}
+                  onChange={e => setStartDate(e.target.value)}
                 />
                 <span className="text-muted font-medium">-</span>
-                <input 
-                  type="date" 
-                  className="w-full min-w-0 p-2 border rounded-control text-[12.5px] focus:ring-2 focus:ring-brand focus:border-brand bg-surface" 
-                  value={endDate} 
-                  onChange={e => setEndDate(e.target.value)} 
+                <Input
+                  type="date"
+                  className="min-w-0 px-2 text-[12.5px] tabular"
+                  value={endDate}
+                  min={startDate || undefined}
+                  onChange={e => setEndDate(e.target.value)}
                 />
              </div>
           </div>
@@ -870,59 +949,69 @@ export default function TicketsPage() {
                     </div>
                     
                     <div className="grid grid-cols-2 gap-4">
+                      {/* Controlled, and saved on blur only when the value has
+                          actually changed — see handleReviewFieldCommit. */}
                       <div className="space-y-1">
-                        <label className="text-[12.5px] font-bold text-muted px-1">Supplier</label>
-                        <input 
-                          type="text" 
-                          className="w-full p-2.5 bg-ink/[0.03] border border-line rounded-control text-sm focus:ring-2 focus:ring-brand outline-none transition-all"
-                          defaultValue={selectedTicket.supplier?.name || selectedTicket.supplierName}
-                          onBlur={(e) => handleUpdateTicket(selectedTicket.id, { supplierName: e.target.value })}
+                        <label className="text-[12.5px] font-bold text-muted px-1" htmlFor="review-supplier">Supplier</label>
+                        <Input
+                          id="review-supplier"
+                          type="text"
+                          value={reviewForm.supplierName}
+                          onChange={(e) => setReviewField('supplierName', e.target.value)}
+                          onBlur={() => handleReviewFieldCommit(selectedTicket.id, 'supplierName')}
                         />
                       </div>
                       <div className="space-y-1">
-                        <label className="text-[12.5px] font-bold text-muted px-1">Ticket Date</label>
-                        <input 
-                          type="date" 
-                          className="w-full p-2.5 bg-ink/[0.03] border border-line rounded-control text-sm focus:ring-2 focus:ring-brand outline-none"
-                          defaultValue={selectedTicket.ticketDate ? new Date(selectedTicket.ticketDate).toISOString().split('T')[0] : ''}
-                          onBlur={(e) => handleUpdateTicket(selectedTicket.id, { ticketDate: e.target.value })}
+                        <label className="text-[12.5px] font-bold text-muted px-1" htmlFor="review-date">Ticket Date</label>
+                        <Input
+                          id="review-date"
+                          type="date"
+                          className="tabular"
+                          value={reviewForm.ticketDate}
+                          onChange={(e) => setReviewField('ticketDate', e.target.value)}
+                          onBlur={() => handleReviewFieldCommit(selectedTicket.id, 'ticketDate')}
                         />
                       </div>
                       <div className="space-y-1">
-                        <label className="text-[12.5px] font-bold text-muted px-1">Ticket Number</label>
-                        <input 
-                          type="text" 
-                          className="w-full p-2.5 bg-ink/[0.03] border border-line rounded-control text-sm focus:ring-2 focus:ring-brand outline-none"
-                          defaultValue={selectedTicket.ticketNumber}
-                          onBlur={(e) => handleUpdateTicket(selectedTicket.id, { ticketNumber: e.target.value })}
+                        <label className="text-[12.5px] font-bold text-muted px-1" htmlFor="review-number">Ticket Number</label>
+                        <Input
+                          id="review-number"
+                          type="text"
+                          value={reviewForm.ticketNumber}
+                          onChange={(e) => setReviewField('ticketNumber', e.target.value)}
+                          onBlur={() => handleReviewFieldCommit(selectedTicket.id, 'ticketNumber')}
                         />
                       </div>
                       <div className="space-y-1">
-                        <label className="text-[12.5px] font-bold text-muted px-1">PO Number</label>
-                        <input 
-                          type="text" 
-                          className="w-full p-2.5 bg-ink/[0.03] border border-line rounded-control text-sm focus:ring-2 focus:ring-brand outline-none"
-                          defaultValue={selectedTicket.poNumber}
-                          onBlur={(e) => handleUpdateTicket(selectedTicket.id, { poNumber: e.target.value })}
+                        <label className="text-[12.5px] font-bold text-muted px-1" htmlFor="review-po">PO Number</label>
+                        <Input
+                          id="review-po"
+                          type="text"
+                          value={reviewForm.poNumber}
+                          onChange={(e) => setReviewField('poNumber', e.target.value)}
+                          onBlur={() => handleReviewFieldCommit(selectedTicket.id, 'poNumber')}
                         />
                       </div>
                       <div className="space-y-1">
-                        <label className="text-[12.5px] font-bold text-muted px-1">Material</label>
-                        <input 
-                          type="text" 
-                          className="w-full p-2.5 bg-ink/[0.03] border border-line rounded-control text-sm focus:ring-2 focus:ring-brand outline-none"
-                          defaultValue={selectedTicket.material}
-                          onBlur={(e) => handleUpdateTicket(selectedTicket.id, { material: e.target.value })}
+                        <label className="text-[12.5px] font-bold text-muted px-1" htmlFor="review-material">Material</label>
+                        <Input
+                          id="review-material"
+                          type="text"
+                          value={reviewForm.material}
+                          onChange={(e) => setReviewField('material', e.target.value)}
+                          onBlur={() => handleReviewFieldCommit(selectedTicket.id, 'material')}
                         />
                       </div>
                       <div className="space-y-1">
-                        <label className="text-[12.5px] font-bold text-muted px-1">Quantity</label>
+                        <label className="text-[12.5px] font-bold text-muted px-1" htmlFor="review-quantity">Quantity</label>
                         <div className="relative">
-                          <input 
-                            type="number" 
-                            className="w-full p-2.5 bg-ink/[0.03] border border-line rounded-control text-sm focus:ring-2 focus:ring-brand outline-none"
-                            defaultValue={selectedTicket.quantity}
-                            onBlur={(e) => handleUpdateTicket(selectedTicket.id, { quantity: parseFloat(e.target.value) })}
+                          <Input
+                            id="review-quantity"
+                            type="number"
+                            className="tabular"
+                            value={reviewForm.quantity}
+                            onChange={(e) => setReviewField('quantity', e.target.value)}
+                            onBlur={() => handleReviewFieldCommit(selectedTicket.id, 'quantity')}
                           />
                         </div>
                       </div>

@@ -12,6 +12,8 @@ const invoicesPageSource = read('src/pages/dashboard/InvoicesPage.jsx');
 const dashboardLayoutSource = read('src/layouts/DashboardLayout.jsx');
 const routeDataSource = read('src/data/routeData.js');
 const cacheSource = read('src/lib/routeDataCache.js');
+const invoiceDetailSource = read('src/pages/dashboard/InvoiceDetailPage.jsx');
+const deliveriesPageSource = read('src/pages/deliveries/DeliveriesPage.jsx');
 
 describe('authenticated route performance contracts', () => {
   it('reads each resource from exactly one source', () => {
@@ -101,6 +103,52 @@ describe('authenticated route performance contracts', () => {
     expect(dashboardLayoutSource).toContain('preloadRouteData(item.path, userId)');
     expect(dashboardLayoutSource).toContain('<Suspense');
     expect(dashboardLayoutSource).toContain('<Outlet />');
+  });
+
+  it('keeps invoice detail and deliveries on the Express API', () => {
+    // Both screens were still reading through the fetch-cgc-data Edge function
+    // after everything else had moved. That extra hop is what QA measured as a
+    // loading delay on each. The Edge invoice-details projection also omitted
+    // `verifiedBy` and `ocrJobs`, which this page renders.
+    for (const source of [invoiceDetailSource, deliveriesPageSource]) {
+      const code = codeOnly(source);
+      expect(code).not.toContain('supabase.functions.invoke');
+      expect(code).not.toContain('fetch-cgc-data');
+      expect(code).not.toContain('limit=1000');
+    }
+    expect(codeOnly(invoiceDetailSource)).toContain('api.get(`/api/invoices/${id}`)');
+    expect(codeOnly(deliveriesPageSource)).toContain("api.get('/api/deliveries')");
+  });
+
+  it('leaves only the driver mobile view on the Edge function', () => {
+    // Measured against production: the Edge hop costs 3-12x Express for
+    // identical data, and each Edge call went out twice where Express goes once.
+    // Every operations screen now reads from Express.
+    const edgeReaders = [
+      ['src/store/supplierSlice.js', read('src/store/supplierSlice.js')],
+      ['src/store/productSlice.js', read('src/store/productSlice.js')],
+      ['src/pages/drivers/DriversPage.jsx', read('src/pages/drivers/DriversPage.jsx')],
+      ['src/pages/dashboard/RatesPage.jsx', read('src/pages/dashboard/RatesPage.jsx')],
+      ['src/pages/dispatch/DispatchBoard.jsx', read('src/pages/dispatch/DispatchBoard.jsx')],
+    ];
+    for (const [name, source] of edgeReaders) {
+      expect(codeOnly(source), name).not.toContain('supabase.functions.invoke');
+      expect(codeOnly(source), name).not.toContain('limit=1000');
+    }
+
+    // DriverMobileView is deliberately still on the Edge function: that path
+    // returns the driver's current stop only, and /api/deliveries returns the
+    // whole route. Migrating it needs the single-stop scope server-side first,
+    // so this is pinned as an intentional exception rather than an oversight.
+    expect(read('src/pages/driver/DriverMobileView.jsx')).toContain('supabase.functions.invoke');
+  });
+
+  it('sends the dispatch board through the day-scoped Express route', () => {
+    // The deployed Edge function ignored `date` and returned 1,000 unassigned
+    // orders across seven import days, which rendered as 32k DOM nodes.
+    const code = codeOnly(read('src/pages/dispatch/DispatchBoard.jsx'));
+    expect(code).toContain("api.get('/api/dispatch'");
+    expect(code).toContain('params: { date: poolDate }');
   });
 
   it('the comment stripper does not hide real code', () => {

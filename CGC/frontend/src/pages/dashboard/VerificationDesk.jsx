@@ -39,6 +39,12 @@ export default function VerificationDesk() {
   const [loadError, setLoadError] = useState(null);
   const [selectedInvoice, setSelectedInvoice] = useState(null);
   const [loading, setLoading] = useState(true);
+  // Placeholders belong to the first load of the route only. Once rows have been
+  // on screen, a changed filter or search revalidates underneath them.
+  const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
+  // Guards against an earlier, slower query overwriting a later one: typing and
+  // backspacing quickly can easily have two requests in flight at once.
+  const latestRequestIdRef = useRef(0);
   const [search, setSearch] = useState('');
   const debouncedSearch = useDebouncedValue(search, 350);
   const [filterStatus, setFilterStatus] = useState('ALL');
@@ -79,6 +85,9 @@ export default function VerificationDesk() {
   }), [page, filterStatus, debouncedSearch]);
 
   const fetchInvoices = useCallback(async () => {
+    const requestId = latestRequestIdRef.current + 1;
+    latestRequestIdRef.current = requestId;
+
     const cached = getCachedInvoicePage(userId, query);
     if (cached) {
       // Keep the previous page on screen while the new one is fetched.
@@ -92,15 +101,18 @@ export default function VerificationDesk() {
     setLoadError(null);
     try {
       const result = await loadInvoicePage(userId, query, { force: true });
+      if (latestRequestIdRef.current !== requestId) return;
       setInvoices(result.data);
       setPagination(result.pagination);
+      setHasLoadedOnce(true);
       setSelectedInvoice(current => (
         current && result.data.some(invoice => invoice.id === current.id) ? current : null
       ));
     } catch (error) {
+      if (latestRequestIdRef.current !== requestId) return;
       setLoadError(error);
     } finally {
-      setLoading(false);
+      if (latestRequestIdRef.current === requestId) setLoading(false);
     }
   }, [userId, query]);
 
@@ -287,7 +299,9 @@ export default function VerificationDesk() {
     if (page > totalPages) setPage(totalPages);
   }, [page, totalPages]);
 
-  if (loading && invoices.length === 0 && !loadError) return <VerificationDeskSkeleton />;
+  // No early return here on purpose — see InvoiceListSkeleton. Only the first
+  // load of the route shows placeholders; a re-query keeps the previous rows up.
+  const showListSkeleton = !hasLoadedOnce && loading && invoices.length === 0 && !loadError;
 
   const getFullUrl = resolveDocumentUrl;
 
@@ -361,7 +375,9 @@ export default function VerificationDesk() {
 
       {/* 2. Invoices Dropdown List */}
       <div className="space-y-4">
-        {visibleInvoices.length === 0 ? (
+        {showListSkeleton ? (
+          <InvoiceListSkeleton />
+        ) : visibleInvoices.length === 0 ? (
           <EmptyState
             icon={History}
             title="No invoices match"
@@ -397,7 +413,7 @@ export default function VerificationDesk() {
                     </div>
                     <div>
                       <div className="flex items-center gap-3">
-                        <span className="text-sm font-semibold tracking-tight text-muted">INV-{inv.invoiceNumber}</span>
+                        <span className="text-sm font-semibold tracking-tight text-muted">{inv.invoiceNumber}</span>
                         <StatusBadge status={inv.status} />
                       </div>
                       <h3 className="text-lg font-medium text-ink mt-1">{inv.supplier?.name}</h3>
@@ -562,7 +578,7 @@ export default function VerificationDesk() {
                                             <span className="text-on-brand text-[12.5px] font-semibold opacity-80">Zoom scan</span>
                                             <Maximize2 className="text-on-brand w-4 h-4 opacity-0 group-hover:opacity-100 transition-opacity" />
                                           </div>
-                                          <h3 className="text-on-brand text-lg font-light mt-1">INV-{selectedInvoice.invoiceNumber}</h3>
+                                          <h3 className="text-on-brand text-lg font-light mt-1">{selectedInvoice.invoiceNumber}</h3>
                                         </div>
                                       </div>
                                     </div>
@@ -967,22 +983,17 @@ export default function VerificationDesk() {
   );
 }
 
-function VerificationDeskSkeleton() {
+/**
+ * Placeholder rows for the list area only.
+ *
+ * The page used to `return <VerificationDeskSkeleton />` for the whole route
+ * while any query was in flight, which unmounted the search box the user was
+ * typing into. Backspacing out of a search with no results therefore blanked
+ * the screen and dropped keyboard focus mid-keystroke — reported as the search
+ * "freezing". The toolbar now stays mounted and only this replaces the rows.
+ */
+function InvoiceListSkeleton() {
   return (
-    <div className="flex flex-col h-full bg-canvas -m-8 p-8 overflow-y-auto">
-      {/* Skeleton Header Toolbar */}
-      <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4 mb-8 bg-surface p-6 rounded-card border border-line shadow-card animate-pulse">
-        <PageHeader
-          title="Verification desk"
-          subtitle="Open an invoice, check the tickets and orders against it, then verify or dispute."
-        />
-        <div className="flex items-center gap-3">
-          <Skeleton variant="rectangle" width="240px" height="42px" className="rounded-control" />
-          <Skeleton variant="rectangle" width="300px" height="42px" className="rounded-control" />
-        </div>
-      </div>
-
-      {/* Skeleton List of Invoice Accordions */}
       <div className="space-y-4 animate-pulse">
         {[...Array(4)].map((_, i) => (
           <div key={i} className="bg-surface rounded-card border border-line p-6 md:p-8 shadow-card flex flex-col md:flex-row md:items-center justify-between gap-6">
@@ -1012,6 +1023,5 @@ function VerificationDeskSkeleton() {
           </div>
         ))}
       </div>
-    </div>
   );
 }
