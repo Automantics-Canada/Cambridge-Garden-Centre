@@ -12,6 +12,8 @@ const invoicesPageSource = read('src/pages/dashboard/InvoicesPage.jsx');
 const dashboardLayoutSource = read('src/layouts/DashboardLayout.jsx');
 const routeDataSource = read('src/data/routeData.js');
 const cacheSource = read('src/lib/routeDataCache.js');
+const invoiceDetailSource = read('src/pages/dashboard/InvoiceDetailPage.jsx');
+const deliveriesPageSource = read('src/pages/deliveries/DeliveriesPage.jsx');
 
 describe('authenticated route performance contracts', () => {
   it('reads each resource from exactly one source', () => {
@@ -101,6 +103,21 @@ describe('authenticated route performance contracts', () => {
     expect(dashboardLayoutSource).toContain('preloadRouteData(item.path, userId)');
     expect(dashboardLayoutSource).toContain('<Suspense');
     expect(dashboardLayoutSource).toContain('<Outlet />');
+  });
+
+  it('keeps invoice detail and deliveries on the Express API', () => {
+    // Both screens were still reading through the fetch-cgc-data Edge function
+    // after everything else had moved. That extra hop is what QA measured as a
+    // loading delay on each. The Edge invoice-details projection also omitted
+    // `verifiedBy` and `ocrJobs`, which this page renders.
+    for (const source of [invoiceDetailSource, deliveriesPageSource]) {
+      const code = codeOnly(source);
+      expect(code).not.toContain('supabase.functions.invoke');
+      expect(code).not.toContain('fetch-cgc-data');
+      expect(code).not.toContain('limit=1000');
+    }
+    expect(codeOnly(invoiceDetailSource)).toContain('api.get(`/api/invoices/${id}`)');
+    expect(codeOnly(deliveriesPageSource)).toContain("api.get('/api/deliveries')");
   });
 
   it('the comment stripper does not hide real code', () => {

@@ -2,7 +2,6 @@ import { resolveDocumentUrl } from '../../lib/apiBase';
 import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import api from '../../api/axios';
-import { supabase } from '../../supabaseClient';
 import {
   ArrowLeft,
   CheckCircle,
@@ -43,19 +42,20 @@ export default function InvoiceDetailPage() {
   const [reopenReason, setReopenReason] = useState('');
   const [showReopenDialog, setShowReopenDialog] = useState(false);
 
+  /**
+   * Reads the invoice from the Express API, like every other invoice screen.
+   *
+   * This page was the last one still going through the `fetch-cgc-data` Edge
+   * function, which is an extra hop into something that can be cold while the
+   * Railway API is already warm — that is the loading delay QA measured. The
+   * Edge projection was also missing two relations this page renders,
+   * `verifiedBy` and `ocrJobs`, so those panels were quietly empty; the Prisma
+   * include behind `/api/invoices/:id` returns both.
+   */
   const fetchInvoice = useCallback(async () => {
     setLoading(true);
     try {
-      const token = localStorage.getItem('token');
-      const headers = token ? { Authorization: `Bearer ${token}` } : {};
-
-      const { data, error } = await supabase.functions.invoke(`fetch-cgc-data?resource=invoice-details&id=${id}`, {
-        method: 'GET',
-        headers
-      });
-
-      if (error) throw error;
-
+      const { data } = await api.get(`/api/invoices/${id}`);
       setInvoice(data);
       if (data?.disputeNote) setDisputeNote(data.disputeNote);
     } catch (err) {
