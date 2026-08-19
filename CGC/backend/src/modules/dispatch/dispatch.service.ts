@@ -3,6 +3,21 @@ import { DeliveryStatus } from '@prisma/client';
 import { MailService } from '../../services/mail.service.js';
 import { businessDayOf, businessDayRange } from '../../lib/businessDay.js';
 
+/**
+ * The order fields the dispatch board renders, and nothing else.
+ *
+ * Deliberately excludes `buyerType`: see the note in `getDispatchBoard`.
+ */
+export const DISPATCH_ORDER_SELECT = {
+  id: true,
+  spruceOrderId: true,
+  customerName: true,
+  product: true,
+  quantity: true,
+  unit: true,
+  createdAt: true,
+} as const;
+
 export const DispatchService = {
   /**
    * @param day 'YYYY-MM-DD' in the yard's timezone. Defaults to today there.
@@ -17,14 +32,25 @@ export const DispatchService = {
     // Scoped to one business day. This used to return every order that had
     // never been assigned, for all time, so the pool only ever grew and today's
     // work sat below months of stale rows.
+    //
+    // Projected rather than `include: { supplier: true }`, for two reasons.
+    //
+    // The board renders exactly these seven fields and never touches the
+    // supplier relation, so the rest was pure payload.
+    //
+    // More importantly, a full row read `buyerType`, and 16 of the 1,816 orders
+    // in production hold NULL there — written by a bulk import on 2026-07-12
+    // that bypassed Prisma's default. The column is declared non-nullable, so
+    // Prisma refused to deserialize those rows and failed the whole query:
+    // this endpoint returned 500 for every date, not just the affected days.
+    // Not selecting the column sidesteps the mismatch without a migration.
+    // The 16 rows still need a decision about what they actually are.
     const unassignedOrders = await prisma.order.findMany({
       where: {
         deliveries: { none: {} },
         createdAt: { gte: dayRange.gte, lte: dayRange.lte },
       },
-      include: {
-        supplier: true
-      }
+      select: DISPATCH_ORDER_SELECT,
     });
 
     const drivers = await prisma.driver.findMany({
@@ -44,7 +70,9 @@ export const DispatchService = {
             ]
           },
           include: {
-            order: true,
+            // Same projection, same reason: a full order row here would hit the
+            // NULL `buyerType` rows and fail the driver query too.
+            order: { select: DISPATCH_ORDER_SELECT },
             history: {
               orderBy: { createdAt: 'desc' }
             }
@@ -57,9 +85,7 @@ export const DispatchService = {
     const unassignedDeliveries = await prisma.delivery.findMany({
       where: { status: 'UNASSIGNED', driverId: null },
       include: {
-        order: {
-          include: { supplier: true }
-        }
+        order: { select: DISPATCH_ORDER_SELECT },
       }
     });
 
