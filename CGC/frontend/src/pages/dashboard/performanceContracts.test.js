@@ -120,6 +120,37 @@ describe('authenticated route performance contracts', () => {
     expect(codeOnly(deliveriesPageSource)).toContain("api.get('/api/deliveries')");
   });
 
+  it('leaves only the driver mobile view on the Edge function', () => {
+    // Measured against production: the Edge hop costs 3-12x Express for
+    // identical data, and each Edge call went out twice where Express goes once.
+    // Every operations screen now reads from Express.
+    const edgeReaders = [
+      ['src/store/supplierSlice.js', read('src/store/supplierSlice.js')],
+      ['src/store/productSlice.js', read('src/store/productSlice.js')],
+      ['src/pages/drivers/DriversPage.jsx', read('src/pages/drivers/DriversPage.jsx')],
+      ['src/pages/dashboard/RatesPage.jsx', read('src/pages/dashboard/RatesPage.jsx')],
+      ['src/pages/dispatch/DispatchBoard.jsx', read('src/pages/dispatch/DispatchBoard.jsx')],
+    ];
+    for (const [name, source] of edgeReaders) {
+      expect(codeOnly(source), name).not.toContain('supabase.functions.invoke');
+      expect(codeOnly(source), name).not.toContain('limit=1000');
+    }
+
+    // DriverMobileView is deliberately still on the Edge function: that path
+    // returns the driver's current stop only, and /api/deliveries returns the
+    // whole route. Migrating it needs the single-stop scope server-side first,
+    // so this is pinned as an intentional exception rather than an oversight.
+    expect(read('src/pages/driver/DriverMobileView.jsx')).toContain('supabase.functions.invoke');
+  });
+
+  it('sends the dispatch board through the day-scoped Express route', () => {
+    // The deployed Edge function ignored `date` and returned 1,000 unassigned
+    // orders across seven import days, which rendered as 32k DOM nodes.
+    const code = codeOnly(read('src/pages/dispatch/DispatchBoard.jsx'));
+    expect(code).toContain("api.get('/api/dispatch'");
+    expect(code).toContain('params: { date: poolDate }');
+  });
+
   it('the comment stripper does not hide real code', () => {
     expect(codeOnly('// Promise.any was removed\nconst a = 1;')).not.toContain('Promise.any');
     expect(codeOnly('const x = Promise.any([a]);')).toContain('Promise.any');

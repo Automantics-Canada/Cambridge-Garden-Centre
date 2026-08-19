@@ -1,22 +1,15 @@
 import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
 import api from '../api/axios';
-import { supabase } from '../supabaseClient';
 
 // Async thunks
 export const fetchSuppliers = createAsyncThunk(
   'suppliers/fetchSuppliers',
   async (_, { rejectWithValue }) => {
     try {
-      const token = localStorage.getItem('token');
-      const headers = token ? { Authorization: `Bearer ${token}` } : {};
-      const { data, error } = await supabase.functions.invoke('fetch-cgc-data?resource=suppliers&limit=1000', {
-        method: 'GET',
-        headers
-      });
-      if (error) throw error;
-      return data?.data || [];
+      const { data } = await api.get('/api/suppliers');
+      return Array.isArray(data) ? data : data?.data || [];
     } catch (error) {
-      return rejectWithValue(error.message || 'Failed to fetch suppliers');
+      return rejectWithValue(error.response?.data?.error || error.message || 'Failed to fetch suppliers');
     }
   }
 );

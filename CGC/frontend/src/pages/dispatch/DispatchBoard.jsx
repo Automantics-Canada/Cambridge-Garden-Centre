@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import api from '../../api/axios';
-import { supabase } from '../../supabaseClient';
 import { Truck, MapPin, Search, ChevronUp, ChevronDown, ChevronRight, User, GripVertical, Mail, Package2, Image as ImageIcon, Calendar, Info, RefreshCw, FileText } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { toast } from 'react-hot-toast';
@@ -42,15 +41,17 @@ export default function DispatchBoard() {
 
     try {
       if (!isBackgroundSync) setLoading(true);
-      const token = localStorage.getItem('token');
-      const headers = token ? { Authorization: `Bearer ${token}` } : {};
 
-      const { data, error } = await supabase.functions.invoke(
-        `fetch-cgc-data?resource=dispatch-board&date=${encodeURIComponent(poolDate)}`,
-        { method: 'GET', headers }
-      );
-
-      if (error) throw error;
+      // Express, not the fetch-cgc-data Edge function.
+      //
+      // The deployed Edge function predates the day-scoping change and ignored
+      // the `date` parameter entirely: it returned 1,000 unassigned orders
+      // spanning seven different import days, which the board rendered as
+      // 32,403 DOM nodes including 1,000 selects and 7,000 options. That render,
+      // not the network, is what made this the slowest screen in the app.
+      //
+      // /api/dispatch applies the business-day range server-side.
+      const { data } = await api.get('/api/dispatch', { params: { date: poolDate } });
 
       const drivers = (data?.drivers || []).map(d => ({
         ...d,
