@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { motion as Motion, AnimatePresence } from 'framer-motion';
-import { Plus, Edit, Trash2, AlertCircle, ChevronDown, Check, FileText, PlusCircle } from 'lucide-react';
+import { Plus, Edit, Trash2, AlertCircle, ChevronDown, Check, FileText, PlusCircle, Search } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { fetchSuppliers, deleteSupplier, deleteSupplierRate, clearSuccess, clearError } from '../../store/supplierSlice';
 import Modal from '../../components/Modal';
@@ -144,13 +144,25 @@ export default function SupplierPage() {
       <Motion.div variants={itemVariants}>
         <Card className="p-4 flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between">
           <div className="flex flex-col sm:flex-row gap-3 flex-1 w-full sm:w-auto">
-            <Input
-              type="text"
-              placeholder="Search suppliers..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full sm:flex-1"
-            />
+            {/* Measured on production: this field rendered 34px wide. The row
+                is `sm:w-auto`, so it sizes to content, and the Input's `w-full`
+                had a shrink-to-fit basis to fill while the Select next to it
+                claimed the space from its options. 16px of padding either side
+                left about 2px of usable box — which is why it read as a small
+                blank square rather than a search field. The min-width gives it a
+                floor; the icon and aria-label bring it in line with every other
+                search box in the app. */}
+            <div className="relative w-full sm:flex-1 sm:min-w-[260px]">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted pointer-events-none" />
+              <Input
+                type="text"
+                aria-label="Search suppliers"
+                placeholder="Search suppliers..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pl-10"
+              />
+            </div>
             <Select
               value={filterType}
               onChange={(e) => setFilterType(e.target.value)}
