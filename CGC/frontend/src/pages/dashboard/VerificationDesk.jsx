@@ -29,6 +29,7 @@ import toast from 'react-hot-toast';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ticketThumbnailSrc } from '../../utils/ticketImage';
 import { EmptyState, PageHeader, StatusBadge } from '../../components/ui';
+import { formatQuantity } from '../../lib/quantity';
 
 const INVOICES_PER_PAGE = 25;
 
@@ -776,7 +777,7 @@ export default function VerificationDesk() {
                                                         <p className="text-sm font-semibold tracking-tight">{li.matchedOrder?.spruceOrderId}</p>
                                                         <div className="flex items-center justify-between mt-3 border-t border-line pt-2 text-[12.5px]">
                                                           <span className="opacity-75">Order Qty</span>
-                                                          <span className="font-bold">{Number(li.matchedOrder?.quantity)} {li.matchedOrder?.unit}</span>
+                                                          <span className="font-bold">{formatQuantity(li.matchedOrder?.quantity, li.matchedOrder?.unit)}</span>
                                                         </div>
                                                       </div>
                                                       <button 

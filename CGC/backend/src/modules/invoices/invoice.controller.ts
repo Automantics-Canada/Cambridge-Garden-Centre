@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from 'uuid';
 import type { InvoiceStatus, SenderType } from '@prisma/client';
 import { InvoiceService } from './invoice.service.js';
 import { triggerOcrProcessing } from '../../services/ocrJobProcessor.js';
+import { parseQueryDate, QueryDateError } from '../../lib/queryDate.js';
 
 /** Signals a malformed query parameter, answered as 400 rather than 500. */
 export class BadRequestError extends Error {}
@@ -12,13 +13,6 @@ export function parseIntParam(value: unknown): number | undefined {
   if (value === undefined || value === null || value === '') return undefined;
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) throw new BadRequestError('page and limit must be numbers');
-  return parsed;
-}
-
-export function parseDateParam(value: unknown, name: string): Date | undefined {
-  if (value === undefined || value === null || value === '') return undefined;
-  const parsed = new Date(String(value));
-  if (Number.isNaN(parsed.getTime())) throw new BadRequestError(`${name} is not a valid date`);
   return parsed;
 }
 
@@ -123,8 +117,8 @@ export const InvoiceController = {
 
       // An unparseable date must not silently widen the result set to the whole
       // ledger, so anything non-numeric/non-date is rejected rather than ignored.
-      const parsedStart = parseDateParam(startDate, 'startDate');
-      const parsedEnd = parseDateParam(endDate, 'endDate');
+      const parsedStart = parseQueryDate(startDate, 'startDate', 'start');
+      const parsedEnd = parseQueryDate(endDate, 'endDate', 'end');
 
       const invoices = await InvoiceService.getInvoices({
         page: parseIntParam(page),
@@ -139,7 +133,7 @@ export const InvoiceController = {
       });
       res.json(wantsLegacyInvoiceListShape(req.query) ? invoices.data : invoices);
     } catch (error) {
-      if (error instanceof BadRequestError) {
+      if (error instanceof BadRequestError || error instanceof QueryDateError) {
         return res.status(400).json({ error: error.message });
       }
       next(error);

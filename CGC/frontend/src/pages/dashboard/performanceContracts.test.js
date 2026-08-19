@@ -117,7 +117,8 @@ describe('authenticated route performance contracts', () => {
       expect(code).not.toContain('limit=1000');
     }
     expect(codeOnly(invoiceDetailSource)).toContain('api.get(`/api/invoices/${id}`)');
-    expect(codeOnly(deliveriesPageSource)).toContain("api.get('/api/deliveries')");
+    expect(codeOnly(deliveriesPageSource)).toContain("api.get('/api/deliveries'");
+    expect(codeOnly(deliveriesPageSource)).toContain('limit: 25');
   });
 
   it('leaves only the driver mobile view on the Edge function', () => {

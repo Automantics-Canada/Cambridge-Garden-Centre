@@ -56,10 +56,10 @@ model Order {
   /// side of the business appeared nowhere. Defaulted rather than asserted:
   /// B2B is roughly 90% of volume, so this is the right guess, but it is a
   /// default to be corrected, not a fact read off the report.
-  buyerType      BuyerType          @default(CONTRACTOR)
+  buyerType      BuyerType?         @default(CONTRACTOR)
   product        String
-  quantity       Decimal            @db.Decimal
-  unit           String
+  quantity       Decimal?           @db.Decimal
+  unit           String?
   supplierId     String?            @db.Uuid
   orderDate      DateTime           @db.Date
   deliveryDate   DateTime?          @db.Date

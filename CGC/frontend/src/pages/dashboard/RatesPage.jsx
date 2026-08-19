@@ -21,14 +21,14 @@ import {
   Select,
   Textarea,
 } from '../../components/ui';
-import { formatDate } from '../../lib/date';
+import { businessDayOf, formatDate } from '../../lib/date';
 
 const INITIAL_FORM = {
   supplierId: '',
   productName: '',
   rate: '',
   unit: 'tonne',
-  effectiveFrom: new Date().toISOString().split('T')[0],
+  effectiveFrom: businessDayOf(),
   effectiveTo: '',
   notes: ''
 };
@@ -67,7 +67,7 @@ export default function RatesPage() {
         (s.negotiatedRates || []).map(r => ({ ...r, supplierName: s.name }))
       );
       setRates(allRates);
-    } catch (err) {
+    } catch {
       toast.error('Failed to fetch data');
     } finally {
       setLoading(false);
@@ -128,11 +128,11 @@ export default function RatesPage() {
   const handleDeactivate = async (rate) => {
     if (!window.confirm(`Deactivate rate for "${rate.productName}"? This sets the expiration to today.`)) return;
     try {
-      const today = new Date().toISOString().split('T')[0];
+      const today = businessDayOf();
       await api.patch(`/api/suppliers/${rate.supplierId}/rates/${rate.id}`, { effectiveTo: today });
       toast.success('Rate deactivated');
       fetchData();
-    } catch (err) {
+    } catch {
       toast.error('Failed to deactivate');
     }
   };
@@ -143,7 +143,7 @@ export default function RatesPage() {
       await api.delete(`/api/suppliers/${rate.supplierId}/rates/${rate.id}`);
       toast.success('Rate deleted');
       fetchData();
-    } catch (err) {
+    } catch {
       toast.error('Failed to delete rate');
     }
   };

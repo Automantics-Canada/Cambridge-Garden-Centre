@@ -64,6 +64,15 @@ function parseIsoDate(isoDate: string): { year: number; month: number; day: numb
   const day = Number(match[3]);
   if (month < 1 || month > 12 || day < 1 || day > 31) return null;
 
+  // Date.UTC normalises impossible dates (for example 31 February) into the
+  // following month. Reject those instead of silently querying a different day.
+  const calendarDate = new Date(Date.UTC(year, month - 1, day));
+  if (
+    calendarDate.getUTCFullYear() !== year ||
+    calendarDate.getUTCMonth() !== month - 1 ||
+    calendarDate.getUTCDate() !== day
+  ) return null;
+
   return { year, month, day };
 }
 

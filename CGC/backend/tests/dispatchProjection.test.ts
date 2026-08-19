@@ -24,6 +24,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import './setupEnv.js';
 
 import { DISPATCH_ORDER_SELECT } from '../src/modules/dispatch/dispatch.service.ts';
 

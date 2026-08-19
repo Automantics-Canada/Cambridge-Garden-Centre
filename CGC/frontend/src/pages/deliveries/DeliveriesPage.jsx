@@ -6,11 +6,13 @@ import { DeliveryTableSkeleton } from '../../components/Skeleton';
 import { FadeInUp } from '../../components/Animated';
 import { motion, AnimatePresence } from 'framer-motion';
 import { toast } from 'react-hot-toast';
-import { Badge, Card, EmptyState, Input, PageHeader, Select, StatusBadge } from '../../components/ui';
+import { Badge, Button, Card, EmptyState, Input, PageHeader, Select, StatusBadge } from '../../components/ui';
 import StatusTimeline from '../../components/deliveries/StatusTimeline';
 import { cn } from '../../lib/cn';
 import { formatDate } from '../../lib/date';
 import { isTerminal, statusErrorMessage, statusOptionsFor } from '../../lib/deliveryTransitions';
+import { formatQuantity } from '../../lib/quantity';
+import { useDebouncedValue } from '../../hooks/useDebouncedValue';
 
 export default function DeliveriesPage() {
   const [searchParams] = useSearchParams();
@@ -18,54 +20,62 @@ export default function DeliveriesPage() {
   const [drivers, setDrivers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [expandedDeliveryId, setExpandedDeliveryId] = useState(null);
+  const [page, setPage] = useState(1);
+  const [pagination, setPagination] = useState({ page: 1, totalPages: 1, totalCount: 0 });
 
   // Search and Filter State
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedDate, setSelectedDate] = useState('');
   const [selectedDriver, setSelectedDriver] = useState('');
+  const debouncedSearch = useDebouncedValue(searchQuery, 350);
+  const hasFilters = Boolean(searchQuery || selectedDate || selectedDriver);
 
   const driverIdParam = searchParams.get('driverId');
 
-  /**
-   * Reads from the Express API rather than the `fetch-cgc-data` Edge function.
-   *
-   * The Edge hop is an extra network round trip into something that can be cold,
-   * which is part of why this page was slow to open.
-   *
-   * It is only part of it. `GET /api/deliveries` is still unbounded — a
-   * `findMany` with no `take`, returning every delivery ever recorded with its
-   * full order, that order's supplier and tickets, and the delivery's complete
-   * status history — and this page then filters the lot in the browser. Making
-   * that query paginated and day-scoped, the way invoices and tickets already
-   * are, is a separate piece of work. Until then this page is faster to open but
-   * still grows with the table.
-   */
-  const fetchData = useCallback(async () => {
+  const fetchDrivers = useCallback(async () => {
     try {
-      setLoading(true);
-
-      const [delRes, driverRes] = await Promise.all([
-        api.get('/api/deliveries'),
-        api.get('/api/drivers'),
-      ]);
-
-      setDeliveries(Array.isArray(delRes.data) ? delRes.data : delRes.data?.data || []);
+      const driverRes = await api.get('/api/drivers');
       setDrivers(Array.isArray(driverRes.data) ? driverRes.data : driverRes.data?.data || []);
     } catch (e) {
-      console.error('Failed to fetch data', e);
+      console.error('Failed to fetch drivers', e);
+      toast.error('Failed to load drivers');
+    }
+  }, []);
+
+  const fetchDeliveries = useCallback(async () => {
+    try {
+      setLoading(true);
+      const { data } = await api.get('/api/deliveries', {
+        params: {
+          page,
+          limit: 25,
+          ...(selectedDate ? { date: selectedDate } : {}),
+          ...(selectedDriver ? { driverId: selectedDriver } : {}),
+          ...(debouncedSearch ? { search: debouncedSearch } : {}),
+        },
+      });
+      setDeliveries(Array.isArray(data) ? data : data?.data || []);
+      setPagination(data?.pagination || { page: 1, totalPages: 1, totalCount: data?.length || 0 });
+    } catch (e) {
+      console.error('Failed to fetch deliveries', e);
       toast.error('Failed to load deliveries');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [debouncedSearch, page, selectedDate, selectedDriver]);
 
   useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+    fetchDrivers();
+  }, [fetchDrivers]);
+
+  useEffect(() => {
+    fetchDeliveries();
+  }, [fetchDeliveries]);
 
   useEffect(() => {
     if (driverIdParam) {
       setSelectedDriver(driverIdParam);
+      setPage(1);
     }
   }, [driverIdParam]);
 
@@ -110,36 +120,10 @@ export default function DeliveriesPage() {
     }
   };
 
-  const filteredDeliveries = useMemo(() => {
-    let result = [...deliveries];
-
-    // Search filter
-    if (searchQuery) {
-      const query = searchQuery.toLowerCase();
-      result = result.filter(del =>
-        del.order?.spruceOrderId?.toLowerCase().includes(query) ||
-        del.order?.customerName?.toLowerCase().includes(query) ||
-        del.driver?.name?.toLowerCase().includes(query) ||
-        del.order?.product?.toLowerCase().includes(query)
-      );
-    }
-
-    // Date filter
-    if (selectedDate) {
-      result = result.filter(del => {
-        const delDate = new Date(del.createdAt).toISOString().split('T')[0];
-        return delDate === selectedDate;
-      });
-    }
-
-    // Driver filter
-    if (selectedDriver) {
-      result = result.filter(del => del.driverId === selectedDriver);
-    }
-
-    // Sort by date descending
-    return result.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-  }, [deliveries, searchQuery, selectedDate, selectedDriver]);
+  const filteredDeliveries = useMemo(
+    () => [...deliveries].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)),
+    [deliveries]
+  );
 
   if (loading) return <DeliveryTableSkeleton />;
 
@@ -163,11 +147,17 @@ export default function DeliveriesPage() {
                   placeholder="Search by order ID, customer, or driver..."
                   className="pl-10 pr-10"
                   value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
+                  onChange={(e) => {
+                    setSearchQuery(e.target.value);
+                    setPage(1);
+                  }}
                 />
                 {searchQuery && (
                   <button
-                    onClick={() => setSearchQuery('')}
+                    onClick={() => {
+                      setSearchQuery('');
+                      setPage(1);
+                    }}
                     className="absolute right-3 top-1/2 -translate-y-1/2 text-muted hover:text-ink"
                   >
                     <X size={16} />
@@ -182,7 +172,10 @@ export default function DeliveriesPage() {
                     type="date"
                     className="pl-10 tabular"
                     value={selectedDate}
-                    onChange={(e) => setSelectedDate(e.target.value)}
+                    onChange={(e) => {
+                      setSelectedDate(e.target.value);
+                      setPage(1);
+                    }}
                   />
                 </div>
 
@@ -191,7 +184,10 @@ export default function DeliveriesPage() {
                   <Select
                     className="pl-10"
                     value={selectedDriver}
-                    onChange={(e) => setSelectedDriver(e.target.value)}
+                    onChange={(e) => {
+                      setSelectedDriver(e.target.value);
+                      setPage(1);
+                    }}
                   >
                     <option value="">All drivers</option>
                     {drivers.map(d => (
@@ -206,6 +202,7 @@ export default function DeliveriesPage() {
                       setSearchQuery('');
                       setSelectedDate('');
                       setSelectedDriver('');
+                      setPage(1);
                     }}
                     className="flex items-center gap-2 text-[12.5px] font-semibold text-clay px-3 hover:bg-clay/10 rounded-control transition-colors"
                   >
@@ -219,8 +216,8 @@ export default function DeliveriesPage() {
 
         {filteredDeliveries.length === 0 ? (
           <EmptyState
-            title={deliveries.length === 0 ? 'No deliveries yet' : 'No deliveries match'}
-            message={deliveries.length === 0 ? 'Deliveries appear here once dispatch assigns an order to a driver.' : 'Try another search, date, or driver.'}
+            title={hasFilters ? 'No deliveries match' : 'No deliveries yet'}
+            message={hasFilters ? 'Try another search, date, or driver.' : 'Deliveries appear here once dispatch assigns an order to a driver.'}
           />
         ) : (
           filteredDeliveries.map((del, idx) => {
@@ -320,7 +317,7 @@ export default function DeliveriesPage() {
                               </div>
                               <div className="flex items-center justify-between">
                                  <span className="text-[13px] text-muted font-medium">Quantity</span>
-                                 <span className="tabular text-[13px] text-ink font-semibold">{Number(del.order.quantity)} {del.order.unit}</span>
+                                 <span className="tabular text-[13px] text-ink font-semibold">{formatQuantity(del.order.quantity, del.order.unit)}</span>
                               </div>
                             </div>
                           </div>
@@ -382,6 +379,28 @@ export default function DeliveriesPage() {
           })
         )}
       </div>
+
+      {pagination.totalPages > 1 && (
+        <div className="flex items-center justify-between gap-4">
+          <Button
+            variant="ghost"
+            disabled={page <= 1}
+            onClick={() => setPage(current => Math.max(1, current - 1))}
+          >
+            Previous
+          </Button>
+          <p className="text-[13px] font-medium text-muted tabular">
+            Page {pagination.page} of {pagination.totalPages} · {pagination.totalCount} deliveries
+          </p>
+          <Button
+            variant="ghost"
+            disabled={page >= pagination.totalPages}
+            onClick={() => setPage(current => Math.min(pagination.totalPages, current + 1))}
+          >
+            Next
+          </Button>
+        </div>
+      )}
     </div>
   );
 }

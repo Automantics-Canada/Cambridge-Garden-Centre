@@ -3,26 +3,90 @@ import { DeliveryStatus } from '@prisma/client';
 import supabaseStorage from '../../services/supabaseStorage.js';
 import { saveTicketImage } from '../../services/fileStorage.js';
 
-export const DeliveriesService = {
-  async getDeliveries(filters: any) {
-    return prisma.delivery.findMany({
-      where: filters,
-      include: {
-        driver: true,
-        order: {
-          include: {
-            supplier: true,
-            tickets: true
-          }
-        },
-        history: {
-          orderBy: { createdAt: 'desc' }
-        }
+/** The delivery list/detail shape rendered by operations screens. */
+export const DELIVERY_RESPONSE_SELECT = {
+  id: true,
+  orderId: true,
+  driverId: true,
+  priority: true,
+  status: true,
+  pickupPhotoUrl: true,
+  deliveryPhotoUrl: true,
+  startedAt: true,
+  completedAt: true,
+  createdAt: true,
+  driver: { select: { id: true, name: true } },
+  order: {
+    select: {
+      id: true,
+      spruceOrderId: true,
+      customerName: true,
+      product: true,
+      quantity: true,
+      unit: true,
+    },
+  },
+  history: {
+    select: { id: true, status: true, notes: true, createdAt: true },
+    orderBy: { createdAt: 'desc' as const },
+  },
+} as const;
+
+/** Extra order evidence needed only by the driver's current-stop screen. */
+export const DELIVERY_DRIVER_RESPONSE_SELECT = {
+  ...DELIVERY_RESPONSE_SELECT,
+  order: {
+    select: {
+      ...DELIVERY_RESPONSE_SELECT.order.select,
+      document: {
+        select: { shippingAddress: true },
       },
-      orderBy: {
-        priority: 'asc'
-      }
-    });
+      tickets: {
+        select: {
+          id: true,
+          ticketNumber: true,
+          imageUrl: true,
+          thumbnailUrl: true,
+          status: true,
+          driverId: true,
+        },
+      },
+    },
+  },
+} as const;
+
+export const DeliveriesService = {
+  async getDeliveries(
+    filters: any,
+    page = 1,
+    limit = 50,
+    sort: 'priority' | 'newest' = 'priority',
+    audience: 'operations' | 'driver' = 'operations',
+  ) {
+    const take = Math.min(Math.max(limit, 1), 100);
+    const skip = (Math.max(page, 1) - 1) * take;
+    const [data, totalCount] = await Promise.all([
+      prisma.delivery.findMany({
+        where: filters,
+        select: audience === 'driver' ? DELIVERY_DRIVER_RESPONSE_SELECT : DELIVERY_RESPONSE_SELECT,
+        orderBy: sort === 'newest'
+          ? [{ createdAt: 'desc' }, { id: 'asc' }]
+          : [{ priority: 'asc' }, { createdAt: 'desc' }, { id: 'asc' }],
+        skip,
+        take,
+      }),
+      prisma.delivery.count({ where: filters }),
+    ]);
+
+    return {
+      data,
+      pagination: {
+        page: Math.max(page, 1),
+        limit: take,
+        totalCount,
+        totalPages: Math.max(1, Math.ceil(totalCount / take)),
+      },
+    };
   },
 
   /**

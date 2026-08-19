@@ -1,16 +1,22 @@
 import { prisma } from '../db/prisma.js';
 import { MailService } from './mail.service.js';
+import { createDriverAccessToken } from './driverAccessToken.js';
 
 export const NotificationService = {
   async sendAssignmentNotification(driverId: string, deliveries: any[]) {
-    const driver = await prisma.driver.findUnique({ where: { id: driverId } });
+    const driver = await prisma.driver.findUnique({ where: { id: driverId }, include: { user: true } });
     if (!driver || !driver.email) {
       console.log(`No email for driver ${driverId}, skipping notification.`);
       return;
     }
 
-    const today = new Date().toISOString().split('T')[0];
-    const token = Buffer.from(`${driver.id}:${today}`).toString('base64');
+    let token: string;
+    try {
+      token = createDriverAccessToken(driver.user);
+    } catch (error: any) {
+      console.log(`${error.message}; skipping notification for ${driverId}.`);
+      return;
+    }
     
     const appUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
     const mobileLink = `${appUrl}/driver/today?token=${token}`;

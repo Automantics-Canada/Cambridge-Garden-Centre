@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useSelector, useDispatch } from 'react-redux';
 import api from '../../api/axios';
@@ -12,6 +12,7 @@ import { MobileDriverSkeleton } from '../../components/Skeleton';
 import { useIntervalRefresh } from '../../hooks/useIntervalRefresh';
 import { Badge } from '../../components/ui';
 import { cn } from '../../lib/cn';
+import { formatQuantity } from '../../lib/quantity';
 
 export default function DriverMobileView() {
   const [searchParams] = useSearchParams();
@@ -31,7 +32,7 @@ export default function DriverMobileView() {
   const [updatingStatus, setUpdatingStatus] = useState(false);
   const [showLogoutModal, setShowLogoutModal] = useState(false);
 
-  const fetchMobileData = async (silent = false) => {
+  const fetchMobileData = useCallback(async (silent = false) => {
     try {
       if (!silent) {
         setLoading(true);
@@ -89,11 +90,11 @@ export default function DriverMobileView() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [isAuthenticated, token]);
 
   useEffect(() => {
     fetchMobileData();
-  }, [token, isAuthenticated]);
+  }, [fetchMobileData]);
 
   useIntervalRefresh(
     () => {
@@ -166,6 +167,9 @@ export default function DriverMobileView() {
 
   // Enforce single active order view constraint
   const currentDelivery = deliveries[0];
+  const deliveryAddress = currentDelivery?.order?.shippingAddress
+    || currentDelivery?.order?.document?.shippingAddress
+    || '';
 
   return (
     <div className="min-h-screen bg-canvas text-ink pb-28 font-sans">
@@ -241,7 +245,7 @@ export default function DriverMobileView() {
                           <Package className="text-brand" size={16} strokeWidth={2} />
                         </div>
                         <div>
-                          <p className="tabular font-semibold text-ink leading-none">{Number(currentDelivery.order.quantity)} {currentDelivery.order.unit}</p>
+                          <p className="tabular font-semibold text-ink leading-none">{formatQuantity(currentDelivery.order.quantity, currentDelivery.order.unit)}</p>
                           <p className="text-[13px] text-muted font-normal mt-1">{currentDelivery.order.product}</p>
                         </div>
                       </div>
@@ -249,8 +253,8 @@ export default function DriverMobileView() {
                         <div className="w-8 h-8 rounded-pill bg-surface flex items-center justify-center shadow-card border border-line flex-shrink-0">
                           <MapPin className="text-clay" size={16} strokeWidth={2} />
                         </div>
-                        <p className={`font-normal text-[13px] leading-relaxed pt-1 ${currentDelivery.order.shippingAddress ? 'text-muted' : 'text-clay'}`}>
-                          {currentDelivery.order.shippingAddress || 'No delivery address on file. Ask dispatch before you leave.'}
+                        <p className={`font-normal text-[13px] leading-relaxed pt-1 ${deliveryAddress ? 'text-muted' : 'text-clay'}`}>
+                          {deliveryAddress || 'No delivery address on file. Ask dispatch before you leave.'}
                         </p>
                       </div>
                     </div>

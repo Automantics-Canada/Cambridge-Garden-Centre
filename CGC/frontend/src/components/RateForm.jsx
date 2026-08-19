@@ -6,6 +6,19 @@ import { addSupplierRate, updateSupplierRate } from '../store/supplierSlice';
 import { fetchProducts, fetchUnits } from '../store/productSlice';
 import { Button, Field, Input, Select, Textarea } from './ui';
 import { cn } from '../lib/cn';
+import { businessDayOf } from '../lib/date';
+
+function initialFormData(rate) {
+  return {
+    productName: rate?.productName || '',
+    rate: rate?.rate || '',
+    unit: rate ? (rate.unit || 'tonne') : 'ton',
+    effectiveFrom: rate?.effectiveFrom
+      ? new Date(rate.effectiveFrom).toISOString().split('T')[0]
+      : businessDayOf(),
+    notes: rate?.notes || '',
+  };
+}
 
 export default function RateForm({ supplierId, rate, onClose }) {
   const dispatch = useDispatch();
@@ -13,13 +26,7 @@ export default function RateForm({ supplierId, rate, onClose }) {
   const { products, units } = useSelector((state) => state.products);
   const currentSupplier = suppliers.find(s => s.id === supplierId);
 
-  const [formData, setFormData] = useState({
-    productName: '',
-    rate: '',
-    unit: 'ton',
-    effectiveFrom: new Date().toISOString().split('T')[0],
-    notes: '',
-  });
+  const [formData, setFormData] = useState(() => initialFormData(rate));
 
   const [errors, setErrors] = useState({});
   const [existingRateFound, setExistingRateFound] = useState(false);
@@ -28,28 +35,6 @@ export default function RateForm({ supplierId, rate, onClose }) {
     dispatch(fetchProducts());
     dispatch(fetchUnits());
   }, [dispatch]);
-
-  useEffect(() => {
-    if (rate) {
-      setFormData({
-        productName: rate.productName || '',
-        rate: rate.rate || '',
-        unit: rate.unit || 'tonne',
-        effectiveFrom: rate.effectiveFrom ? new Date(rate.effectiveFrom).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
-        notes: rate.notes || '',
-      });
-      setExistingRateFound(false);
-    } else {
-      setFormData({
-        productName: '',
-        rate: '',
-        unit: 'ton',
-        effectiveFrom: new Date().toISOString().split('T')[0],
-        notes: '',
-      });
-      setExistingRateFound(false);
-    }
-  }, [rate]);
 
   const validate = () => {
     const newErrors = {};
@@ -109,7 +94,7 @@ export default function RateForm({ supplierId, rate, onClose }) {
           productName: value,
           rate: existingRate.rate || '',
           unit: existingRate.unit || selectedProduct?.unit || 'ton',
-          effectiveFrom: existingRate.effectiveFrom ? new Date(existingRate.effectiveFrom).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
+          effectiveFrom: existingRate.effectiveFrom ? new Date(existingRate.effectiveFrom).toISOString().split('T')[0] : businessDayOf(),
           notes: existingRate.notes || '',
         });
         setExistingRateFound(true);

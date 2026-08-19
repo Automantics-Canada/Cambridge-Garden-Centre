@@ -1,5 +1,7 @@
 import { prisma } from '../db/prisma.js';
 import nodemailer from 'nodemailer';
+import { createDriverAccessToken } from './driverAccessToken.js';
+import { formatQuantity } from '../lib/quantity.js';
 
 let transporter: nodemailer.Transporter | null = null;
 
@@ -57,7 +59,7 @@ export const MailService = {
   async sendAssignmentEmail(driverId: string, deliveryId: string) {
     console.time(`AssignmentEmail-${deliveryId}`);
     const [driver, delivery] = await Promise.all([
-      prisma.driver.findUnique({ where: { id: driverId } }),
+      prisma.driver.findUnique({ where: { id: driverId }, include: { user: true } }),
       prisma.delivery.findUnique({ 
         where: { id: deliveryId },
         include: { order: { include: { supplier: true } } }
@@ -78,8 +80,13 @@ export const MailService = {
       return { success: false, error: 'Delivery not found' };
     }
 
-    const today = new Date().toISOString().split('T')[0];
-    const token = Buffer.from(`${driver.id}:${today}`).toString('base64');
+    let token: string;
+    try {
+      token = createDriverAccessToken(driver.user);
+    } catch (error: any) {
+      console.error(`[MAIL] ${error.message}: ${driver.id}`);
+      return { success: false, error: error.message };
+    }
     const appUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
     const driverUrl = `${appUrl}/driver/today?token=${token}`;
     
@@ -115,7 +122,7 @@ export const MailService = {
             </div>
             <div style="flex: 1;">
               <p style="font-size: 10px; font-weight: 800; color: #a0aec0; text-transform: uppercase; letter-spacing: 1px; margin: 0 0 4px 0;">Quantity</p>
-              <p style="font-size: 14px; font-weight: 600; color: #2d3748; margin: 0;">${Number(delivery.order.quantity)} ${delivery.order.unit}</p>
+              <p style="font-size: 14px; font-weight: 600; color: #2d3748; margin: 0;">${formatQuantity(delivery.order.quantity, delivery.order.unit)}</p>
             </div>
           </div>
         </div>
@@ -139,12 +146,16 @@ export const MailService = {
   },
 
   async sendPriorityUpdateEmail(driverId: string) {
-    const driver = await prisma.driver.findUnique({ where: { id: driverId } });
+    const driver = await prisma.driver.findUnique({ where: { id: driverId }, include: { user: true } });
     if (!driver) return { success: false, error: 'Driver not found' };
     if (!driver.email) return { success: false, error: 'No email' };
 
-    const today = new Date().toISOString().split('T')[0];
-    const token = Buffer.from(`${driver.id}:${today}`).toString('base64');
+    let token: string;
+    try {
+      token = createDriverAccessToken(driver.user);
+    } catch (error: any) {
+      return { success: false, error: error.message };
+    }
     const appUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
     const driverUrl = `${appUrl}/driver/today?token=${token}`;
 

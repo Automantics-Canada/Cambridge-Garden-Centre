@@ -17,6 +17,7 @@ import {
 } from '../../components/ui';
 import { cn } from '../../lib/cn';
 import { businessDayOffset, formatDate } from '../../lib/date';
+import { formatQuantity } from '../../lib/quantity';
 
 export default function OrdersPage() {
   const [searchParams] = useSearchParams();
@@ -32,7 +33,7 @@ export default function OrdersPage() {
   const [search, setSearch] = useState('');
   const [buyerType, setBuyerType] = useState('');
   const [supplierId, setSupplierId] = useState('');
-  const [driverId, setDriverId] = useState(searchParams.get('driverId') || '');
+  const [driverId] = useState(searchParams.get('driverId') || '');
   const [hasInvoice, setHasInvoice] = useState('');
   const [hasLinkedTickets, setHasLinkedTickets] = useState('');
   const [uploadFilter, setUploadFilter] = useState('today'); // 'today' | 'yesterday' | 'select'
@@ -603,7 +604,7 @@ export default function OrdersPage() {
                       </td>
 
                       <td className="whitespace-nowrap px-3 py-4 text-sm">
-                        <Badge tone="neutral">{order.buyerType}</Badge>
+                        <Badge tone="neutral">{order.buyerType || 'Not recorded'}</Badge>
                       </td>
 
                       <td className="whitespace-nowrap px-3 py-4 text-sm text-ink">
@@ -611,7 +612,7 @@ export default function OrdersPage() {
                       </td>
 
                       <td className="tabular whitespace-nowrap px-3 py-4 text-sm text-muted font-medium">
-                        {order.quantity} {order.unit}
+                        {formatQuantity(order.quantity, order.unit)}
                       </td>
 
                       <td className="whitespace-nowrap px-3 py-4 text-sm text-muted">

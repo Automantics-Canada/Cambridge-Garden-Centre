@@ -4,12 +4,14 @@ import { DeliveriesService } from './deliveries.service.js';
 import { prisma } from '../../db/prisma.js';
 import { canAccessDelivery, findDriverIdForUser } from '../../services/authorization.js';
 import { evaluateTransition, DENIAL_HTTP_STATUS } from './deliveryTransitions.js';
+import { DeliveryQueryError, parseDeliveryQuery } from './deliveryQuery.js';
 
 export const getDeliveries = async (req: AuthRequest, res: Response) => {
   try {
-    const { driverId, status, priority } = req.query;
-    const filters: any = {};
+    const parsed = parseDeliveryQuery(req.query as Record<string, unknown>);
+    const filters = parsed.filters;
 
+    const driverRequest = req.user?.role === 'DRIVER';
     if (req.user?.role === 'DRIVER') {
       // Securely enforce that drivers can only query their own deliveries
       const ownDriverId = await findDriverIdForUser(prisma, req.user.id);
@@ -17,16 +19,23 @@ export const getDeliveries = async (req: AuthRequest, res: Response) => {
         return res.status(404).json({ error: 'Driver profile not linked' });
       }
       filters.driverId = ownDriverId;
-    } else {
-      if (driverId) filters.driverId = driverId;
     }
 
-    if (status) filters.status = status;
-    if (priority) filters.priority = Number(priority);
+    const result = await DeliveriesService.getDeliveries(
+      filters,
+      parsed.page,
+      parsed.limit,
+      parsed.wantsEnvelope ? 'newest' : 'priority',
+      driverRequest ? 'driver' : 'operations',
+    );
 
-    const deliveries = await DeliveriesService.getDeliveries(filters);
-    res.json(deliveries);
+    // Legacy driver links and older frontends expect an array when they did not
+    // request pagination. The current operations screen always sends page/limit.
+    res.json(parsed.wantsEnvelope ? result : result.data);
   } catch (error: any) {
+    if (error instanceof DeliveryQueryError) {
+      return res.status(error.status).json({ error: error.message });
+    }
     res.status(500).json({ error: error.message });
   }
 };

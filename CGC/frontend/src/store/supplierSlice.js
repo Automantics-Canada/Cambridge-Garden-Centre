@@ -42,7 +42,7 @@ export const deleteSupplier = createAsyncThunk(
   'suppliers/deleteSupplier',
   async (id, { rejectWithValue }) => {
     try {
-      const response = await api.delete(`/api/suppliers/${id}`);
+      await api.delete(`/api/suppliers/${id}`);
       return id;
     } catch (error) {
       return rejectWithValue(error.response?.data?.error || error.response?.data?.message || 'Failed to delete supplier');
