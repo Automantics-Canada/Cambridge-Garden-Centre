@@ -8,8 +8,20 @@
 
 @layer base {
   html {
-    /* Honour the OS setting for form controls, scrollbars and the like. */
+    /* The default only covers the "System" setting. An explicit Light or Dark
+       choice is stamped as an inline `color-scheme` by applyTheme(), which wins
+       over this — otherwise a dark OS would keep painting form controls dark
+       inside an app the user has switched to Light. */
     color-scheme: light dark;
+  }
+
+  /* Belt and braces for anything that renders before applyTheme() runs. */
+  html[data-theme='light'] {
+    color-scheme: light;
+  }
+
+  html[data-theme='dark'] {
+    color-scheme: dark;
   }
 
   body {
