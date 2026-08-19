@@ -9,6 +9,7 @@ import { Badge, Button, EmptyState, Input, PageHeader, StatusBadge } from '../..
 import { useIntervalRefresh } from '../../hooks/useIntervalRefresh';
 import { businessDayOffset, formatDate } from '../../lib/date';
 import { cn } from '../../lib/cn';
+import { isTerminal, statusErrorMessage, statusOptionsFor } from '../../lib/deliveryTransitions';
 
 export default function DispatchBoard() {
   const [board, setBoard] = useState({ unassignedOrders: [], unassignedDeliveries: [], drivers: [] });
@@ -109,12 +110,13 @@ export default function DispatchBoard() {
         })
         .catch((e) => {
           console.error(e);
-          toast.error('Failed to update status');
+          // Surface the server's actual reason rather than a generic failure.
+          toast.error(statusErrorMessage(e));
           fetchBoard(); // Revert optimistic update
         });
     } catch (e) {
       console.error(e);
-      toast.error('Failed to update status');
+      toast.error(statusErrorMessage(e));
       fetchBoard();
     }
   };
@@ -727,17 +729,26 @@ export default function DispatchBoard() {
                                               {/* Actions Inline Column */}
                                               <td className="px-6 py-4 whitespace-nowrap text-right text-[12.5px] font-bold w-64">
                                                 <div className="flex items-center justify-end gap-2">
+                                                  {/* Only the moves the server will
+                                                      accept from this stop's current
+                                                      state, that state listed first. */}
                                                   <select
-                                                    className="text-[12.5px] font-bold border border-line rounded-control px-2 py-1 outline-none focus:ring-1 focus:ring-brand bg-surface cursor-pointer text-ink"
+                                                    className="text-[12.5px] font-bold border border-line rounded-control px-2 py-1 outline-none focus:ring-1 focus:ring-brand bg-surface cursor-pointer text-ink disabled:opacity-50 disabled:cursor-not-allowed"
                                                     value={del.status}
+                                                    disabled={isTerminal(del.status)}
+                                                    title={isTerminal(del.status)
+                                                      ? `${del.status} is final and cannot be changed here`
+                                                      : 'Change delivery status'}
                                                     onChange={(e) => {
                                                       handleStatusUpdate(del.id, e.target.value);
                                                     }}
                                                     onClick={(e) => e.stopPropagation()} // prevent row drag trigger on click
                                                   >
-                                                    <option value="PLACED">Placed</option>
-                                                    <option value="IN_TRANSIT">In Transit</option>
-                                                    <option value="DELIVERED">Delivered</option>
+                                                    {statusOptionsFor(del).map(option => (
+                                                      <option key={option.value} value={option.value} disabled={option.disabled}>
+                                                        {option.label}
+                                                      </option>
+                                                    ))}
                                                   </select>
 
 
