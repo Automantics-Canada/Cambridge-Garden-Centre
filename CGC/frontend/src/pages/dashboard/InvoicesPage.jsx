@@ -15,6 +15,7 @@ import {
   AlertTriangle,
   ChevronRight,
   Inbox,
+  RefreshCw,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { Skeleton } from '../../components/Skeleton';
@@ -51,6 +52,8 @@ export default function InvoicesPage() {
   const [page, setPage] = useState(1);
   const [loadError, setLoadError] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [lastLoadedAt, setLastLoadedAt] = useState(null);
   const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef(null);
   const [suppliers, setSuppliers] = useState([]);
@@ -106,6 +109,7 @@ export default function InvoicesPage() {
       setInvoices(result.data);
       setPagination(result.pagination);
       setLoadError(null);
+      setLastLoadedAt(new Date());
     } catch (err) {
       // A background refresh that fails must not blank the table the user is
       // reading; it only surfaces the banner.
@@ -114,6 +118,20 @@ export default function InvoicesPage() {
       setLoading(false);
     }
   }, [userId, query]);
+
+  /**
+   * The list already refreshes itself every 60 seconds, but nothing said so and
+   * nothing let you ask for it now. Someone who had just uploaded an invoice had
+   * no way to tell whether the rows in front of them were current.
+   */
+  const handleManualRefresh = useCallback(async () => {
+    setIsRefreshing(true);
+    try {
+      await fetchInvoices(true);
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, [fetchInvoices]);
 
   const fetchSuppliers = useCallback(async () => {
     try {
@@ -189,6 +207,20 @@ export default function InvoicesPage() {
         subtitle="Review incoming invoices and check them against the agreed rates."
         actions={
           <>
+            {lastLoadedAt && (
+              <span className="text-[12.5px] text-muted tabular mr-1 hidden sm:inline">
+                Updated {lastLoadedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+              </span>
+            )}
+            <Button
+              variant="secondary"
+              onClick={handleManualRefresh}
+              disabled={isRefreshing}
+              title="Fetch the latest invoices now"
+            >
+              <RefreshCw size={16} className={cn(isRefreshing && 'animate-spin')} />
+              Refresh
+            </Button>
             <input
               type="file"
               accept=".jpg,.jpeg,.png,.pdf"
@@ -283,6 +315,10 @@ export default function InvoicesPage() {
                 type="date"
                 className="tabular"
                 value={filters.dateStart}
+                // Bounds keep the range from being entered backwards: the picker
+                // greys out the impossible dates rather than accepting a range
+                // that can only ever return nothing.
+                max={filters.dateEnd || undefined}
                 onChange={e => setFilters({...filters, dateStart: e.target.value})}
               />
             </div>
@@ -292,6 +328,7 @@ export default function InvoicesPage() {
                 type="date"
                 className="tabular"
                 value={filters.dateEnd}
+                min={filters.dateStart || undefined}
                 onChange={e => setFilters({...filters, dateEnd: e.target.value})}
               />
             </div>

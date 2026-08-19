@@ -316,6 +316,7 @@ export default function RatesPage() {
                     type="date"
                     className="tabular"
                     value={formData.effectiveFrom}
+                    max={formData.effectiveTo || undefined}
                     onChange={e => setFormData({...formData, effectiveFrom: e.target.value})}
                   />
                 </Field>
@@ -325,6 +326,7 @@ export default function RatesPage() {
                     type="date"
                     className="tabular"
                     value={formData.effectiveTo}
+                    min={formData.effectiveFrom || undefined}
                     onChange={e => setFormData({...formData, effectiveTo: e.target.value})}
                   />
                 </Field>
