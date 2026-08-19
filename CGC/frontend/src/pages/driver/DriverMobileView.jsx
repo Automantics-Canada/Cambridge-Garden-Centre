@@ -167,6 +167,9 @@ export default function DriverMobileView() {
 
   // Enforce single active order view constraint
   const currentDelivery = deliveries[0];
+  const deliveryAddress = currentDelivery?.order?.shippingAddress
+    || currentDelivery?.order?.document?.shippingAddress
+    || '';
 
   return (
     <div className="min-h-screen bg-canvas text-ink pb-28 font-sans">
@@ -250,8 +253,8 @@ export default function DriverMobileView() {
                         <div className="w-8 h-8 rounded-pill bg-surface flex items-center justify-center shadow-card border border-line flex-shrink-0">
                           <MapPin className="text-clay" size={16} strokeWidth={2} />
                         </div>
-                        <p className={`font-normal text-[13px] leading-relaxed pt-1 ${currentDelivery.order.shippingAddress ? 'text-muted' : 'text-clay'}`}>
-                          {currentDelivery.order.shippingAddress || 'No delivery address on file. Ask dispatch before you leave.'}
+                        <p className={`font-normal text-[13px] leading-relaxed pt-1 ${deliveryAddress ? 'text-muted' : 'text-clay'}`}>
+                          {deliveryAddress || 'No delivery address on file. Ask dispatch before you leave.'}
                         </p>
                       </div>
                     </div>

@@ -10,6 +10,7 @@ import { businessDayOffset, formatDate } from '../../lib/date';
 import { cn } from '../../lib/cn';
 import { isTerminal, statusErrorMessage, statusOptionsFor } from '../../lib/deliveryTransitions';
 import { formatQuantity } from '../../lib/quantity';
+import { mergeUnassignedOrders } from '../../lib/dispatchBoard';
 
 export default function DispatchBoard() {
   const [board, setBoard] = useState({ unassignedOrders: [], unassignedDeliveries: [], drivers: [] });
@@ -58,7 +59,14 @@ export default function DispatchBoard() {
         ...d,
         deliveries: [...(d.deliveries || [])].sort((a, b) => (a.priority || 0) - (b.priority || 0))
       }));
-      setBoard({ ...data, drivers });
+      setBoard({
+        ...data,
+        unassignedOrders: mergeUnassignedOrders(
+          data?.unassignedOrders,
+          data?.unassignedDeliveries,
+        ),
+        drivers,
+      });
     } catch (e) {
       console.error(e);
       if (!isBackgroundSync) toast.error('Failed to fetch dispatch board');

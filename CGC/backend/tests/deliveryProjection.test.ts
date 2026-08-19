@@ -16,7 +16,7 @@ describe('delivery response projections', () => {
 
   it('keeps address and ticket evidence in the driver response', () => {
     const order = DELIVERY_DRIVER_RESPONSE_SELECT.order.select;
-    assert.equal(order.shippingAddress, true);
+    assert.deepEqual(order.document, { select: { shippingAddress: true } });
     assert.ok(order.tickets.select.thumbnailUrl);
     assert.ok(order.tickets.select.imageUrl);
   });

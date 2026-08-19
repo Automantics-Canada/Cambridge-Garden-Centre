@@ -38,7 +38,9 @@ export const DELIVERY_DRIVER_RESPONSE_SELECT = {
   order: {
     select: {
       ...DELIVERY_RESPONSE_SELECT.order.select,
-      shippingAddress: true,
+      document: {
+        select: { shippingAddress: true },
+      },
       tickets: {
         select: {
           id: true,
