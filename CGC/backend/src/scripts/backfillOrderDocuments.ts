@@ -38,6 +38,18 @@ interface Args {
   limit: number;
 }
 
+type BackfillBuyerType = 'RETAIL' | 'CONTRACTOR';
+
+interface BackfillOrder {
+  id: string;
+  spruceOrderId: string;
+  customerName: string;
+  poNumber: string | null;
+  buyerType: BackfillBuyerType | null;
+  orderDate: Date;
+  deliveryDate: Date | null;
+}
+
 function parseArgs(argv: string[]): Args {
   const apply = argv.includes('--apply');
   const limitArg = argv.find(a => a.startsWith('--limit='));
@@ -55,27 +67,29 @@ async function main() {
       : `DRY RUN — nothing will be written. Limit ${limit}. Pass --apply to write.`
   );
 
-  const orders = await prisma.order.findMany({
-    where: { documentId: null },
-    // Oldest first so a document's fields come from its earliest line on every
-    // run, making repeated runs produce the same result.
-    orderBy: [{ orderDate: 'asc' }, { createdAt: 'asc' }, { spruceOrderId: 'asc' }],
-    take: limit,
-    select: {
-      id: true,
-      spruceOrderId: true,
-      customerName: true,
-      poNumber: true,
-      buyerType: true,
-      orderDate: true,
-      deliveryDate: true,
-    },
-  });
+  // Production contains a small legacy tail where buyerType is NULL even
+  // though the Prisma model is non-nullable. A normal findMany tries to decode
+  // that value as the enum and aborts the entire dry run. Cast it to text so we
+  // can preserve the unknown value and skip only documents that cannot be
+  // classified from any of their own lines.
+  const orders = await prisma.$queryRaw<BackfillOrder[]>`
+    SELECT "id",
+           "spruceOrderId",
+           "customerName",
+           "poNumber",
+           "buyerType"::text AS "buyerType",
+           "orderDate",
+           "deliveryDate"
+      FROM "public"."Order"
+     WHERE "documentId" IS NULL
+     ORDER BY "orderDate" ASC, "createdAt" ASC, "spruceOrderId" ASC
+     LIMIT ${limit}
+  `;
 
   console.log(`Found ${orders.length} order line(s) with no document.`);
 
   // Group by the document number recovered from the key.
-  const groups = new Map<string, typeof orders>();
+  const groups = new Map<string, BackfillOrder[]>();
   const unparseable: string[] = [];
 
   for (const order of orders) {
@@ -101,41 +115,61 @@ async function main() {
   let created = 0;
   let attached = 0;
   let reused = 0;
+  let unknownBuyerDocuments = 0;
+  let unknownBuyerLines = 0;
   const failures: Array<{ documentNumber: string; error: string }> = [];
 
   for (const [documentNumber, lines] of groups) {
     const first = lines[0]!;
+    const buyerTypes = [...new Set(
+      lines
+        .map(line => line.buyerType)
+        .filter((value): value is BackfillBuyerType => value !== null)
+    )];
+
+    // One document may contain several line rows. If at least one line carries
+    // a buyer type and every known line agrees, that is the document's own
+    // evidence. With no known value (or conflicting values), leave the whole
+    // document unattached for explicit review rather than defaulting it.
+    if (buyerTypes.length !== 1) {
+      unknownBuyerDocuments++;
+      unknownBuyerLines += lines.length;
+      console.warn(
+        `${apply ? '[skip]' : '[dry run skip]'} ${documentNumber}: ` +
+        `${lines.length} line(s) have ${buyerTypes.length === 0 ? 'no buyer type' : 'conflicting buyer types'}.`
+      );
+      continue;
+    }
+
+    const buyerType = buyerTypes[0]!;
 
     if (!apply) {
       console.log(
         `[dry run] ${documentNumber}: would attach ${lines.length} line(s) ` +
-        `(customer "${first.customerName}", ordered ${first.orderDate.toISOString().slice(0, 10)})`
+        `(customer "${first.customerName}", buyer type ${buyerType}, ` +
+        `ordered ${first.orderDate.toISOString().slice(0, 10)})`
       );
       continue;
     }
 
     try {
-      await prisma.$transaction(async tx => {
+      const result = await prisma.$transaction(async tx => {
         const existing = await tx.orderDocument.findUnique({
           where: { documentNumber },
           select: { id: true },
         });
-
-        if (existing) reused++;
 
         const document = existing ?? await tx.orderDocument.create({
           data: {
             documentNumber,
             customerName: first.customerName,
             poNumber: first.poNumber,
-            buyerType: first.buyerType,
+            buyerType,
             orderDate: first.orderDate,
             deliveryDate: first.deliveryDate,
           },
           select: { id: true },
         });
-
-        if (!existing) created++;
 
         // lineNumber is assigned by the order the lines were selected in, which
         // is deterministic, so re-running produces the same numbering.
@@ -144,9 +178,24 @@ async function main() {
             where: { id: lines[i]!.id },
             data: { documentId: document.id, lineNumber: i + 1 },
           });
-          attached++;
         }
+
+        return {
+          created: existing ? 0 : 1,
+          reused: existing ? 1 : 0,
+          attached: lines.length,
+        };
+      }, {
+        // Prisma's interactive-transaction default is five seconds. Larger
+        // documents legitimately contain dozens of line rows and exceeded it
+        // over the production pooler even though the database stayed healthy.
+        maxWait: 10_000,
+        timeout: 120_000,
       });
+
+      created += result.created;
+      reused += result.reused;
+      attached += result.attached;
     } catch (error: any) {
       failures.push({ documentNumber, error: error?.message || 'Unknown error' });
     }
@@ -158,9 +207,16 @@ async function main() {
     console.log(`Documents already present: ${reused}`);
     console.log(`Order lines attached: ${attached}`);
   } else {
-    console.log(`Would create up to ${groups.size} document(s) and attach ${orders.length - unparseable.length} line(s).`);
+    console.log(
+      `Would create up to ${groups.size - unknownBuyerDocuments} document(s) and attach ` +
+      `${orders.length - unparseable.length - unknownBuyerLines} line(s).`
+    );
   }
   console.log(`Skipped (unparseable key): ${unparseable.length}`);
+  console.log(
+    `Skipped (buyer type unknown/conflicting): ${unknownBuyerDocuments} document(s), ` +
+    `${unknownBuyerLines} line(s)`
+  );
 
   if (failures.length > 0) {
     console.error(`Failed documents: ${failures.length}`);
