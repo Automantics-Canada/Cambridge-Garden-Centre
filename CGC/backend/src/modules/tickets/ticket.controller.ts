@@ -11,6 +11,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import crypto from 'node:crypto';
 import { pdfToPng } from 'pdf-to-png-converter';
+import { parseQueryDate, QueryDateError } from '../../lib/queryDate.js';
 
 export const ingestWhatsappTicket = async (req: Request, res: Response) => {
   const file = (req as any).file as Express.Multer.File | undefined;
@@ -199,8 +200,8 @@ export const getTickets = async (req: Request, res: Response) => {
     if (status) filters.status = status as any;
     if (supplierId) filters.supplierId = supplierId as string;
     if (source) filters.source = source as any;
-    if (startDate) filters.startDate = startDate as string;
-    if (endDate) filters.endDate = endDate as string;
+    if (startDate) filters.startDate = parseQueryDate(startDate, 'startDate', 'start');
+    if (endDate) filters.endDate = parseQueryDate(endDate, 'endDate', 'end');
     if (search) filters.search = search as string;
 
     const pageNum = page ? parseInt(page as string) : undefined;
@@ -230,6 +231,9 @@ export const getTickets = async (req: Request, res: Response) => {
 
     return res.status(200).json(await TicketService.getTickets(filters));
   } catch (error: any) {
+    if (error instanceof QueryDateError) {
+      return res.status(400).json({ error: error.message });
+    }
     return res.status(500).json({ error: error.message || 'Unexpected error' });
   }
 };

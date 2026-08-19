@@ -45,8 +45,8 @@ export interface TicketFilters {
   status?: TicketStatus;
   supplierId?: string;
   source?: TicketSource;
-  startDate?: string;
-  endDate?: string;
+  startDate?: Date;
+  endDate?: Date;
   search?: string;
   page?: number;
   limit?: number;
@@ -68,8 +68,8 @@ export function buildTicketWhere(filters?: TicketFilters) {
 
   if (filters?.startDate || filters?.endDate) {
     where.receivedAt = {};
-    if (filters.startDate) where.receivedAt.gte = new Date(filters.startDate);
-    if (filters.endDate) where.receivedAt.lte = new Date(filters.endDate);
+    if (filters.startDate) where.receivedAt.gte = filters.startDate;
+    if (filters.endDate) where.receivedAt.lte = filters.endDate;
   }
 
   if (filters?.search && filters.search.trim()) {

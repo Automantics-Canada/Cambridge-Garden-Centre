@@ -31,14 +31,17 @@ describe('buildTicketWhere', () => {
   });
 
   it('builds a bounded date range', () => {
-    const where = buildTicketWhere({ startDate: '2026-01-01', endDate: '2026-02-01' });
+    const where = buildTicketWhere({
+      startDate: new Date('2026-01-01T05:00:00.000Z'),
+      endDate: new Date('2026-02-02T04:59:59.999Z'),
+    });
     assert.ok(where.receivedAt.gte instanceof Date);
     assert.ok(where.receivedAt.lte instanceof Date);
     assert.ok(where.receivedAt.gte < where.receivedAt.lte);
   });
 
   it('supports an open-ended range', () => {
-    const fromOnly = buildTicketWhere({ startDate: '2026-01-01' });
+    const fromOnly = buildTicketWhere({ startDate: new Date('2026-01-01T05:00:00.000Z') });
     assert.ok(fromOnly.receivedAt.gte instanceof Date);
     assert.equal(fromOnly.receivedAt.lte, undefined);
   });
@@ -74,7 +77,7 @@ describe('buildTicketWhere', () => {
       status: 'UNLINKED' as any,
       supplierId: 'sup-9',
       search: 'gravel',
-      startDate: '2026-03-01',
+      startDate: new Date('2026-03-01T05:00:00.000Z'),
     };
     assert.deepEqual(
       JSON.stringify(buildTicketWhere(filters)),

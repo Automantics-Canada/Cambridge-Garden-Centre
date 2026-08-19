@@ -75,7 +75,7 @@ export default function InvoiceDetailPage() {
       await api.post(`/api/invoices/${id}/verify`);
       toast.success('Invoice verified successfully');
       fetchInvoice();
-    } catch (err) {
+    } catch {
       toast.error('Verification failed');
     }
   };
@@ -89,7 +89,7 @@ export default function InvoiceDetailPage() {
       await api.post(`/api/invoices/${id}/dispute`, { note: disputeNote });
       toast.success('Invoice marked as disputed');
       fetchInvoice();
-    } catch (err) {
+    } catch {
       toast.error('Action failed');
     }
   };
@@ -105,7 +105,7 @@ export default function InvoiceDetailPage() {
       setShowReopenDialog(false);
       setReopenReason('');
       fetchInvoice();
-    } catch (err) {
+    } catch {
       toast.error('Reopening failed');
     }
   };

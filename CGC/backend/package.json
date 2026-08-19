@@ -10,6 +10,7 @@
     "build": "tsc",
     "start": "node dist/server.js",
     "start:worker": "node dist/worker.js",
+    "pretest": "prisma generate",
     "db:push": "prisma db push",
     "db:generate": "prisma generate",
     "bootstrap:admin": "tsx src/scripts/bootstrapAdmin.ts",

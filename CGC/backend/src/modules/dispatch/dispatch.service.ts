@@ -6,7 +6,7 @@ import { businessDayOf, businessDayRange } from '../../lib/businessDay.js';
 /**
  * The order fields the dispatch board renders, and nothing else.
  *
- * Deliberately excludes `buyerType`: see the note in `getDispatchBoard`.
+ * Deliberately excludes fields the board does not render.
  */
 export const DISPATCH_ORDER_SELECT = {
   id: true,
@@ -38,13 +38,10 @@ export const DispatchService = {
     // The board renders exactly these seven fields and never touches the
     // supplier relation, so the rest was pure payload.
     //
-    // More importantly, a full row read `buyerType`, and 16 of the 1,816 orders
-    // in production hold NULL there — written by a bulk import on 2026-07-12
-    // that bypassed Prisma's default. The column is declared non-nullable, so
-    // Prisma refused to deserialize those rows and failed the whole query:
-    // this endpoint returned 500 for every date, not just the affected days.
-    // Not selecting the column sidesteps the mismatch without a migration.
-    // The 16 rows still need a decision about what they actually are.
+    // Historical imports also left buyerType, quantity and unit null on a small
+    // set of rows. The Prisma model now mirrors that production reality so this
+    // projection can return an honest null instead of failing the whole board.
+    // buyerType remains excluded because the board does not render it.
     const unassignedOrders = await prisma.order.findMany({
       where: {
         deliveries: { none: {} },
@@ -70,8 +67,7 @@ export const DispatchService = {
             ]
           },
           include: {
-            // Same projection, same reason: a full order row here would hit the
-            // NULL `buyerType` rows and fail the driver query too.
+            // Same bounded projection for every order rendered on the board.
             order: { select: DISPATCH_ORDER_SELECT },
             history: {
               orderBy: { createdAt: 'desc' }

@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import api from '../../api/axios';
-import { Truck, MapPin, Search, ChevronUp, ChevronDown, ChevronRight, User, GripVertical, Mail, Package2, Image as ImageIcon, Calendar, Info, RefreshCw, FileText } from 'lucide-react';
+import { Truck, MapPin, Search, ChevronUp, ChevronDown, ChevronRight, User, GripVertical, Package2, Image as ImageIcon, Calendar, Info, RefreshCw, FileText } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { toast } from 'react-hot-toast';
 import { FadeInUp } from '../../components/Animated';
@@ -9,6 +9,7 @@ import { useIntervalRefresh } from '../../hooks/useIntervalRefresh';
 import { businessDayOffset, formatDate } from '../../lib/date';
 import { cn } from '../../lib/cn';
 import { isTerminal, statusErrorMessage, statusOptionsFor } from '../../lib/deliveryTransitions';
+import { formatQuantity } from '../../lib/quantity';
 
 export default function DispatchBoard() {
   const [board, setBoard] = useState({ unassignedOrders: [], unassignedDeliveries: [], drivers: [] });
@@ -33,7 +34,7 @@ export default function DispatchBoard() {
 
   const awaitingDateChoice = dateFilter === 'select' && !selectedDate;
 
-  const fetchBoard = async (isBackgroundSync = false) => {
+  const fetchBoard = useCallback(async (isBackgroundSync = false) => {
     if (awaitingDateChoice) {
       setLoading(false);
       return;
@@ -64,12 +65,12 @@ export default function DispatchBoard() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [awaitingDateChoice, poolDate]);
 
   useEffect(() => {
     fetchBoard();
     // Refetch when the day being dispatched changes.
-  }, [poolDate, awaitingDateChoice]);
+  }, [fetchBoard]);
 
   useIntervalRefresh(
     () => {
@@ -78,19 +79,6 @@ export default function DispatchBoard() {
     10_000,
     { enabled: !draggingOrderId }
   );
-
-  const handleResendEmail = async (deliveryId) => {
-    try {
-      const res = await api.post(`/api/dispatch/resend-email/${deliveryId}`);
-      if (res.data.success) {
-        toast.success('Email resent successfully');
-      } else {
-        toast.error(`Failed to send: ${res.data.error || 'Check credentials'}`);
-      }
-    } catch (e) {
-      toast.error('Failed to resend email');
-    }
-  };
 
   const handleStatusUpdate = async (deliveryId, newStatus) => {
     // Optimistic UI update
@@ -365,16 +353,6 @@ export default function DispatchBoard() {
       if (del) return del.order;
     }
     return null;
-  };
-
-  // Helper for real-time status colors
-  const getStatusColor = (status) => {
-    switch (status) {
-      case 'PLACED': return 'brand';
-      case 'IN_TRANSIT': return 'ochre';
-      case 'DELIVERED': return 'brand';
-      default: return 'muted';
-    }
   };
 
   // Filtering based on Search Query
@@ -719,7 +697,7 @@ export default function DispatchBoard() {
 
                                               {/* Quantity Column */}
                                               <td className="px-6 py-4 whitespace-nowrap text-[12.5px] text-muted font-bold select-none w-32">
-                                                {Number(del.order.quantity)} {del.order.unit}
+                                                {formatQuantity(del.order.quantity, del.order.unit)}
                                               </td>
 
                                               {/* Status Badge Column */}
@@ -908,7 +886,7 @@ export default function DispatchBoard() {
 
                     {/* Quantity Column */}
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-muted font-bold select-none">
-                      {Number(order.quantity)} {order.unit}
+                      {formatQuantity(order.quantity, order.unit)}
                     </td>
 
                     {/* Date Column */}

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useSelector, useDispatch } from 'react-redux';
 import api from '../../api/axios';
@@ -12,6 +12,7 @@ import { MobileDriverSkeleton } from '../../components/Skeleton';
 import { useIntervalRefresh } from '../../hooks/useIntervalRefresh';
 import { Badge } from '../../components/ui';
 import { cn } from '../../lib/cn';
+import { formatQuantity } from '../../lib/quantity';
 
 export default function DriverMobileView() {
   const [searchParams] = useSearchParams();
@@ -31,7 +32,7 @@ export default function DriverMobileView() {
   const [updatingStatus, setUpdatingStatus] = useState(false);
   const [showLogoutModal, setShowLogoutModal] = useState(false);
 
-  const fetchMobileData = async (silent = false) => {
+  const fetchMobileData = useCallback(async (silent = false) => {
     try {
       if (!silent) {
         setLoading(true);
@@ -89,11 +90,11 @@ export default function DriverMobileView() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [isAuthenticated, token]);
 
   useEffect(() => {
     fetchMobileData();
-  }, [token, isAuthenticated]);
+  }, [fetchMobileData]);
 
   useIntervalRefresh(
     () => {
@@ -241,7 +242,7 @@ export default function DriverMobileView() {
                           <Package className="text-brand" size={16} strokeWidth={2} />
                         </div>
                         <div>
-                          <p className="tabular font-semibold text-ink leading-none">{Number(currentDelivery.order.quantity)} {currentDelivery.order.unit}</p>
+                          <p className="tabular font-semibold text-ink leading-none">{formatQuantity(currentDelivery.order.quantity, currentDelivery.order.unit)}</p>
                           <p className="text-[13px] text-muted font-normal mt-1">{currentDelivery.order.product}</p>
                         </div>
                       </div>

@@ -31,9 +31,13 @@ describe('startOfBusinessDay', () => {
 
   it('rejects anything that is not a calendar date', () => {
     // Callers must reject rather than fall through to an unfiltered query.
-    for (const bad of ['', 'today', '2026-8-16', '2026-13-01', '2026-08-16T00:00:00Z']) {
+    for (const bad of ['', 'today', '2026-8-16', '2026-13-01', '2026-02-31', '2025-02-29', '2026-08-16T00:00:00Z']) {
       assert.equal(startOfBusinessDay(bad), null, `expected null for ${JSON.stringify(bad)}`);
     }
+  });
+
+  it('accepts a real leap day', () => {
+    assert.equal(startOfBusinessDay('2024-02-29')?.toISOString(), '2024-02-29T05:00:00.000Z');
   });
 });
 
