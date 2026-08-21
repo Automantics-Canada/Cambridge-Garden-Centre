@@ -19,7 +19,7 @@ const upload = multer({
   limits: { fileSize: 5 * 1024 * 1024, files: 1 },
 });
 
-// A PDF import fans out to one Textract call per page, so it is the most
+// A PDF import parses every page of the report in process, so it is the most
 // expensive endpoint in the service. Bound both rate and concurrency.
 const pdfUpload = createUploader({ maxBytes: 5 * 1024 * 1024, kinds: ['pdf'] });
 
@@ -48,7 +48,7 @@ router.post(
 
 // Step two of the Spruce import: merge the PO report onto documents already
 // imported from the delivery report, joined on document number. Same rate and
-// concurrency bounds as the delivery import — it is the same Textract cost.
+// concurrency bounds as the delivery import — it is the same parsing cost.
 router.post(
   '/merge-po-report',
   requireRole([UserRole.AP_USER, UserRole.OWNER, UserRole.ADMIN]),

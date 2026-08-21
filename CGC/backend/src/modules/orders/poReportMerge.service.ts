@@ -1,5 +1,5 @@
 import { prisma } from '../../db/prisma.js';
-import { findCell, readPdfTableRows } from './pdfTableReader.js';
+import { parseSprucePdf, REPORT_LABELS } from './spruce/parseSprucePdf.js';
 
 /**
  * The second half of the two-step Spruce import.
@@ -44,44 +44,111 @@ export interface PoMergePreview {
   unreadable: Array<{ pageNumber: number; rowNumber: number; reason: string }>;
 }
 
-const DOCUMENT_ALIASES = ['document', 'documentno', 'documentnumber', 'docno', 'doc', 'order', 'orderno', 'ordernumber'];
-const PO_ALIASES = ['podocument', 'ponumber', 'po', 'purchaseorder', 'ponum', 'customerpo'];
-
 /**
  * Reads (document number, PO number) pairs out of the PO report.
  *
- * Column names vary between Spruce report definitions, so headers are matched
- * against alias lists rather than fixed positions. A row that does not yield
- * both values is reported rather than dropped — a silently skipped row is how
- * a PO goes missing without anyone noticing.
+ * Only the item-tracking report carries a PO. It prints one line per item, so
+ * a document with several items repeats its PO on each of them; the pairs are
+ * reduced to one per document here.
+ *
+ * A document whose lines disagree about their PO is reported rather than
+ * resolved. So is a document with no PO at all, and so is a report of the wrong
+ * kind. A silently skipped row is how a PO goes missing without anyone noticing
+ * it went.
  */
 export async function parsePoReport(buffer: Buffer): Promise<{
   rows: PoReportRow[];
   unreadable: PoMergePreview['unreadable'];
 }> {
-  const tableRows = await readPdfTableRows(buffer);
-
-  const rows: PoReportRow[] = [];
+  const report = await parseSprucePdf(buffer);
   const unreadable: PoMergePreview['unreadable'] = [];
 
-  for (const row of tableRows) {
-    const documentNumber = findCell(row.cells, DOCUMENT_ALIASES)?.trim();
-    const poNumber = findCell(row.cells, PO_ALIASES)?.trim();
+  if (report.type !== 'ITEM_TRACKING') {
+    // Reporting this per row would bury the point under one entry per line.
+    return {
+      rows: [],
+      unreadable: [
+        {
+          pageNumber: 1,
+          rowNumber: 0,
+          reason:
+            `This is the ${REPORT_LABELS[report.type]}, which has no PO columns. ` +
+            `Upload the ${REPORT_LABELS.ITEM_TRACKING} report instead.`,
+        },
+      ],
+    };
+  }
 
-    if (!documentNumber && !poNumber) continue; // blank or total row
+  interface Seen {
+    poNumber: string;
+    pageNumber: number;
+    rowNumber: number;
+    conflictsWith?: string;
+  }
 
-    if (!documentNumber || !poNumber) {
+  const byDocument = new Map<string, Seen>();
+  const withoutPo = new Map<string, { pageNumber: number; rowNumber: number }>();
+
+  for (const row of report.rows) {
+    const { page: pageNumber, row: rowNumber } = row.source;
+
+    if (!row.poNumber) {
+      if (!withoutPo.has(row.documentNumber)) {
+        withoutPo.set(row.documentNumber, { pageNumber, rowNumber });
+      }
+      continue;
+    }
+
+    const seen = byDocument.get(row.documentNumber);
+    if (!seen) {
+      byDocument.set(row.documentNumber, { poNumber: row.poNumber, pageNumber, rowNumber });
+    } else if (seen.poNumber !== row.poNumber && !seen.conflictsWith) {
+      seen.conflictsWith = row.poNumber;
+    }
+  }
+
+  const rows: PoReportRow[] = [];
+
+  for (const [documentNumber, seen] of byDocument) {
+    if (seen.conflictsWith) {
       unreadable.push({
-        pageNumber: row.pageNumber,
-        rowNumber: row.rowNumber,
-        reason: !documentNumber
-          ? `no document number (columns seen: ${Object.keys(row.cells).join(', ')})`
-          : `no PO number for document ${documentNumber}`,
+        pageNumber: seen.pageNumber,
+        rowNumber: seen.rowNumber,
+        reason:
+          `document ${documentNumber} has more than one PO on it ` +
+          `(${seen.poNumber} and ${seen.conflictsWith}); left alone`,
       });
       continue;
     }
 
-    rows.push({ documentNumber, poNumber, pageNumber: row.pageNumber, rowNumber: row.rowNumber });
+    rows.push({
+      documentNumber,
+      poNumber: seen.poNumber,
+      pageNumber: seen.pageNumber,
+      rowNumber: seen.rowNumber,
+    });
+  }
+
+  // Most documents have no purchase order: one is only raised where the yard
+  // buys in for the job, so on a normal day's report the majority of lines
+  // leave the column empty. Reported once as a count rather than once per
+  // document — an ordinary state listed alongside genuine failures reads like
+  // twelve things went wrong.
+  const missing = [...withoutPo.keys()].filter(documentNumber => !byDocument.has(documentNumber));
+  if (missing.length > 0) {
+    const first = withoutPo.get(missing[0]!)!;
+    unreadable.push({
+      pageNumber: first.pageNumber,
+      rowNumber: first.rowNumber,
+      reason:
+        `${missing.length} document${missing.length === 1 ? '' : 's'} on this report ` +
+        `carr${missing.length === 1 ? 'ies' : 'y'} no PO number and will not be merged ` +
+        `(${missing.slice(0, 5).join(', ')}${missing.length > 5 ? ', ...' : ''})`,
+    });
+  }
+
+  for (const row of report.unreadable) {
+    unreadable.push({ pageNumber: row.page, rowNumber: row.row, reason: row.reason });
   }
 
   return { rows, unreadable };

@@ -1,5 +1,24 @@
 /**
- * Synthesises the unique `Order.spruceOrderId` for one parsed PDF import row.
+ * The unique `Order.spruceOrderId` for one line of a Spruce document.
+ *
+ * A document number is not unique per row — one document spans many lines — so
+ * the key pairs it with the line's number within that document.
+ *
+ * This is the key the importer writes. It records where a line sits in its
+ * document rather than where it sat on a page, which is what makes it stable:
+ * the same line keeps the same key however the report is paginated, and a
+ * re-import updates the row it wrote before instead of adding another beside
+ * it. The `-L` marker distinguishes these from every earlier shape below.
+ */
+export function buildSpruceLineKey(documentNumber: string, lineNumber: number): string {
+  return `${documentNumber}-L${lineNumber}`;
+}
+
+/**
+ * Synthesises the `Order.spruceOrderId` an OCR import row would have had.
+ *
+ * Superseded by `buildSpruceLineKey` and kept only to read what is already
+ * stored. Nothing writes this shape any more.
  *
  * A Spruce document number is not unique per row: one document spans many line
  * items, and the parser carries the last seen document number forward across
@@ -62,6 +81,11 @@ export function documentNumberFromSpruceOrderKey(spruceOrderId: string): string 
   // digits-only is deliberately narrow so an arbitrary malformed coordinate
   // is not accepted as a document number.
   if (/^\d+$/.test(trimmed)) return trimmed;
+
+  // Current shape: `<document>-L<line>`. Checked before the coordinate shapes,
+  // whose trailing `-<number>` would otherwise match first and leave the `-L`.
+  const lineKey = /^(.+?)-L\d+$/.exec(trimmed);
+  if (lineKey) return lineKey[1] ?? null;
 
   // Text-extraction fallback: `<document>-T-<index>`. Checked first because its
   // `-T-` would otherwise be read as an empty table suffix.

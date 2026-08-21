@@ -339,7 +339,7 @@ export default function OrdersPage() {
               <Button
                 onClick={() => poInputRef.current?.click()}
                 disabled={isUploading || poBusy}
-                title="Step two: merge the Spruce PO report onto orders already imported"
+                title="Step two: merge the Sales Order Item Tracking report onto orders already imported. It is the only Spruce report that carries PO numbers."
               >
                 {poBusy ? 'Reading...' : (<><Upload size={16} /> Add PO report</>)}
               </Button>

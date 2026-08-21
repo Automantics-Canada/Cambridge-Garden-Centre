@@ -3,8 +3,9 @@ import type { AuthRequest } from '../../middleware/authMiddleware.js';
 import { OrderImportService, OrderService } from './order.service.js';
 import { OrderPdfImportService } from './orderPdfImport.service.js';
 import { v4 as uuidv4 } from 'uuid';
-import { orderEventEmitter, OrderEvents } from './order.events.js';
+import { orderEventEmitter, OrderEvents, waitForImportListener } from './order.events.js';
 import { applyPoReportMerge, parsePoReport, previewPoReportMerge } from './poReportMerge.service.js';
+import { SprucePdfError } from '../../lib/pdf/pdfWords.js';
 export const importOrdersFromCsv = async (req: AuthRequest, res: Response) => {
   const file = req.file;
 
@@ -39,10 +40,15 @@ export const importOrdersFromPdf = async (req: AuthRequest, res: Response) => {
   // Start processing in the background (fire and forget)
   // Make sure to copy the buffer since req.file.buffer might be freed
   const fileBuffer = Buffer.from(file.buffer);
-  
-  OrderPdfImportService.importFromPdf(fileBuffer, jobId).catch(err => {
-    console.error('Background PDF import failed catastrophically', err);
-  });
+
+  // Wait for the client to open the progress stream before starting, so it
+  // sees the import from its first row. Bounded, so an upload nobody is
+  // watching still runs.
+  waitForImportListener(jobId)
+    .then(() => OrderPdfImportService.importFromPdf(fileBuffer, jobId))
+    .catch(err => {
+      console.error('Background PDF import failed catastrophically', err);
+    });
 
   return res.status(202).json({
     message: 'PDF Import started',
@@ -95,6 +101,11 @@ export const streamPdfImport = async (req: AuthRequest, res: Response) => {
   };
 
   req.on('close', cleanup);
+
+  // Only now, with the listeners in place, may the import begin. It is fast
+  // enough to finish before this point otherwise, and the stream has no
+  // backlog to replay.
+  orderEventEmitter.emit(OrderEvents.PDF_IMPORT_ATTACHED, { jobId });
 };
 
 export const getOrders = async (req: AuthRequest, res: Response) => {
@@ -142,6 +153,13 @@ export const mergePoReport = async (req: AuthRequest, res: Response) => {
     return res.status(200).json({ applied: true, ...summary, unreadable });
   } catch (err: any) {
     console.error('PO report merge error', err);
+
+    // A SprucePdfError is about the file the user chose — the wrong report, or
+    // a scan of one — so it is theirs to correct, and its message says how.
+    if (err instanceof SprucePdfError) {
+      return res.status(400).json({ error: err.message });
+    }
+
     return res.status(500).json({ error: err?.message || 'Unexpected error merging PO report' });
   }
 };

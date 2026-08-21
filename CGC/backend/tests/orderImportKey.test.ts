@@ -9,7 +9,11 @@
  */
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { buildSpruceOrderKey, documentNumberFromSpruceOrderKey } from '../src/modules/orders/orderImportKey.js';
+import {
+  buildSpruceLineKey,
+  buildSpruceOrderKey,
+  documentNumberFromSpruceOrderKey,
+} from '../src/modules/orders/orderImportKey.js';
 
 describe('buildSpruceOrderKey', () => {
   it('keeps the legacy format for the first table of the first page', () => {
@@ -132,5 +136,56 @@ describe('documentNumberFromSpruceOrderKey', () => {
     assert.equal(documentNumberFromSpruceOrderKey(''), null);
     assert.equal(documentNumberFromSpruceOrderKey('   '), null);
     assert.equal(documentNumberFromSpruceOrderKey('no-trailing-row'), null);
+  });
+});
+
+describe('buildSpruceLineKey', () => {
+  it('identifies a line by its place in its document', () => {
+    assert.equal(buildSpruceLineKey('2608-712589', 1), '2608-712589-L1');
+    assert.equal(buildSpruceLineKey('2608-712589', 12), '2608-712589-L12');
+  });
+
+  it('gives every line of a document its own key', () => {
+    const keys = new Set<string>();
+    for (let line = 1; line <= 50; line++) keys.add(buildSpruceLineKey('2608-712589', line));
+
+    assert.equal(keys.size, 50);
+  });
+
+  it('cannot collide with any key the OCR importer wrote', () => {
+    // A re-import updates the row it finds by (document, line) and rewrites its
+    // key. That is only safe if the new key cannot already belong to a
+    // different row.
+    const legacy = new Set<string>();
+    for (const pageIndex of [0, 1, 4]) {
+      for (const tableIndex of [0, 1]) {
+        for (const rowIndex of [1, 2, 11, 12]) {
+          legacy.add(buildSpruceOrderKey({ documentId: '2608-712589', pageIndex, tableIndex, rowIndex }));
+        }
+      }
+    }
+    legacy.add('2608-712589-T-3');
+    legacy.add('712589');
+
+    for (let line = 1; line <= 50; line++) {
+      assert.ok(!legacy.has(buildSpruceLineKey('2608-712589', line)));
+    }
+  });
+
+  it('round-trips back to its document number', () => {
+    for (const line of [1, 7, 40]) {
+      assert.equal(documentNumberFromSpruceOrderKey(buildSpruceLineKey('2608-712589', line)), '2608-712589');
+    }
+  });
+
+  it('still reads every key shape stored before it', () => {
+    // Production holds rows written by the OCR importer and by earlier CSV
+    // imports. The backfill groups on this, so none of them may stop parsing.
+    assert.equal(documentNumberFromSpruceOrderKey('123456'), '123456');
+    assert.equal(documentNumberFromSpruceOrderKey('INV-123-2'), 'INV-123');
+    assert.equal(documentNumberFromSpruceOrderKey('INV-123-P2-4'), 'INV-123');
+    assert.equal(documentNumberFromSpruceOrderKey('INV-123-T2-4'), 'INV-123');
+    assert.equal(documentNumberFromSpruceOrderKey('INV-123-P2-T2-4'), 'INV-123');
+    assert.equal(documentNumberFromSpruceOrderKey('INV-123-T-4'), 'INV-123');
   });
 });
