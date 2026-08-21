@@ -226,11 +226,13 @@ describe('order routes', () => {
   it('imports require an operations role', () => {
     assertGuarded(orderRouter, 'post', '/import', OPERATIONS);
     assertGuarded(orderRouter, 'post', '/import-pdf', OPERATIONS);
+    assertGuarded(orderRouter, 'post', '/merge-po-report', OPERATIONS);
   });
 
   it('order GETs require an operations role so a DRIVER cannot dump the book', () => {
     assertGuarded(orderRouter, 'get', '/', OPERATIONS);
     assertGuarded(orderRouter, 'get', '/import/stream', OPERATIONS);
+    assertGuarded(orderRouter, 'get', '/import/jobs/:jobId', OPERATIONS);
     assert.equal(admittedRoles(effectiveChain(orderRouter, 'get', '/'))?.includes('DRIVER'), false);
   });
 });
@@ -310,6 +312,7 @@ describe('GET routes that operations staff use', () => {
     [ticketRouter, 'get', '/:ticketId/ocr-status', OPERATIONS],
     [orderRouter, 'get', '/', OPERATIONS],
     [orderRouter, 'get', '/import/stream', OPERATIONS],
+    [orderRouter, 'get', '/import/jobs/:jobId', OPERATIONS],
     [supplierRouter, 'get', '/', OPERATIONS],
     [productRouter, 'get', '/', OPERATIONS],
     [productRouter, 'get', '/units', OPERATIONS],

@@ -129,24 +129,25 @@ async function main() {
 
     // One document may contain several line rows. If at least one line carries
     // a buyer type and every known line agrees, that is the document's own
-    // evidence. With no known value (or conflicting values), leave the whole
-    // document unattached for explicit review rather than defaulting it.
-    if (buyerTypes.length !== 1) {
+    // evidence. With no known value or conflicting values, the document is
+    // attached with no buyer type at all rather than skipped: identity is what
+    // makes re-imports safe, and guessing CONTRACTOR hid the walk-in trade.
+    // `OrderDocument.buyerType` is nullable for exactly this.
+    const buyerType: BackfillBuyerType | null = buyerTypes.length === 1 ? buyerTypes[0]! : null;
+    if (buyerType === null) {
       unknownBuyerDocuments++;
       unknownBuyerLines += lines.length;
       console.warn(
-        `${apply ? '[skip]' : '[dry run skip]'} ${documentNumber}: ` +
-        `${lines.length} line(s) have ${buyerTypes.length === 0 ? 'no buyer type' : 'conflicting buyer types'}.`
+        `${apply ? '[attach]' : '[dry run attach]'} ${documentNumber}: ` +
+        `${lines.length} line(s) have ${buyerTypes.length === 0 ? 'no buyer type' : 'conflicting buyer types'}; ` +
+        'attaching with buyer type unset.'
       );
-      continue;
     }
-
-    const buyerType = buyerTypes[0]!;
 
     if (!apply) {
       console.log(
         `[dry run] ${documentNumber}: would attach ${lines.length} line(s) ` +
-        `(customer "${first.customerName}", buyer type ${buyerType}, ` +
+        `(customer "${first.customerName}", buyer type ${buyerType ?? 'unset'}, ` +
         `ordered ${first.orderDate.toISOString().slice(0, 10)})`
       );
       continue;
@@ -208,14 +209,14 @@ async function main() {
     console.log(`Order lines attached: ${attached}`);
   } else {
     console.log(
-      `Would create up to ${groups.size - unknownBuyerDocuments} document(s) and attach ` +
-      `${orders.length - unparseable.length - unknownBuyerLines} line(s).`
+      `Would create or reuse up to ${groups.size} document(s) and attach ` +
+      `${orders.length - unparseable.length} line(s).`
     );
   }
   console.log(`Skipped (unparseable key): ${unparseable.length}`);
   console.log(
-    `Skipped (buyer type unknown/conflicting): ${unknownBuyerDocuments} document(s), ` +
-    `${unknownBuyerLines} line(s)`
+    `Attached with buyer type unset: ${unknownBuyerDocuments} document(s), ` +
+    `${unknownBuyerLines} line(s).`
   );
 
   if (failures.length > 0) {

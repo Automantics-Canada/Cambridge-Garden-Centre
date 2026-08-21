@@ -109,6 +109,18 @@ describe('parseItemTrackingReport', () => {
       (err: unknown) => err instanceof SprucePdfError && err.code === 'MISSING_HEADERS'
     );
   });
+
+  it('refuses a report whose bands carry headings but no item lines', () => {
+    const headersOnly = [
+      page(0, [run(1.2, 5.7, 'Document'), run(11.6, 5.7, 'Customer Name')]),
+      page(1, [run(10.46, 5.7, 'Item Number'), run(16.09, 5.7, 'Item Desc'), run(29.05, 5.7, 'Qty')]),
+    ];
+
+    assert.throws(
+      () => parseItemTrackingReport(headersOnly),
+      (err: unknown) => err instanceof SprucePdfError && err.code === 'NO_READABLE_ROWS'
+    );
+  });
 });
 
 describe('parseOrderSummaryReport', () => {
@@ -161,6 +173,21 @@ describe('parseOrderSummaryReport', () => {
   it('reports nothing unreadable for a well-formed report', () => {
     assert.deepEqual(parseOrderSummaryReport(orderSummaryReport()).unreadable, []);
   });
+
+  it('refuses a report whose order headings sit above no item lines', () => {
+    const headersOnly = [page(0, [
+      run(1.0, 6.61, 'Order#'),
+      run(5.5, 6.61, 'Account'),
+      run(8.0, 6.61, 'Name'),
+      run(19.3, 6.61, 'Cashier'),
+      run(22.1, 6.61, 'Branch'),
+    ])];
+
+    assert.throws(
+      () => parseOrderSummaryReport(headersOnly),
+      (err: unknown) => err instanceof SprucePdfError && err.code === 'NO_READABLE_ROWS'
+    );
+  });
 });
 
 describe('parseDeliveryReport', () => {
@@ -209,6 +236,46 @@ describe('parseDeliveryReport', () => {
     assert.throws(
       () => parseDeliveryReport([page(0, [run(1.5, 5.53, '(Inv / Tkt / Ord)')])]),
       (err: unknown) => err instanceof SprucePdfError && err.code === 'MISSING_HEADERS'
+    );
+  });
+
+  it('does not read a phone extension as the customer', () => {
+    // The real failure on document 2608-712563: `EXT.1` sat immediately before
+    // the phone number and replaced the customer's actual name.
+    const pages = [page(0, [
+      run(1.5, 5.53, '09/02/26 - 09/02/26 (Inv / Tkt / Ord)    Qty Branch'),
+      run(1.5, 8.72, '09/02/26'),
+      run(4.2, 8.72, '2608-700009'),
+      run(16.4, 8.72, 'CGOLF01'),
+      run(21.4, 8.72, 'Cambridge Golf Course'),
+      run(30.0, 8.72, 'EXT.1'),
+      run(37.1, 8.72, '519-555-0144'),
+      run(42.7, 8.72, '88.25'),
+      // The line under the order carries only codes; it must not refine.
+      run(16.4, 9.63, '0'),
+      run(21.4, 9.63, 'EXT.1'),
+      run(4.5, 11.38, 'SOILSCRNA'),
+      run(12.4, 11.38, 'Screened Soil Bulk'),
+      run(29.1, 11.38, '4.0000'),
+      run(31.3, 11.38, 'CY'),
+    ])];
+
+    const { rows } = parseDeliveryReport(pages);
+
+    assert.equal(rows[0]?.customerName, 'Cambridge Golf Course');
+  });
+
+  it('refuses a report whose headings sit above no readable item lines', () => {
+    assert.throws(
+      () => parseDeliveryReport([page(0, [
+        run(1.5, 5.53, '09/02/26 - 09/02/26 (Inv / Tkt / Ord)    Qty Branch'),
+        run(1.5, 8.72, '09/02/26'),
+        run(4.2, 8.72, '2608-700009'),
+        run(21.4, 8.72, 'Harrowgate Masonry'),
+        run(37.1, 8.72, '519-555-6336'),
+        run(42.7, 8.72, '2,149.57'),
+      ])]),
+      (err: unknown) => err instanceof SprucePdfError && err.code === 'NO_READABLE_ROWS'
     );
   });
 });

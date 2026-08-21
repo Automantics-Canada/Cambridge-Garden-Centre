@@ -15,12 +15,15 @@
 /**
  * How to read a slash date when both halves could be a month.
  *
- * Spruce is configured for a Canadian yard and its reports have been observed
- * day-first. This is the one assumption in the parser that cannot be derived
- * from the file itself — if a report ever arrives month-first, change it here
- * rather than at the call sites.
+ * Spruce is American software and prints its dates month-first by default;
+ * every report observed from this yard follows that (`8/14/2026`, `08/17/26`).
+ * Reading them day-first silently turned a September 2 order into February 9 —
+ * a value nothing downstream flags. This is the one assumption in the parser
+ * that cannot be derived from the file itself: a date like 8/14 settles itself
+ * because 14 cannot be a month, but 9/2 does not. If a report ever arrives
+ * genuinely day-first, change it here rather than at the call sites.
  */
-export const SLASH_DATE_ORDER: 'DAY_FIRST' | 'MONTH_FIRST' = 'DAY_FIRST';
+export const SLASH_DATE_ORDER: 'DAY_FIRST' | 'MONTH_FIRST' = 'MONTH_FIRST';
 
 function makeUtcDate(year: number, month: number, day: number): Date | null {
   if (month < 1 || month > 12 || day < 1 || day > 31) return null;

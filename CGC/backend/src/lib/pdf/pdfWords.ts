@@ -23,7 +23,8 @@ import PDFParser, { type Output, type Page as RawPage } from 'pdf2json';
 export type SprucePdfErrorCode =
   | 'NO_TEXT_LAYER'
   | 'UNKNOWN_REPORT'
-  | 'MISSING_HEADERS';
+  | 'MISSING_HEADERS'
+  | 'NO_READABLE_ROWS';
 
 export class SprucePdfError extends Error {
   readonly code: SprucePdfErrorCode;

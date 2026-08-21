@@ -236,5 +236,19 @@ export function parseItemTrackingReport(pages: PdfTextPage[]): ParsedSpruceRepor
     }
   }
 
+  // Headings without a single readable line mean a truncated export or a
+  // column change mid-report. Importing nothing "successfully" is how a day's
+  // orders go missing while the screen says done.
+  if (rows.length === 0) {
+    throw new SprucePdfError(
+      'NO_READABLE_ROWS',
+      unreadable.length > 0
+        ? `Found the column headings but could not read any of the ${unreadable.length} item line(s) on this ` +
+          'Sales Order Item Tracking report. Export it again from Spruce without changing its columns.'
+        : 'Found the column headings but no item lines under them in this Sales Order Item Tracking ' +
+          'report. Export it again from Spruce.'
+    );
+  }
+
   return { type: 'ITEM_TRACKING', rows, unreadable };
 }

@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import multer from 'multer';
-import { importOrdersFromCsv, importOrdersFromPdf, getOrders, streamPdfImport, mergePoReport } from './order.controller.js';
+import { importOrdersFromCsv, importOrdersFromPdf, getOrders, streamPdfImport, getPdfImportJob, mergePoReport } from './order.controller.js';
 import { authMiddleware, requireRole } from '../../middleware/authMiddleware.js';
 import {
   createUploader,
@@ -28,6 +28,8 @@ router.use(requireRole([UserRole.AP_USER, UserRole.OWNER, UserRole.ADMIN]));
 
 router.get('/', getOrders);
 router.get('/import/stream', streamPdfImport);
+// Poll a durable import job: for streams that died and browsers that reloaded.
+router.get('/import/jobs/:jobId', getPdfImportJob);
 
 router.post(
   '/import',

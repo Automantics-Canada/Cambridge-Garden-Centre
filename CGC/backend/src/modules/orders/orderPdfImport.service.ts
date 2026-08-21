@@ -1,18 +1,56 @@
 import { prisma } from '../../db/prisma.js';
-import type { Prisma } from '@prisma/client';
+import type { Prisma, PrismaClient } from '@prisma/client';
 import { orderEventEmitter, OrderEvents } from './order.events.js';
 import { buildSpruceLineKey } from './orderImportKey.js';
 import { parseSpruceDate } from '../../lib/spruceDate.js';
 import { SprucePdfError } from '../../lib/pdf/pdfWords.js';
 import { parseSprucePdf } from './spruce/parseSprucePdf.js';
-import type { ParsedSpruceRow } from './spruce/spruceReportTypes.js';
+import {
+  reconcileDocumentLines,
+  type ExistingLine,
+} from './spruce/reconcileSpruceDocument.js';
+import type { ParsedSpruceRow, SpruceReportType } from './spruce/spruceReportTypes.js';
 
 export interface ImportSummary {
   created: number;
   updated: number;
+  /** Paired rows whose line content already matched the report exactly. */
+  unchanged: number;
+  /**
+   * Stored lines this report does not mention. Never deleted: they may carry
+   * deliveries, tickets or invoices that outlive the report.
+   */
+  absent: number;
+  /** Documents refused because a line could not be placed without guessing. */
+  conflicts: number;
   skipped: number;
   errors: Array<{ rowNumber: number; error: string }>;
 }
+
+/** A document refused before anything was written; its siblings still import. */
+class DocumentError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'DocumentError';
+  }
+}
+
+/**
+ * What each report may overwrite once a document already exists.
+ *
+ * The reports are not equivalent witnesses. The Customer Order Summary and
+ * the delivery run sheet name the customer outright; the Item Tracking report
+ * prints "Cash Sales" for walk-in trade where the other two print the person
+ * behind it, so letting it write `customerName` replaced real names with a
+ * counter word. Its authority is the enrichment only it carries: PO, vendor
+ * and shipping address. Line content — what was ordered, how much — is every
+ * report's to refresh, since reconciliation pairs by item identity first.
+ */
+const REPORT_UPDATES_CUSTOMER: Record<SpruceReportType, boolean> = {
+  ORDER_SUMMARY: true,
+  DELIVERY: true,
+  ITEM_TRACKING: false,
+};
 
 /**
  * Unit of measure for a line, read from its description.
@@ -36,71 +74,281 @@ export function inferUnitFromDescription(description: string): string {
   return 'EA';
 }
 
+/** Just the model the vendor lookup needs; both the client and a transaction satisfy it. */
+type VendorLookupClient = Pick<Prisma.TransactionClient, 'supplierSpruceVendor'>;
+
 /**
- * Finds or creates the OrderDocument for a Spruce document number.
+ * Resolves the vendor codes on the report to suppliers.
  *
- * The document number is the join key between the reports, so it is created on
- * first sight and its header fields are refreshed from whichever report
- * supplies them. `poNumber` and `shippingAddress` are only ever widened — each
- * report knows a different subset, and a later import that lacks a field must
- * not erase what an earlier one established.
+ * The item-tracking report names vendors as Spruce codes (`BESTWAYS01`,
+ * `UNILOCKL01`), which match no supplier's stored name — matching one against
+ * the other was a guess that decided which negotiated rates an invoice is
+ * checked against. Resolution now goes through `SupplierSpruceVendor`, which a
+ * person records once and which is exact thereafter. Anything unmapped stays
+ * null and is reported, never guessed.
  */
-async function upsertOrderDocument(input: {
-  documentNumber: string;
-  customerName: string;
-  poNumber: string | null;
+async function buildVendorIndex(client: VendorLookupClient, rows: ParsedSpruceRow[]): Promise<Map<string, string>> {
+  const codes = [...new Set(
+    rows.map(row => row.vendorName?.trim().toUpperCase()).filter(Boolean) as string[]
+  )];
+  const index = new Map<string, string>();
+  if (codes.length === 0) return index;
+
+  const mappings = await client.supplierSpruceVendor.findMany({
+    where: { code: { in: codes }, active: true },
+    select: { code: true, supplierId: true, supplier: { select: { active: true } } },
+  });
+
+  for (const mapping of mappings) {
+    if (mapping.supplier.active) index.set(mapping.code, mapping.supplierId);
+  }
+
+  return index;
+}
+
+interface PreparedRow {
+  row: ParsedSpruceRow;
   orderDate: Date;
   deliveryDate: Date | null;
-  shippingAddress: string | null;
-}) {
-  const { documentNumber, customerName, poNumber, orderDate, deliveryDate, shippingAddress } = input;
+  unit: string;
+  supplierId: string | null;
+}
 
-  return prisma.orderDocument.upsert({
-    where: { documentNumber },
-    update: {
-      customerName,
+/**
+ * Resolves everything the report leaves as text before any write happens.
+ *
+ * An order date that is missing or unreadable refuses the whole document: the
+ * old fallback stamped "today" on the row, and an order dated today instead of
+ * August looks healthy on every screen until a bill goes unpaid against it.
+ */
+function prepareRows(rows: ParsedSpruceRow[], vendorIndex: Map<string, string>): PreparedRow[] {
+  return rows.map(row => {
+    const orderDate = parseSpruceDate(row.orderDateRaw);
+    if (!orderDate) {
+      throw new DocumentError(
+        `Page ${row.source.page}, row ${row.source.row}: ` +
+        (row.orderDateRaw
+          ? `unreadable order date "${row.orderDateRaw}"`
+          : 'no order date on the report') +
+        '; nothing for this document was written.'
+      );
+    }
+
+    if (row.deliveryDateRaw && !parseSpruceDate(row.deliveryDateRaw)) {
+      throw new DocumentError(
+        `Page ${row.source.page}, row ${row.source.row}: unreadable delivery date "${row.deliveryDateRaw}".`
+      );
+    }
+
+    return {
+      row,
       orderDate,
-      ...(deliveryDate ? { deliveryDate } : {}),
-      ...(poNumber ? { poNumber } : {}),
-      ...(shippingAddress ? { shippingAddress } : {}),
-    },
-    create: {
-      documentNumber,
-      customerName,
-      poNumber,
-      orderDate,
-      deliveryDate,
-      shippingAddress,
-    },
-    select: { id: true },
+      deliveryDate: parseSpruceDate(row.deliveryDateRaw),
+      unit: row.unit ?? inferUnitFromDescription(row.product),
+      supplierId: row.vendorName
+        ? vendorIndex.get(row.vendorName.trim().toUpperCase()) ?? null
+        : null,
+    };
   });
 }
 
 /**
- * Resolves a vendor name to a supplier, by exact name only.
+ * The document header fields each report knows a different subset of.
  *
- * Supplier used to be inferred by asking whether any supplier's name
- * *contained* the customer's, which is backwards twice over: the customer buys
- * from the yard, the supplier sells to it, and a short name matches half the
- * table by substring. A wrong supplier decides which negotiated rates an
- * invoice is checked against, so a guess here costs real money.
- *
- * The item-tracking report names the vendor outright, so that name is matched
- * whole or not at all. Anything less certain stays null and waits for a person.
+ * First-wins per field, so one document's rows contribute whichever of them
+ * carries each fact. A later import widens the record; nothing here erases.
  */
-async function buildVendorIndex(rows: ParsedSpruceRow[]): Promise<Map<string, string>> {
-  const names = new Set(rows.map(row => row.vendorName?.trim().toLowerCase()).filter(Boolean) as string[]);
-  if (names.size === 0) return new Map();
+function documentHeader(prepared: PreparedRow[], updatesCustomer: boolean) {
+  const first = prepared[0]!;
+  const firstDeliveryDate = prepared.map(p => p.deliveryDate).find(d => d !== null);
+  const firstPoNumber = prepared.map(p => p.row.poNumber).find(po => po);
+  const firstShippingAddress = prepared.map(p => p.row.shippingAddress).find(a => a?.trim());
 
-  const suppliers = await prisma.supplier.findMany({ select: { id: true, name: true } });
+  return {
+    ...(updatesCustomer ? { customerName: first.row.customerName } : {}),
+    orderDate: first.orderDate,
+    ...(firstDeliveryDate ? { deliveryDate: firstDeliveryDate } : {}),
+    ...(firstPoNumber ? { poNumber: firstPoNumber } : {}),
+    ...(firstShippingAddress ? { shippingAddress: firstShippingAddress } : {}),
+  };
+}
 
-  const index = new Map<string, string>();
-  for (const supplier of suppliers) {
-    const key = supplier.name.trim().toLowerCase();
-    if (names.has(key)) index.set(key, supplier.id);
+type ProgressEvent = { action: 'created' | 'updated'; order: unknown };
+
+interface DocumentResult {
+  created: number;
+  updated: number;
+  unchanged: number;
+  absent: number;
+  events: ProgressEvent[];
+}
+
+/**
+ * Imports one document inside its own transaction.
+ *
+ * Either the whole document lands or none of it does: a failure halfway
+ * through used to leave some rows written and others not, while the summary
+ * counted both as success.
+ *
+ * Existing rows are found by reconciliation — item code where the report
+ * prints one, description otherwise — and never by place in the document,
+ * because the three reports print one document's lines in different orders.
+ * Rows imported by the Textract-era importer are adopted here too: anything
+ * keyed to this document number joins the same reconciliation instead of
+ * gaining duplicates beside it.
+ */
+export async function importDocument(
+  tx: Prisma.TransactionClient,
+  documentNumber: string,
+  rows: ParsedSpruceRow[],
+  vendorIndex: Map<string, string>,
+  reportType: SpruceReportType
+): Promise<DocumentResult> {
+  const prepared = prepareRows(rows, vendorIndex);
+
+  const document = await tx.orderDocument.upsert({
+    where: { documentNumber },
+    update: documentHeader(prepared, REPORT_UPDATES_CUSTOMER[reportType]),
+    create: {
+      documentNumber,
+      // A document being created has no customer to protect.
+      customerName: prepared[0]!.row.customerName,
+      ...documentHeader(prepared, true),
+    },
+    select: { id: true },
+  });
+
+  // Every row that belongs to this document, under either key shape: rows this
+  // importer wrote (`documentId` set) and rows the Textract-era importer left
+  // keyed by PDF position (`documentId` null, document number in the key).
+  // Adopting them here is what makes a re-import update rather than duplicate.
+  const storedLines = await tx.order.findMany({
+    where: {
+      OR: [
+        { documentId: document.id },
+        { documentId: null, spruceOrderId: { startsWith: `${documentNumber}-` } },
+        { documentId: null, spruceOrderId: documentNumber },
+      ],
+    },
+    select: {
+      id: true,
+      product: true,
+      quantity: true,
+      unit: true,
+      spruceItemNumber: true,
+      lineNumber: true,
+      poNumber: true,
+      hasInvoice: true,
+      deliveryStatus: true,
+      driverId: true,
+      _count: {
+        select: {
+          deliveries: true,
+          lineItems: true,
+          tickets: true,
+          ticketMatches: true,
+        },
+      },
+    },
+  });
+
+  const existingLines: ExistingLine[] = storedLines.map(line => ({
+    id: line.id,
+    product: line.product,
+    quantity: line.quantity,
+    unit: line.unit,
+    spruceItemNumber: line.spruceItemNumber,
+    lineNumber: line.lineNumber,
+    poNumber: line.poNumber,
+    hasOperationalLinks:
+      line.hasInvoice ||
+      line.driverId !== null ||
+      line.deliveryStatus !== 'NOT_STARTED' ||
+      line._count.deliveries > 0 ||
+      line._count.lineItems > 0 ||
+      line._count.tickets > 0 ||
+      line._count.ticketMatches > 0,
+  }));
+
+  const plan = reconcileDocumentLines(rows, existingLines);
+
+  // A conflict means the report cannot safely be paired with what is stored.
+  // Writing the unambiguous lines and skipping the ambiguous ones would leave
+  // the document half-refreshed against itself, so the whole document waits.
+  if (plan.conflicts.length > 0) {
+    const first = plan.conflicts[0]!;
+    throw new DocumentError(
+      `${plan.conflicts.length} line(s) could not be matched safely ` +
+        `(page ${rows[first.incomingIndex]?.source.page}, row ${rows[first.incomingIndex]?.source.row}: ` +
+        `${first.reason}). Nothing for this document was written.`
+    );
   }
 
-  return index;
+  // New lines number on from the highest existing position, so their
+  // `spruceOrderId` keys never collide with an earlier import's.
+  let nextLineNumber = existingLines.reduce(
+    (max, line) => Math.max(max, line.lineNumber ?? 0),
+    0
+  );
+
+  const result: DocumentResult = {
+    created: 0,
+    updated: 0,
+    unchanged: 0,
+    absent: plan.absentIds.length,
+    events: [],
+  };
+
+  for (const paired of plan.paired) {
+    const p = prepared[paired.incomingIndex]!;
+    const source = p.row;
+
+    // Source-owned fields refresh on every paired row, changed or not: the
+    // report is the authority for what was ordered and when. Workflow state —
+    // hasInvoice, invoiceNumber, deliveryStatus, driver, priority, buyerType —
+    // is deliberately absent: no report may reset it.
+    const data: Prisma.OrderUncheckedUpdateInput = {
+      ...('patch' in paired ? paired.patch : {}),
+      ...(REPORT_UPDATES_CUSTOMER[reportType] ? { customerName: source.customerName } : {}),
+      orderDate: p.orderDate,
+      ...(p.deliveryDate ? { deliveryDate: p.deliveryDate } : {}),
+      ...(source.poNumber ? { poNumber: source.poNumber } : {}),
+      ...(p.supplierId ? { supplierId: p.supplierId } : {}),
+      documentId: document.id,
+    };
+
+    const written = await tx.order.update({ where: { id: paired.id }, data });
+    result.events.push({ action: 'updated', order: written });
+    if (paired.kind === 'update') result.updated++;
+    else result.unchanged++;
+  }
+
+  for (const index of plan.createIndices) {
+    const p = prepared[index]!;
+    nextLineNumber += 1;
+
+    const createdOrder = await tx.order.create({
+      data: {
+        spruceOrderId: buildSpruceLineKey(documentNumber, nextLineNumber),
+        documentId: document.id,
+        lineNumber: nextLineNumber,
+        ...(p.row.itemNumber ? { spruceItemNumber: p.row.itemNumber.trim() } : {}),
+        poNumber: p.row.poNumber ?? null,
+        customerName: p.row.customerName,
+        supplierId: p.supplierId,
+        product: p.row.product,
+        quantity: p.row.quantity.toString(),
+        unit: p.unit,
+        orderDate: p.orderDate,
+        deliveryDate: p.deliveryDate,
+        hasInvoice: false,
+      },
+    });
+    result.events.push({ action: 'created', order: createdOrder });
+    result.created++;
+  }
+
+  return result;
 }
 
 export const OrderPdfImportService = {
@@ -108,21 +356,47 @@ export const OrderPdfImportService = {
    * Imports a Spruce order report.
    *
    * The report is read from its own text layer rather than recognised from an
-   * image of it. See `spruce/parseSprucePdf` for why: these are digital PDFs
-   * whose every figure already carries its position, and inferring a table from
-   * pixels was what bound descriptions to the wrong item codes.
+   * image of it — these are digital PDFs whose every figure already carries
+   * its position, and inferring a table from pixels was what bound
+   * descriptions to the wrong item codes.
    *
-   * Rows are written one at a time so that a single bad row is reported against
-   * its own line and the rest of the import still lands.
+   * Documents are written one transaction each, so a single bad document is
+   * reported against its own number and the rest of the upload still lands.
    */
   async importFromPdf(buffer: Buffer, jobId: string): Promise<ImportSummary> {
+    return this.importWithClient(prisma, buffer, jobId);
+  },
+
+  /** `importFromPdf` against an injected client, so persistence is testable. */
+  async importWithClient(
+    client: PrismaClient,
+    buffer: Buffer,
+    jobId: string
+  ): Promise<ImportSummary> {
+    return this.applyReport(client, await parseSprucePdf(buffer), jobId);
+  },
+
+  /**
+   * Writes an already-parsed report against an injected client.
+   *
+   * Separated from parsing because pdf2json rejects machine-generated PDFs,
+   * so persistence tests drive it with page objects read through the same
+   * parsers production uses.
+   */
+  async applyReport(
+    client: PrismaClient,
+    report: Awaited<ReturnType<typeof parseSprucePdf>>,
+    jobId: string
+  ): Promise<ImportSummary> {
     let created = 0;
     let updated = 0;
+    let unchanged = 0;
+    let absent = 0;
+    let conflicts = 0;
     let skipped = 0;
     const errors: ImportSummary['errors'] = [];
 
     try {
-      const report = await parseSprucePdf(buffer);
       console.log(
         `[OrderPdfImport] Read ${report.rows.length} lines from a ${report.type} report ` +
           `(${report.unreadable.length} unreadable).`
@@ -135,124 +409,78 @@ export const OrderPdfImportService = {
         errors.push({ rowNumber: row.row, error: `Page ${row.page}, row ${row.row}: ${row.reason}` });
       }
 
-      const vendorIndex = await buildVendorIndex(report.rows);
+      const vendorIndex = await buildVendorIndex(client, report.rows);
 
-      // Line numbers run per document across the whole upload, so a document
-      // whose lines span a page break keeps numbering continuously instead of
-      // restarting at 1 and colliding with its own earlier lines.
-      const lineCounters = new Map<string, number>();
-
+      // Vendor codes with no recorded mapping are named once each, so the fix
+      // is one mapping entry rather than a hunt through unlinked orders.
+      const unmapped = new Set<string>();
       for (const row of report.rows) {
-        const { page, row: rowNumber } = row.source;
+        const code = row.vendorName?.trim().toUpperCase();
+        if (code && !vendorIndex.has(code)) unmapped.add(code);
+      }
+      for (const code of unmapped) {
+        errors.push({
+          rowNumber: report.rows.find(r => r.vendorName?.trim().toUpperCase() === code)?.source.row ?? 0,
+          error: `Vendor code "${code}" has no supplier mapping; its lines were imported unlinked. ` +
+            'Record it with npm run vendors:add.',
+        });
+      }
 
-        const orderDate = parseSpruceDate(row.orderDateRaw) ?? new Date();
-        if (row.orderDateRaw && !parseSpruceDate(row.orderDateRaw)) {
-          errors.push({
-            rowNumber,
-            error: `Page ${page}, row ${rowNumber}: unreadable order date "${row.orderDateRaw}"; used today's date`,
-          });
-        }
+      // Rows grouped per document, in report order.
+      const documents = new Map<string, ParsedSpruceRow[]>();
+      for (const row of report.rows) {
+        const group = documents.get(row.documentNumber);
+        if (group) group.push(row);
+        else documents.set(row.documentNumber, [row]);
+      }
 
-        const deliveryDate = parseSpruceDate(row.deliveryDateRaw);
-        if (row.deliveryDateRaw && !deliveryDate) {
-          errors.push({
-            rowNumber,
-            error: `Page ${page}, row ${rowNumber}: unreadable delivery date "${row.deliveryDateRaw}"`,
-          });
-        }
-
-        // The reports that print a unit are believed; only the one that does
-        // not falls back to reading the description.
-        const unit = row.unit ?? inferUnitFromDescription(row.product);
-        const supplierId = row.vendorName
-          ? vendorIndex.get(row.vendorName.trim().toLowerCase()) ?? null
-          : null;
-
-        const data: Prisma.OrderUncheckedCreateInput = {
-          spruceOrderId: '', // replaced below, once the line number is known
-          poNumber: row.poNumber ?? null,
-          customerName: row.customerName,
-          supplierId,
-          // buyerType is deliberately not set: the report does not say, and
-          // stamping CONTRACTOR on every row hid the B2C side of the business
-          // entirely. The column's default applies instead, which records it as
-          // an assumption rather than something read off the page. See the
-          // schema comment on Order.buyerType.
-          product: row.product,
-          quantity: row.quantity.toString(),
-          unit,
-          orderDate,
-          deliveryDate,
-          hasInvoice: false,
-        };
-
+      for (const [documentNumber, rows] of documents) {
         try {
-          const document = await upsertOrderDocument({
-            documentNumber: row.documentNumber,
-            customerName: row.customerName,
-            poNumber: row.poNumber ?? null,
-            orderDate,
-            deliveryDate,
-            shippingAddress: row.shippingAddress ?? null,
-          });
+          const result = await client.$transaction(tx =>
+            importDocument(tx, documentNumber, rows, vendorIndex, report.type)
+          );
 
-          const lineNumber = (lineCounters.get(document.id) ?? 0) + 1;
-          lineCounters.set(document.id, lineNumber);
+          created += result.created;
+          updated += result.updated;
+          unchanged += result.unchanged;
+          absent += result.absent;
 
-          data.spruceOrderId = buildSpruceLineKey(row.documentNumber, lineNumber);
-
-          // Identity is the line's place within its document, not its place on
-          // the page. The page-and-row keys the OCR importer wrote cannot be
-          // reproduced here — there are no OCR table blocks to count — so a
-          // re-import finds its earlier rows by (document, line) and updates
-          // them, rewriting the key as it goes.
-          //
-          // Matching on content instead was considered and rejected: a document
-          // may legitimately carry the same product on two lines, and matching
-          // by name would quietly merge them into one.
-          const existing =
-            (await prisma.order.findFirst({
-              where: { documentId: document.id, lineNumber },
-              select: { id: true },
-            }))
-            ?? (await prisma.order.findUnique({
-              where: { spruceOrderId: data.spruceOrderId },
-              select: { id: true },
-            }));
-
-          const payload = { ...data, documentId: document.id, lineNumber };
-
-          if (existing) {
-            const updatedObj = await prisma.order.update({ where: { id: existing.id }, data: payload });
-            updated++;
-            orderEventEmitter.emit(OrderEvents.PDF_IMPORT_PROGRESS, { jobId, action: 'updated', order: updatedObj });
-          } else {
-            const createdObj = await prisma.order.create({ data: payload });
-            created++;
-            orderEventEmitter.emit(OrderEvents.PDF_IMPORT_PROGRESS, { jobId, action: 'created', order: createdObj });
+          // Emitted only once the transaction has committed, so the stream
+          // never announces a row that a rollback then took back.
+          for (const event of result.events) {
+            orderEventEmitter.emit(OrderEvents.PDF_IMPORT_PROGRESS, { jobId, ...event });
           }
         } catch (e: any) {
-          skipped++;
+          skipped += rows.length;
+          if (e instanceof DocumentError) conflicts++;
+          const reason =
+            e instanceof DocumentError || e instanceof SprucePdfError
+              ? e.message
+              : 'A server operation failed. Retry this report; if it keeps failing, ' +
+                'contact an administrator with this document number.';
+          console.error(`[OrderPdfImport] Document ${documentNumber} failed:`, e);
           errors.push({
-            rowNumber,
-            error: `Page ${page}, row ${rowNumber}: ${e?.message || 'Database error'}`,
+            rowNumber: rows[0]?.source.row ?? 0,
+            error: `Document ${documentNumber}: ${reason}`,
           });
         }
       }
     } catch (err: any) {
-      // A SprucePdfError already says what to do about it; anything else is
-      // reported as it stands.
+      // Parser errors are written for an operator. Unexpected exceptions can
+      // contain SQL, local paths or provider internals, so keep those in the
+      // server log and return only a safe recovery step to the browser.
       const message =
-        err instanceof SprucePdfError ? err.message : `Critical error: ${err?.message ?? 'unknown'}`;
+        err instanceof SprucePdfError
+          ? err.message
+          : 'The import failed unexpectedly. Retry the report; if it keeps failing, ' +
+            'contact an administrator with the job ID.';
 
       console.error('[OrderPdfImport] Import failed:', err);
       errors.push({ rowNumber: 0, error: message });
-      orderEventEmitter.emit(OrderEvents.PDF_IMPORT_ERROR, { jobId, error: message });
-      return { created, updated, skipped, errors };
+      return { created, updated, unchanged, absent, conflicts, skipped, errors };
     }
 
-    const summary = { created, updated, skipped, errors };
-    orderEventEmitter.emit(OrderEvents.PDF_IMPORT_DONE, { jobId, summary });
+    const summary = { created, updated, unchanged, absent, conflicts, skipped, errors };
     return summary;
   },
 };

@@ -18,7 +18,10 @@
     "keep-alive": "node scripts/keep-alive.js",
     "ping-once": "node scripts/ping-once.js",
     "backfill:thumbnails": "tsx src/scripts/backfillTicketThumbnails.ts",
-    "backfill:order-documents": "tsx src/scripts/backfillOrderDocuments.ts"
+    "backfill:order-documents": "tsx src/scripts/backfillOrderDocuments.ts",
+    "vendors:list": "tsx src/scripts/manageSpruceVendors.ts list",
+    "vendors:add": "tsx src/scripts/manageSpruceVendors.ts add",
+    "vendors:deactivate": "tsx src/scripts/manageSpruceVendors.ts deactivate"
   },
   "keywords": [],
   "author": "",

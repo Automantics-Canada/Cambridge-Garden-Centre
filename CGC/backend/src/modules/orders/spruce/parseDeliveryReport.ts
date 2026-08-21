@@ -44,18 +44,42 @@ interface OrderContext {
 }
 
 /**
- * The customer, taken as the run before the phone number.
+ * A run that could be a customer's name.
+ *
+ * Names are letters with ordinary punctuation. Everything else on these lines
+ * is furniture: quantities, account fragments, and — the case that motivated
+ * this — phone extensions such as `EXT.1`, which sat immediately before the
+ * phone number and was being read as the customer in its place, replacing the
+ * real name beside it.
+ */
+function looksLikeName(text: string): boolean {
+  return text.length > 1 && /[A-Za-z]/.test(text) && !/\d/.test(text);
+}
+
+/** The nearest name-like run strictly before `anchorIndex`. */
+function lastNameBefore(texts: string[], anchorIndex: number): string {
+  for (let i = anchorIndex - 1; i >= 0; i--) {
+    const candidate = texts[i]!;
+    if (looksLikeName(candidate)) return candidate;
+  }
+  return '';
+}
+
+/**
+ * The customer, taken as the name before the phone number.
  *
  * The line runs account code, then customer, then phone, then total, and the
  * codes beside the customer are branch and account abbreviations rather than
- * anything a person would recognise.
+ * anything a person would recognise. Searching backwards for the nearest
+ * name-like run steps over extensions and codes instead of taking whichever
+ * run happens to sit closest to the phone.
  */
 function customerFrom(texts: string[]): string {
   const phoneAt = texts.findIndex(text => PHONE.test(text));
-  if (phoneAt > 0) return texts[phoneAt - 1]!;
+  if (phoneAt > 0) return lastNameBefore(texts, phoneAt);
 
   const totalAt = texts.findIndex(text => MONEY.test(text));
-  if (totalAt > 0) return texts[totalAt - 1]!;
+  if (totalAt > 0) return lastNameBefore(texts, totalAt);
 
   return '';
 }
@@ -205,10 +229,16 @@ export function parseDeliveryReport(pages: PdfTextPage[]): ParsedSpruceReport {
 
       // Before the first item, the line under an order names the person behind
       // a trade account — "Cash Sales" above, "Aaron Deal" here — which is the
-      // name the yard actually recognises.
+      // name the yard actually recognises. Only a plausible name may refine
+      // it: a line of codes or extensions leaves the customer as read.
       if (!order.sawItem) {
-        const name = texts.filter(text => text !== '0' && !/^\d+$/.test(text)).pop();
-        if (name) order.customerName = name;
+        for (let i = texts.length - 1; i >= 0; i--) {
+          const text = texts[i]!;
+          if (text !== '0' && !/^\d+$/.test(text) && looksLikeName(text)) {
+            order.customerName = text;
+            break;
+          }
+        }
         continue;
       }
 
@@ -224,6 +254,19 @@ export function parseDeliveryReport(pages: PdfTextPage[]): ParsedSpruceReport {
     throw new SprucePdfError(
       'MISSING_HEADERS',
       'Could not find any orders in this delivery report. Export it again from Spruce.'
+    );
+  }
+
+  // Orders without a single readable line mean a truncated export. Importing
+  // nothing "successfully" is how a day's deliveries go missing while the
+  // screen says done.
+  if (rows.length === 0) {
+    throw new SprucePdfError(
+      'NO_READABLE_ROWS',
+      unreadable.length > 0
+        ? `Found ${unreadable.length} unreadable item line(s) and none it could read in this delivery ` +
+          'report. Export it again from Spruce.'
+        : 'Found orders but no readable item lines in this delivery report. Export it again from Spruce.'
     );
   }
 
