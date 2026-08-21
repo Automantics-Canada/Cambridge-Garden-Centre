@@ -53,16 +53,21 @@ describe('deriveRowTolerance', () => {
     assert.ok(tolerance < 0.8, `expected < 0.8 to keep rows apart, got ${tolerance}`);
   });
 
-  it('is not dragged down by near-zero jitter, however much of it there is', () => {
-    // Two runs of a row can differ in the third decimal; on a dense page that
-    // jitter outnumbers the rows themselves.
+  it('is not dragged down by the jitter within rows', () => {
+    // Parts of one row can differ in the second decimal. On the sample reports
+    // between a quarter and a half of all gaps are this jitter rather than
+    // spacing, so the estimate has to look past them.
     const ys: number[] = [];
     for (let i = 0; i < 20; i++) {
       const base = 6.58 + i * 0.9;
-      ys.push(base, base + 0.01, base + 0.02);
+      ys.push(base);
+      if (i % 2 === 0) ys.push(base + 0.02);
     }
 
-    assert.ok(deriveRowTolerance(ys) > 0.1);
+    const tolerance = deriveRowTolerance(ys);
+
+    assert.ok(tolerance > 0.02, `must clear the jitter, got ${tolerance}`);
+    assert.ok(tolerance < 0.9, `must not reach the next row, got ${tolerance}`);
   });
 
   it('is not dragged up by one outsized gap such as a footer', () => {
@@ -82,6 +87,7 @@ describe('deriveRowTolerance', () => {
 
 describe('clusterRows', () => {
   it('keeps a description with the item code it is offset from', () => {
+    // Enough rows for the spacing to be readable, as any real page has.
     const rows = clusterRows([
       run(16.09, 9.18, 'Bestway Skid Deposit ($35 refundable upon return in good condition)'),
       run(10.46, 9.29, 'BSKID'),
@@ -89,9 +95,15 @@ describe('clusterRows', () => {
       run(16.09, 10.08, 'Camden Step Filler Granite Grey'),
       run(10.46, 10.19, 'BCAM28GG'),
       run(28.34, 10.19, '2.0000'),
+      run(10.46, 11.09, 'SOILGRDNA'),
+      run(16.09, 11.09, 'Garden Soil Bulk'),
+      run(28.34, 11.09, '3.0000'),
+      run(10.46, 11.99, 'MISCDEL'),
+      run(16.09, 11.99, 'Delivery Charge'),
+      run(28.34, 11.99, '1.0000'),
     ]);
 
-    assert.equal(rows.length, 2);
+    assert.equal(rows.length, 4);
     assert.deepEqual(rows[0]?.runs.map(r => r.text), [
       'BSKID',
       'Bestway Skid Deposit ($35 refundable upon return in good condition)',

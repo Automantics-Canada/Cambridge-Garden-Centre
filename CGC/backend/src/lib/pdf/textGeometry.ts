@@ -30,6 +30,13 @@ export interface ColumnSpec {
   key: string;
   /** Header text, matched case- and whitespace-insensitively. */
   phrase: string;
+  /**
+   * Which match to take when a heading appears more than once, from zero.
+   *
+   * The order summary heads two different columns "U/M" — one for the quantity
+   * ordered and one for the price — so naming alone cannot tell them apart.
+   */
+  occurrence?: number;
 }
 
 function normalise(text: string): string {
@@ -65,13 +72,16 @@ export function deriveRowTolerance(ys: number[]): number {
   const pitch = dominantRowPitch(gaps);
   if (pitch <= 0) return 0;
 
-  // Under half a row's pitch. Comfortably above the largest within-row offset
-  // seen on the sample reports (about a third of a pitch) and comfortably below
-  // the tightest genuine row spacing.
+  // Under half a row's pitch: clear of the widest offset within a row on the
+  // sample reports — about a third of a pitch — and clear of the tightest
+  // genuine row spacing.
   return pitch * ROW_TOLERANCE_FRACTION;
 }
 
 const ROW_TOLERANCE_FRACTION = 0.45;
+
+/** A gap this much wider than the middle of the pack is not row spacing. */
+const CHASM_MULTIPLE = 3;
 
 /**
  * The report's usual line spacing.
@@ -79,15 +89,32 @@ const ROW_TOLERANCE_FRACTION = 0.45;
  * Read off as the upper quartile of the gaps: three gaps in four are no wider
  * than this, which on a ruled report is the spacing between rows.
  *
- * A plain average or median would sit too low. Roughly half the gaps on a dense
- * page are the near-zero jitter between parts of a single row — a description
- * drawn a fraction above its own item code — and counting those as spacing
- * would pull the estimate under a real row's height. The upper quartile stays
- * clear of them while ignoring the outsized gaps around headers and footers.
+ * A mean or median would sit too low. Up to half the gaps on a dense page are
+ * the small offsets inside a single row — a description drawn a fraction above
+ * its own item code — and counting those as spacing pulls the estimate under a
+ * row's own height.
+ *
+ * Chasms are dropped first: a short page puts its footer well below its last
+ * row, and where there are few rows that one gap alone drags the quartile past
+ * a whole row.
+ *
+ * Deliberately not a search for the boundary between the two groups of gaps.
+ * That is the more obvious reading of the distribution, and it does not
+ * survive contact with these files — floating-point jitter puts gaps of a
+ * hundredth beside gaps of a thousandth, and the proportional step between
+ * *those* is larger than the step between a row's offsets and its spacing. It
+ * measured a row of the item-tracking report at three hundredths of its true
+ * height. A quartile has no such sensitivity to the smallest values present.
  */
 function dominantRowPitch(gaps: number[]): number {
   const ascending = [...gaps].sort((a, b) => a - b);
-  return ascending[Math.round((ascending.length - 1) * 0.75)]!;
+  const median = ascending[Math.floor((ascending.length - 1) / 2)]!;
+
+  const withoutChasms =
+    median > 0 ? ascending.filter(gap => gap <= median * CHASM_MULTIPLE) : ascending;
+  const considered = withoutChasms.length > 0 ? withoutChasms : ascending;
+
+  return considered[Math.round((considered.length - 1) * 0.75)]!;
 }
 
 /**
@@ -146,10 +173,7 @@ export function findHeaderRow(rows: TextRow[], columns: ColumnSpec[]): HeaderMat
     const hits = new Map<string, PdfTextRun>();
 
     for (const column of columns) {
-      const wanted = normalise(column.phrase);
-      // A header cell may carry more than its own label when Spruce packs two
-      // columns into one run, so containment is enough to locate it.
-      const run = row.runs.find(r => normalise(r.text).includes(wanted));
+      const run = matchColumn(row, column);
       if (run) hits.set(column.key, run);
     }
 
@@ -160,6 +184,25 @@ export function findHeaderRow(rows: TextRow[], columns: ColumnSpec[]): HeaderMat
   }
 
   return best;
+}
+
+/**
+ * Locates one column's heading within a row.
+ *
+ * An exact heading wins over one that merely contains the phrase, because the
+ * short headings are substrings of the long ones — the order summary heads a
+ * column "Ord" on a row that opens with "Order#", and containment alone would
+ * put the order date's boundary at the document number.
+ */
+function matchColumn(row: TextRow, column: ColumnSpec): PdfTextRun | undefined {
+  const wanted = normalise(column.phrase);
+
+  const exact = row.runs.filter(run => normalise(run.text) === wanted);
+  // Containment still matters: Spruce sometimes packs a heading in with its
+  // neighbour, and then the phrase is all there is to go on.
+  const candidates = exact.length > 0 ? exact : row.runs.filter(run => normalise(run.text).includes(wanted));
+
+  return candidates[column.occurrence ?? 0];
 }
 
 /**
