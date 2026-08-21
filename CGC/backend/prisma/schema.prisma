@@ -27,7 +27,10 @@ model OrderDocument {
   customerName    String
   /// Filled by the delivery report, or later by the PO report merge.
   poNumber        String?
-  buyerType       BuyerType @default(CONTRACTOR)
+  /// Null until someone establishes how this customer buys — never guessed.
+  /// The reports do not say, and stamping CONTRACTOR on every document hid the
+  /// walk-in trade entirely.
+  buyerType       BuyerType?
   orderDate       DateTime  @db.Date
   deliveryDate    DateTime? @db.Date
   shippingAddress String?
@@ -45,10 +48,16 @@ model Order {
   /// Owning document. Nullable while the backfill runs and for rows imported
   /// by the legacy path; new imports always set it.
   documentId     String?            @db.Uuid
-  /// Position of this line within its document, 1-based. Together with
-  /// `documentId` this is the stable identity a re-import matches on, replacing
-  /// the PDF-position key held in `spruceOrderId`.
+  /// Position of this line within its document, 1-based. Display order only:
+  /// the reports print the same document's lines in different orders, so a
+  /// re-import reconciles on `spruceItemNumber` and never on this number.
   lineNumber     Int?
+  /// Spruce item code as printed on the line, e.g. `SOILGRDNA`. The stable
+  /// cross-report identity: the same code appears for the same line in every
+  /// report layout, so a re-import pairs it with its earlier row wherever the
+  /// reports happened to print them. Null only for legacy rows awaiting their
+  /// first post-migration re-import, which fills it from the report.
+  spruceItemNumber String?
   poNumber       String?
   customerName   String
   /// Spruce's delivery report does not distinguish a contractor sale from a
@@ -77,12 +86,14 @@ model Order {
   tickets        Ticket[]
   ticketMatches  TicketOrderMatch[]
 
-  /// The identity a re-import matches on, once the document layer is populated.
+  /// The identity a re-import reconciles on, once the document layer is
+  /// populated. `lineNumber` is display order, not identity.
   @@unique([documentId, lineNumber])
   @@index([poNumber])
   @@index([supplierId])
   @@index([orderDate])
   @@index([documentId])
+  @@index([spruceItemNumber])
 }
 
 
@@ -237,12 +248,36 @@ model Supplier {
   address         String?
   active          Boolean               @default(true)
   keywords        String[]
+  /// The vendor codes Spruce prints on its reports for this supplier, e.g.
+  /// `BESTWAYS01`. Reports name vendors by code, not by the supplier's stored
+  /// name, so matching one against the other guessed wrong; this mapping is
+  /// recorded once by a person and is exact thereafter.
+  spruceVendors   SupplierSpruceVendor[]
   emailEvents     EmailIngestionEvent[]
   invoices        Invoice[]
   negotiatedRates NegotiatedRate[]
   orders          Order[]
   productAliases  SupplierProductAlias[]
   tickets         Ticket[]
+}
+
+/// Maps a Spruce vendor code to the supplier it bills as.
+///
+/// The item-tracking report names the vendor as a code (`BESTWAYS01`,
+/// `UNILOCKL01`), which matches no supplier's stored name, so every such line
+/// imported with no supplier at all — and invoice matching, which needs both
+/// PO and supplier, never fired. A person records the code once; the importer
+/// resolves it exactly or leaves the line unlinked and says so.
+model SupplierSpruceVendor {
+  code       String   @id
+  supplierId String   @db.Uuid
+  /// Retired codes are kept but no longer resolve, so an old report
+  /// re-imported after a supplier change cannot silently re-point at it.
+  active     Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  supplier   Supplier @relation(fields: [supplierId], references: [id])
+
+  @@index([supplierId])
 }
 
 /// Maps the wording a supplier prints on their paperwork to the product name
@@ -343,6 +378,9 @@ model SpruceImportJob {
   totalRows    Int                    @default(0)
   createdCount Int                    @default(0)
   updatedCount Int                    @default(0)
+  unchangedCount Int                  @default(0)
+  absentCount  Int                    @default(0)
+  conflictCount Int                   @default(0)
   skippedCount Int                    @default(0)
   errorSummary String?
   uploadedBy   User                   @relation(fields: [uploadedById], references: [id])
@@ -549,6 +587,8 @@ enum AuditActionType {
 enum ImportStatus {
   PENDING
   PROCESSING
+  /// Finished with some rows imported and some refused; see the row errors.
+  PARTIAL
   COMPLETED
   FAILED
 }

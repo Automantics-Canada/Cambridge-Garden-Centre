@@ -1,8 +1,10 @@
 /**
- * The defect pinned here: `new Date('05/06/24')` resolves month-first in V8, so
- * a Canadian report reading 5 June was stored as 6 May. Nothing about the
- * stored value looks wrong afterwards, and every report built on it inherits
- * the error.
+ * The defect pinned here: `new Date('05/06/24')` resolves month-first in V8,
+ * so a Canadian report reading 5 June was stored as 6 May. The explicit parser
+ * replaced the engine's guess — and its own convention is month-first, because
+ * Spruce prints American dates (`8/14/2026` for 14 August). A day-first
+ * reading of the same convention turned September 2 into February 9, which is
+ * the regression the ambiguous-date tests below pin shut.
  */
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
@@ -11,9 +13,17 @@ import { parseSpruceDate } from '../src/lib/spruceDate.js';
 const iso = (d: Date | null) => d?.toISOString().slice(0, 10) ?? null;
 
 describe('parseSpruceDate', () => {
-  it('reads an ambiguous slash date day-first, not the engine default', () => {
-    // The whole point: V8's Date would call this 6 May.
-    assert.equal(iso(parseSpruceDate('05/06/24')), '2024-06-05');
+  it('reads an ambiguous slash date month-first, as Spruce prints it', () => {
+    assert.equal(iso(parseSpruceDate('05/06/24')), '2024-05-06');
+  });
+
+  it('stores the sample reports’ dates as the day they name', () => {
+    // The exact strings carried by the three real reports. Under the previous
+    // day-first convention these became February and May.
+    assert.equal(iso(parseSpruceDate('9/2/2026')), '2026-09-02');
+    assert.equal(iso(parseSpruceDate('9/5/2026')), '2026-09-05');
+    assert.equal(iso(parseSpruceDate('8/14/2026')), '2026-08-14');
+    assert.equal(iso(parseSpruceDate('08/17/26')), '2026-08-17');
   });
 
   it('uses the out-of-range half to settle the order without guessing', () => {
@@ -45,10 +55,10 @@ describe('parseSpruceDate', () => {
     assert.equal(parseSpruceDate('13/13/24'), null);
   });
 
-  it('resolves 05/13/24 as 13 May, since 13 cannot be a month', () => {
-    // Day-first is only the tiebreak. When one half is out of range for a
+  it('resolves 13/05/24 as 13 May, since 13 cannot be a month', () => {
+    // Month-first is only the tiebreak. When one half is out of range for a
     // month, that settles the reading regardless of the convention.
-    assert.equal(iso(parseSpruceDate('05/13/24')), '2024-05-13');
+    assert.equal(iso(parseSpruceDate('13/05/24')), '2024-05-13');
   });
 
   it('returns null for text that is not a date', () => {
