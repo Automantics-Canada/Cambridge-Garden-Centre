@@ -1,154 +1,111 @@
+/**
+ * Reading a supplier invoice.
+ *
+ * AWS Textract AnalyzeExpense does the OCR. The deterministic extractor turns its
+ * structured output into typed, validated fields. Only what is left unresolved
+ * after that is offered to the fallback reader.
+ *
+ * What this no longer does is flatten Textract's response to a wall of text and
+ * ask a language model to find the numbers in it. That threw away the per-field
+ * confidence Textract had already produced, and made a hallucinated unit price
+ * indistinguishable from a scanned one by the time it reached the ledger.
+ */
+
 import {
   TextractClient,
   AnalyzeExpenseCommand,
 } from '@aws-sdk/client-textract';
 import path from 'node:path';
 import fs from 'node:fs';
-import { prisma } from '../db/prisma.js';
-import { downloadFileToTemp, cleanupTempFile, isSupabaseUrl, getFilenameFromUrl } from './urlHandler.js';
-import { extractStructuredData } from './bedrock.service.js';
+import {
+  downloadFileToTemp,
+  cleanupTempFile,
+  isSupabaseUrl,
+  getFilenameFromUrl,
+} from './urlHandler.js';
+import {
+  extractInvoiceFromExpense,
+  getOcrConfidenceFromExpense,
+  getOcrTextFromExpense,
+} from './documentExtraction/invoiceExtractor.js';
+import { finaliseInvoiceExtraction } from './documentExtraction/mergeExtraction.js';
+import type { ExtractionOutcome, InvoiceExtraction } from './documentExtraction/types.js';
 
 const textractClient = new TextractClient();
 
-export interface InvoiceOcrExtractionResult {
-  supplierName: string | null;
-  invoiceDate: Date | null;
-  totalAmount: number | null;
-  invoiceNumber: string | null;
-  poNumber: string | null;
-  lineItems: Array<{
-    description: string;
-    quantity: number;
-    unitPrice: number;
-    totalPrice: number;
-    unit: string | null;
-    poNumber: string | null;
-  }>;
-  rawResponse: any;
+export type InvoiceOcrOutcome = ExtractionOutcome<InvoiceExtraction>;
+
+export interface InvoiceOcrInput {
+  fileUrl: string;
+  /** Used for operational logging and to tie fallback calls to a document. */
+  jobId: string;
 }
 
 /**
- * Extract expense/invoice data using AWS Textract AnalyzeExpense
+ * Read an invoice from wherever it is stored.
+ *
+ * The caller gets the OCR text and the typed fields separately. The Textract
+ * response itself does not leave this module — it is large, it contains page
+ * geometry nobody downstream reads, and it used to be serialised into the
+ * invoice's `ocrRawText` column in place of the actual text.
  */
-export async function extractExpenseFromLocalImage(imageUrl: string): Promise<InvoiceOcrExtractionResult> {
-  let localPath = imageUrl;
+export async function extractInvoiceDocument({
+  fileUrl,
+  jobId,
+}: InvoiceOcrInput): Promise<InvoiceOcrOutcome> {
+  let localPath = fileUrl;
   let tempFile: string | null = null;
 
   try {
-    // Handle Supabase URLs
-    if (isSupabaseUrl(imageUrl)) {
-      console.log(`[Invoice OCR] Downloading from Supabase: ${imageUrl.substring(0, 50)}...`);
-      const filename = getFilenameFromUrl(imageUrl);
-      tempFile = await downloadFileToTemp(imageUrl, filename);
+    if (isSupabaseUrl(fileUrl)) {
+      const filename = getFilenameFromUrl(fileUrl);
+      tempFile = await downloadFileToTemp(fileUrl, filename);
       localPath = tempFile;
-    } else if (imageUrl.startsWith('/uploads/')) {
-      // Handle legacy local paths
-      localPath = path.join(process.cwd(), imageUrl);
+    } else if (fileUrl.startsWith('/uploads/')) {
+      // Legacy local uploads, constrained to the uploads root so a crafted
+      // fileUrl cannot walk out of it.
+      const uploadsRoot = path.resolve(process.cwd(), 'uploads');
+      const requested = path.resolve(process.cwd(), `.${fileUrl}`);
+      if (!requested.startsWith(`${uploadsRoot}${path.sep}`)) {
+        throw new Error('Invalid legacy upload path');
+      }
+      localPath = requested;
+    } else {
+      throw new Error('Unsupported invoice file location');
     }
 
     if (!fs.existsSync(localPath)) {
-      throw new Error(`Local file not found for OCR: ${localPath}`);
+      throw new Error('Invoice file not found for OCR');
     }
 
-    // Extract with AWS Textract
-    return await extractInvoiceWithTextract(localPath);
+    return await readInvoice(localPath, jobId);
   } finally {
-    // Clean up temporary file if it was downloaded
-    if (tempFile) {
-      await cleanupTempFile(tempFile);
-    }
+    if (tempFile) await cleanupTempFile(tempFile);
   }
 }
 
-/**
- * Extract invoice data using AWS Textract AnalyzeExpense
- */
-async function extractInvoiceWithTextract(localPath: string): Promise<InvoiceOcrExtractionResult> {
-  const imageBytes = fs.readFileSync(localPath);
+async function readInvoice(localPath: string, jobId: string): Promise<InvoiceOcrOutcome> {
+  const response = await textractClient.send(
+    new AnalyzeExpenseCommand({ Document: { Bytes: fs.readFileSync(localPath) } })
+  );
 
-  const command = new AnalyzeExpenseCommand({
-    Document: {
-      Bytes: imageBytes,
-    },
+  const ocrText = getOcrTextFromExpense(response);
+  const ocrConfidence = getOcrConfidenceFromExpense(response);
+
+  // No text at all is a failed read, not an empty invoice. Letting it through
+  // would post an invoice with every field unresolved and no way to tell that
+  // from a document that genuinely had nothing on it.
+  if (!ocrText.trim()) {
+    throw new Error('Textract detected no text in the invoice document');
+  }
+
+  const extraction = extractInvoiceFromExpense({ response, ocrText });
+
+  return finaliseInvoiceExtraction({
+    extraction,
+    ocrText,
+    ocrConfidence,
+    documentType: 'INVOICE',
+    jobId,
   });
-
-  const response = await textractClient.send(command);
-  const rawText = getRawTextFromExpenseResponse(response);
-
-  const extraction = await extractStructuredData(rawText, 'INVOICE');
-
-  // Debug: log what Bedrock returned
-  console.log('[InvoiceOCR] Bedrock extracted supplierName:', extraction.supplierName);
-  console.log('[InvoiceOCR] Bedrock extracted lineItems:', JSON.stringify(
-    (extraction.lineItems || []).map(i => ({ desc: i.description, qty: i.quantity, unit: i.unit })),
-    null, 2
-  ));
-
-  // Helper: extract unit from raw text near a quantity
-  function inferUnit(description: string, rawOcrText: string): string {
-    // Search raw text for a line containing the description and a unit word
-    const unitPattern = /\b(\d+\.?\d*)\s*(tons?|tonnes?|lbs?|pounds?|kg|cy|ea|each|cubic yards?|tm)\b/gi;
-    const lines = rawOcrText.split('\n');
-    const descLower = description.toLowerCase().replace(/[^a-z0-9]/g, '');
-    for (const line of lines) {
-      const lineLower = line.toLowerCase().replace(/[^a-z0-9\s]/g, '');
-      if (lineLower.includes(descLower.substring(0, Math.min(4, descLower.length)))) {
-        const m = line.match(unitPattern);
-        if (m) {
-          const unitMatch = m[0].match(/[a-zA-Z]+$/);
-          if (unitMatch) return unitMatch[0].toLowerCase();
-        }
-      }
-    }
-    // Scan full raw text for unit patterns near quantities
-    const allMatches = rawOcrText.match(unitPattern);
-    if (allMatches && allMatches.length > 0) {
-      const unitMatch = allMatches[0].match(/[a-zA-Z]+$/);
-      if (unitMatch) return unitMatch[0].toLowerCase();
-    }
-    return 'ea';
-  }
-
-  return {
-    supplierName: extraction.supplierName,
-    invoiceDate: extraction.date,
-    totalAmount: extraction.totalAmount || null,
-    invoiceNumber: extraction.invoiceNumber || null,
-    poNumber: extraction.poNumber || null,
-    lineItems: (extraction.lineItems || []).map(item => {
-      const resolvedUnit = (item.unit && item.unit.trim().length > 0)
-        ? item.unit.trim()
-        : inferUnit(item.description, rawText);
-      console.log(`[InvoiceOCR] Line "${item.description}": AI unit="${item.unit}" → resolved="${resolvedUnit}"`);
-      return {
-        description: item.description,
-        quantity: item.quantity,
-        unitPrice: item.unitPrice,
-        totalPrice: item.totalPrice,
-        unit: resolvedUnit,
-        poNumber: item.poNumber,
-      };
-    }),
-    rawResponse: {
-      textract: response,
-      bedrock: extraction,
-    },
-  };
-}
-
-/**
- * Helper to get raw text from AnalyzeExpense response
- */
-function getRawTextFromExpenseResponse(response: any): string {
-  const lines: string[] = [];
-  const docs = response.ExpenseDocuments || [];
-  for (const doc of docs) {
-    const blocks = doc.Blocks || [];
-    for (const block of blocks) {
-      if (block.BlockType === 'LINE' && block.Text) {
-        lines.push(block.Text);
-      }
-    }
-  }
-  return lines.join('\n');
 }

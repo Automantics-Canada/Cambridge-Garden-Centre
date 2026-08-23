@@ -9,7 +9,10 @@ const api = axios.create({
 api.interceptors.request.use(
   (config) => { 
     const token = localStorage.getItem('token');
-    if (token) {
+    const hasExplicitAuthorization = config.headers && typeof config.headers.get === 'function'
+      ? Boolean(config.headers.get('Authorization'))
+      : Boolean(config.headers?.Authorization);
+    if (token && !hasExplicitAuthorization) {
       if (config.headers && typeof config.headers.set === 'function') {
         config.headers.set('Authorization', `Bearer ${token}`);
       } else {

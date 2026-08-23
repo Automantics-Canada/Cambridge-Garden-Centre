@@ -74,7 +74,8 @@ export const createDriver = async (req: AuthRequest, res: Response) => {
       name, phone, email, password, type, companyName,
       ratePerDelivery: Number(ratePerDelivery || 0), 
       ratePerTrip: Number(ratePerTrip || ratePerDelivery || 0),
-      active 
+      active,
+      sendCredentials: !(email && password),
     });
 
     // Handle credential email delivery

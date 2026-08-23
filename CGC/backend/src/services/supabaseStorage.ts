@@ -269,6 +269,11 @@ export async function listFiles(folderPath: string): Promise<string[]> {
  * Verify Supabase Storage connection
  */
 export async function verifyStorageConnection(): Promise<boolean> {
+  if (env.storageDriver === 'local') {
+    console.log('[Storage] Local QA storage enabled.');
+    return true;
+  }
+
   try {
     const { data, error } = await supabase.storage.listBuckets();
 

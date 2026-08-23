@@ -1,6 +1,6 @@
 import { prisma } from '../db/prisma.js';
 import nodemailer from 'nodemailer';
-import { createDriverAccessToken } from './driverAccessToken.js';
+import { buildDriverAccessUrl, createDriverAccessToken } from './driverAccessToken.js';
 import { formatQuantity } from '../lib/quantity.js';
 
 let transporter: nodemailer.Transporter | null = null;
@@ -88,7 +88,7 @@ export const MailService = {
       return { success: false, error: error.message };
     }
     const appUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
-    const driverUrl = `${appUrl}/driver/today?token=${token}`;
+    const driverUrl = buildDriverAccessUrl(appUrl, token);
     
     const subject = `🚚 New Assignment: ${delivery.order.spruceOrderId} - Action Required`;
     const text = `Hey ${driver.name},\n\nYou have been assigned a new delivery task: ${delivery.order.spruceOrderId} for ${delivery.order.customerName}.\n\nView details: ${driverUrl}\n\nSafe driving!\nCGC Dispatch Team`;
@@ -157,7 +157,7 @@ export const MailService = {
       return { success: false, error: error.message };
     }
     const appUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
-    const driverUrl = `${appUrl}/driver/today?token=${token}`;
+    const driverUrl = buildDriverAccessUrl(appUrl, token);
 
     const subject = `⚠️ Sequence Updated: Your Delivery Board has changed`;
     const text = `Hey ${driver.name},\n\nYour delivery sequence for today has been updated by dispatch.\n\nPlease check your updated schedule here: ${driverUrl}\n\nThank you!`;

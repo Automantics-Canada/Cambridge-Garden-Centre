@@ -1,6 +1,16 @@
 import { prisma } from '../../db/prisma.js';
 import { saveTicketImage } from '../../services/fileStorage.js';
-import { extractTextFromLocalImage } from '../../services/ocr.service.js';
+import { extractTicketDocument } from '../../services/ocr.service.js';
+import {
+  buildTicketProvenance,
+  summariseReviewReasons,
+} from '../../services/documentExtraction/mergeExtraction.js';
+import { EXTRACTION_PROVIDER } from '../../services/documentExtraction/types.js';
+import type {
+  ExtractedField,
+  ReviewIssue,
+} from '../../services/documentExtraction/types.js';
+import { isoDateToUtcDate } from '../../services/documentExtraction/validation.js';
 import { triggerOcrProcessing } from '../../services/ocrJobProcessor.js';
 import {
   TicketSource,
@@ -10,6 +20,17 @@ import {
   OcrProvider,
 } from '@prisma/client';
 
+
+/**
+ * The value of a field, but only if it validated.
+ *
+ * Every write below is `validValue(field) ?? whateverIsAlreadyThere`. Reading a
+ * field's `.value` directly would pick up a value that failed validation, which
+ * is exactly the class of bug this layer exists to prevent.
+ */
+function validValue<T>(field: ExtractedField<T>): T | null {
+  return field.state === 'VALID' ? field.value : null;
+}
 
 async function findDriverIdByPhone(phone: string | undefined | null) {
   if (!phone) return null;
@@ -237,189 +258,228 @@ export const TicketService = {
     return { ticket, ocrJob };
   },
 
-  async processTicketOcr(ticketId: string) {
+  /**
+   * Read a delivery ticket and record what could be established.
+   *
+   * Two rules govern what this is allowed to write.
+   *
+   * A field is only written when it validated. Previously the extracted values
+   * arrived untyped and were pushed through a stack of sanitisers that coped
+   * with a model returning an array where a number belonged, or an object where
+   * a string belonged, by flattening whatever it got into something the column
+   * would accept. That guaranteed a write; it did not produce a fact.
+   *
+   * And the supplier is found, never created. `findOrCreateSupplier` accepted a
+   * 0.75 string similarity as a match and invented a supplier when nothing came
+   * close, so a misread letterhead either attached the delivery to whichever
+   * company was spelled most like the misreading, or spawned a duplicate. Both
+   * are silent and both corrupt the supplier records that invoice matching and
+   * the rate tables are built on.
+   */
+  async processTicketOcr(ticketId: string, claimedJobId?: string) {
     const ticket = await prisma.ticket.findUnique({
       where: { id: ticketId },
-      include: { ocrJobs: { orderBy: { startedAt: 'desc' }, take: 1 } },
+      include: {
+        ocrJobs: {
+          ...(claimedJobId ? { where: { id: claimedJobId } } : {}),
+          orderBy: { startedAt: 'desc' },
+          take: 1,
+        },
+      },
     });
     if (!ticket) throw new Error('Ticket not found');
 
     const ocrJob = ticket.ocrJobs[0];
-    if (ocrJob) {
-      await prisma.ocrJob.update({
-        where: { id: ocrJob.id },
-        data: { status: OcrJobStatus.PROCESSING, startedAt: new Date() },
+    if (!ocrJob) throw new Error('No OCR job found for ticket');
+
+    if (claimedJobId) {
+      if (ocrJob.status !== OcrJobStatus.PROCESSING) {
+        return prisma.ticket.findUniqueOrThrow({ where: { id: ticketId } });
+      }
+    } else {
+      const now = new Date();
+      const claimed = await prisma.ocrJob.updateMany({
+        where: {
+          id: ocrJob.id,
+          status: OcrJobStatus.PENDING,
+          OR: [{ nextAttemptAt: null }, { nextAttemptAt: { lte: now } }],
+        },
+        data: {
+          status: OcrJobStatus.PROCESSING,
+          startedAt: now,
+          attempts: { increment: 1 },
+        },
       });
+      if (claimed.count === 0) {
+        return prisma.ticket.findUniqueOrThrow({ where: { id: ticketId } });
+      }
     }
 
     try {
-      const extracted = await extractTextFromLocalImage(ticket.imageUrl);
+      const outcome = await extractTicketDocument({
+        imageUrl: ticket.imageUrl,
+        jobId: ocrJob.id,
+      });
 
-      // Sanitize extracted values
-      let sanitizedMaterial: string | null = null;
-      if (extracted.material) {
-        if (Array.isArray(extracted.material)) {
-          sanitizedMaterial = extracted.material.map((m: any) => {
-            if (typeof m === 'object' && m !== null) {
-              return m.name || m.description || JSON.stringify(m);
-            }
-            return String(m);
-          }).join(', ');
-        } else if (typeof extracted.material === 'object') {
-          const mObj = extracted.material as any;
-          sanitizedMaterial = mObj.name || mObj.description || JSON.stringify(mObj);
-        } else {
-          sanitizedMaterial = String(extracted.material);
-        }
+      const fields = outcome.fields;
+      const issues: ReviewIssue[] = [...outcome.issues];
+
+      // --- Supplier: exact resolution only ---
+      const { SupplierService } = await import('../supplier/supplier.service.js');
+      const resolution = await SupplierService.resolveSupplierForOcr(fields.supplierName.value);
+
+      if (!resolution.supplier) {
+        issues.push({
+          field: 'supplierName',
+          code: 'UNRESOLVED_SUPPLIER',
+          message: resolution.reason ?? 'Supplier could not be matched to a recorded supplier',
+        });
       }
 
-      let sanitizedQuantity: number | null = null;
-      if (extracted.quantity !== undefined && extracted.quantity !== null) {
-        if (Array.isArray(extracted.quantity)) {
-          const nums = extracted.quantity.map((q: any) => parseFloat(String(q))).filter((n: any) => !isNaN(n));
-          sanitizedQuantity = nums.length > 0 ? nums.reduce((a: number, b: number) => a + b, 0) : null;
-        } else if (typeof extracted.quantity === 'object') {
-          const qObj = extracted.quantity as any;
-          const val = parseFloat(String(qObj.value || qObj.amount || qObj.quantity));
-          sanitizedQuantity = isNaN(val) ? null : val;
-        } else {
-          const val = parseFloat(String(extracted.quantity));
-          sanitizedQuantity = isNaN(val) ? null : val;
-        }
-      }
+      // An unresolved supplier leaves whatever was already on the ticket — which
+      // for an email-ingested ticket is the sender's domain match, and for a
+      // driver upload is usually nothing.
+      const supplierId = resolution.supplier?.id ?? ticket.supplierId;
 
-      let sanitizedUnit: string | null = null;
-      if (extracted.unit) {
-        if (Array.isArray(extracted.unit)) {
-          sanitizedUnit = extracted.unit.map((u: any) => typeof u === 'object' ? (u.name || JSON.stringify(u)) : String(u)).join(', ');
-        } else if (typeof extracted.unit === 'object') {
-          const uObj = extracted.unit as any;
-          sanitizedUnit = uObj.name || uObj.unit || JSON.stringify(uObj);
-        } else {
-          sanitizedUnit = String(extracted.unit);
-        }
-      }
-
-      const finalPoNumber = extracted.poNumber || ticket.poNumber;
-      const isValidPo = !!(finalPoNumber && /^\d{6}$/.test(finalPoNumber));
+      // --- PO and auto-link ---
+      // Unchanged, and deliberately so: an exact six-digit PO that resolves to
+      // exactly one order assigned to this driver. There is no fallback to "the
+      // first delivery in the driver's queue" — that was a guess written to the
+      // database indistinguishably from a real match, so a ticket for one
+      // customer could end up as evidence against another customer's invoice.
+      const extractedPo = fields.poNumber.state === 'VALID' ? (fields.poNumber.value as string) : null;
+      const finalPoNumber = extractedPo ?? ticket.poNumber;
+      const isValidPo = Boolean(finalPoNumber && /^\d{6}$/.test(finalPoNumber));
 
       let linkedOrderId: string | null = ticket.linkedOrderId;
       let ticketStatus: TicketStatus = ticket.status;
       let linkMethod: string | null = ticket.linkMethod;
+      let matchedOrderId: string | null = null;
 
-      // ONLY automatically link if the ticket is uploaded by a driver (has driverId)
-      if (ticketStatus === TicketStatus.UNLINKED && ticket.driverId) {
-        let matchedOrder = null;
-        let matchMethod = 'AUTO_PO';
+      if (ticketStatus === TicketStatus.UNLINKED && ticket.driverId && isValidPo) {
+        const matchingOrders = await prisma.order.findMany({
+          where: { poNumber: finalPoNumber as string, driverId: ticket.driverId },
+          select: { id: true },
+        });
 
-        if (isValidPo) {
-          // 1. Try to find the order by PO number that was assigned to this driver
-          const matchingOrders = await prisma.order.findMany({
-            where: {
-              poNumber: finalPoNumber as string,
-              driverId: ticket.driverId,
-            },
-          });
-
-          if (matchingOrders.length === 1) {
-            matchedOrder = matchingOrders[0];
-            matchMethod = 'AUTO_PO';
-          }
-        }
-
-        // There is deliberately no fallback here.
-        //
-        // This used to link the ticket to whichever delivery happened to be
-        // first in the driver's queue when the PO did not match, recorded as
-        // AUTO_DRIVER_ASSIGNED. That is a guess, and it was written to the
-        // database indistinguishably from a real PO match — so a ticket for one
-        // customer could end up as evidence against another customer's invoice,
-        // with nothing on screen to say it had been guessed.
-        //
-        // An unmatched ticket now stays UNLINKED and surfaces on the
-        // verification desk, which exists precisely for a human to resolve this.
-
-        if (matchedOrder) {
-          await prisma.ticketOrderMatch.upsert({
-            where: {
-              ticketId_orderId: {
-                ticketId: ticketId,
-                orderId: matchedOrder.id,
-              },
-            },
-            update: {},
-            create: {
-              ticketId: ticketId,
-              orderId: matchedOrder.id,
-              matchMethod: matchMethod,
-            },
-          });
-
-          linkedOrderId = matchedOrder.id;
+        // Exactly one, or none. An ambiguous match stays unlinked and surfaces
+        // on the verification desk, which exists precisely for a person to
+        // resolve this.
+        if (matchingOrders.length === 1) {
+          matchedOrderId = (matchingOrders[0] as { id: string }).id;
+          linkedOrderId = matchedOrderId;
           ticketStatus = TicketStatus.LINKED;
           linkMethod = 'AUTO';
-          console.log(`[TicketService] Automatically linked driver ticket ${ticketId} to assigned order ${matchedOrder.id} (method: ${matchMethod})`);
-        }
-      } else {
-        if (!ticket.driverId) {
-          console.log(`[TicketService] Ticket ${ticketId} was not uploaded by a driver. Skipping auto-linking.`);
-        } else if (ticketStatus !== TicketStatus.UNLINKED) {
-          console.log(`[TicketService] Ticket ${ticketId} is already linked. Skipping auto-linking.`);
-        }
-      }
-
-      // Find or create supplier if extracted
-      let updatedSupplierId = ticket.supplierId;
-      if (extracted.supplierName) {
-        const { SupplierService } = await import('../supplier/supplier.service.js');
-        const foundSupplier = await SupplierService.findOrCreateSupplier(extracted.supplierName);
-        if (foundSupplier) {
-          updatedSupplierId = foundSupplier.id;
+        } else if (matchingOrders.length > 1) {
+          issues.push({
+            field: 'poNumber',
+            code: 'INVALID_FIELD',
+            message: `PO ${finalPoNumber} matches ${matchingOrders.length} orders for this driver; link it by hand`,
+          });
         }
       }
 
-      const updatedTicket = await prisma.ticket.update({
-        where: { id: ticketId },
-        data: {
-          ocrRawText: extracted.rawText,
-          ocrConfidence: extracted.ocrConfidence,
-          supplierId: updatedSupplierId,
-          supplierName: extracted.supplierName || ticket.supplierName,
-          material: sanitizedMaterial || ticket.material,
-          quantity: sanitizedQuantity !== null ? sanitizedQuantity : ticket.quantity,
-          unit: sanitizedUnit || ticket.unit,
-          poNumber: finalPoNumber,
-          ticketNumber: extracted.ticketNumber || ticket.ticketNumber,
-          ticketDate: extracted.ticketDate || ticket.ticketDate,
-          linkedOrderId,
-          status: ticketStatus,
-          linkMethod,
+      const complete = issues.length === 0;
+      const provenance = {
+        ...buildTicketProvenance({ ...outcome, issues, complete }),
+        supplierMatch: { method: resolution.method, suggestion: resolution.suggestion },
+        autoLink: {
+          linked: complete && matchedOrderId !== null,
+          method: complete && matchedOrderId ? 'AUTO_PO' : null,
         },
-      });
+      };
+      const reviewReasons = summariseReviewReasons(issues);
 
-      if (ocrJob) {
-        await prisma.ocrJob.update({
-          where: { id: ocrJob.id },
-          data: {
-            status: OcrJobStatus.COMPLETED,
-            finishedAt: new Date(),
-            rawResponse: extracted as any,
-          },
-        });
-      }
+      // --- Write ---
+      // Only validated fields are written, and each one falls back to what is
+      // already on the ticket rather than to a placeholder. A field that could
+      // not be read leaves the existing value — including a value a person has
+      // already corrected by hand — untouched.
+      const updatedTicket = await prisma.$transaction(
+        async tx => {
+          if (complete && matchedOrderId) {
+            await tx.ticketOrderMatch.upsert({
+              where: { ticketId_orderId: { ticketId, orderId: matchedOrderId } },
+              update: {},
+              create: { ticketId, orderId: matchedOrderId, matchMethod: 'AUTO_PO' },
+            });
+          }
+
+          const written = await tx.ticket.update({
+            where: { id: ticketId },
+            data: {
+              ocrRawText: outcome.ocrText,
+              ocrConfidence: outcome.ocrConfidence,
+              // Candidate fields are stored in OcrJob.rawResponse for review.
+              // Business fields and links move only when the entire extraction
+              // is trusted; NEEDS_REVIEW is an alternative to persistence.
+              ...(complete
+                ? {
+                    supplierId,
+                    supplierName: validValue(fields.supplierName) ?? ticket.supplierName,
+                    material: validValue(fields.material) ?? ticket.material,
+                    quantity: validValue(fields.quantity) ?? ticket.quantity,
+                    // No default. An absent unit remains absent.
+                    unit: validValue(fields.unit) ?? ticket.unit,
+                    poNumber: finalPoNumber,
+                    ticketNumber: validValue(fields.ticketNumber) ?? ticket.ticketNumber,
+                    ticketDate:
+                      fields.ticketDate.state === 'VALID'
+                        ? isoDateToUtcDate(fields.ticketDate.value as string)
+                        : ticket.ticketDate,
+                    linkedOrderId,
+                    status: ticketStatus,
+                    linkMethod,
+                  }
+                : {}),
+            },
+          });
+
+          await tx.ocrJob.update({
+            where: { id: ocrJob.id },
+            data: {
+              status: complete ? OcrJobStatus.COMPLETED : OcrJobStatus.NEEDS_REVIEW,
+              finishedAt: new Date(),
+              rawResponse: provenance as any,
+              structuredProvider: EXTRACTION_PROVIDER,
+              structuredModel: outcome.fallback.model,
+              fallbackUsed: outcome.fallback.used,
+              reviewReasons,
+              extractionConfidence: outcome.ocrConfidence,
+              errorMessage: null,
+            },
+          });
+
+          return written;
+        },
+        { timeout: 30_000 }
+      );
+
+      console.log(
+        '[TicketService]',
+        JSON.stringify({
+          ticketId,
+          outcome: complete ? 'COMPLETED' : 'NEEDS_REVIEW',
+          reasonCount: reviewReasons.length,
+          supplierMatch: resolution.method,
+          autoLinked: complete && matchedOrderId !== null,
+          fallbackUsed: outcome.fallback.used,
+        })
+      );
 
       return updatedTicket;
     } catch (error: any) {
-      if (ocrJob) {
-        await prisma.ocrJob.update({
-          where: { id: ocrJob.id },
-          data: {
-            status: OcrJobStatus.FAILED,
-            finishedAt: new Date(),
-            errorMessage: error.message,
-          },
-        });
-      }
+      // Reserved for a document that produced nothing usable at all. A ticket
+      // that was merely read incompletely is written above and marked
+      // NEEDS_REVIEW; it never lands here and never enters the retry loop.
+      await prisma.ocrJob.update({
+        where: { id: ocrJob.id },
+        data: {
+          status: OcrJobStatus.FAILED,
+          finishedAt: new Date(),
+          errorMessage: error?.message ?? 'Unknown error',
+        },
+      });
       throw error;
     }
   },
@@ -477,7 +537,10 @@ export const TicketService = {
       include: {
         supplier: true,
         driver: true,
-        ocrJobs: true,
+        // Newest first: the review panel reads the most recent job to decide
+        // whether the ticket still needs a person, and an unordered list left
+        // that to insertion order.
+        ocrJobs: { orderBy: { startedAt: 'desc' } },
         linkedOrder: true,
         orderMatches: {
           include: { order: true }

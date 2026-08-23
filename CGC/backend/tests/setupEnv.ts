@@ -4,9 +4,11 @@
 //
 // Import this before any src/ module:  import './setupEnv.js';
 process.env.NODE_ENV ||= 'test';
+process.env.STORAGE_DRIVER ||= 'local';
 process.env.DATABASE_URL ||= 'postgresql://test:test@127.0.0.1:5432/test';
 process.env.DIRECT_URL ||= 'postgresql://test:test@127.0.0.1:5432/test';
 process.env.JWT_SECRET ||= 'test-only-jwt-secret';
+process.env.INTERNAL_SHARED_SECRET ||= 'test-only-internal-secret';
 process.env.SUPABASE_URL ||= 'https://test-project.supabase.co';
 process.env.SUPABASE_SERVICE_ROLE_KEY ||= 'test-only-service-role-key';
 process.env.SUPABASE_STORAGE_BUCKET ||= 'test-bucket';

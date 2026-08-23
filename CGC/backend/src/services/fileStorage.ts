@@ -4,9 +4,37 @@
  */
 
 import { v4 as uuidv4 } from 'uuid';
+import fs from 'node:fs/promises';
+import path from 'node:path';
 import { uploadTicketImage, uploadInvoiceImage, uploadCsvFile, uploadTicketThumbnail } from './supabaseStorage.js';
 import { generateThumbnail, deriveThumbnailPath, THUMBNAIL_CONTENT_TYPE } from './thumbnail.service.js';
 import { pdfToPng } from 'pdf-to-png-converter';
+import { env } from '../config/env.js';
+
+const uploadsRoot = path.resolve(process.cwd(), 'uploads');
+
+function safeExtension(originalName: string, fallback: string): string {
+  const extension = path.extname(path.basename(originalName)).toLowerCase();
+  return /^\.[a-z0-9]{1,8}$/.test(extension) ? extension : fallback;
+}
+
+async function saveLocalFile(
+  buffer: Buffer,
+  segments: string[],
+): Promise<{ path: string; publicUrl: string; size: number; timestamp: string }> {
+  const destination = path.resolve(uploadsRoot, ...segments);
+  if (!destination.startsWith(`${uploadsRoot}${path.sep}`)) {
+    throw new Error('Invalid local storage path');
+  }
+  await fs.mkdir(path.dirname(destination), { recursive: true });
+  await fs.writeFile(destination, buffer, { flag: 'wx' });
+  return {
+    path: segments.join('/'),
+    publicUrl: `/uploads/${segments.join('/')}`,
+    size: buffer.length,
+    timestamp: new Date().toISOString(),
+  };
+}
 
 /**
  * Helper to convert PDF ticket buffer to PNG buffer if necessary using in-process converter
@@ -73,10 +101,16 @@ export async function saveTicketImage(
   try {
     const { buffer: processedBuffer, name: processedName } = await convertPdfToPngIfNecessary(buffer, originalName);
     const ticketId = uuidv4();
-    result = await uploadTicketImage(processedBuffer, ticketId, processedName);
+    result = env.storageDriver === 'local'
+      ? await saveLocalFile(processedBuffer, [
+          'tickets',
+          ticketId,
+          `${ticketId}-${Date.now()}${safeExtension(processedName, '.jpg')}`,
+        ])
+      : await uploadTicketImage(processedBuffer, ticketId, processedName);
     thumbnailSource = processedBuffer;
 
-    console.log(`[FileStorage] Ticket image uploaded: ${result.publicUrl}`);
+    console.log('[FileStorage] Ticket image stored');
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
     console.error('[FileStorage] Failed to save ticket image:', errorMsg);
@@ -87,11 +121,13 @@ export async function saveTicketImage(
   try {
     const thumbnail = await generateThumbnail(thumbnailSource);
     const thumbnailPath = deriveThumbnailPath(result.path);
-    const uploaded = await uploadTicketThumbnail(
-      thumbnail.buffer,
-      thumbnailPath,
-      THUMBNAIL_CONTENT_TYPE
-    );
+    const uploaded = env.storageDriver === 'local'
+      ? await saveLocalFile(thumbnail.buffer, thumbnailPath.split('/'))
+      : await uploadTicketThumbnail(
+          thumbnail.buffer,
+          thumbnailPath,
+          THUMBNAIL_CONTENT_TYPE
+        );
     thumbnailUrl = uploaded.publicUrl;
     console.log(
       `[FileStorage] Thumbnail generated: ${thumbnail.sourceBytes} -> ${thumbnail.bytes} bytes`
@@ -119,9 +155,15 @@ export async function saveInvoiceImage(
   try {
     const { buffer: processedBuffer, name: processedName } = await convertPdfToPngIfNecessary(buffer, originalName);
     const invoiceId = uuidv4();
-    const result = await uploadInvoiceImage(processedBuffer, invoiceId, processedName);
+    const result = env.storageDriver === 'local'
+      ? await saveLocalFile(processedBuffer, [
+          'invoices',
+          invoiceId,
+          `${invoiceId}-${Date.now()}${safeExtension(processedName, '.jpg')}`,
+        ])
+      : await uploadInvoiceImage(processedBuffer, invoiceId, processedName);
     
-    console.log(`[FileStorage] Invoice image uploaded: ${result.publicUrl}`);
+    console.log('[FileStorage] Invoice image stored');
     
     return result.publicUrl;
   } catch (error) {
@@ -129,6 +171,26 @@ export async function saveInvoiceImage(
     console.error('[FileStorage] Failed to save invoice image:', errorMsg);
     throw error;
   }
+}
+
+/**
+ * Save pickup/delivery proof. Production keeps the existing Supabase object
+ * layout; the guarded local adapter exists only for disposable browser QA.
+ */
+export async function saveDeliveryPhoto(
+  buffer: Buffer,
+  deliveryId: string,
+  type: 'pickup' | 'delivery',
+  originalName: string,
+): Promise<string> {
+  const result = env.storageDriver === 'local'
+    ? await saveLocalFile(buffer, [
+        'deliveries',
+        deliveryId,
+        `${deliveryId}-${type}-${Date.now()}${safeExtension(originalName, '.jpg')}`,
+      ])
+    : await uploadTicketImage(buffer, `${deliveryId}-${type}`, originalName);
+  return result.publicUrl;
 }
 
 /**
@@ -141,9 +203,11 @@ export async function saveCsvFile(
 ): Promise<string> {
   try {
     const uploadId = uuidv4();
-    const result = await uploadCsvFile(buffer, originalName, uploadId);
+    const result = env.storageDriver === 'local'
+      ? await saveLocalFile(buffer, ['csv-uploads', `${uploadId}-${Date.now()}.csv`])
+      : await uploadCsvFile(buffer, originalName, uploadId);
     
-    console.log(`[FileStorage] CSV file uploaded: ${result.publicUrl}`);
+    console.log('[FileStorage] CSV file stored');
     
     return result.publicUrl;
   } catch (error) {
@@ -156,5 +220,6 @@ export async function saveCsvFile(
 export default {
   saveTicketImage,
   saveInvoiceImage,
+  saveDeliveryPhoto,
   saveCsvFile,
 };

@@ -1,6 +1,6 @@
 import { prisma } from '../db/prisma.js';
 import { MailService } from './mail.service.js';
-import { createDriverAccessToken } from './driverAccessToken.js';
+import { buildDriverAccessUrl, createDriverAccessToken } from './driverAccessToken.js';
 
 export const NotificationService = {
   async sendAssignmentNotification(driverId: string, deliveries: any[]) {
@@ -19,7 +19,7 @@ export const NotificationService = {
     }
     
     const appUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
-    const mobileLink = `${appUrl}/driver/today?token=${token}`;
+    const mobileLink = buildDriverAccessUrl(appUrl, token);
 
     const subject = `🚚 You have ${deliveries.length} new deliveries assigned`;
     const body = `

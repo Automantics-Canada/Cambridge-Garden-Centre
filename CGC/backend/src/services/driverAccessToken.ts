@@ -20,3 +20,12 @@ export function createDriverAccessToken(user: LinkedDriverUser | null | undefine
     { expiresIn: '12h' },
   );
 }
+
+/**
+ * Put the bearer token in the URL fragment. Fragments are handled by the
+ * browser and are not sent in the HTTP request, reverse-proxy logs or Referer.
+ */
+export function buildDriverAccessUrl(appUrl: string, token: string): string {
+  const base = appUrl.replace(/\/+$/, '');
+  return `${base}/driver/today#token=${encodeURIComponent(token)}`;
+}

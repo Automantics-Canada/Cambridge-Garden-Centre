@@ -1,8 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { useSearchParams } from 'react-router-dom';
 import { useSelector, useDispatch } from 'react-redux';
 import api from '../../api/axios';
-import { supabase } from '../../supabaseClient';
 import { logout } from '../../store/authSlice';
 import LogoutModal from '../../components/LogoutModal';
 import { MapPin, Camera, CheckCircle2, AlertCircle, Package, User, LogOut } from 'lucide-react';
@@ -14,9 +12,16 @@ import { Badge } from '../../components/ui';
 import { cn } from '../../lib/cn';
 import { formatQuantity } from '../../lib/quantity';
 
+function accessTokenFromLocation() {
+  return new URLSearchParams(window.location.search).get('token')
+    || new URLSearchParams(window.location.hash.slice(1)).get('token')
+    || '';
+}
+
 export default function DriverMobileView() {
-  const [searchParams] = useSearchParams();
-  const token = searchParams.get('token');
+  const [token, setToken] = useState(() => (
+    accessTokenFromLocation() || sessionStorage.getItem('driverLinkToken') || ''
+  ));
 
   const dispatch = useDispatch();
   const { isAuthenticated } = useSelector((state) => state.auth);
@@ -32,52 +37,58 @@ export default function DriverMobileView() {
   const [updatingStatus, setUpdatingStatus] = useState(false);
   const [showLogoutModal, setShowLogoutModal] = useState(false);
 
+  // A signed email link necessarily lands with a token once. Exchange it into
+  // tab-scoped session storage immediately and remove it from the address bar,
+  // so API requests, browser history, screenshots and diagnostics do not keep
+  // carrying the reusable credential in URLs.
+  useEffect(() => {
+    const exchangeLocationToken = () => {
+      const locationToken = accessTokenFromLocation();
+      if (!locationToken) return;
+      sessionStorage.setItem('driverLinkToken', locationToken);
+      setToken(locationToken);
+      window.history.replaceState(null, '', window.location.pathname);
+    };
+
+    exchangeLocationToken();
+    window.addEventListener('hashchange', exchangeLocationToken);
+    window.addEventListener('popstate', exchangeLocationToken);
+    return () => {
+      window.removeEventListener('hashchange', exchangeLocationToken);
+      window.removeEventListener('popstate', exchangeLocationToken);
+    };
+  }, []);
+
   const fetchMobileData = useCallback(async (silent = false) => {
     try {
       if (!silent) {
         setLoading(true);
       }
 
-      let driverInfoData, deliveriesData, remaining;
-      if (token) {
-        // Legacy URL token access
-        const [driverRes, delRes] = await Promise.all([
-          api.get(`/api/drivers/me?token=${token}`),
-          api.get(`/api/deliveries?token=${token}`)
-        ]);
-        driverInfoData = driverRes.data;
-        deliveriesData = delRes.data;
-      } else if (isAuthenticated) {
-        // Standard session authenticated access
-        const userToken = localStorage.getItem('token');
-        const headers = userToken ? { Authorization: `Bearer ${userToken}` } : {};
-
-        const { data: meData, error: meError } = await supabase.functions.invoke('fetch-cgc-data?resource=drivers-me', {
-          method: 'GET',
-          headers
-        });
-        if (meError) throw meError;
-        driverInfoData = meData;
-
-        // The server returns the current stop only, and reports how many remain.
-        // This used to ask for limit=1000 and hide all but the first row, which
-        // put the whole day's route — customers, products, quantities — in the
-        // browser of a driver who is only meant to see the stop they are on.
-        const { data: delData, error: delError } = await supabase.functions.invoke(
-          `fetch-cgc-data?resource=deliveries&driverId=${meData.id}`,
-          { method: 'GET', headers }
-        );
-        if (delError) throw delError;
-        deliveriesData = delData?.data || [];
-        remaining = delData?.pagination?.totalCount;
-      } else {
+      if (!token && !isAuthenticated) {
         throw new Error("Missing session or access link");
       }
 
+      // Both authenticated sessions and signed legacy links use the same
+      // Express authorization path. The backend scopes DRIVER reads to the
+      // logged-in driver's id and `limit: 1` returns only the current stop,
+      // while totalCount keeps the remaining-stop badge accurate.
+      const linkConfig = token
+        ? { headers: { Authorization: `Bearer ${token}` } }
+        : {};
+      const [driverRes, delRes] = await Promise.all([
+        api.get('/api/drivers/me', linkConfig),
+        api.get('/api/deliveries', {
+          ...linkConfig,
+          params: { page: 1, limit: 1 },
+        }),
+      ]);
+      const driverInfoData = driverRes.data;
+      const deliveriesData = delRes.data?.data || [];
+      const remaining = delRes.data?.pagination?.totalCount;
+
       setDriverInfo(driverInfoData);
 
-      // The token path still returns the full list, so the same rule is applied
-      // here for it. The session path is already narrowed server-side.
       const active = (deliveriesData || [])
         .filter(d => d.status !== 'DELIVERED' && d.status !== 'CANCELLED')
         .sort((a, b) => (a.priority || 0) - (b.priority || 0));
@@ -107,10 +118,8 @@ export default function DriverMobileView() {
   const handleStatusChange = async (id, newStatus, notes) => {
     try {
       setUpdatingStatus(true);
-      const url = token
-        ? `/api/deliveries/${id}/status?token=${token}`
-        : `/api/deliveries/${id}/status`;
-      await api.patch(url, { status: newStatus, notes });
+      const config = token ? { headers: { Authorization: `Bearer ${token}` } } : {};
+      await api.patch(`/api/deliveries/${id}/status`, { status: newStatus, notes }, config);
       toast.success(`Status: ${newStatus.replace(/_/g, ' ')}`);
       await fetchMobileData(true);
     } catch (err) {
@@ -135,10 +144,8 @@ export default function DriverMobileView() {
       formData.append('file', file);
       formData.append('type', type);
 
-      const url = token
-        ? `/api/deliveries/${id}/photos?token=${token}`
-        : `/api/deliveries/${id}/photos`;
-      await api.post(url, formData);
+      const config = token ? { headers: { Authorization: `Bearer ${token}` } } : {};
+      await api.post(`/api/deliveries/${id}/photos`, formData, config);
       toast.success(`${type === 'pickup' ? 'Pickup' : type === 'delivery' ? 'Delivery' : 'Ticket'} photo uploaded!`);
       await fetchMobileData(true);
     } catch (err) {

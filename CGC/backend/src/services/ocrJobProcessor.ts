@@ -1,5 +1,4 @@
 import { prisma } from '../db/prisma.js';
-import { extractTextFromLocalImage } from './ocr.service.js';
 import {
   OcrJobStatus,
   TicketStatus,
@@ -19,10 +18,15 @@ import { shouldRunWorkersInProcess } from '../workers/runtime.js';
 /**
  * How many times a document is retried before a person has to look at it.
  *
- * Textract and Bedrock both fail transiently. Retrying forever would hide a
- * document that can never be read (a blank scan, a corrupt upload) behind an
- * endlessly retried job, so failures stop being retried and start being
- * reported.
+ * Textract fails transiently, and so does the network under it. Retrying forever
+ * would hide a document that can never be read (a blank scan, a corrupt upload)
+ * behind an endlessly retried job, so failures stop being retried and start
+ * being reported.
+ *
+ * Note what is *not* retried: a document that was read but not confidently. That
+ * is NEEDS_REVIEW, it is terminal, and it never re-enters this loop. In
+ * particular a deployment with no Groq key does not produce a retry storm — each
+ * such document is held for a person on its first pass and never queued again.
  */
 export const MAX_OCR_ATTEMPTS = 4;
 
@@ -48,18 +52,25 @@ export async function processOcrJob(jobId: string): Promise<void> {
       return;
     }
 
-    // Update job status to PROCESSING and count the attempt. Counting here
-    // rather than on failure means a job that crashes the process mid-run still
-    // burns an attempt, so a document that reliably kills the worker cannot
-    // retry indefinitely.
-    await prisma.ocrJob.update({
-      where: { id: jobId },
+    // Atomically claim the due PENDING row. Multiple API triggers, worker ticks,
+    // or replicas may race on the same job; exactly one is allowed past here.
+    const now = new Date();
+    const claimed = await prisma.ocrJob.updateMany({
+      where: {
+        id: jobId,
+        status: OcrJobStatus.PENDING,
+        OR: [{ nextAttemptAt: null }, { nextAttemptAt: { lte: now } }],
+      },
       data: {
         status: OcrJobStatus.PROCESSING,
-        startedAt: new Date(),
+        startedAt: now,
         attempts: { increment: 1 },
       },
     });
+    if (claimed.count === 0) {
+      console.log(`[OCR] Skipped job ${jobId}; it is not due and pending`);
+      return;
+    }
 
     const targetId = ocrJob.ticket?.id || ocrJob.invoice?.id;
     console.log(`[OCR] Processing job ${jobId} for entity ${targetId}`);
@@ -68,15 +79,24 @@ export async function processOcrJob(jobId: string): Promise<void> {
       console.log(`[OCR] Processing Ticket OCR for: ${ocrJob.ticket.id}`);
       // Delegate to TicketService to ensure consistent logic (junction table, etc.)
       const { TicketService } = await import('../modules/tickets/ticket.service.js');
-      await TicketService.processTicketOcr(ocrJob.ticket.id);
+      await TicketService.processTicketOcr(ocrJob.ticket.id, jobId);
     } else if (ocrJob.type === OcrJobType.INVOICE && ocrJob.invoice) {
         console.log(`[OCR] Processing Invoice OCR for: ${ocrJob.invoice.id}`);
         // Delegate to InvoiceService
-        await InvoiceService.processInvoiceOcr(ocrJob.invoice.id);
+        await InvoiceService.processInvoiceOcr(ocrJob.invoice.id, jobId);
         // InvoiceService already updates the ocrJob status inside its method
     }
 
-    console.log(`[OCR] Successfully processed job ${jobId}`);
+    // The delegated service has already set the job's terminal status —
+    // COMPLETED when the extraction validated, NEEDS_REVIEW when it produced a
+    // usable candidate that a person has to confirm.
+    const finished = await prisma.ocrJob.findUnique({
+      where: { id: jobId },
+      select: { status: true },
+    });
+    console.log(
+      `[OCR] Finished job ${jobId} with status ${finished?.status ?? 'UNKNOWN'}`
+    );
   } catch (error: any) {
     console.error(`[OCR] Error processing job ${jobId}:`, error?.message);
 
@@ -155,32 +175,55 @@ export async function processPendingOcrJobs(): Promise<number> {
 }
 
 /**
- * Documents that have exhausted their retries and need a person.
+ * Documents that are not going to finish on their own.
  *
- * Without this, a permanently failed OCR job is invisible: the ticket or
- * invoice simply never gains its extracted fields, and nothing distinguishes
- * "not processed yet" from "will never be processed".
+ * Two distinct populations, reported separately because they need different
+ * things from a person:
+ *
+ *   FAILED        could not be read at all, retries exhausted. Someone has to
+ *                 look at the file itself — a blank scan, a corrupt upload, a
+ *                 credential problem.
+ *   NEEDS_REVIEW  was read, and the result is usable, but a required field is
+ *                 unresolved or a value came from the fallback reader. Someone
+ *                 has to confirm it on the review desk.
+ *
+ * Collapsing the two would either bury a readable document in the failure
+ * report or claim a genuinely broken one is merely awaiting review.
  */
+const STUCK_JOB_SELECT = {
+  id: true,
+  type: true,
+  status: true,
+  attempts: true,
+  errorMessage: true,
+  reviewReasons: true,
+  fallbackUsed: true,
+  structuredModel: true,
+  extractionConfidence: true,
+  finishedAt: true,
+  ticketId: true,
+  invoiceId: true,
+} as const;
+
 export async function getStuckOcrJobs() {
-  const [count, jobs] = await Promise.all([
+  const [count, jobs, needsReviewCount, needsReview] = await Promise.all([
     prisma.ocrJob.count({ where: { status: OcrJobStatus.FAILED } }),
     prisma.ocrJob.findMany({
       where: { status: OcrJobStatus.FAILED },
       orderBy: { finishedAt: 'desc' },
       take: 20,
-      select: {
-        id: true,
-        type: true,
-        attempts: true,
-        errorMessage: true,
-        finishedAt: true,
-        ticketId: true,
-        invoiceId: true,
-      },
+      select: STUCK_JOB_SELECT,
+    }),
+    prisma.ocrJob.count({ where: { status: OcrJobStatus.NEEDS_REVIEW } }),
+    prisma.ocrJob.findMany({
+      where: { status: OcrJobStatus.NEEDS_REVIEW },
+      orderBy: { finishedAt: 'desc' },
+      take: 20,
+      select: STUCK_JOB_SELECT,
     }),
   ]);
 
-  return { count, jobs };
+  return { count, jobs, needsReviewCount, needsReview };
 }
 
 /**

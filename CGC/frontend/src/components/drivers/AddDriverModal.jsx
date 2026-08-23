@@ -198,6 +198,7 @@ export default function AddDriverModal({ isOpen, onClose, onSuccess }) {
                       id="add-driver-password"
                       type={showPassword ? 'text' : 'password'}
                       required={!!formData.email}
+                      minLength={12}
                       className="pr-10"
                       placeholder="Set credentials password"
                       value={formData.password}

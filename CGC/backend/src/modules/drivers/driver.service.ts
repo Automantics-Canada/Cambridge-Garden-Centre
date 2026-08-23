@@ -1,6 +1,7 @@
 import { prisma } from '../../db/prisma.js';
 import { DriverType } from '@prisma/client';
 import bcrypt from 'bcryptjs';
+import { randomBytes } from 'node:crypto';
 
 import { GmailService } from '../../services/gmail.service.js';
 
@@ -61,14 +62,19 @@ export const DriverService = {
     companyName?: string;
     ratePerDelivery?: number; 
     ratePerTrip?: number; 
-    active?: boolean 
+    active?: boolean;
+    /** Controller-owned delivery can disable the service's email to avoid duplicates. */
+    sendCredentials?: boolean;
   }) {
     const emailNormalized = data.email ? data.email.toLowerCase().trim() : undefined;
     const phoneNormalized = data.phone.trim();
 
     let plainPassword = data.password;
+    if (plainPassword && plainPassword.length < 12) {
+      throw new Error('Driver portal password must be at least 12 characters');
+    }
     if (emailNormalized && !plainPassword) {
-      plainPassword = Math.random().toString(36).slice(-8) + 'A1!';
+      plainPassword = `${randomBytes(18).toString('base64url')}Aa1!`;
     }
 
     const driver = await prisma.$transaction(async (tx) => {
@@ -159,7 +165,7 @@ export const DriverService = {
       return newDriver;
     });
 
-    if (emailNormalized && plainPassword) {
+    if (emailNormalized && plainPassword && data.sendCredentials !== false) {
       try {
         const html = `
           <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; text-align: center; color: #333;">
@@ -258,6 +264,10 @@ export const DriverService = {
       }
 
       let userId = existingDriver.userId;
+
+      if (password && password.length < 12) {
+        throw new Error('Driver portal password must be at least 12 characters');
+      }
 
       // Handle User table sync
       if (emailNormalized && emailNormalized !== '') {
@@ -367,37 +377,53 @@ export const DriverService = {
 
     const driver = await prisma.driver.findUnique({
       where: { userId },
-      include: {
-        deliveries: {
-          where: {
-            OR: [
-              { status: { notIn: ['DELIVERED', 'CANCELLED'] } },
-              { completedAt: { gte: today } }
-            ]
-          },
-          include: {
-            order: {
-              include: { supplier: true }
-            }
-          }
-        }
+      select: {
+        id: true,
+        name: true,
+        type: true,
+        phone: true,
+        email: true,
+        active: true,
+        ratePerDelivery: true,
+        ratePerTrip: true,
+        userId: true,
+        companyName: true,
       }
     });
 
     if (!driver) return null;
 
-    const todayDeliveries = driver.deliveries;
-    const completedDeliveries = todayDeliveries.filter(d => d.status === 'DELIVERED');
-    const currentTask = todayDeliveries.find(d => 
-      ['PLACED', 'OUT_FOR_DELIVERY', 'IN_TRANSIT', 'ON_HOLD', 'DELAYED'].includes(d.status)
-    );
+    const [totalToday, completedToday, currentTask] = await Promise.all([
+      prisma.delivery.count({
+        where: {
+          driverId: driver.id,
+          OR: [
+            { status: { notIn: ['DELIVERED', 'CANCELLED'] } },
+            { completedAt: { gte: today } },
+          ],
+        },
+      }),
+      prisma.delivery.count({
+        where: { driverId: driver.id, status: 'DELIVERED', completedAt: { gte: today } },
+      }),
+      prisma.delivery.findFirst({
+        where: { driverId: driver.id, status: { notIn: ['DELIVERED', 'CANCELLED'] } },
+        orderBy: [{ priority: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
+        select: {
+          id: true,
+          status: true,
+          priority: true,
+          order: { select: { id: true, spruceOrderId: true, customerName: true } },
+        },
+      }),
+    ]);
 
     return {
       ...driver,
       stats: {
-        totalToday: todayDeliveries.length,
-        completedToday: completedDeliveries.length,
-        progress: todayDeliveries.length > 0 ? Math.round((completedDeliveries.length / todayDeliveries.length) * 100) : 0
+        totalToday,
+        completedToday,
+        progress: totalToday > 0 ? Math.round((completedToday / totalToday) * 100) : 0
       },
       currentTask: currentTask || null
     };

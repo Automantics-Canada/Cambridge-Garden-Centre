@@ -42,7 +42,6 @@ function stubClient(options: {
       async findFirst(args: any) {
         const ownerUserId = args.where.driver?.userId;
         const found = deliveries.find((d) => {
-          if (d.id !== args.where.id) return false;
           if (ownerUserId === undefined) return true;
           const driver = drivers.find((dr) => dr.id === d.driverId);
           return driver?.userId === ownerUserId;
@@ -91,6 +90,7 @@ describe('canAccessDelivery', () => {
     ],
     deliveries: [
       { id: 'delivery-a1', driverId: 'driver-a' },
+      { id: 'delivery-a2', driverId: 'driver-a' },
       { id: 'delivery-b1', driverId: 'driver-b' },
     ],
   });
@@ -106,6 +106,10 @@ describe('canAccessDelivery', () => {
   it("denies a driver acting on another driver's delivery", async () => {
     assert.equal(await canAccessDelivery(client, DRIVER_A, 'delivery-b1'), false);
     assert.equal(await canAccessDelivery(client, DRIVER_B, 'delivery-a1'), false);
+  });
+
+  it('denies a later stop assigned to the same driver', async () => {
+    assert.equal(await canAccessDelivery(client, DRIVER_A, 'delivery-a2'), false);
   });
 
   it('denies a driver acting on a delivery that does not exist', async () => {

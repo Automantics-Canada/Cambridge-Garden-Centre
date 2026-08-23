@@ -22,8 +22,8 @@ The system operates across three main data entities:
 
 **2. Ticket Arrival & OCR**
 - **User Action:** A driver sends a photo of a material ticket.
-- **System Action:** A webhook or email puller grabs the raw image, queues an `OcrJob`, and dispatches it to AWS Textract. 
-- **System Action:** Extracts PO number, ticket number, supplier, material type, date, and weights/quantities.
+- **System Action:** A webhook or email puller grabs the raw image, queues an `OcrJob`, and dispatches it to AWS Textract (`DetectDocumentText`).
+- **System Action:** A deterministic parser reads PO number, ticket number, supplier, material, date and net quantity out of the OCR text. Each field is validated and carries its own confidence — see *Document extraction* below.
 
 **3. Auto-Linking Engine**
 - **System Action:** After OCR extraction, the backend matches the extracted `poNumber` against existing `Orders`.
@@ -33,7 +33,7 @@ The system operates across three main data entities:
 **4. Invoice Arrival & Matching**
 - **User Action:** Supplier emails a PDF invoice to AP.
 - **System Action:** The Gmail API Integration (or Mock Endpoint) receives the email, downloads the attachment, and generates an `Invoice` record.
-- **System Action:** AWS Textract (`AnalyzeExpense`) parses the invoice completely, extracting line items, quantities, and unit rates.
+- **System Action:** AWS Textract (`AnalyzeExpense`) parses the invoice, and the deterministic extractor reads its structured summary fields and line item groups into typed, validated fields.
 - **Matching Engine:** The system checks the extracted line items against:
   - Linked Orders
   - Negotiated Supplier Rates table
@@ -45,6 +45,79 @@ The system operates across three main data entities:
 - A side-by-side modal opens: showing the raw PDF on the left and extracted data/flagged items on the right.
 - The AP user clicks **Verify** or **Dispute**.
 - **System Action:** The system updates the invoice state and permanently records the action in the `AuditLog` table ensuring accountability.
+
+---
+
+## Document extraction
+
+Textract is the OCR provider. What turns its output into fields is deterministic
+code, and a language model is reached for only to fill gaps.
+
+```
+Document
+  -> AWS Textract                     (OCR: AnalyzeExpense or DetectDocumentText)
+  -> deterministic extraction         (typed fields, per-field confidence)
+  -> field-level validation           (dates, units, six-digit POs, CAD amounts, arithmetic)
+  -> fallback reader                  (only for fields still missing or uncertain)
+  -> deterministic merge + recheck
+  -> persist, or mark NEEDS_REVIEW
+```
+
+The rules that matter:
+
+- **Nothing is defaulted.** A unit that cannot be read stays empty; it does not
+  become `ea`. A price that cannot be read stays empty; it does not become `0`.
+- **The fallback fills, it does not overrule.** A field that validated at high
+  confidence is never offered to the model and can never be overwritten by it.
+- **Model output is a candidate.** It is returned as text and put through the
+  same validators as anything Textract produced. Anything that fails is dropped.
+- **A fallback-sourced value always reaches a person.** Any document that used it
+  finishes `NEEDS_REVIEW`, never `COMPLETED`.
+- **OCR cannot create or guess a supplier.** Only an exact name or email-domain
+  match attaches one. A close match is shown as a suggestion and links nothing.
+- **Invoice writes are transactional.** The header and the complete set of line
+  items are replaced together or not at all.
+
+### OCR job states
+
+| State | Meaning |
+| --- | --- |
+| `COMPLETED` | Every required field validated. Nothing came from the fallback. |
+| `NEEDS_REVIEW` | A usable result exists, but a field is unresolved, was read with low confidence, or came from the fallback. Terminal — it is never retried. |
+| `FAILED` | No usable result at all (unreadable file, no text detected). Retried with backoff up to `MAX_OCR_ATTEMPTS`. |
+
+### Environment
+
+Backend and worker only. **None of these belong in the frontend or in Vercel** —
+the frontend build is public.
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_REGION` | — | Textract. Required; OCR does not run without them. |
+| `GROQ_API_KEY` | _(unset)_ | Fallback reader credential. **Optional** — the API and worker start without it. |
+| `GROQ_MODEL` | `openai/gpt-oss-20b` | Fallback model. |
+| `GROQ_FALLBACK_ENABLED` | `false` | Must be `true` for any fallback call to happen. A key on its own does not enable it. |
+| `GROQ_TIMEOUT_MS` | `20000` | Per-request timeout. |
+| `GROQ_MAX_OUTPUT_TOKENS` | `1200` | Bounded output. |
+| `GROQ_MAX_CONCURRENCY` | `2` | Ceiling on simultaneous fallback calls per worker. |
+
+With `GROQ_FALLBACK_ENABLED` unset or `false`, the system runs deterministically:
+documents that cannot be fully read are marked `NEEDS_REVIEW` rather than
+completed. That is a supported operating mode, not a degraded one.
+
+### What is sent to the fallback, and what is logged
+
+Sent: the list of unresolved field names and only the matching OCR line
+neighbourhoods, with contact/address patterns stripped and the total length
+bounded. Not sent: unrelated document sections, the Textract response, file
+URLs, images, or any database identifier.
+
+Logged: job id, document type, model, duration, token counts, and outcome.
+Never logged: prompts, OCR text, model output, API keys, or document values.
+
+> **Rollout prerequisite.** Groq Zero Data Retention must be confirmed on the
+> account before the fallback is enabled against real supplier documents. It is
+> not asserted here and cannot be verified from this repository.
 
 ---
 
@@ -60,7 +133,7 @@ The system operates across three main data entities:
 │   │   │   ├── orders/     # Order ingestion logic
 │   │   │   ├── supplier/   # Supplier logic
 │   │   │   └── tickets/    # Ticket ingestion, Auto-linking & OCR logic 
-│   │   ├── services/       # File Storage and specialized AWS Textract logic
+│   │   ├── services/       # File storage, AWS Textract, and documentExtraction/
 │   │   ├── middleware/     # Express route JWT protection
 │   │   └── app.ts          # Core router pipeline
 ├── frontend/
@@ -79,7 +152,7 @@ The system operates across three main data entities:
 
 ### 1. Prerequisites setup
 1. Ensure Postgres DB is running and Prisma URL is injected into `.env`.
-2. Ensure you have valid `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and `AWS_REGION` configured either locally or in `.env` for Textract to work.
+2. Ensure you have valid `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and `AWS_REGION` configured either locally or in `.env` for Textract to work. The Groq fallback is optional and off by default — see *Document extraction*.
 3. Start Backend: `cd backend && npm run dev`
 4. Start Frontend: `cd frontend && npm run dev`
 

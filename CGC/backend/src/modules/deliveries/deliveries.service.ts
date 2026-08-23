@@ -1,7 +1,6 @@
 import { prisma } from '../../db/prisma.js';
 import { DeliveryStatus } from '@prisma/client';
-import supabaseStorage from '../../services/supabaseStorage.js';
-import { saveTicketImage } from '../../services/fileStorage.js';
+import { saveDeliveryPhoto, saveTicketImage } from '../../services/fileStorage.js';
 
 /** The delivery list/detail shape rendered by operations screens. */
 export const DELIVERY_RESPONSE_SELECT = {
@@ -55,6 +54,27 @@ export const DELIVERY_DRIVER_RESPONSE_SELECT = {
   },
 } as const;
 
+async function assertCurrentDriverDelivery(
+  client: any,
+  driverUserId: string | undefined,
+  deliveryId: string,
+): Promise<void> {
+  if (!driverUserId) return;
+  const current = await client.delivery.findFirst({
+    where: {
+      driver: { userId: driverUserId },
+      status: { notIn: ['DELIVERED', 'CANCELLED'] },
+    },
+    orderBy: [{ priority: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
+    select: { id: true },
+  });
+  if (!current || current.id !== deliveryId) {
+    const error: any = new Error('Drivers may act only on their current dispatch stop');
+    error.code = 'DELIVERY_NOT_CURRENT';
+    throw error;
+  }
+}
+
 export const DeliveriesService = {
   async getDeliveries(
     filters: any,
@@ -105,9 +125,12 @@ export const DeliveriesService = {
     id: string,
     status: DeliveryStatus,
     notes?: string,
-    expectedFrom?: DeliveryStatus
+    expectedFrom?: DeliveryStatus,
+    driverUserId?: string,
+    audience: 'operations' | 'driver' = 'operations',
   ) {
     return prisma.$transaction(async (tx) => {
+      await assertCurrentDriverDelivery(tx, driverUserId, id);
       const delivery = await tx.delivery.findUnique({ where: { id } });
       if (!delivery) throw new Error('Delivery not found');
 
@@ -146,23 +169,20 @@ export const DeliveriesService = {
 
       return tx.delivery.findUniqueOrThrow({
         where: { id },
-        include: {
-          driver: true,
-          order: {
-            include: {
-              supplier: true,
-              tickets: true
-            }
-          },
-          history: {
-            orderBy: { createdAt: 'desc' }
-          }
-        }
+        select: audience === 'driver' ? DELIVERY_DRIVER_RESPONSE_SELECT : DELIVERY_RESPONSE_SELECT,
       });
     });
   },
 
-  async uploadPhoto(id: string, type: 'pickup' | 'delivery' | 'ticket', fileBuffer: Buffer, filename: string) {
+  async uploadPhoto(
+    id: string,
+    type: 'pickup' | 'delivery' | 'ticket',
+    fileBuffer: Buffer,
+    filename: string,
+    driverUserId?: string,
+    audience: 'operations' | 'driver' = 'operations',
+  ) {
+    await assertCurrentDriverDelivery(prisma, driverUserId, id);
     if (type === 'ticket') {
       const delivery = await prisma.delivery.findUnique({
         where: { id },
@@ -174,48 +194,21 @@ export const DeliveriesService = {
       // and dashboard uploads so they also receive a best-effort thumbnail.
       const { imageUrl, thumbnailUrl } = await saveTicketImage(fileBuffer, filename);
 
-      // Create a ticket in the database linked to the driver and order
-      const ticket = await prisma.ticket.create({
-        data: {
-          source: 'MANUAL',
-          imageUrl,
-          thumbnailUrl,
-          ocrRawText: '',
-          ocrConfidence: 0,
-          status: 'LINKED',
-          linkMethod: 'MANUAL',
-          receivedAt: new Date(),
-          driverId: delivery.driverId,
-          linkedOrderId: delivery.orderId,
-        }
-      });
-
-      // Create the TicketOrderMatch junction record
-      await prisma.ticketOrderMatch.upsert({
-        where: {
-          ticketId_orderId: {
-            ticketId: ticket.id,
-            orderId: delivery.orderId,
+      const ocrJob = await prisma.$transaction(async (tx) => {
+        await assertCurrentDriverDelivery(tx, driverUserId, id);
+        const ticket = await tx.ticket.create({
+          data: {
+            source: 'MANUAL', imageUrl, thumbnailUrl, ocrRawText: '', ocrConfidence: 0,
+            status: 'LINKED', linkMethod: 'MANUAL', receivedAt: new Date(),
+            driverId: delivery.driverId, linkedOrderId: delivery.orderId,
           }
-        },
-        update: {
-          matchMethod: 'MANUAL',
-        },
-        create: {
-          ticketId: ticket.id,
-          orderId: delivery.orderId,
-          matchMethod: 'MANUAL',
-        }
-      });
-
-      // Create the OCR Job for the ticket
-      const ocrJob = await prisma.ocrJob.create({
-        data: {
-          type: 'TICKET',
-          provider: 'AWS_TEXTRACT',
-          status: 'PENDING',
-          ticketId: ticket.id,
-        }
+        });
+        await tx.ticketOrderMatch.create({
+          data: { ticketId: ticket.id, orderId: delivery.orderId, matchMethod: 'MANUAL' },
+        });
+        return tx.ocrJob.create({
+          data: { type: 'TICKET', provider: 'AWS_TEXTRACT', status: 'PENDING', ticketId: ticket.id },
+        });
       });
 
       // Trigger OCR background processing
@@ -225,38 +218,19 @@ export const DeliveriesService = {
       // Return the delivery fully loaded with order and tickets
       return prisma.delivery.findUnique({
         where: { id },
-        include: {
-          driver: true,
-          order: {
-            include: {
-              supplier: true,
-              tickets: true
-            }
-          },
-          history: {
-            orderBy: { createdAt: 'desc' }
-          }
-        }
+        select: audience === 'driver' ? DELIVERY_DRIVER_RESPONSE_SELECT : DELIVERY_RESPONSE_SELECT,
       });
     } else {
-      const uploadResult = await supabaseStorage.uploadTicketImage(fileBuffer, `${id}-${type}`, filename);
-      const updateData = type === 'pickup' ? { pickupPhotoUrl: uploadResult.publicUrl } : { deliveryPhotoUrl: uploadResult.publicUrl };
+      const publicUrl = await saveDeliveryPhoto(fileBuffer, id, type, filename);
+      const updateData = type === 'pickup' ? { pickupPhotoUrl: publicUrl } : { deliveryPhotoUrl: publicUrl };
 
-      return prisma.delivery.update({
-        where: { id },
-        data: updateData,
-        include: {
-          driver: true,
-          order: {
-            include: {
-              supplier: true,
-              tickets: true
-            }
-          },
-          history: {
-            orderBy: { createdAt: 'desc' }
-          }
-        }
+      return prisma.$transaction(async (tx) => {
+        await assertCurrentDriverDelivery(tx, driverUserId, id);
+        return tx.delivery.update({
+          where: { id },
+          data: updateData,
+          select: audience === 'driver' ? DELIVERY_DRIVER_RESPONSE_SELECT : DELIVERY_RESPONSE_SELECT,
+        });
       });
     }
   }

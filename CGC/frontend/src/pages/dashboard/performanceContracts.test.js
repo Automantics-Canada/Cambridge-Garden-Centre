@@ -121,7 +121,7 @@ describe('authenticated route performance contracts', () => {
     expect(codeOnly(deliveriesPageSource)).toContain('limit: 25');
   });
 
-  it('leaves only the driver mobile view on the Edge function', () => {
+  it('keeps every interactive screen off the Edge read proxy', () => {
     // Measured against production: the Edge hop costs 3-12x Express for
     // identical data, and each Edge call went out twice where Express goes once.
     // Every operations screen now reads from Express.
@@ -137,11 +137,11 @@ describe('authenticated route performance contracts', () => {
       expect(codeOnly(source), name).not.toContain('limit=1000');
     }
 
-    // DriverMobileView is deliberately still on the Edge function: that path
-    // returns the driver's current stop only, and /api/deliveries returns the
-    // whole route. Migrating it needs the single-stop scope server-side first,
-    // so this is pinned as an intentional exception rather than an oversight.
-    expect(read('src/pages/driver/DriverMobileView.jsx')).toContain('supabase.functions.invoke');
+    const driverSource = codeOnly(read('src/pages/driver/DriverMobileView.jsx'));
+    expect(driverSource).not.toContain('supabase.functions.invoke');
+    expect(driverSource).toContain("api.get('/api/drivers/me'");
+    expect(driverSource).toContain("api.get('/api/deliveries'");
+    expect(driverSource).toContain('limit: 1');
   });
 
   it('sends the dispatch board through the day-scoped Express route', () => {
