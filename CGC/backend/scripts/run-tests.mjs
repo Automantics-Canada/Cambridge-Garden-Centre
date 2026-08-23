@@ -23,6 +23,9 @@ if (mode === 'integration') {
     process.exit(2);
   }
 
+  process.env.DATABASE_URL ||= 'postgresql://cgctest:cgctest@127.0.0.1:55432/cgc_integration';
+  process.env.DIRECT_URL ||= process.env.DATABASE_URL;
+
   let databaseUrl;
   try {
     databaseUrl = new URL(process.env.DATABASE_URL ?? '');

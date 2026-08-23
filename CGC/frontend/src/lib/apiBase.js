@@ -10,7 +10,8 @@
  * build, and it should look broken immediately rather than half-work against
  * the wrong origin.
  */
-export const API_BASE_URL = import.meta.env.VITE_API_URL || '';
+export const API_BASE_URL = import.meta.env.VITE_API_URL
+  || (import.meta.env.DEV ? 'http://localhost:4000' : '');
 
 if (!API_BASE_URL && import.meta.env.PROD) {
   console.error('VITE_API_URL is not set. API requests and document URLs will not resolve.');

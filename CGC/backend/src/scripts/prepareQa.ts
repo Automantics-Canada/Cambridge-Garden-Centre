@@ -2,6 +2,11 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { assertDisposableQaDatabase } from './qaGuard.js';
 
+process.env.DATABASE_URL ??= 'postgresql://cgctest:cgctest@127.0.0.1:55432/cgc_integration';
+process.env.DIRECT_URL ??= process.env.DATABASE_URL;
+process.env.NODE_ENV ??= 'test';
+process.env.STORAGE_DRIVER ??= 'local';
+
 function runNodeScript(script: string, args: string[]): void {
   const result = spawnSync(process.execPath, [path.resolve(script), ...args], {
     cwd: process.cwd(),

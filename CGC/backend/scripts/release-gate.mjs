@@ -21,7 +21,8 @@ function run(command, args, cwd = backend) {
 if (process.env.CGC_TEST_CONFIRM_DISPOSABLE !== '1') {
   throw new Error('Release gate requires CGC_TEST_CONFIRM_DISPOSABLE=1');
 }
-const database = new URL(process.env.DATABASE_URL || '');
+process.env.DATABASE_URL ||= 'postgresql://cgctest:cgctest@127.0.0.1:55432/cgc_integration';
+const database = new URL(process.env.DATABASE_URL);
 if (!['127.0.0.1', 'localhost', '::1'].includes(database.hostname)
     || database.pathname !== '/cgc_integration') {
   throw new Error('Release gate DATABASE_URL must target loopback/cgc_integration');

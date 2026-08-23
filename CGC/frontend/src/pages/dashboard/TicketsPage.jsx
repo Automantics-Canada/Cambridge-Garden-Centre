@@ -928,13 +928,13 @@ export default function TicketsPage() {
                   {selectedTicket.imageUrl ? (
                     selectedTicket.imageUrl.toLowerCase().endsWith('.pdf') ? (
                       <iframe
-                        src={selectedTicket.imageUrl.startsWith('http') ? selectedTicket.imageUrl : `${import.meta.env.VITE_API_URL || 'http://localhost:4000'}${selectedTicket.imageUrl}`}
+                        src={resolveDocumentUrl(selectedTicket.imageUrl)}
                         className="w-full h-full border-0 bg-surface"
                         title="PDF Ticket"
                       />
                     ) : (
                       <img 
-                        src={selectedTicket.imageUrl.startsWith('http') ? selectedTicket.imageUrl : `${import.meta.env.VITE_API_URL || 'http://localhost:4000'}${selectedTicket.imageUrl}`} 
+                        src={resolveDocumentUrl(selectedTicket.imageUrl)}
                         className="max-w-full max-h-full object-contain shadow-overlay transition-transform duration-300 group-hover:scale-[1.02]"
                         alt="Full ticket"
                       />

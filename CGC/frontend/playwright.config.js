@@ -1,7 +1,9 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { defineConfig, devices } from '@playwright/test';
-import { backendQaEnv, frontendQaEnv } from './e2e/qa-env.js';
+import { assertE2eOptIn, backendQaEnv, frontendQaEnv } from './e2e/qa-env.js';
+
+assertE2eOptIn();
 
 const frontend = path.dirname(fileURLToPath(import.meta.url));
 const backend = path.resolve(frontend, '../backend');

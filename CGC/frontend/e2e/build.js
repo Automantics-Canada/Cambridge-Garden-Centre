@@ -1,6 +1,8 @@
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { frontendQaEnv } from './qa-env.js';
+import { assertE2eOptIn, frontendQaEnv } from './qa-env.js';
+
+assertE2eOptIn();
 
 const result = spawnSync(
   process.execPath,
