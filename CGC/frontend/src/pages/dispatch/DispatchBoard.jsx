@@ -11,6 +11,7 @@ import { cn } from '../../lib/cn';
 import { isTerminal, statusErrorMessage, statusOptionsFor } from '../../lib/deliveryTransitions';
 import { formatQuantity } from '../../lib/quantity';
 import { mergeUnassignedOrders } from '../../lib/dispatchBoard';
+import { resolveDocumentUrl } from '../../lib/apiBase';
 
 export default function DispatchBoard() {
   const [board, setBoard] = useState({ unassignedOrders: [], unassignedDeliveries: [], drivers: [] });
@@ -765,13 +766,13 @@ export default function DispatchBoard() {
                                                     {del.pickupPhotoUrl && (
                                                       <div className="flex gap-2 items-center">
                                                         <span className="text-[12.5px] font-bold text-muted">Pickup photo:</span>
-                                                        <img src={del.pickupPhotoUrl} className="w-20 h-10 object-cover rounded-control border hover:scale-105 transition-all cursor-zoom-in" alt="Pickup Evidence" />
+                                                        <img src={resolveDocumentUrl(del.pickupPhotoUrl)} className="w-20 h-10 object-cover rounded-control border hover:scale-105 transition-all cursor-zoom-in" alt="Pickup Evidence" />
                                                       </div>
                                                     )}
                                                     {del.deliveryPhotoUrl && (
                                                       <div className="flex gap-2 items-center">
                                                         <span className="text-[12.5px] font-bold text-muted">Delivery photo:</span>
-                                                        <img src={del.deliveryPhotoUrl} className="w-20 h-10 object-cover rounded-control border hover:scale-105 transition-all cursor-zoom-in" alt="Delivery Evidence" />
+                                                        <img src={resolveDocumentUrl(del.deliveryPhotoUrl)} className="w-20 h-10 object-cover rounded-control border hover:scale-105 transition-all cursor-zoom-in" alt="Delivery Evidence" />
                                                       </div>
                                                     )}
                                                   </div>

@@ -18,9 +18,9 @@ import {
 import path from 'node:path';
 import fs from 'node:fs';
 import {
-  downloadFileToTemp,
+  downloadStoredFileToTemp,
   cleanupTempFile,
-  isSupabaseUrl,
+  isStoredFileLocation,
   getFilenameFromUrl,
 } from './urlHandler.js';
 import { pdfToPng } from 'pdf-to-png-converter';
@@ -47,9 +47,9 @@ export async function extractTicketDocument({
   let generatedImagePath: string | null = null;
 
   try {
-    if (isSupabaseUrl(imageUrl)) {
+    if (isStoredFileLocation(imageUrl)) {
       const filename = getFilenameFromUrl(imageUrl);
-      tempFile = await downloadFileToTemp(imageUrl, filename);
+      tempFile = await downloadStoredFileToTemp(imageUrl, filename);
       localPath = tempFile;
     } else if (imageUrl.startsWith('/uploads/')) {
       const uploadsRoot = path.resolve(process.cwd(), 'uploads');

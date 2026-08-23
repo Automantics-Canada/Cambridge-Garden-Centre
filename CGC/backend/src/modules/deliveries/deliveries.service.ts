@@ -221,8 +221,8 @@ export const DeliveriesService = {
         select: audience === 'driver' ? DELIVERY_DRIVER_RESPONSE_SELECT : DELIVERY_RESPONSE_SELECT,
       });
     } else {
-      const publicUrl = await saveDeliveryPhoto(fileBuffer, id, type, filename);
-      const updateData = type === 'pickup' ? { pickupPhotoUrl: publicUrl } : { deliveryPhotoUrl: publicUrl };
+      const storedUrl = await saveDeliveryPhoto(fileBuffer, id, type, filename);
+      const updateData = type === 'pickup' ? { pickupPhotoUrl: storedUrl } : { deliveryPhotoUrl: storedUrl };
 
       return prisma.$transaction(async (tx) => {
         await assertCurrentDriverDelivery(tx, driverUserId, id);

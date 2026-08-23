@@ -60,3 +60,18 @@ npm run test:live-providers
 Do not use client documents. Groq fallback remains disabled unless explicitly
 enabled, and provider credentials must never be committed or written to test
 artifacts.
+
+## Private document-storage rollout
+
+Staging and production must use a private `SUPABASE_STORAGE_BUCKET`. The API
+fails startup when the configured bucket is public. Roll out in this order:
+
+1. mark the dedicated non-production bucket private;
+2. apply the forward migration that converts durable public URLs to
+   `storage://` references;
+3. deploy the backend and worker, which read private objects with the service
+   role and issue short-lived signed links;
+4. deploy the frontend and run authenticated document/upload UAT.
+
+These are separate deployment targets. Do not change a production bucket or
+apply the production migration as part of local QA.

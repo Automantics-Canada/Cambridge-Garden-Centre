@@ -14,7 +14,7 @@ async function main() {
     console.log('\n📦 Initializing Supabase Storage...');
     const storageConnected = await verifyStorageConnection();
     if (!storageConnected) {
-      console.warn('⚠️  Supabase Storage connection failed, uploads will not work');
+      throw new Error('Storage connection failed or the configured bucket is not private');
     }
 
     app.listen(env.port, () => {

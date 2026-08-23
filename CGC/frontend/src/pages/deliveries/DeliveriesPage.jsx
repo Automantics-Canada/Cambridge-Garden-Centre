@@ -13,6 +13,7 @@ import { formatDate } from '../../lib/date';
 import { isTerminal, statusErrorMessage, statusOptionsFor } from '../../lib/deliveryTransitions';
 import { formatQuantity } from '../../lib/quantity';
 import { useDebouncedValue } from '../../hooks/useDebouncedValue';
+import { resolveDocumentUrl } from '../../lib/apiBase';
 
 export default function DeliveriesPage() {
   const [searchParams] = useSearchParams();
@@ -342,7 +343,7 @@ export default function DeliveriesPage() {
                             <div>
                               <p className="text-[12.5px] font-medium text-muted mb-1">Pickup</p>
                               {del.pickupPhotoUrl ? (
-                                <img src={del.pickupPhotoUrl} className="w-full h-32 object-cover rounded-control border border-line" alt="Pickup" />
+                                <img src={resolveDocumentUrl(del.pickupPhotoUrl)} className="w-full h-32 object-cover rounded-control border border-line" alt="Pickup" />
                               ) : (
                                 <div className="w-full h-32 bg-surface border border-dashed border-line rounded-control flex flex-col items-center justify-center text-muted">
                                   <ImageIcon size={20} />
@@ -353,7 +354,7 @@ export default function DeliveriesPage() {
                             <div>
                               <p className="text-[12.5px] font-medium text-muted mb-1">Delivery</p>
                               {del.deliveryPhotoUrl ? (
-                                <img src={del.deliveryPhotoUrl} className="w-full h-32 object-cover rounded-control border border-line" alt="Delivery" />
+                                <img src={resolveDocumentUrl(del.deliveryPhotoUrl)} className="w-full h-32 object-cover rounded-control border border-line" alt="Delivery" />
                               ) : (
                                 <div className="w-full h-32 bg-surface border border-dashed border-line rounded-control flex flex-col items-center justify-center text-muted">
                                   <ImageIcon size={20} />

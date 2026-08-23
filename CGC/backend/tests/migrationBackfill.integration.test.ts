@@ -92,4 +92,71 @@ describe('operational schema reconciliation', { skip: !disposableConfirmed }, ()
     `;
     assert.equal(columns[0]?.count, 0n);
   });
+
+  it('removes durable public URLs while preserving the bucket and object path', async () => {
+    const supplier = await prisma.supplier.create({
+      data: { name: 'Private Storage Migration Supplier', type: 'SUPPLIER', emailDomains: [], keywords: [] },
+    });
+    const invoice = await prisma.invoice.create({
+      data: {
+        invoiceNumber: `PRIVATE-MIGRATION-${Date.now()}`,
+        senderType: 'SUPPLIER',
+        supplierId: supplier.id,
+        invoiceDate: new Date('2026-08-23T00:00:00Z'),
+        totalAmount: null,
+        currency: 'CAD',
+        fileUrl: 'https://qa.supabase.co/storage/v1/object/public/test-bucket/invoices/a/file.pdf?download=1',
+        emailFrom: 'private-migration@example.test',
+        emailSubject: 'Sanitized private storage migration fixture',
+        gmailMessageId: `private-migration-${Date.now()}`,
+      },
+    });
+    const ticket = await prisma.ticket.create({
+      data: {
+        source: 'MANUAL',
+        imageUrl: 'https://qa.supabase.co/storage/v1/object/public/test-bucket/tickets/a/original.jpg',
+        thumbnailUrl: 'https://qa.supabase.co/storage/v1/object/public/test-bucket/ticket-thumbnails/a/thumb.webp?x=1',
+        ocrRawText: '',
+        ocrConfidence: 1,
+        status: 'UNLINKED',
+      },
+    });
+    const delivery = await prisma.delivery.findFirstOrThrow();
+    await prisma.delivery.update({
+      where: { id: delivery.id },
+      data: {
+        pickupPhotoUrl: 'https://qa.supabase.co/storage/v1/object/public/test-bucket/deliveries/a/pickup.jpg',
+        deliveryPhotoUrl: 'https://qa.supabase.co/storage/v1/object/public/test-bucket/deliveries/a/drop.jpg',
+      },
+    });
+
+    try {
+      const migration = await readFile(
+        path.resolve('prisma/migrations/20260823150000_private_storage_references/migration.sql'),
+        'utf8',
+      );
+      for (const statement of migration.split(';').map(part => part.trim()).filter(Boolean)) {
+        await prisma.$executeRawUnsafe(statement);
+      }
+
+      const [storedInvoice, storedTicket, storedDelivery] = await Promise.all([
+        prisma.invoice.findUniqueOrThrow({ where: { id: invoice.id } }),
+        prisma.ticket.findUniqueOrThrow({ where: { id: ticket.id } }),
+        prisma.delivery.findUniqueOrThrow({ where: { id: delivery.id } }),
+      ]);
+      assert.equal(storedInvoice.fileUrl, 'storage://test-bucket/invoices/a/file.pdf');
+      assert.equal(storedTicket.imageUrl, 'storage://test-bucket/tickets/a/original.jpg');
+      assert.equal(storedTicket.thumbnailUrl, 'storage://test-bucket/ticket-thumbnails/a/thumb.webp');
+      assert.equal(storedDelivery.pickupPhotoUrl, 'storage://test-bucket/deliveries/a/pickup.jpg');
+      assert.equal(storedDelivery.deliveryPhotoUrl, 'storage://test-bucket/deliveries/a/drop.jpg');
+    } finally {
+      await prisma.delivery.update({
+        where: { id: delivery.id },
+        data: { pickupPhotoUrl: null, deliveryPhotoUrl: null },
+      });
+      await prisma.ticket.delete({ where: { id: ticket.id } });
+      await prisma.invoice.delete({ where: { id: invoice.id } });
+      await prisma.supplier.delete({ where: { id: supplier.id } });
+    }
+  });
 });

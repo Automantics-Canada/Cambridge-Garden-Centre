@@ -18,9 +18,9 @@ import {
 import path from 'node:path';
 import fs from 'node:fs';
 import {
-  downloadFileToTemp,
+  downloadStoredFileToTemp,
   cleanupTempFile,
-  isSupabaseUrl,
+  isStoredFileLocation,
   getFilenameFromUrl,
 } from './urlHandler.js';
 import {
@@ -57,9 +57,9 @@ export async function extractInvoiceDocument({
   let tempFile: string | null = null;
 
   try {
-    if (isSupabaseUrl(fileUrl)) {
+    if (isStoredFileLocation(fileUrl)) {
       const filename = getFilenameFromUrl(fileUrl);
-      tempFile = await downloadFileToTemp(fileUrl, filename);
+      tempFile = await downloadStoredFileToTemp(fileUrl, filename);
       localPath = tempFile;
     } else if (fileUrl.startsWith('/uploads/')) {
       // Legacy local uploads, constrained to the uploads root so a crafted

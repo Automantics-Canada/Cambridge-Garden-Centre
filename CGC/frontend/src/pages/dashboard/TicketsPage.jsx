@@ -1,4 +1,4 @@
-import { resolveDocumentUrl } from '../../lib/apiBase';
+import { isPdfDocumentUrl, resolveDocumentUrl } from '../../lib/apiBase';
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useSelector } from 'react-redux';
 import { useSearchParams } from 'react-router-dom';
@@ -926,7 +926,7 @@ export default function TicketsPage() {
                 {/* Image Side */}
                 <div className="flex-[1.2] bg-ink p-4 flex items-center justify-center overflow-hidden border-r relative group">
                   {selectedTicket.imageUrl ? (
-                    selectedTicket.imageUrl.toLowerCase().endsWith('.pdf') ? (
+                    isPdfDocumentUrl(selectedTicket.imageUrl) ? (
                       <iframe
                         src={resolveDocumentUrl(selectedTicket.imageUrl)}
                         className="w-full h-full border-0 bg-surface"

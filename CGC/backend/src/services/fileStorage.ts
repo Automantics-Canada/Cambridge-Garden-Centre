@@ -21,7 +21,7 @@ function safeExtension(originalName: string, fallback: string): string {
 async function saveLocalFile(
   buffer: Buffer,
   segments: string[],
-): Promise<{ path: string; publicUrl: string; size: number; timestamp: string }> {
+): Promise<{ path: string; storedUrl: string; size: number; timestamp: string }> {
   const destination = path.resolve(uploadsRoot, ...segments);
   if (!destination.startsWith(`${uploadsRoot}${path.sep}`)) {
     throw new Error('Invalid local storage path');
@@ -30,7 +30,7 @@ async function saveLocalFile(
   await fs.writeFile(destination, buffer, { flag: 'wx' });
   return {
     path: segments.join('/'),
-    publicUrl: `/uploads/${segments.join('/')}`,
+    storedUrl: `/uploads/${segments.join('/')}`,
     size: buffer.length,
     timestamp: new Date().toISOString(),
   };
@@ -73,9 +73,9 @@ async function convertPdfToPngIfNecessary(
 }
 
 export interface SavedTicketImage {
-  /** Public URL of the untouched original. Always present. */
+  /** Durable private reference of the untouched original. Always present. */
   imageUrl: string;
-  /** Public URL of the derived thumbnail, or null when generation failed. */
+  /** Durable private reference of the derived thumbnail, or null on failure. */
   thumbnailUrl: string | null;
 }
 
@@ -128,7 +128,7 @@ export async function saveTicketImage(
           thumbnailPath,
           THUMBNAIL_CONTENT_TYPE
         );
-    thumbnailUrl = uploaded.publicUrl;
+    thumbnailUrl = uploaded.storedUrl;
     console.log(
       `[FileStorage] Thumbnail generated: ${thumbnail.sourceBytes} -> ${thumbnail.bytes} bytes`
     );
@@ -141,12 +141,12 @@ export async function saveTicketImage(
     );
   }
 
-  return { imageUrl: result.publicUrl, thumbnailUrl };
+  return { imageUrl: result.storedUrl, thumbnailUrl };
 }
 
 /**
  * Save invoice image to Supabase Storage
- * Returns the public URL of the uploaded file
+ * Returns a durable private reference for the uploaded file.
  */
 export async function saveInvoiceImage(
   buffer: Buffer,
@@ -165,7 +165,7 @@ export async function saveInvoiceImage(
     
     console.log('[FileStorage] Invoice image stored');
     
-    return result.publicUrl;
+    return result.storedUrl;
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
     console.error('[FileStorage] Failed to save invoice image:', errorMsg);
@@ -190,12 +190,12 @@ export async function saveDeliveryPhoto(
         `${deliveryId}-${type}-${Date.now()}${safeExtension(originalName, '.jpg')}`,
       ])
     : await uploadTicketImage(buffer, `${deliveryId}-${type}`, originalName);
-  return result.publicUrl;
+  return result.storedUrl;
 }
 
 /**
  * Save CSV file to Supabase Storage
- * Returns the public URL of the uploaded file
+ * Returns a durable private reference for the uploaded file.
  */
 export async function saveCsvFile(
   buffer: Buffer,
@@ -209,7 +209,7 @@ export async function saveCsvFile(
     
     console.log('[FileStorage] CSV file stored');
     
-    return result.publicUrl;
+    return result.storedUrl;
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
     console.error('[FileStorage] Failed to save CSV file:', errorMsg);

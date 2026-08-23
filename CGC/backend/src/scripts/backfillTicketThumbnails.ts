@@ -31,7 +31,8 @@ import { PrismaClient } from '@prisma/client';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { env } from '../config/env.js';
-import { uploadTicketThumbnail } from '../services/supabaseStorage.js';
+import { downloadStorageObject, uploadTicketThumbnail } from '../services/supabaseStorage.js';
+import { parseStoredObjectLocation } from '../services/storageAccess.js';
 import {
   generateThumbnail,
   deriveThumbnailPath,
@@ -156,7 +157,7 @@ async function processTicket(
     return {
       ticketId: ticket.id,
       status: options.apply ? 'failed' : 'skipped',
-      detail: 'imageUrl is not a public storage object URL',
+      detail: 'imageUrl is not a configured storage object reference',
     };
   }
 
@@ -167,7 +168,9 @@ async function processTicket(
   }
 
   try {
-    const source = await downloadTicketSource(ticket.imageUrl);
+    const location = parseStoredObjectLocation(ticket.imageUrl);
+    if (!location) throw new Error('imageUrl is not a configured storage object reference');
+    const source = (await downloadStorageObject(location)).buffer;
     const thumbnail = await generateThumbnail(source);
     const uploaded = await uploadTicketThumbnail(
       thumbnail.buffer,
@@ -179,7 +182,7 @@ async function processTicket(
     // exist. Scoped to rows still NULL so a concurrent run cannot double-write.
     const updated = await prisma.ticket.updateMany({
       where: { id: ticket.id, thumbnailUrl: null },
-      data: { thumbnailUrl: uploaded.publicUrl },
+      data: { thumbnailUrl: uploaded.storedUrl },
     });
 
     if (updated.count === 0) {

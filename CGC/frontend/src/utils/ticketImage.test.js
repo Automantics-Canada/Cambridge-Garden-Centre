@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { API_BASE_URL } from '../lib/apiBase';
+import { API_BASE_URL, isPdfDocumentUrl } from '../lib/apiBase';
 import { ticketFullImageSrc, ticketThumbnailSrc } from './ticketImage';
 
 describe('ticket image URL resolution', () => {
@@ -20,5 +20,10 @@ describe('ticket image URL resolution', () => {
   it('returns null when no stored ticket image exists', () => {
     expect(ticketThumbnailSrc({})).toBeNull();
     expect(ticketFullImageSrc(null)).toBeNull();
+  });
+
+  it('detects PDF signed proxy paths even when they carry a signature query', () => {
+    expect(isPdfDocumentUrl('/api/storage/object/ref/invoice.pdf?expires=1&signature=x')).toBe(true);
+    expect(isPdfDocumentUrl('/api/storage/object/ref/ticket.jpg?expires=1&signature=x')).toBe(false);
   });
 });
