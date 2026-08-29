@@ -13,6 +13,7 @@ import {
   ShieldCheck,
 } from 'lucide-react';
 import { loginAsync, clearError } from '../store/authSlice';
+import { takeSessionNotice } from '../lib/session';
 import { Button, Field, Input, ThemeToggle } from '../components/ui';
 
 const WORKFLOW = [
@@ -46,6 +47,9 @@ export default function Login() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  // Consumed once on mount so an expired session explains itself here rather
+  // than looking like an outage on the dashboard.
+  const [notice, setNotice] = useState(() => takeSessionNotice());
   const dispatch = useDispatch();
   const navigate = useNavigate();
   const location = useLocation();
@@ -54,15 +58,24 @@ export default function Login() {
 
   const { loading, error, isAuthenticated, user } = useSelector((state) => state.auth);
 
+  // Where the 401 interceptor bounced the user from, so signing back in returns
+  // them to the screen they were on. Ignored for drivers, who have one screen.
+  const nextPath = new URLSearchParams(location.search).get('next');
+
   useEffect(() => {
     if (isAuthenticated && user) {
-      navigate(user.role === 'DRIVER' ? '/driver/today' : '/dashboard');
+      if (user.role === 'DRIVER') {
+        navigate('/driver/today');
+        return;
+      }
+      navigate(nextPath && nextPath.startsWith('/') ? nextPath : '/dashboard');
     }
-  }, [isAuthenticated, user, navigate]);
+  }, [isAuthenticated, user, navigate, nextPath]);
 
   const handleLogin = (event) => {
     event.preventDefault();
     if (!email || !password) return;
+    setNotice(null);
     dispatch(clearError());
     dispatch(loginAsync({ email, password }));
   };
@@ -145,6 +158,15 @@ export default function Login() {
                 : 'Sign in to continue to Cambridge Garden Centre.'}
             </p>
           </div>
+
+          {notice && !error && (
+            <div
+              role="status"
+              className="mb-5 rounded-control border border-brand/30 bg-brand/10 px-4 py-3 text-sm text-brand"
+            >
+              {notice}
+            </div>
+          )}
 
           {error && (
             <div

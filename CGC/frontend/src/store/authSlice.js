@@ -1,8 +1,11 @@
 import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
 import api from '../api/axios';
+import { clearStoredSession, readStoredSession } from '../lib/session';
 
-const savedUser = JSON.parse(localStorage.getItem('user') || 'null');
-const savedToken = localStorage.getItem('token');
+// Reads the stored session and drops it if the token has already expired, so a
+// stale token can no longer boot the app into a signed-in shell that 401s on
+// every read. See `lib/session.js`.
+const { user: savedUser, token: savedToken } = readStoredSession();
 
 const initialState = {
   user: savedUser,
@@ -44,8 +47,7 @@ const authSlice = createSlice({
       state.user = null;
       state.token = null;
       state.isAuthenticated = false;
-      localStorage.removeItem('token');
-      localStorage.removeItem('user');
+      clearStoredSession();
     },
     clearError: (state) => {
       state.error = null;
