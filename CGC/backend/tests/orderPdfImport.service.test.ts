@@ -13,6 +13,11 @@ import type { PrismaClient } from '@prisma/client';
 
 import { OrderPdfImportService } from '../src/modules/orders/orderPdfImport.service.js';
 import { parseSprucePages } from '../src/modules/orders/spruce/parseSprucePdf.js';
+import type {
+  ParsedSpruceReport,
+  SpruceReportType,
+} from '../src/modules/orders/spruce/spruceReportTypes.js';
+import { aug14SpruceReports } from './fixtures/aug14SpruceShapes.js';
 import {
   itemTrackingReport,
   orderSummaryReport,
@@ -38,9 +43,24 @@ interface FakeOrder {
   _count: { deliveries: number; lineItems: number; tickets: number; ticketMatches: number };
 }
 
-function makeClient() {
+interface FakeDocument {
+  id: string;
+  documentNumber: string;
+  customerName: string;
+  orderDate: Date;
+  deliveryDate?: Date;
+  poNumber?: string;
+  shippingAddress?: string;
+}
+
+type FakeClient = PrismaClient & {
+  __orders: Map<string, FakeOrder>;
+  __documents: Map<string, FakeDocument>;
+};
+
+function makeClient(): FakeClient {
   const orders = new Map<string, FakeOrder>();
-  const documents = new Map<string, { id: string; documentNumber: string }>();
+  const documents = new Map<string, FakeDocument>();
   let seq = 0;
 
   const tx = {
@@ -51,7 +71,7 @@ function makeClient() {
           Object.assign(existing, update);
           return { id: existing.id };
         }
-        const doc = { id: `doc-${++seq}`, ...create };
+        const doc = { id: `doc-${++seq}`, ...create } as FakeDocument;
         documents.set(where.documentNumber, doc);
         return { id: doc.id };
       },
@@ -102,11 +122,71 @@ function makeClient() {
   };
 
   return {
-    supplierSpruceVendor: { findMany: async () => [] },
+    supplierSpruceVendor: {
+      findMany: async ({ where }: any) =>
+        (where.code.in as string[]).map(code => ({
+          code,
+          supplierId: `supplier-${code}`,
+          supplier: { active: true },
+        })),
+    },
     $transaction: (fn: (tx: typeof tx) => Promise<unknown>) => fn(tx),
     __orders: orders,
     __documents: documents,
-  } as unknown as PrismaClient & { __orders: Map<string, FakeOrder> };
+  } as unknown as FakeClient;
+}
+
+const AUG14_REPORT_ORDERS: SpruceReportType[][] = [
+  ['ORDER_SUMMARY', 'ITEM_TRACKING', 'DELIVERY'],
+  ['ORDER_SUMMARY', 'DELIVERY', 'ITEM_TRACKING'],
+  ['ITEM_TRACKING', 'ORDER_SUMMARY', 'DELIVERY'],
+  ['ITEM_TRACKING', 'DELIVERY', 'ORDER_SUMMARY'],
+  ['DELIVERY', 'ORDER_SUMMARY', 'ITEM_TRACKING'],
+  ['DELIVERY', 'ITEM_TRACKING', 'ORDER_SUMMARY'],
+];
+
+function documentNumberForOrder(client: FakeClient, order: FakeOrder): string {
+  const document = [...client.__documents.values()].find(row => row.id === order.documentId);
+  assert.ok(document, `missing synthetic document for order ${order.id}`);
+  return document.documentNumber;
+}
+
+function lineIdentity(client: FakeClient, order: FakeOrder): string {
+  return [
+    documentNumberForOrder(client, order),
+    order.spruceItemNumber,
+    order.product,
+    order.quantity,
+  ].join('|');
+}
+
+function persistedSignature(client: FakeClient): string[] {
+  const lines = [...client.__orders.values()].map(order => [
+    lineIdentity(client, order),
+    order.unit,
+    order.poNumber,
+    order.supplierId,
+    order.customerName,
+    order.deliveryDate?.toISOString() ?? null,
+  ].join('|')).sort();
+  const documents = [...client.__documents.values()].map(document => [
+    document.documentNumber,
+    document.customerName,
+    document.orderDate.toISOString(),
+    document.deliveryDate?.toISOString() ?? null,
+    document.poNumber ?? null,
+    document.shippingAddress ?? null,
+  ].join('|')).sort();
+
+  return [...documents.map(row => `D|${row}`), ...lines.map(row => `L|${row}`)];
+}
+
+function documentCounts(report: ParsedSpruceReport): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const row of report.rows) {
+    counts.set(row.documentNumber, (counts.get(row.documentNumber) ?? 0) + 1);
+  }
+  return counts;
 }
 
 function seedLegacyRow(orders: Map<string, FakeOrder>): void {
@@ -218,6 +298,105 @@ describe('OrderPdfImportService.applyReport', () => {
 
     assert.ok(summary.absent > 0, 'item-tracking-only lines are reported absent');
     assert.equal(client.__orders.size, before + summary.created, 'absent lines were kept');
+  });
+
+  it('captures the real Aug-14 overlap: the extra row is a named, item-only document', () => {
+    const reports = aug14SpruceReports();
+    const orderCounts = documentCounts(reports.ORDER_SUMMARY);
+    const itemCounts = documentCounts(reports.ITEM_TRACKING);
+    const deliveryCounts = documentCounts(reports.DELIVERY);
+
+    assert.equal(reports.ORDER_SUMMARY.rows.length, 36);
+    assert.equal(reports.ITEM_TRACKING.rows.length, 37);
+    assert.equal(reports.DELIVERY.rows.length, 41);
+    assert.equal(orderCounts.size, 12);
+    assert.equal(itemCounts.size, 13);
+    assert.equal(deliveryCounts.size, 16);
+
+    for (const [documentNumber, count] of orderCounts) {
+      assert.equal(
+        itemCounts.get(documentNumber),
+        count,
+        `${documentNumber} must have the same line count in both order reports`
+      );
+    }
+
+    const itemOnly = [...itemCounts.keys()].filter(document => !orderCounts.has(document));
+    assert.deepEqual(itemOnly, ['9900-000013']);
+    const itemOnlyRows = reports.ITEM_TRACKING.rows.filter(
+      row => row.documentNumber === itemOnly[0]
+    );
+    assert.equal(itemOnlyRows.length, 1);
+    assert.notEqual(itemOnlyRows[0]?.customerName, 'Cash Sales');
+
+    const deliveryOverlap = [...deliveryCounts.keys()].filter(document => orderCounts.has(document));
+    assert.equal(deliveryOverlap.length, 4);
+  });
+
+  it('keeps every Aug-14 line identity and final value in all six report orders', async () => {
+    let expected: string[] | undefined;
+
+    for (const [permutationIndex, order] of AUG14_REPORT_ORDERS.entries()) {
+      const client = makeClient();
+      const reports = aug14SpruceReports();
+
+      for (const [reportIndex, reportType] of order.entries()) {
+        const identitiesBefore = new Map(
+          [...client.__orders.values()].map(line => [line.id, lineIdentity(client, line)])
+        );
+        const summary = await OrderPdfImportService.applyReport(
+          client,
+          reports[reportType],
+          `aug14-${permutationIndex}-${reportIndex}`
+        );
+
+        assert.equal(summary.conflicts, 0, `${order.join(' -> ')} must not conflict`);
+        assert.equal(summary.skipped, 0, `${order.join(' -> ')} must not skip a row`);
+
+        for (const [id, identity] of identitiesBefore) {
+          const line = client.__orders.get(id);
+          assert.ok(line, `${order.join(' -> ')} removed line ${id}`);
+          assert.equal(
+            lineIdentity(client, line),
+            identity,
+            `${order.join(' -> ')} silently moved an existing line identity`
+          );
+        }
+      }
+
+      assert.equal(client.__orders.size, 69);
+      assert.equal(client.__documents.size, 25);
+      assert.equal(client.__documents.get('9900-000013')?.customerName, 'Synthetic Customer C09');
+      for (const document of ['9900-000006', '9900-000007', '9900-000010', '9900-000012']) {
+        assert.notEqual(client.__documents.get(document)?.customerName, 'Cash Sales');
+      }
+
+      const signature = persistedSignature(client);
+      if (expected === undefined) expected = signature;
+      else assert.deepEqual(signature, expected, order.join(' -> '));
+    }
+  });
+
+  it('shows that order alone cannot correct an item-only Cash Sales customer', async () => {
+    const client = makeClient();
+    const report: ParsedSpruceReport = {
+      type: 'ITEM_TRACKING',
+      unreadable: [],
+      rows: [{
+        documentNumber: '9900-999999',
+        customerName: 'Cash Sales',
+        product: 'Synthetic Product',
+        itemNumber: 'ITEM-SYNTHETIC',
+        quantity: 1,
+        orderDateRaw: '08/14/2026',
+        source: { page: 1, row: 1 },
+      }],
+    };
+
+    await OrderPdfImportService.applyReport(client, report, 'item-only-cash');
+
+    assert.equal(client.__documents.get('9900-999999')?.customerName, 'Cash Sales');
+    assert.equal([...client.__orders.values()][0]?.customerName, 'Cash Sales');
   });
 
   it('does not expose database internals in row errors', async () => {
