@@ -417,7 +417,7 @@ export default function InvoicesPage() {
                         {formatDate(inv.invoiceDate)}
                       </td>
                       <td className="tabular px-6 py-4 whitespace-nowrap text-sm font-semibold text-ink">
-                        ${Number(inv.totalAmount).toFixed(2)}
+                        {inv.totalAmount == null ? '—' : `$${Number(inv.totalAmount).toFixed(2)}`}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-center">
                         <div className="flex items-center justify-center gap-2">

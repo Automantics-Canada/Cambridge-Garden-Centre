@@ -1,3 +1,5 @@
+import { resolveDocumentUrl } from '../lib/apiBase';
+
 /**
  * Resolving ticket image URLs.
  *
@@ -13,8 +15,7 @@
 
 function absolute(url) {
   if (!url) return null;
-  if (url.startsWith('http://') || url.startsWith('https://')) return url;
-  return `${import.meta.env.VITE_API_URL || ''}${url}`;
+  return resolveDocumentUrl(url);
 }
 
 /**

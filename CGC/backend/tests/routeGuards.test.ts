@@ -189,10 +189,9 @@ describe('driver routes', () => {
     }
   });
 
-  it('self-service driver routes stay authenticated but unrestricted by role', () => {
-    // Ownership for these is enforced in the controller, not by role.
+  it('self-service profile stays available but delivery history is operations-only', () => {
     assertGuarded(driverRouter, 'get', '/me', null);
-    assertGuarded(driverRouter, 'get', '/:id/deliveries', null);
+    assertGuarded(driverRouter, 'get', '/:id/deliveries', OPERATIONS);
   });
 });
 
@@ -319,7 +318,7 @@ describe('GET routes that operations staff use', () => {
     [deliveriesRouter, 'get', '/', null],
     [driverRouter, 'get', '/me', null],
     [driverRouter, 'get', '/', null],
-    [driverRouter, 'get', '/:id/deliveries', null],
+    [driverRouter, 'get', '/:id/deliveries', OPERATIONS],
   ];
 
   for (const [router, method, path, roles] of cases) {

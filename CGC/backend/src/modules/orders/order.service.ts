@@ -121,10 +121,9 @@ export const OrderService = {
 export const OrderImportService = {
   async importFromCsv(buffer: Buffer, originalName?: string): Promise<ImportSummary> {
     // Save file to Supabase Storage first
-    let fileUrl = '';
     try {
-      fileUrl = await saveCsvFile(buffer, originalName || 'orders-import.csv');
-      console.log(`[OrderImport] CSV saved to Supabase: ${fileUrl}`);
+      await saveCsvFile(buffer, originalName || 'orders-import.csv');
+      console.log('[OrderImport] CSV stored for import processing');
     } catch (error) {
       console.error('[OrderImport] Failed to save CSV to storage, continuing with processing...', error);
     }
@@ -145,8 +144,10 @@ export const OrderImportService = {
       trim: true,
     }) as RawOrderCsvRow[];
 
-    console.log("[OrderImport] First record keys:", Object.keys(records[0] || {}));
-    console.log("[OrderImport] First record:", records[0]);
+    console.log('[OrderImport] Parsed CSV', {
+      rowCount: records.length,
+      headers: Object.keys(records[0] || {}),
+    });
 
     let created = 0;
     let updated = 0;

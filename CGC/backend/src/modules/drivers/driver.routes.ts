@@ -19,7 +19,7 @@ router.get('/', getDrivers);
 router.post('/', requireRole(['OWNER', 'ADMIN']), createDriver);
 router.patch('/:id', requireRole(['OWNER', 'ADMIN']), updateDriver);
 router.delete('/:id', requireRole(['OWNER', 'ADMIN']), deleteDriver);
-router.get('/:id/deliveries', getDriverDeliveries);
+router.get('/:id/deliveries', requireRole(['AP_USER', 'OWNER', 'ADMIN']), getDriverDeliveries);
 
 export default router;
 

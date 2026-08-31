@@ -21,9 +21,9 @@ datasource db {
 /// join on and something stable to re-import against. It is additive: `Order`
 /// keeps its own id and every existing foreign key still resolves.
 model OrderDocument {
-  id              String    @id @default(uuid()) @db.Uuid
+  id              String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   /// The Spruce document number, as printed. The join key for both reports.
-  documentNumber  String    @unique
+  documentNumber  String     @unique
   customerName    String
   /// Filled by the delivery report, or later by the PO report merge.
   poNumber        String?
@@ -31,11 +31,11 @@ model OrderDocument {
   /// The reports do not say, and stamping CONTRACTOR on every document hid the
   /// walk-in trade entirely.
   buyerType       BuyerType?
-  orderDate       DateTime  @db.Date
-  deliveryDate    DateTime? @db.Date
+  orderDate       DateTime   @db.Date
+  deliveryDate    DateTime?  @db.Date
   shippingAddress String?
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @default(now()) @updatedAt
   lines           Order[]
 
   @@index([orderDate])
@@ -43,48 +43,48 @@ model OrderDocument {
 }
 
 model Order {
-  id             String             @id @default(uuid()) @db.Uuid
-  spruceOrderId  String             @unique
+  id               String             @id @default(uuid()) @db.Uuid
+  spruceOrderId    String             @unique
   /// Owning document. Nullable while the backfill runs and for rows imported
   /// by the legacy path; new imports always set it.
-  documentId     String?            @db.Uuid
+  documentId       String?            @db.Uuid
   /// Position of this line within its document, 1-based. Display order only:
   /// the reports print the same document's lines in different orders, so a
   /// re-import reconciles on `spruceItemNumber` and never on this number.
-  lineNumber     Int?
+  lineNumber       Int?
   /// Spruce item code as printed on the line, e.g. `SOILGRDNA`. The stable
   /// cross-report identity: the same code appears for the same line in every
   /// report layout, so a re-import pairs it with its earlier row wherever the
   /// reports happened to print them. Null only for legacy rows awaiting their
   /// first post-migration re-import, which fills it from the report.
   spruceItemNumber String?
-  poNumber       String?
-  customerName   String
+  poNumber         String?
+  customerName     String
   /// Spruce's delivery report does not distinguish a contractor sale from a
   /// walk-in, and the importer stamped CONTRACTOR on every row — so the B2C
   /// side of the business appeared nowhere. Defaulted rather than asserted:
   /// B2B is roughly 90% of volume, so this is the right guess, but it is a
   /// default to be corrected, not a fact read off the report.
-  buyerType      BuyerType?         @default(CONTRACTOR)
-  product        String
-  quantity       Decimal?           @db.Decimal
-  unit           String?
-  supplierId     String?            @db.Uuid
-  orderDate      DateTime           @db.Date
-  deliveryDate   DateTime?          @db.Date
-  hasInvoice     Boolean            @default(false)
-  invoiceNumber  String?
-  createdAt      DateTime           @default(now())
-  deliveryStatus DriverTaskStatus   @default(NOT_STARTED)
-  driverId       String?            @db.Uuid
-  priority       Int                @default(1)
-  deliveries     Delivery[]
-  lineItems      InvoiceLineItem[]
-  driver         Driver?            @relation(fields: [driverId], references: [id])
-  supplier       Supplier?          @relation(fields: [supplierId], references: [id])
-  document       OrderDocument?     @relation(fields: [documentId], references: [id])
-  tickets        Ticket[]
-  ticketMatches  TicketOrderMatch[]
+  buyerType        BuyerType?         @default(CONTRACTOR)
+  product          String
+  quantity         Decimal?           @db.Decimal
+  unit             String?
+  supplierId       String?            @db.Uuid
+  orderDate        DateTime           @db.Date
+  deliveryDate     DateTime?          @db.Date
+  hasInvoice       Boolean            @default(false)
+  invoiceNumber    String?
+  createdAt        DateTime           @default(now())
+  deliveryStatus   DriverTaskStatus   @default(NOT_STARTED)
+  driverId         String?            @db.Uuid
+  priority         Int                @default(1)
+  deliveries       Delivery[]
+  lineItems        InvoiceLineItem[]
+  driver           Driver?            @relation(fields: [driverId], references: [id])
+  supplier         Supplier?          @relation(fields: [supplierId], references: [id])
+  document         OrderDocument?     @relation(fields: [documentId], references: [id])
+  tickets          Ticket[]
+  ticketMatches    TicketOrderMatch[]
 
   /// The identity a re-import reconciles on, once the document layer is
   /// populated. `lineNumber` is display order, not identity.
@@ -95,7 +95,6 @@ model Order {
   @@index([documentId])
   @@index([spruceItemNumber])
 }
-
 
 model Ticket {
   id                      String             @id @default(uuid()) @db.Uuid
@@ -143,7 +142,6 @@ model Ticket {
   @@index([supplierId, receivedAt(sort: Desc)])
 }
 
-
 model TicketOrderMatch {
   id          String   @id @default(uuid()) @db.Uuid
   ticketId    String   @db.Uuid
@@ -167,7 +165,7 @@ model Invoice {
   supplierId     String               @db.Uuid
   invoiceDate    DateTime             @db.Date
   dueDate        DateTime?            @db.Date
-  totalAmount    Decimal              @db.Decimal
+  totalAmount    Decimal?             @db.Decimal
   currency       String
   fileUrl        String
   emailFrom      String
@@ -193,7 +191,6 @@ model Invoice {
   // orders by receivedAt desc.
   @@index([status, receivedAt(sort: Desc)])
 }
-
 
 model InvoiceLineItem {
   id              String       @id @default(uuid()) @db.Uuid
@@ -221,7 +218,6 @@ model InvoiceLineItem {
   @@index([poNumber])
 }
 
-
 model NegotiatedRate {
   id            String    @id @default(uuid()) @db.Uuid
   supplierId    String    @db.Uuid
@@ -238,7 +234,7 @@ model NegotiatedRate {
 }
 
 model Supplier {
-  id              String                @id @default(uuid()) @db.Uuid
+  id              String                 @id @default(uuid()) @db.Uuid
   name            String
   type            SupplierType
   emailDomains    String[]
@@ -246,7 +242,7 @@ model Supplier {
   contactEmail    String?
   phone           String?
   address         String?
-  active          Boolean               @default(true)
+  active          Boolean                @default(true)
   keywords        String[]
   /// The vendor codes Spruce prints on its reports for this supplier, e.g.
   /// `BESTWAYS01`. Reports name vendors by code, not by the supplier's stored
@@ -289,7 +285,7 @@ model SupplierSpruceVendor {
 /// alias is recorded once by a person and is exact thereafter; fuzzy matching
 /// stays only as the fallback for text nobody has mapped yet.
 model SupplierProductAlias {
-  id          String   @id @default(uuid()) @db.Uuid
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   supplierId  String   @db.Uuid
   /// Supplier's wording, normalised (lower case, punctuation collapsed).
   aliasText   String
@@ -336,7 +332,7 @@ model Driver {
   orders          Order[]
   tickets         Ticket[]
   messages        WhatsAppMessage[]
-  userId          String?           @db.Uuid @unique
+  userId          String?           @unique @db.Uuid
   user            User?             @relation(fields: [userId], references: [id])
 }
 
@@ -369,22 +365,22 @@ model AuditLog {
 }
 
 model SpruceImportJob {
-  id           String                 @id @default(uuid()) @db.Uuid
-  uploadedById String                 @db.Uuid
-  fileUrl      String
-  startedAt    DateTime               @default(now())
-  finishedAt   DateTime?
-  status       ImportStatus           @default(PENDING)
-  totalRows    Int                    @default(0)
-  createdCount Int                    @default(0)
-  updatedCount Int                    @default(0)
-  unchangedCount Int                  @default(0)
-  absentCount  Int                    @default(0)
-  conflictCount Int                   @default(0)
-  skippedCount Int                    @default(0)
-  errorSummary String?
-  uploadedBy   User                   @relation(fields: [uploadedById], references: [id])
-  rowErrors    SpruceImportRowError[]
+  id             String                 @id @default(uuid()) @db.Uuid
+  uploadedById   String                 @db.Uuid
+  fileUrl        String
+  startedAt      DateTime               @default(now())
+  finishedAt     DateTime?
+  status         ImportStatus           @default(PENDING)
+  totalRows      Int                    @default(0)
+  createdCount   Int                    @default(0)
+  updatedCount   Int                    @default(0)
+  unchangedCount Int                    @default(0)
+  absentCount    Int                    @default(0)
+  conflictCount  Int                    @default(0)
+  skippedCount   Int                    @default(0)
+  errorSummary   String?
+  uploadedBy     User                   @relation(fields: [uploadedById], references: [id])
+  rowErrors      SpruceImportRowError[]
 }
 
 model SpruceImportRowError {
@@ -397,27 +393,43 @@ model SpruceImportRowError {
 }
 
 model OcrJob {
-  id           String       @id @default(uuid()) @db.Uuid
-  provider     OcrProvider
-  startedAt    DateTime?
-  finishedAt   DateTime?
-  errorMessage String?
-  rawResponse  Json?
-  ticketId     String?      @db.Uuid
-  invoiceId    String?      @db.Uuid
-  type         OcrJobType
-  status       OcrJobStatus @default(PENDING)
+  id                   String       @id @default(uuid()) @db.Uuid
+  provider             OcrProvider
+  startedAt            DateTime?
+  finishedAt           DateTime?
+  errorMessage         String?
+  rawResponse          Json?
+  ticketId             String?      @db.Uuid
+  invoiceId            String?      @db.Uuid
+  type                 OcrJobType
+  status               OcrJobStatus @default(PENDING)
   /// How many times this job has been attempted. The worker only picked up
   /// PENDING jobs, so a single Textract timeout left the document FAILED and
   /// unprocessed forever, with nothing on any screen to say so.
-  attempts     Int          @default(0)
+  attempts             Int          @default(0)
   /// Earliest time the worker may try again; spaces out retries after a failure.
-  nextAttemptAt DateTime?
-  invoice      Invoice?     @relation("InvoiceOcrJobs", fields: [invoiceId], references: [id])
-  ticket       Ticket?      @relation("TicketOcrJobs", fields: [ticketId], references: [id])
+  nextAttemptAt        DateTime?
+  /// Which extraction pipeline produced the structured fields. `provider` above
+  /// stays AWS_TEXTRACT because Textract is still the OCR; this records what
+  /// turned its output into fields.
+  structuredProvider   String?
+  /// The fallback model, when one was used. Null on the deterministic path.
+  structuredModel      String?
+  /// Whether any field on this document came from the fallback reader.
+  fallbackUsed         Boolean      @default(false)
+  /// Short, human-readable reasons this document needs a person. Queryable so
+  /// the review desk can filter without unpacking `rawResponse`.
+  reviewReasons        String[]     @default([])
+  /// Mean Textract line confidence for the document, 0..1. Null when the job
+  /// predates this column or never reached OCR.
+  extractionConfidence Float?
+  invoice              Invoice?     @relation("InvoiceOcrJobs", fields: [invoiceId], references: [id])
+  ticket               Ticket?      @relation("TicketOcrJobs", fields: [ticketId], references: [id])
 
   /// The worker's claim query: status plus when the job is next due.
   @@index([status, nextAttemptAt])
+  /// The review desk's query: everything awaiting a person, newest first.
+  @@index([status, finishedAt])
 }
 
 model EmailIngestionEvent {
@@ -557,6 +569,11 @@ enum OcrJobStatus {
   PENDING
   PROCESSING
   COMPLETED
+  /// A usable extraction exists but a person has to confirm it before it can be
+  /// trusted: a required field is unresolved, something was read with low
+  /// confidence, or a value came from the fallback reader rather than Textract.
+  /// Distinct from FAILED, which means no usable candidate was produced at all.
+  NEEDS_REVIEW
   FAILED
 }
 

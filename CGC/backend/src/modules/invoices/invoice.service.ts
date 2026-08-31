@@ -1,7 +1,17 @@
 import { prisma } from '../../db/prisma.js';
 import { compareTwoStrings } from 'string-similarity';
 import { saveInvoiceImage } from '../../services/fileStorage.js';
-import { extractExpenseFromLocalImage } from '../../services/invoiceOcr.service.js';
+import { extractInvoiceDocument } from '../../services/invoiceOcr.service.js';
+import {
+  buildInvoiceProvenance,
+  summariseReviewReasons,
+} from '../../services/documentExtraction/mergeExtraction.js';
+import { EXTRACTION_PROVIDER } from '../../services/documentExtraction/types.js';
+import type {
+  InvoiceLineExtraction,
+  ReviewIssue,
+} from '../../services/documentExtraction/types.js';
+import { isoDateToUtcDate } from '../../services/documentExtraction/validation.js';
 import { compareUnits } from '../../lib/units.js';
 import { normalizeProductName } from '../../lib/productName.js';
 import {
@@ -298,6 +308,311 @@ function stringsMatchFuzzy(a: string, b: string): boolean {
   return similarity > 0.6 || normA.includes(normB) || normB.includes(normA);
 }
 
+/**
+ * The domain an invoice arrived from, used as a second, exact way to identify
+ * the supplier when the letterhead could not be read.
+ */
+function emailDomainOf(emailFrom: string | null | undefined): string | null {
+  if (!emailFrom) return null;
+  const match = emailFrom.match(/@([A-Za-z0-9.-]+\.[A-Za-z]{2,})/);
+  return match?.[1]?.toLowerCase() ?? null;
+}
+
+/**
+ * Park an invoice whose extraction did not fully hold up.
+ *
+ * Deliberately touches nothing that carries money or meaning: no supplier, no
+ * invoice number, no date, no total, and above all no line items. Whatever was
+ * on the invoice before — including a correct version somebody had already
+ * fixed by hand — is still there afterwards.
+ *
+ * What it does record is the OCR text and the full field-by-field candidate set,
+ * so the review desk can show a person what was read and let them accept it.
+ */
+async function holdInvoiceForReview(params: {
+  invoiceId: string;
+  ocrJobId: string | null;
+  ocrText: string;
+  ocrConfidence: number;
+  provenance: unknown;
+  reviewReasons: string[];
+  fallback: { model: string | null; used: boolean };
+}) {
+  const { invoiceId, ocrJobId, ocrText, ocrConfidence, provenance, reviewReasons, fallback } = params;
+
+  const [updated] = await prisma.$transaction([
+    prisma.invoice.update({
+      where: { id: invoiceId },
+      data: {
+        ocrRawText: ocrText,
+        OcrJobStatus: OcrJobStatus.NEEDS_REVIEW,
+      },
+    }),
+    ...(ocrJobId
+      ? [
+          prisma.ocrJob.update({
+            where: { id: ocrJobId },
+            data: {
+              status: OcrJobStatus.NEEDS_REVIEW,
+              finishedAt: new Date(),
+              rawResponse: provenance as any,
+              structuredProvider: EXTRACTION_PROVIDER,
+              structuredModel: fallback.model,
+              fallbackUsed: fallback.used,
+              reviewReasons,
+              extractionConfidence: ocrConfidence,
+              // Not an error. Clearing this keeps the stuck-job report — which
+              // reads errorMessage — free of documents that are merely waiting
+              // on a person.
+              errorMessage: null,
+            },
+          }),
+        ]
+      : []),
+  ]);
+
+  console.log(
+    '[InvoiceService]',
+    JSON.stringify({
+      invoiceId,
+      outcome: 'NEEDS_REVIEW',
+      reasonCount: reviewReasons.length,
+      fallbackUsed: fallback.used,
+    })
+  );
+
+  return updated;
+}
+
+/** One invoice line, fully resolved and ready to write. */
+interface ComputedInvoiceLine {
+  lineNumber: number;
+  description: string;
+  poNumber: string | null;
+  quantity: number;
+  unit: string;
+  unitRate: number;
+  lineTotal: number;
+  matchedOrderId: string | null;
+  matchedTicketIds: string[];
+  negotiatedRate: number | null;
+  rateDiscrepancy: number | null;
+  qtyDiscrepancy: number | null;
+  approvedTotal: number | null;
+  flag: LineItemFlag;
+}
+
+/**
+ * Match every line against tickets, orders and agreed rates.
+ *
+ * Read-only, and run before the write transaction opens. The matching itself is
+ * unchanged from before — the ticket-first quantity check, the unit guard on the
+ * rate comparison, the two-percent tolerance — only the coercion in front of it
+ * is gone. Every value arriving here has already been validated, so there is
+ * nothing left to default.
+ */
+async function computeInvoiceLineMatches(params: {
+  lines: InvoiceLineExtraction[];
+  headerPo: string | null;
+  supplierId: string;
+  invoiceDate: Date;
+}): Promise<ComputedInvoiceLine[]> {
+  const { lines, headerPo, supplierId, invoiceDate } = params;
+
+  const allRates = await prisma.negotiatedRate.findMany({
+    where: {
+      supplierId,
+      effectiveFrom: { lte: invoiceDate },
+      OR: [{ effectiveTo: null }, { effectiveTo: { gte: invoiceDate } }],
+    },
+  });
+
+  const computed: ComputedInvoiceLine[] = [];
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index] as InvoiceLineExtraction;
+
+    const description = line.description.value as string;
+    const quantity = line.quantity.value as number;
+    const unit = line.unit.value as string;
+    const unitRate = line.unitRate.value as number;
+    const lineTotal = line.lineTotal.value as number;
+    const linePo = line.poNumber.value ?? headerPo;
+
+    const flags: LineItemFlag[] = [];
+    let matchedOrderId: string | null = null;
+    let matchedTicketIds: string[] = [];
+    let negotiatedRateVal: number | null = null;
+    let rateDiscrepancy: number | null = null;
+    let qtyDiscrepancy: number | null = null;
+
+    // --- MATCH 1: Invoice line to ticket ---
+    // The ticket is the only independent record of what actually moved — the
+    // supplier writes the invoice, but the contractor signs the ticket — so an
+    // invoice billing more than the tickets account for is the single most
+    // useful thing this system can catch.
+    let ticketedQuantity: number | null = null;
+    if (linePo) {
+      const matchingTickets = await prisma.ticket.findMany({
+        where: { poNumber: linePo, supplierId },
+        select: { id: true, quantity: true, unit: true, material: true },
+      });
+
+      if (matchingTickets.length > 0) {
+        matchedTicketIds = matchingTickets.map(ticket => ticket.id);
+
+        // Only tickets recorded in the same unit as the invoice line can be
+        // summed against it. Mixing tonnes and cubic yards into one total would
+        // produce a confident, wrong number.
+        const comparable = matchingTickets.filter(
+          ticket => ticket.quantity !== null && compareUnits(unit, ticket.unit).comparable
+        );
+
+        if (comparable.length > 0) {
+          ticketedQuantity = comparable.reduce((sum, ticket) => sum + Number(ticket.quantity), 0);
+        }
+      }
+    }
+
+    if (matchedTicketIds.length === 0) flags.push(LineItemFlag.NO_TICKET);
+
+    // --- MATCH 2: Invoice line to order ---
+    if (linePo) {
+      const potentialOrders = await prisma.order.findMany({
+        where: { poNumber: linePo, supplierId },
+      });
+      const orderMatch = potentialOrders.find(order =>
+        stringsMatchFuzzy(order.product ?? '', description)
+      );
+      if (orderMatch) {
+        matchedOrderId = orderMatch.id;
+      } else {
+        flags.push(LineItemFlag.NO_ORDER);
+      }
+    } else {
+      flags.push(LineItemFlag.NO_ORDER);
+    }
+
+    // --- Quantity check ---
+    // Signed tickets first, then the order: the order is what was asked for, the
+    // tickets are what was received, and billing follows what was received.
+    const expectedQuantity =
+      ticketedQuantity !== null
+        ? ticketedQuantity
+        : matchedOrderId
+        ? Number(
+            (
+              await prisma.order.findUnique({
+                where: { id: matchedOrderId },
+                select: { quantity: true },
+              })
+            )?.quantity ?? Number.NaN
+          )
+        : Number.NaN;
+
+    if (Number.isFinite(expectedQuantity) && expectedQuantity !== 0) {
+      const diff = quantity - expectedQuantity;
+      const tolerance = Math.abs(expectedQuantity) * 0.02; // 2% either way
+      if (Math.abs(diff) > tolerance) {
+        flags.push(LineItemFlag.QTY_MISMATCH);
+        qtyDiscrepancy = diff;
+      }
+    }
+
+    // --- MATCH 3: Rate ---
+    // An alias recorded for this supplier is an exact, human-confirmed answer
+    // and always beats guessing at the product name.
+    const aliasRate = await resolveRateByAlias(supplierId, description, allRates);
+    const rateMatch = aliasRate ?? allRates.find(rate => stringsMatchFuzzy(rate.productName, description));
+
+    if (!rateMatch) {
+      flags.push(LineItemFlag.RATE_UNKNOWN);
+    } else {
+      // Both sides must be priced per the same unit before the numbers mean
+      // anything. Without this, $8.10/tonne against $9.10/ton reads as a clean
+      // ten percent overcharge that nobody committed.
+      const units = compareUnits(unit, rateMatch.unit);
+      if (!units.comparable) {
+        flags.push(LineItemFlag.UNIT_MISMATCH);
+      } else {
+        negotiatedRateVal = Number(rateMatch.rate);
+        const diff = unitRate - negotiatedRateVal;
+        // Recorded in both directions: being under-billed is still a
+        // discrepancy, and the correction tends to arrive later.
+        if (Math.abs(diff) > 0.01) {
+          flags.push(LineItemFlag.RATE_MISMATCH);
+          rateDiscrepancy = diff;
+        }
+      }
+    }
+
+    let flag: LineItemFlag = LineItemFlag.OK;
+    if (flags.length > 1) {
+      flag = LineItemFlag.MULTIPLE_FLAGS;
+    } else if (flags.length === 1) {
+      flag = flags[0] as LineItemFlag;
+    }
+
+    computed.push({
+      lineNumber: index + 1,
+      description,
+      poNumber: linePo,
+      quantity,
+      unit,
+      unitRate,
+      lineTotal,
+      matchedOrderId,
+      matchedTicketIds,
+      negotiatedRate: negotiatedRateVal,
+      rateDiscrepancy,
+      qtyDiscrepancy,
+      approvedTotal: negotiatedRateVal === null ? null : quantity * negotiatedRateVal,
+      flag,
+    });
+  }
+
+  return computed;
+}
+
+/**
+ * The invoice-level total check.
+ *
+ * Only lines with an applicable agreed rate can be totalled. Lines without one
+ * were previously counted at a rate of zero, so a single unpriced product
+ * dragged the expected total far below the billed total and stamped a mismatch
+ * on an invoice that was very likely correct — which, on a supplier who had just
+ * introduced a product, fired on every invoice. A dispute note that is usually
+ * wrong is one nobody reads, so with unpriced lines present the totals are
+ * simply not comparable and the reason is recorded instead.
+ */
+function buildDisputeNote(lines: ComputedInvoiceLine[], billedTotal: number): string | null {
+  if (lines.length === 0) return null;
+
+  const unpriced = lines.filter(line => line.negotiatedRate === null);
+  if (unpriced.length > 0) {
+    return (
+      `Total not checked: ${unpriced.length} of ${lines.length} line(s) have no ` +
+      `applicable agreed rate (${unpriced.map(line => line.description).join('; ')}). ` +
+      `Billed: $${billedTotal.toFixed(2)}. Add the missing rates, then reopen to re-check.`
+    );
+  }
+
+  const subtotal = lines.reduce(
+    (sum, line) => sum + line.quantity * (line.negotiatedRate as number),
+    0
+  );
+  // HST is Ontario's 13%. Hard-coded because every supplier here is
+  // Ontario-registered; revisit if that stops being true.
+  const withHst = subtotal * 1.13;
+
+  if (Math.abs(withHst - billedTotal) <= 0.05) return null;
+
+  return (
+    `Total amount mismatch. Expected pay: $${withHst.toFixed(2)} ` +
+    `(Subtotal: $${subtotal.toFixed(2)} + 13% HST). Billed: $${billedTotal.toFixed(2)}.`
+  );
+}
+
 export const InvoiceService = {
   async ingestEmailInvoice(params: {
     buffer: Buffer;
@@ -346,7 +661,7 @@ export const InvoiceService = {
         senderType: SenderType.SUPPLIER,
         supplierId: supplier.id,
         invoiceDate: new Date(),
-        totalAmount: 0,
+        totalAmount: null,
         currency: 'CAD',
         fileUrl,
         emailFrom: params.fromEmail,
@@ -369,303 +684,217 @@ export const InvoiceService = {
     return { invoice, ocrJob };
   },
 
-  async processInvoiceOcr(invoiceId: string) {
+  /**
+   * Read an invoice document and, when the read holds up, post it.
+   *
+   * The shape of this is the point. It runs in three phases:
+   *
+   *   1. read and validate — nothing is written;
+   *   2. decide — a document with any unresolved field stops here and is held
+   *      for a person, with the invoice left exactly as it was;
+   *   3. write — the invoice header and the complete set of lines are replaced
+   *      together, inside one transaction.
+   *
+   * Previously all three were interleaved. The header was updated first, then
+   * the lines were deleted, then each line was recreated one at a time in its
+   * own statement. A failure anywhere in that sequence — a malformed line, a
+   * dropped connection — left the invoice carrying new header totals with its
+   * lines partly or entirely gone, and nothing recorded that it had happened.
+   * Worse, missing values were coerced on the way in (`Number(x) || 0`, a unit
+   * defaulted to "ea", a description defaulted to "Unknown Item"), so an invoice
+   * that could not be read at all still came out looking like a complete,
+   * zero-priced one.
+   */
+  async processInvoiceOcr(invoiceId: string, claimedJobId?: string) {
     const invoice = await prisma.invoice.findUnique({
       where: { id: invoiceId },
-      include: { ocrJobs: { orderBy: { startedAt: 'desc' }, take: 1 } },
+      include: {
+        ocrJobs: {
+          ...(claimedJobId ? { where: { id: claimedJobId } } : {}),
+          orderBy: { startedAt: 'desc' },
+          take: 1,
+        },
+      },
     });
     if (!invoice) throw new Error('Invoice not found');
 
     const ocrJob = invoice.ocrJobs[0];
-    if (ocrJob) {
-      await prisma.ocrJob.update({
-        where: { id: ocrJob.id },
-        data: { status: OcrJobStatus.PROCESSING, startedAt: new Date() },
+    if (!ocrJob) throw new Error('No OCR job found for invoice');
+
+    if (claimedJobId) {
+      if (ocrJob.status !== OcrJobStatus.PROCESSING) {
+        return prisma.invoice.findUniqueOrThrow({ where: { id: invoiceId } });
+      }
+    } else {
+      const now = new Date();
+      const claimed = await prisma.ocrJob.updateMany({
+        where: {
+          id: ocrJob.id,
+          status: OcrJobStatus.PENDING,
+          OR: [{ nextAttemptAt: null }, { nextAttemptAt: { lte: now } }],
+        },
+        data: {
+          status: OcrJobStatus.PROCESSING,
+          startedAt: now,
+          attempts: { increment: 1 },
+        },
       });
+      if (claimed.count === 0) {
+        return prisma.invoice.findUniqueOrThrow({ where: { id: invoiceId } });
+      }
     }
 
     try {
-      const extracted = await extractExpenseFromLocalImage(invoice.fileUrl);
-
-      let updatedSupplierId = invoice.supplierId;
-      if (extracted.supplierName) {
-        const { SupplierService } = await import('../supplier/supplier.service.js');
-        const found = await SupplierService.findOrCreateSupplier(extracted.supplierName);
-        if (found) updatedSupplierId = found.id;
-      }
-
-      const updatedInvoice = await prisma.invoice.update({
-        where: { id: invoiceId },
-        data: {
-          supplierId: updatedSupplierId,
-          invoiceNumber: extracted.invoiceNumber || invoice.invoiceNumber,
-          invoiceDate: extracted.invoiceDate || invoice.invoiceDate,
-          totalAmount: extracted.totalAmount || invoice.totalAmount,
-          ocrRawText: JSON.stringify(extracted.rawResponse),
-          OcrJobStatus: OcrJobStatus.COMPLETED,
-        },
+      // ---- Phase 1: read. Nothing below this line writes anything. ----
+      const outcome = await extractInvoiceDocument({
+        fileUrl: invoice.fileUrl,
+        jobId: ocrJob.id,
       });
 
-      console.log(`[InvoiceService] OCR COMPLETE for Invoice ${invoiceId}. Final Supplier: ${updatedSupplierId}. Raw extracted name: "${extracted.supplierName}"`);
+      const issues: ReviewIssue[] = [...outcome.issues];
 
-        await prisma.invoiceLineItem.deleteMany({ where: { invoiceId } });
-        console.log(`[InvoiceService] Processing ${extracted.lineItems.length} line items for invoice ${invoiceId}`);
+      // The supplier is *found*, never created and never fuzzily attached.
+      // See SupplierService.resolveSupplierForOcr for why.
+      const { SupplierService } = await import('../supplier/supplier.service.js');
+      const resolution = await SupplierService.resolveSupplierForOcr(
+        outcome.fields.supplierName.value,
+        { emailDomain: emailDomainOf(invoice.emailFrom) }
+      );
 
-        for (let i = 0; i < extracted.lineItems.length; i++) {
-          const item = extracted.lineItems[i];
-          if (!item) continue;
-          
-          // Normalize values to avoid null crashes on required DB fields
-          const description = item.description || 'Unknown Item';
-          const quantity = Number(item.quantity) || 0;
-          const unitRate = Number(item.unitPrice) || 0;
-          const lineTotal = Number(item.totalPrice) || (quantity * unitRate);
-          const unit = item.unit ? item.unit.trim() : 'ea';
-
-        let matchedOrderId: string | null = null;
-        let matchedTicketIds: string[] = [];
-        let negotiatedRateVal: number | null = null;
-        let flags: LineItemFlag[] = [];
-        let rateDiscrepancy: number | null = null;
-        let qtyDiscrepancy: number | null = null;
-
-        const linePo = item.poNumber || extracted.poNumber || null;
-
-        // --- MATCH 1: Invoice Line to Ticket ---
-        // Link the tickets carrying this PO, then check that what the tickets
-        // say was delivered is what the invoice is charging for.
-        //
-        // Tickets used to be attached and never looked at again. The ticket is
-        // the only independent record of what actually moved — the supplier
-        // writes the invoice, but the contractor signs the ticket — so an
-        // invoice that bills more than the tickets account for is the single
-        // most useful thing this system can catch.
-        let ticketedQuantity: number | null = null;
-        if (linePo) {
-          const matchingTickets = await prisma.ticket.findMany({
-            where: { poNumber: linePo, supplierId: updatedSupplierId },
-            select: { id: true, quantity: true, unit: true, material: true },
-          });
-
-          if (matchingTickets.length > 0) {
-            matchedTicketIds = matchingTickets.map(t => t.id);
-
-            // Only tickets recorded in the same unit as the invoice line can be
-            // summed against it. Mixing tonnes and cubic yards into one total
-            // would produce a confident, wrong number.
-            const comparable = matchingTickets.filter(
-              t => t.quantity !== null && compareUnits(unit, t.unit).comparable
-            );
-
-            if (comparable.length > 0) {
-              ticketedQuantity = comparable.reduce((sum, t) => sum + Number(t.quantity), 0);
-            } else {
-              console.warn(
-                `[InvoiceService] PO ${linePo}: ${matchingTickets.length} ticket(s) attached but ` +
-                `none are recorded in "${unit}", so the quantity was not checked.`
-              );
-            }
-          }
-        }
-
-        if (matchedTicketIds.length === 0) {
-          flags.push(LineItemFlag.NO_TICKET);
-        }
-
-        // --- MATCH 2: Invoice Line to Order ---
-        // Match 2: Match via PO number AND material name (fuzzy)
-        if (linePo) {
-          const potentialOrders = await prisma.order.findMany({
-            where: { poNumber: linePo, supplierId: updatedSupplierId },
-          });
-          
-          const orderMatch = potentialOrders.find(o => stringsMatchFuzzy(o.product ?? '', description ?? ''));
-
-          if (orderMatch) {
-            matchedOrderId = orderMatch.id;
-          } else {
-            flags.push(LineItemFlag.NO_ORDER);
-          }
-        } else {
-          flags.push(LineItemFlag.NO_ORDER);
-        }
-
-        // --- Quantity check ---
-        // Preference order: signed tickets first, then the order.
-        //
-        // The order is what was asked for; the tickets are what was received.
-        // Billing is supposed to follow what was received, so tickets win when
-        // they are usable. Previously only the order was checked, and only for
-        // over-billing — an invoice for less than was ordered passed silently,
-        // which hides a short delivery just as effectively.
-        const expectedQuantity =
-          ticketedQuantity !== null
-            ? ticketedQuantity
-            : matchedOrderId
-            ? Number((await prisma.order.findUnique({
-                where: { id: matchedOrderId },
-                select: { quantity: true },
-              }))?.quantity ?? Number.NaN)
-            : Number.NaN;
-
-        if (Number.isFinite(expectedQuantity) && expectedQuantity !== 0) {
-          const diff = quantity - expectedQuantity;
-          const tolerance = Math.abs(expectedQuantity) * 0.02; // 2% either way
-          if (Math.abs(diff) > tolerance) {
-            flags.push(LineItemFlag.QTY_MISMATCH);
-            qtyDiscrepancy = diff;
-          }
-        }
-
-        // --- MATCH 3: Rate Match ---
-        // 7.1 Match 3: Look up negotiated_rates table
-        const allRates = await prisma.negotiatedRate.findMany({
-          where: {
-            supplierId: updatedSupplierId,
-            effectiveFrom: { lte: new Date(updatedInvoice.invoiceDate) },
-            OR: [
-              { effectiveTo: null },
-              { effectiveTo: { gte: new Date(updatedInvoice.invoiceDate) } }
-            ]
-          },
+      if (!resolution.supplier) {
+        issues.push({
+          field: 'supplierName',
+          code: 'UNRESOLVED_SUPPLIER',
+          message: resolution.reason ?? 'Supplier could not be matched to a recorded supplier',
         });
+      }
 
-        // An alias recorded for this supplier is an exact, human-confirmed
-        // answer and always beats guessing at the product name.
-        const aliasRate = await resolveRateByAlias(updatedSupplierId, description, allRates);
-        const rateMatch = aliasRate ?? allRates.find(r => stringsMatchFuzzy(r.productName, description));
+      const supplierId = resolution.supplier?.id ?? invoice.supplierId;
+      const complete = issues.length === 0;
 
-        if (!rateMatch) {
-          flags.push(LineItemFlag.RATE_UNKNOWN);
-        } else {
-          // Both sides must be priced per the same unit before the numbers mean
-          // anything. Without this, $8.10/tonne against $9.10/ton reads as a
-          // clean ten percent overcharge that nobody committed.
-          const units = compareUnits(unit, rateMatch.unit);
+      const provenance = {
+        ...buildInvoiceProvenance({ ...outcome, issues, complete }),
+        supplierMatch: {
+          method: resolution.method,
+          suggestion: resolution.suggestion,
+        },
+      };
+      const reviewReasons = summariseReviewReasons(issues);
 
-          if (!units.comparable) {
-            flags.push(LineItemFlag.UNIT_MISMATCH);
-            console.warn(
-              `[InvoiceService] Line "${description}": invoice unit "${unit}" and agreed rate ` +
-              `unit "${rateMatch.unit}" are not comparable (${units.reason}). Rate not applied.`
-            );
-          } else {
-            negotiatedRateVal = Number(rateMatch.rate);
-            const diff = unitRate - negotiatedRateVal;
+      // ---- Phase 2: decide. ----
+      if (!complete) {
+        return await holdInvoiceForReview({
+          invoiceId,
+          ocrJobId: ocrJob.id,
+          ocrText: outcome.ocrText,
+          ocrConfidence: outcome.ocrConfidence,
+          provenance,
+          reviewReasons,
+          fallback: outcome.fallback,
+        });
+      }
 
-            // Recorded in both directions. Being under-billed is still a
-            // discrepancy worth seeing — it usually means the wrong rate or the
-            // wrong product, and the correction tends to arrive later.
-            if (Math.abs(diff) > 0.01) {
-              flags.push(LineItemFlag.RATE_MISMATCH);
-              rateDiscrepancy = diff;
-            }
-          }
-        }
+      // ---- Phase 3: write. ----
+      // Every read the matching needs happens here, before the transaction
+      // opens, so the transaction holds locks only for as long as the writes
+      // take.
+      const invoiceDate = isoDateToUtcDate(outcome.fields.invoiceDate.value as string);
+      const totalAmount = outcome.fields.total.value as number;
 
-        // --- Final Flagging ---
-        // 7.2 Flag Definitions
-        let finalFlag: LineItemFlag = LineItemFlag.OK;
-        if (flags.length > 1) {
-          finalFlag = LineItemFlag.MULTIPLE_FLAGS;
-        } else if (flags.length === 1) {
-          finalFlag = flags[0] as LineItemFlag;
-        }
+      const computedLines = await computeInvoiceLineMatches({
+        lines: outcome.fields.lines,
+        headerPo: outcome.fields.poNumber.value,
+        supplierId,
+        invoiceDate,
+      });
 
-        // --- Calculation ---
-        let approvedTotal: number | null = null;
-        if (negotiatedRateVal) {
-          approvedTotal = quantity * negotiatedRateVal;
-        }
+      const disputeNote = buildDisputeNote(computedLines, totalAmount);
 
-        await prisma.invoiceLineItem.create({
-          data: {
-            invoiceId,
-            lineNumber: i + 1,
-            description,
-            poNumber: linePo,
-            quantity,
-            unit,
-            unitRate,
-            lineTotal,
-            matchedOrderId,
-            matchedTickets: {
-              connect: matchedTicketIds.map(id => ({ id }))
+      const updatedInvoice = await prisma.$transaction(
+        async tx => {
+          const written = await tx.invoice.update({
+            where: { id: invoiceId },
+            data: {
+              // `Invoice.supplier` is a required relation, so Prisma exposes only
+              // the nested form here — assigning the `supplierId` scalar on an
+              // update is rejected at runtime, not at compile time.
+              supplier: { connect: { id: supplierId } },
+              invoiceNumber: outcome.fields.invoiceNumber.value as string,
+              invoiceDate,
+              totalAmount,
+              currency: 'CAD',
+              // The OCR text, not a serialised provider response. This column is
+              // read by people and by the search; it used to hold a JSON dump of
+              // the entire Textract payload plus the model's output.
+              ocrRawText: outcome.ocrText,
+              disputeNote,
+              OcrJobStatus: OcrJobStatus.COMPLETED,
             },
-            negotiatedRate: negotiatedRateVal,
-            rateDiscrepancy,
-            qtyDiscrepancy,
-            approvedTotal,
-            flag: finalFlag,
+          });
+
+          // Replacing the lines wholesale is correct — the document is the
+          // authority on what it charges for — but the delete and the recreate
+          // have to succeed or fail together, which is what this transaction is
+          // for.
+          await tx.invoiceLineItem.deleteMany({ where: { invoiceId } });
+
+          for (const line of computedLines) {
+            await tx.invoiceLineItem.create({
+              data: {
+                invoiceId,
+                lineNumber: line.lineNumber,
+                description: line.description,
+                poNumber: line.poNumber,
+                quantity: line.quantity,
+                unit: line.unit,
+                unitRate: line.unitRate,
+                lineTotal: line.lineTotal,
+                matchedOrderId: line.matchedOrderId,
+                matchedTickets: { connect: line.matchedTicketIds.map(id => ({ id })) },
+                negotiatedRate: line.negotiatedRate,
+                rateDiscrepancy: line.rateDiscrepancy,
+                qtyDiscrepancy: line.qtyDiscrepancy,
+                approvedTotal: line.approvedTotal,
+                flag: line.flag,
+              },
+            });
           }
-        });
-      }
 
-      // --- Total Discrepancy Match ---
-      //
-      // Only lines with an applicable agreed rate can be totalled. Lines
-      // without one were previously counted at a rate of zero, so a single
-      // unpriced product dragged the expected total far below the billed total
-      // and stamped a "total amount mismatch" dispute on an invoice that was
-      // very likely correct. On a supplier who has just introduced a product,
-      // that fired on every invoice — and a dispute note that is usually wrong
-      // is one nobody reads.
-      //
-      // With unpriced lines present the totals are not comparable at all, so
-      // the check is skipped and the reason is recorded instead.
-      const lineItems = await prisma.invoiceLineItem.findMany({ where: { invoiceId } });
-      const pricedLines = lineItems.filter(item => item.negotiatedRate !== null);
-      const unpricedLines = lineItems.filter(item => item.negotiatedRate === null);
+          await tx.ocrJob.update({
+            where: { id: ocrJob.id },
+            data: {
+              status: OcrJobStatus.COMPLETED,
+              finishedAt: new Date(),
+              rawResponse: provenance as any,
+              structuredProvider: EXTRACTION_PROVIDER,
+              structuredModel: outcome.fallback.model,
+              fallbackUsed: outcome.fallback.used,
+              reviewReasons: [],
+              extractionConfidence: outcome.ocrConfidence,
+              errorMessage: null,
+            },
+          });
 
-      const billedTotal = Number(updatedInvoice.totalAmount);
-
-      if (unpricedLines.length > 0) {
-        await prisma.invoice.update({
-          where: { id: invoiceId },
-          data: {
-            disputeNote:
-              `Total not checked: ${unpricedLines.length} of ${lineItems.length} line(s) have no ` +
-              `applicable agreed rate (${unpricedLines.map(l => l.description).join('; ')}). ` +
-              `Billed: $${billedTotal.toFixed(2)}. Add the missing rates, then reopen to re-check.`,
-          },
-        });
-      } else if (lineItems.length > 0) {
-        const totalApprovedSubtotal = pricedLines.reduce(
-          (sum, item) => sum + Number(item.quantity) * Number(item.negotiatedRate),
-          0
-        );
-
-        // HST is Ontario's 13%. Hard-coded because every supplier here is
-        // Ontario-registered; revisit if that stops being true.
-        const totalApprovedWithHst = totalApprovedSubtotal * 1.13;
-        const totalDiscrepancy = Math.abs(totalApprovedWithHst - billedTotal);
-
-        await prisma.invoice.update({
-          where: { id: invoiceId },
-          data: {
-            disputeNote:
-              totalDiscrepancy > 0.05
-                ? `Total amount mismatch. Expected pay: $${totalApprovedWithHst.toFixed(2)} (Subtotal: $${totalApprovedSubtotal.toFixed(2)} + 13% HST). Billed: $${billedTotal.toFixed(2)}.`
-                : null,
-          },
-        });
-      }
-
-      if (ocrJob) {
-        await prisma.ocrJob.update({
-          where: { id: ocrJob.id },
-          data: { status: OcrJobStatus.COMPLETED, finishedAt: new Date() },
-        });
-      }
+          return written;
+        },
+        // Line-by-line creates on a long invoice can outrun the 5s default.
+        { timeout: 30_000 }
+      );
 
       return updatedInvoice;
     } catch (error: any) {
-      if (ocrJob) {
-        await prisma.ocrJob.update({
-          where: { id: ocrJob.id },
-          data: { status: OcrJobStatus.FAILED, errorMessage: error.message, finishedAt: new Date() },
-        });
-      }
+      // A throw here means no usable candidate was produced at all — the file
+      // was unreachable, or Textract found no text. That is FAILED, and the
+      // worker's retry/backoff applies. A document that merely could not be
+      // read *confidently* never reaches this path; it is held for review above.
+      await prisma.ocrJob.update({
+        where: { id: ocrJob.id },
+        data: {
+          status: OcrJobStatus.FAILED,
+          errorMessage: error?.message ?? 'Unknown error',
+          finishedAt: new Date(),
+        },
+      });
       await prisma.invoice.update({
         where: { id: invoiceId },
         data: { OcrJobStatus: OcrJobStatus.FAILED },

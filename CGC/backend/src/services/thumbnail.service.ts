@@ -127,12 +127,26 @@ export function deriveThumbnailPath(originalPath: string): string {
 }
 
 /**
- * Recover the in-bucket object path from a stored public URL.
+ * Recover the in-bucket object path from a private reference or legacy public URL.
  *
- * Returns null when the URL is not a public storage object URL, which the
- * backfill treats as "cannot process" rather than guessing.
+ * Returns null when the value is not a configured storage object reference;
+ * the backfill treats that as "cannot process" rather than guessing.
  */
 export function storagePathFromPublicUrl(publicUrl: string, bucket: string): string | null {
+  if (publicUrl.startsWith('storage://')) {
+    try {
+      const remainder = publicUrl.slice('storage://'.length);
+      const slash = remainder.indexOf('/');
+      if (slash <= 0 || decodeURIComponent(remainder.slice(0, slash)) !== bucket) return null;
+      const storedPath = remainder.slice(slash + 1)
+        .split('/')
+        .map(segment => decodeURIComponent(segment))
+        .join('/');
+      return storedPath || null;
+    } catch {
+      return null;
+    }
+  }
   const marker = `/storage/v1/object/public/${bucket}/`;
   const index = String(publicUrl || '').indexOf(marker);
   if (index === -1) return null;

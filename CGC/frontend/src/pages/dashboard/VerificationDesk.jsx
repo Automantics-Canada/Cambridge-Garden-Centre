@@ -425,7 +425,9 @@ export default function VerificationDesk() {
                     {/* Total Billed */}
                     <div className="flex flex-col">
                       <span className="text-[12.5px] font-normal text-muted">Total Billed</span>
-                      <span className="text-lg font-semibold text-ink mt-0.5">${Number(inv.totalAmount).toLocaleString()}</span>
+                      <span className="text-lg font-semibold text-ink mt-0.5">
+                        {inv.totalAmount == null ? 'Pending extraction' : `$${Number(inv.totalAmount).toLocaleString()}`}
+                      </span>
                     </div>
 
                     {/* Reconciliation State Badge */}
@@ -594,7 +596,11 @@ export default function VerificationDesk() {
                               <div className="space-y-4">
                                 <div className="flex items-center justify-between">
                                   <span className="text-sm font-normal opacity-70">Total Billed</span>
-                                  <span className="text-xl font-light">${Number(selectedInvoice.totalAmount).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                                  <span className="text-xl font-light">
+                                    {selectedInvoice.totalAmount == null
+                                      ? 'Pending extraction'
+                                      : `$${Number(selectedInvoice.totalAmount).toLocaleString(undefined, { minimumFractionDigits: 2 })}`}
+                                  </span>
                                 </div>
                                 <div className="flex items-center justify-between border-t border-brand/40 pt-4">
                                   <span className="text-sm font-normal opacity-70 text-on-brand">Reconciliation state</span>

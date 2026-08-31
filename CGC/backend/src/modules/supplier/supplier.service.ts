@@ -3,6 +3,33 @@ import { SupplierType } from '@prisma/client';
 import { compareTwoStrings } from 'string-similarity';
 import { normalizeProductName } from '../../lib/productName.js';
 
+export interface SupplierRef {
+  id: string;
+  name: string;
+}
+
+/** How an OCR-read supplier name was resolved, if at all. */
+export type OcrSupplierMatchMethod = 'EXACT_NAME' | 'EMAIL_DOMAIN' | 'SUGGESTED' | 'NONE';
+
+export interface OcrSupplierResolution {
+  /** Non-null only for an unambiguous exact match. Safe to attach. */
+  supplier: SupplierRef | null;
+  method: OcrSupplierMatchMethod;
+  /** A close match for a person to confirm. Never attached automatically. */
+  suggestion: (SupplierRef & { score: number }) | null;
+  /** Why nothing was attached. Null when a supplier was resolved. */
+  reason: string | null;
+}
+
+/**
+ * How close a name has to be before it is worth showing as a suggestion.
+ *
+ * Only ever used to *propose*. The automatic-attachment threshold is exact
+ * equality; there is no similarity score high enough to link a supplier without
+ * a person.
+ */
+const OCR_SUGGESTION_THRESHOLD = 0.6;
+
 export const SupplierService = {
   async findOrCreateSupplier(name: string | null): Promise<{ id: string; name: string } | null> {
     if (!name) return null;
@@ -59,6 +86,123 @@ export const SupplierService = {
       },
     });
     return newSupplier;
+  },
+
+  /**
+   * Resolve a supplier from a name that OCR read off a document. Read-only.
+   *
+   * `findOrCreateSupplier` must never be reached from an automated OCR path.
+   * It creates a supplier when nothing matches, and it accepts a 0.75 string
+   * similarity as a match — so a misread letterhead either invented a duplicate
+   * supplier record or attached a delivery to whichever existing supplier
+   * happened to be spelled most like the misreading. Both are silent, and both
+   * corrupt the supplier dimension that invoice matching and the negotiated
+   * rate tables depend on.
+   *
+   * This resolver only ever *finds*:
+   *
+   *   - an exact name match (case-insensitive) is used;
+   *   - an exact match on a recorded email domain is used;
+   *   - a close-but-not-exact match is returned as a *suggestion* and is not
+   *     attached to anything;
+   *   - more than one equally good match resolves to nothing.
+   *
+   * Anything short of an unambiguous exact match leaves the document's supplier
+   * where it was, with a reason for the review desk.
+   */
+  async resolveSupplierForOcr(
+    name: string | null,
+    options: { emailDomain?: string | null } = {}
+  ): Promise<OcrSupplierResolution> {
+    const trimmed = name?.trim() ?? '';
+
+    if (!trimmed && !options.emailDomain) {
+      return { supplier: null, method: 'NONE', suggestion: null, reason: 'No supplier name was read from the document' };
+    }
+
+    if (trimmed) {
+      const exact = await prisma.supplier.findMany({
+        where: { name: { equals: trimmed, mode: 'insensitive' } },
+        select: { id: true, name: true },
+        take: 2,
+      });
+
+      // Two suppliers sharing a name is a data problem a person has to settle;
+      // picking one here would attach the document to a coin flip.
+      if (exact.length === 1) {
+        return { supplier: exact[0] as SupplierRef, method: 'EXACT_NAME', suggestion: null, reason: null };
+      }
+      if (exact.length > 1) {
+        return {
+          supplier: null,
+          method: 'NONE',
+          suggestion: null,
+          reason: `More than one supplier is recorded under this name; pick the right one`,
+        };
+      }
+    }
+
+    const domain = options.emailDomain?.trim().toLowerCase();
+    if (domain) {
+      const byDomain = await prisma.supplier.findMany({
+        where: { emailDomains: { has: domain } },
+        select: { id: true, name: true },
+        take: 2,
+      });
+      if (byDomain.length === 1) {
+        return { supplier: byDomain[0] as SupplierRef, method: 'EMAIL_DOMAIN', suggestion: null, reason: null };
+      }
+      if (byDomain.length > 1) {
+        return {
+          supplier: null,
+          method: 'NONE',
+          suggestion: null,
+          reason: 'More than one supplier is recorded against this email domain',
+        };
+      }
+    }
+
+    if (!trimmed) {
+      return { supplier: null, method: 'NONE', suggestion: null, reason: 'No supplier name was read from the document' };
+    }
+
+    // Nothing exact. Offer the closest active supplier as something for a person
+    // to confirm — a suggestion is written nowhere and links nothing.
+    const active = await prisma.supplier.findMany({
+      where: { active: true },
+      select: { id: true, name: true },
+    });
+
+    let best: SupplierRef | null = null;
+    let bestScore = 0;
+    let tied = false;
+
+    for (const candidate of active) {
+      const score = compareTwoStrings(trimmed.toLowerCase(), candidate.name.toLowerCase());
+      if (score > bestScore) {
+        bestScore = score;
+        best = candidate;
+        tied = false;
+      } else if (score === bestScore && bestScore > 0) {
+        tied = true;
+      }
+    }
+
+    if (best && !tied && bestScore >= OCR_SUGGESTION_THRESHOLD) {
+      return {
+        supplier: null,
+        method: 'SUGGESTED',
+        suggestion: { ...best, score: Number(bestScore.toFixed(3)) },
+        reason: `Supplier not matched exactly; "${best.name}" looks close — confirm it`,
+      };
+    }
+
+    return {
+      supplier: null,
+      method: 'NONE',
+      suggestion: null,
+      reason: 'Supplier name on the document does not match any recorded supplier',
+    };
   },
 
   /**

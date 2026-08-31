@@ -3,10 +3,11 @@
  * Utility functions for downloading files from URLs
  */
 
-import axios from 'axios';
+import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { promises as fs } from 'node:fs';
-import { env } from '../config/env.js';
+import { downloadStorageObject } from './supabaseStorage.js';
+import { parseStoredObjectLocation } from './storageAccess.js';
 
 const TEMP_DIR = path.join(process.cwd(), '.temp-ocr');
 
@@ -21,42 +22,23 @@ async function ensureTempDir() {
   }
 }
 
-/**
- * Download file from URL and save to temporary location
- */
-export async function downloadFileToTemp(
-  url: string,
-  filename?: string
+/** Materialise a private storage object for Textract without making it public. */
+export async function downloadStoredFileToTemp(
+  reference: string,
+  filename?: string,
 ): Promise<string> {
-  try {
-    await ensureTempDir();
+  await ensureTempDir();
+  const location = parseStoredObjectLocation(reference);
+  if (!location) throw new Error('Unsupported storage object reference');
+  const object = await downloadStorageObject(location);
+  const safeName = path.basename(filename || object.filename || 'document.tmp');
+  const tempPath = path.join(TEMP_DIR, `${randomUUID()}-${safeName}`);
+  await fs.writeFile(tempPath, object.buffer, { flag: 'wx' });
+  return tempPath;
+}
 
-    // Generate filename if not provided
-    if (!isSupabaseUrl(url)) {
-      throw new Error('Refusing to download from an untrusted origin');
-    }
-    const finalFilename = path.basename(filename || `temp-${Date.now()}.tmp`);
-    const tempPath = path.join(TEMP_DIR, finalFilename);
-
-    // Download file
-    const response = await axios.get(url, {
-      responseType: 'arraybuffer',
-      timeout: 15_000,
-      maxRedirects: 0,
-      maxContentLength: 20 * 1024 * 1024,
-      maxBodyLength: 20 * 1024 * 1024,
-    });
-
-    // Save to temp
-    await fs.writeFile(tempPath, response.data);
-
-    console.log(`[URLHandler] File downloaded to temp: ${tempPath}`);
-    return tempPath;
-  } catch (error) {
-    const errorMsg = error instanceof Error ? error.message : String(error);
-    console.error('[URLHandler] Download error:', errorMsg);
-    throw error;
-  }
+export function isStoredFileLocation(value: string): boolean {
+  return parseStoredObjectLocation(value) !== null;
 }
 
 /**
@@ -75,21 +57,6 @@ export async function cleanupTempFile(tempPath: string): Promise<void> {
 }
 
 /**
- * Check if URL is a Supabase Storage URL
- */
-export function isSupabaseUrl(url: string): boolean {
-  try {
-    const candidate = new URL(url);
-    const configured = new URL(env.supabaseUrl);
-    return candidate.protocol === 'https:' &&
-      candidate.hostname === configured.hostname &&
-      candidate.port === configured.port;
-  } catch {
-    return false;
-  }
-}
-
-/**
  * Get filename from URL or path
  */
 export function getFilenameFromUrl(url: string): string {
@@ -99,8 +66,8 @@ export function getFilenameFromUrl(url: string): string {
 }
 
 export default {
-  downloadFileToTemp,
+  downloadStoredFileToTemp,
   cleanupTempFile,
-  isSupabaseUrl,
+  isStoredFileLocation,
   getFilenameFromUrl,
 };

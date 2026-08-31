@@ -12,6 +12,9 @@ import driverRoutes from './modules/drivers/driver.routes.js';
 import dispatchRoutes from './modules/dispatch/dispatch.routes.js';
 import deliveriesRoutes from './modules/deliveries/deliveries.routes.js';
 import internalRoutes from './modules/internal/internal.routes.js';
+import storageRoutes from './modules/storage/storage.routes.js';
+import { env } from './config/env.js';
+import { rewriteStoredDocumentUrls } from './services/storageAccess.js';
 
 const app = express();
 
@@ -53,13 +56,26 @@ app.use(cors({
 }));
 app.use(express.json());
 
-// Serve static files from the uploads directory
-app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
+// Local files exist only in the guarded development/test adapter. Production
+// documents are private Supabase objects served through expiring signed links.
+if (env.storageDriver === 'local') {
+  app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
+}
+
+// Convert durable storage references (and legacy public Supabase URLs) into
+// short-lived proxy links at the response boundary. Database rows and service
+// logs therefore never need to retain expiring URLs.
+app.use((_req, res, next) => {
+  const json = res.json.bind(res);
+  res.json = ((body: unknown) => json(rewriteStoredDocumentUrls(body))) as typeof res.json;
+  next();
+});
 
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', message: 'LegionAutomations CGC Backend is running perfectly' });
 });
 
+app.use('/api/storage', storageRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/orders', orderRoutes);
 app.use('/api/tickets', ticketRoutes);

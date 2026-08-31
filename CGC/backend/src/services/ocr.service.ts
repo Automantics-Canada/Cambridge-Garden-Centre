@@ -1,44 +1,57 @@
+/**
+ * Reading a delivery ticket.
+ *
+ * AWS Textract DetectDocumentText does the OCR, unchanged. What follows it is a
+ * deterministic parser over that text rather than an unconditional call to a
+ * language model, and the fallback reader is reached for only when a required
+ * field is missing or was read with low confidence.
+ *
+ * The loose sanitisers this used to need — the code that coped with the model
+ * returning an array where a number was expected, or an object where a string
+ * was — are gone. There is one result type and everything is validated into it.
+ */
+
 import {
   TextractClient,
   DetectDocumentTextCommand,
 } from '@aws-sdk/client-textract';
 import path from 'node:path';
 import fs from 'node:fs';
-import { downloadFileToTemp, cleanupTempFile, isSupabaseUrl, getFilenameFromUrl } from './urlHandler.js';
-import { extractStructuredData } from './bedrock.service.js';
+import {
+  downloadStoredFileToTemp,
+  cleanupTempFile,
+  isStoredFileLocation,
+  getFilenameFromUrl,
+} from './urlHandler.js';
 import { pdfToPng } from 'pdf-to-png-converter';
+import { extractTicketFromText } from './documentExtraction/ticketExtractor.js';
+import { finaliseTicketExtraction } from './documentExtraction/mergeExtraction.js';
+import { fromTextractConfidence } from './documentExtraction/types.js';
+import type { ExtractionOutcome, TicketExtraction } from './documentExtraction/types.js';
 
-const textractClient = new TextractClient(); // Relies on standard AWS credential provider chain
+const textractClient = new TextractClient(); // Standard AWS credential provider chain
 
-export interface OcrExtractionResult {
-  rawText: string;
-  supplierName: string | null;
-  ticketDate: Date | null;
-  material: string | null;
-  quantity: number | null;
-  unit: string | null;
-  poNumber: string | null;
-  ticketNumber: string | null;
-  ocrConfidence: number;
+export type TicketOcrOutcome = ExtractionOutcome<TicketExtraction>;
+
+export interface TicketOcrInput {
+  imageUrl: string;
+  jobId: string;
 }
 
-/**
- * Extract text from local image using AWS Textract
- */
-export async function extractTextFromLocalImage(imageUrl: string): Promise<OcrExtractionResult> {
+export async function extractTicketDocument({
+  imageUrl,
+  jobId,
+}: TicketOcrInput): Promise<TicketOcrOutcome> {
   let localPath = imageUrl;
   let tempFile: string | null = null;
   let generatedImagePath: string | null = null;
 
   try {
-    // Handle Supabase URLs
-    if (isSupabaseUrl(imageUrl)) {
-      console.log(`[OCR] Downloading from Supabase: ${imageUrl.substring(0, 50)}...`);
+    if (isStoredFileLocation(imageUrl)) {
       const filename = getFilenameFromUrl(imageUrl);
-      tempFile = await downloadFileToTemp(imageUrl, filename);
+      tempFile = await downloadStoredFileToTemp(imageUrl, filename);
       localPath = tempFile;
     } else if (imageUrl.startsWith('/uploads/')) {
-      // Handle legacy local paths
       const uploadsRoot = path.resolve(process.cwd(), 'uploads');
       const requestedPath = path.resolve(process.cwd(), `.${imageUrl}`);
       if (!requestedPath.startsWith(`${uploadsRoot}${path.sep}`)) {
@@ -50,14 +63,13 @@ export async function extractTextFromLocalImage(imageUrl: string): Promise<OcrEx
     }
 
     if (!fs.existsSync(localPath)) {
-      throw new Error(`Local file not found for OCR: ${localPath}`);
+      throw new Error('Ticket file not found for OCR');
     }
 
     const ext = path.extname(localPath).toLowerCase();
     let imagePathForOcr = localPath;
 
     if (ext === '.pdf') {
-      console.log(`[OCR] Converting PDF to image: ${localPath}`);
       const pages = await pdfToPng(fs.readFileSync(localPath), {
         viewportScale: 3,
         pagesToProcess: [1],
@@ -67,147 +79,52 @@ export async function extractTextFromLocalImage(imageUrl: string): Promise<OcrEx
       });
       const imageBuffer = pages[0]?.content;
       if (!imageBuffer) throw new Error('PDF did not render a first page');
-      
-      generatedImagePath = path.join(path.dirname(localPath), `${path.basename(localPath, ext)}-1.png`);
+
+      generatedImagePath = path.join(
+        path.dirname(localPath),
+        `${path.basename(localPath, ext)}-1.png`
+      );
       fs.writeFileSync(generatedImagePath, Buffer.from(imageBuffer));
-      
-      console.log(`[OCR] Successfully converted PDF to image: ${generatedImagePath}`);
       imagePathForOcr = generatedImagePath;
     }
 
-    // Extract text using AWS Textract
-    return await extractWithTextract(imagePathForOcr);
+    return await readTicket(imagePathForOcr, jobId);
   } finally {
     if (generatedImagePath && fs.existsSync(generatedImagePath)) {
       try {
         fs.unlinkSync(generatedImagePath);
-        console.log(`[OCR] Cleaned up converted image: ${generatedImagePath}`);
-      } catch (e) {
-        console.error(`[OCR] Failed to clean up converted image: ${e}`);
+      } catch (error) {
+        console.error('[OCR] Failed to clean up converted page image');
       }
     }
-    // Clean up temporary file if it was downloaded
-    if (tempFile) {
-      await cleanupTempFile(tempFile);
-    }
+    if (tempFile) await cleanupTempFile(tempFile);
   }
 }
 
-/**
- * Extract text using AWS Textract
- */
-async function extractWithTextract(localPath: string): Promise<OcrExtractionResult> {
-  const imageBytes = fs.readFileSync(localPath);
+async function readTicket(localPath: string, jobId: string): Promise<TicketOcrOutcome> {
+  const result = await textractClient.send(
+    new DetectDocumentTextCommand({ Document: { Bytes: fs.readFileSync(localPath) } })
+  );
 
-  const command = new DetectDocumentTextCommand({
-    Document: {
-      Bytes: imageBytes,
-    },
+  const blocks = result.Blocks ?? [];
+  const lineBlocks = blocks.filter(block => block.BlockType === 'LINE' && block.Text);
+
+  if (lineBlocks.length === 0) {
+    throw new Error('Textract detected no text in the ticket image');
+  }
+
+  const ocrText = lineBlocks.map(block => block.Text as string).join('\n');
+  const ocrConfidence = fromTextractConfidence(
+    lineBlocks.reduce((sum, block) => sum + (block.Confidence ?? 0), 0) / lineBlocks.length
+  );
+
+  const extraction = extractTicketFromText({ ocrText });
+
+  return finaliseTicketExtraction({
+    extraction,
+    ocrText,
+    ocrConfidence,
+    documentType: 'TICKET',
+    jobId,
   });
-
-  const result = await textractClient.send(command);
-  const blocks = result.Blocks;
-
-  if (!blocks || blocks.length === 0) {
-    throw new Error('No text detected in the image');
-  }
-
-  const lineBlocks = blocks.filter((block: any) => block.BlockType === 'LINE' && block.Text);
-  const textLines = lineBlocks.map((block: any) => block.Text as string);
-  const rawText = textLines.join('\n');
-
-  // Calculate average confidence
-  const totalConfidence = lineBlocks.reduce((acc: number, block: any) => acc + (block.Confidence || 0), 0);
-  const averageConfidence = lineBlocks.length > 0 ? totalConfidence / lineBlocks.length : 0;
-
-  if (!rawText.trim()) {
-    return {
-      rawText,
-      supplierName: null,
-      ticketDate: null,
-      material: null,
-      quantity: null,
-      unit: null,
-      poNumber: null,
-      ticketNumber: null,
-      ocrConfidence: averageConfidence / 100,
-    };
-  }
-
-  const extraction = await extractStructuredData(rawText, 'TICKET');
-  
-  return {
-    rawText,
-    supplierName: extraction.supplierName,
-    ticketDate: extraction.date,
-    material: extraction.material || null,
-    quantity: extraction.quantity,
-    unit: extraction.unit || null,
-    poNumber: extraction.poNumber,
-    ticketNumber: extraction.ticketNumber || null,
-    ocrConfidence: averageConfidence / 100,
-  };
-}
-
-/**
- * Legacy Textract-only parsing function (kept for backward compatibility)
- */
-function parseTicketData(text: string): Omit<OcrExtractionResult, 'ocrConfidence'> {
-  const result: Omit<OcrExtractionResult, 'ocrConfidence'> = {
-    rawText: text,
-    supplierName: null,
-    ticketDate: null,
-    material: null,
-    quantity: null,
-    unit: null,
-    poNumber: null,
-    ticketNumber: null,
-  };
-
-  const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
-
-  if (lines.length > 0) {
-    result.supplierName = lines[0] || null;
-  }
-
-  const dateRegex = /\b(\d{1,4}[-/]\d{1,2}[-/]\d{1,4})\b/;
-  const dateMatch = text.match(dateRegex);
-  if (dateMatch && dateMatch[1]) {
-    const parsedDate = new Date(dateMatch[1]);
-    if (!isNaN(parsedDate.getTime())) {
-      result.ticketDate = parsedDate;
-    }
-  }
-
-  const ticketRegex = /Ticket\s*#?\s*[:\-]?\s*([A-Za-z0-9]+)/i;
-  const ticketMatch = text.match(ticketRegex);
-  if (ticketMatch && ticketMatch[1]) {
-    result.ticketNumber = ticketMatch[1] || null;
-  }
-
-  const poRegex = /PO\s*#?\s*[:\-]?\s*([A-Za-z0-9]+)/i;
-  const poMatch = text.match(poRegex);
-  if (poMatch && poMatch[1]) {
-    result.poNumber = poMatch[1];
-  }
-
-  const qtyRegex = /([\d.,]+)\s*(tons?|tonnes?|lbs?|kg|t|tm)/i;
-  const qtyMatch = text.match(qtyRegex);
-  if (qtyMatch && qtyMatch[1]) {
-    const qtyVal = parseFloat(qtyMatch[1].replace(/,/g, ''));
-    if (!isNaN(qtyVal)) {
-      result.quantity = qtyVal;
-    }
-  }
-
-  const materials = ['sand', 'gravel', 'stone', 'aggregate', 'crush', 'soil', 'asphalt'];
-  for (const line of lines) {
-    const lowerLine = line.toLowerCase();
-    if (materials.some(m => lowerLine.includes(m))) {
-      result.material = line;
-      break;
-    }
-  }
-
-  return result;
 }

@@ -10,7 +10,8 @@
  * build, and it should look broken immediately rather than half-work against
  * the wrong origin.
  */
-export const API_BASE_URL = import.meta.env.VITE_API_URL || '';
+export const API_BASE_URL = import.meta.env.VITE_API_URL
+  || (import.meta.env.DEV ? 'http://localhost:4000' : '');
 
 if (!API_BASE_URL && import.meta.env.PROD) {
   console.error('VITE_API_URL is not set. API requests and document URLs will not resolve.');
@@ -26,4 +27,14 @@ export function resolveDocumentUrl(url) {
   if (!url) return '';
   if (url.startsWith('http://') || url.startsWith('https://')) return url;
   return `${API_BASE_URL}${url}`;
+}
+
+export function isPdfDocumentUrl(url) {
+  if (!url) return false;
+  try {
+    return new URL(resolveDocumentUrl(url), 'http://local.invalid')
+      .pathname.toLowerCase().endsWith('.pdf');
+  } catch {
+    return String(url).split(/[?#]/, 1)[0].toLowerCase().endsWith('.pdf');
+  }
 }

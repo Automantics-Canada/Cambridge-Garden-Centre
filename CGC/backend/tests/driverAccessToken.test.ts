@@ -3,7 +3,10 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import jwt from 'jsonwebtoken';
 import { env } from '../src/config/env.js';
-import { createDriverAccessToken } from '../src/services/driverAccessToken.js';
+import {
+  buildDriverAccessUrl,
+  createDriverAccessToken,
+} from '../src/services/driverAccessToken.js';
 
 describe('createDriverAccessToken', () => {
   const user = {
@@ -27,5 +30,14 @@ describe('createDriverAccessToken', () => {
     assert.throws(() => createDriverAccessToken(null), /not linked or active/);
     assert.throws(() => createDriverAccessToken({ ...user, active: false }), /not linked or active/);
     assert.throws(() => createDriverAccessToken({ ...user, role: 'ADMIN' }), /not linked or active/);
+  });
+
+  it('builds new email links with a fragment so the token is not sent to the web server', () => {
+    const url = buildDriverAccessUrl('https://portal.example.test/', 'header.payload.signature');
+    assert.equal(
+      url,
+      'https://portal.example.test/driver/today#token=header.payload.signature'
+    );
+    assert.equal(url.includes('?token='), false);
   });
 });

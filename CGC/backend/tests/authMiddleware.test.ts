@@ -111,11 +111,11 @@ describe('authMiddleware', () => {
     assert.equal(advanced, false);
   });
 
-  it('denies an expired token supplied through the SSE query parameter', async () => {
-    const expired = jwt.sign({ id: 'user-1', email: 'a@b.test', role: 'AP_USER' }, SECRET, {
-      expiresIn: '-60s',
+  it('never treats a query parameter as an authentication credential', async () => {
+    const valid = jwt.sign({ id: 'user-1', email: 'a@b.test', role: 'AP_USER' }, SECRET, {
+      expiresIn: '1h',
     });
-    const { captured, advanced } = await run({ query: { token: expired }, headers: {} });
+    const { captured, advanced } = await run({ query: { token: valid }, headers: {} });
     assert.equal(captured.status, 401);
     assert.equal(advanced, false);
   });

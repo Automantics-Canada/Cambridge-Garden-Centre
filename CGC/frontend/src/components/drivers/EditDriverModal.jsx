@@ -142,6 +142,7 @@ export default function EditDriverModal({ isOpen, onClose, onSuccess, driver }) 
                 className="pr-10"
                 placeholder="Enter new password"
                 value={formData.password}
+                minLength={12}
                 onChange={(e) => setFormData({ ...formData, password: e.target.value })}
               />
               <button

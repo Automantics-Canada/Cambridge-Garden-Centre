@@ -27,6 +27,8 @@ export interface RateLimitOptions {
   max: number;
   /** Label used in the error message. */
   name: string;
+  /** Optional endpoint-specific key. */
+  key?: (req: Request) => string;
 }
 
 /**
@@ -40,7 +42,7 @@ function callerKey(req: Request): string {
   return `ip:${req.ip ?? req.socket.remoteAddress ?? 'unknown'}`;
 }
 
-export function rateLimit({ windowMs, max, name }: RateLimitOptions) {
+export function rateLimit({ windowMs, max, name, key: resolveKey }: RateLimitOptions) {
   const windows = new Map<string, WindowState>();
 
   // Bounded sweep so the map cannot grow without limit on a long-lived process.
@@ -53,7 +55,7 @@ export function rateLimit({ windowMs, max, name }: RateLimitOptions) {
   sweep.unref?.();
 
   return (req: Request, res: Response, next: NextFunction) => {
-    const key = callerKey(req);
+    const key = resolveKey?.(req) ?? callerKey(req);
     const now = Date.now();
     const state = windows.get(key);
 
@@ -77,7 +79,7 @@ export function rateLimit({ windowMs, max, name }: RateLimitOptions) {
 
 /**
  * Caps simultaneous in-flight requests, which is what actually bounds parallel
- * Textract/Bedrock spend. Rejects with 503 rather than queueing so a caller
+ * Textract and fallback spend. Rejects with 503 rather than queueing so a caller
  * gets a fast, explicit answer instead of holding a connection open.
  */
 export function limitConcurrency(max: number, name: string) {

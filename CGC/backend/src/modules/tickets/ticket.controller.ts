@@ -6,10 +6,6 @@ import type {
   EmailTicketPayload,
 } from './ticket.types.js';
 import { PDFDocument } from 'pdf-lib';
-import path from 'node:path';
-import fs from 'node:fs';
-import os from 'node:os';
-import crypto from 'node:crypto';
 import { pdfToPng } from 'pdf-to-png-converter';
 import { parseQueryDate, QueryDateError } from '../../lib/queryDate.js';
 
@@ -136,51 +132,59 @@ export const uploadManualPdfTickets = async (req: Request, res: Response) => {
   }
 
   try {
-    console.log(`[UploadPDF] Converting PDF buffer to image...`);
-    let imageBuffer: Buffer;
-    try {
-      const pages = await pdfToPng(file.buffer, {
-        viewportScale: 3,
-        pagesToProcess: [1],
-        disableFontFace: false,
-        useSystemFonts: true,
-        enableXfa: true,
+    console.log('[UploadPDF] Rendering every ticket page...');
+    const pageImages = await renderTicketPdfPages(file.buffer);
+    const baseName = file.originalname.substring(0, file.originalname.lastIndexOf('.')) || file.originalname;
+    const tickets = [];
+    const ocrJobIds = [];
+    for (let index = 0; index < pageImages.length; index += 1) {
+      const { ticket, ocrJob } = await TicketService.ingestManualTicket({
+        buffer: pageImages[index]!,
+        originalName: `${baseName}-page-${index + 1}.png`,
       });
-      const firstPage = pages[0]?.content;
-      if (!firstPage) throw new Error('PDF did not render a first page');
-      imageBuffer = Buffer.from(firstPage);
-    } catch (err) {
-      console.error('[UploadPDF] Error converting PDF to image:', err);
-      throw new Error('Failed to convert PDF to image');
+      tickets.push(ticket);
+      ocrJobIds.push(ocrJob.id);
     }
 
-    const baseName = file.originalname.substring(0, file.originalname.lastIndexOf('.')) || file.originalname;
-    const imageName = `${baseName}.png`;
-
-    // Ingest the image buffer instead of the PDF and wait for OCR
-    const { ticket, ocrJob } = await TicketService.ingestManualTicket({
-      buffer: imageBuffer,
-      originalName: imageName,
-    }, true);
-
     return res.status(201).json({
-      message: 'Successfully converted PDF and queued ticket for OCR',
-      tickets: [ticket],
-      ocrJobIds: [ocrJob.id],
+      message: `Successfully queued ${tickets.length} ticket page(s) for OCR`,
+      tickets,
+      ocrJobIds,
     });
   } catch (error: any) {
     console.error('uploadManualPdfTickets error', error);
-    try {
-      const logFile = path.join(process.cwd(), 'debug_upload.log');
-      fs.writeFileSync(logFile, `Error: ${error?.message}\nStack: ${error?.stack}\n`);
-    } catch (logErr) {
-      console.error('Failed to write debug log:', logErr);
-    }
     return res
       .status(500)
       .json({ error: error?.message ?? 'Unexpected error during PDF upload and processing' });
   }
 };
+
+export async function renderTicketPdfPages(buffer: Buffer): Promise<Buffer[]> {
+  const source = await PDFDocument.load(buffer, { ignoreEncryption: false });
+  const pageCount = source.getPageCount();
+  if (pageCount < 1) throw new Error('PDF contains no pages');
+  if (pageCount > 50) throw new Error('PDF contains more than the 50-page safety limit');
+
+  const rendered: Buffer[] = [];
+  for (let pageIndex = 0; pageIndex < pageCount; pageIndex += 1) {
+    const singlePage = await PDFDocument.create();
+    const [copiedPage] = await singlePage.copyPages(source, [pageIndex]);
+    if (!copiedPage) throw new Error(`Could not copy PDF page ${pageIndex + 1}`);
+    singlePage.addPage(copiedPage);
+    const singlePageBytes = await singlePage.save();
+    const images = await pdfToPng(Buffer.from(singlePageBytes), {
+      viewportScale: 3,
+      pagesToProcess: [1],
+      disableFontFace: false,
+      useSystemFonts: true,
+      enableXfa: true,
+    });
+    const firstPage = images[0]?.content;
+    if (!firstPage) throw new Error(`PDF page ${pageIndex + 1} did not render`);
+    rendered.push(Buffer.from(firstPage));
+  }
+  return rendered;
+}
 
 export const processTicketOcr = async (req: Request, res: Response) => {
   try {

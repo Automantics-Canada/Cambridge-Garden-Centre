@@ -38,10 +38,12 @@ const DriverProtectedRoute = ({ children }) => {
   
   // Extract token from URL
   const queryParams = new URLSearchParams(window.location.search);
-  const token = queryParams.get('token');
+  const fragmentParams = new URLSearchParams(window.location.hash.slice(1));
+  const token = queryParams.get('token') || fragmentParams.get('token');
+  const exchangedLinkToken = sessionStorage.getItem('driverLinkToken');
 
   // If there's a legacy URL token, bypass authentication check
-  if (token) return children;
+  if (token || exchangedLinkToken) return children;
 
   // Otherwise, enforce authentication
   if (!isAuthenticated) return <Navigate to="/login" replace />;

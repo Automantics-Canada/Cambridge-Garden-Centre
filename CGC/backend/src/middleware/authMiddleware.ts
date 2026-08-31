@@ -22,26 +22,6 @@ export async function authMiddleware(
   res: Response,
   next: NextFunction
 ) {
-  // Support JWT via query parameter (e.g. for Server-Sent Events / EventSource)
-  const queryToken = req.query.token as string;
-  if (queryToken && queryToken.split('.').length === 3) {
-    try {
-      const decoded = jwt.verify(queryToken, env.jwtSecret) as unknown as {
-        id: string;
-        email: string;
-        role: UserRole;
-      };
-      const currentUser = await resolveActiveUser(prisma, decoded.id);
-      if (!currentUser) {
-        return res.status(401).json({ error: 'Account is inactive' });
-      }
-      req.user = currentUser;
-      return next();
-    } catch {
-      // Let it fall through or fail
-    }
-  }
-
   const authHeader = req.headers.authorization;
   if (!authHeader?.startsWith('Bearer ')) {
     return res.status(401).json({ error: 'Missing or invalid Authorization' });

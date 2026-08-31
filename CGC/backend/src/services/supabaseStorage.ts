@@ -5,12 +5,13 @@
 
 import { createClient } from '@supabase/supabase-js';
 import { env } from '../config/env.js';
+import { toStorageReference, type StoredObjectLocation } from './storageAccess.js';
 
 const supabase = createClient(env.supabaseUrl, env.supabaseServiceRoleKey);
 
 export interface UploadResult {
   path: string;
-  publicUrl: string;
+  storedUrl: string;
   size: number;
   timestamp: string;
 }
@@ -71,14 +72,9 @@ export async function uploadTicketImage(
       throw new Error(`Supabase upload error: ${error.message}`);
     }
 
-    // Get public URL
-    const { data: publicUrlData } = supabase.storage
-      .from(env.supabaseStorageBucket)
-      .getPublicUrl(path);
-
     return {
       path: data.path,
-      publicUrl: publicUrlData.publicUrl,
+      storedUrl: toStorageReference(data.path),
       size: buffer.length,
       timestamp: new Date().toISOString(),
     };
@@ -116,13 +112,9 @@ export async function uploadTicketThumbnail(
     throw new Error(`Supabase thumbnail upload error: ${error.message}`);
   }
 
-  const { data: publicUrlData } = supabase.storage
-    .from(env.supabaseStorageBucket)
-    .getPublicUrl(path);
-
   return {
     path: data.path,
-    publicUrl: publicUrlData.publicUrl,
+    storedUrl: toStorageReference(data.path),
     size: buffer.length,
     timestamp: new Date().toISOString(),
   };
@@ -151,14 +143,9 @@ export async function uploadInvoiceImage(
       throw new Error(`Supabase upload error: ${error.message}`);
     }
 
-    // Get public URL
-    const { data: publicUrlData } = supabase.storage
-      .from(env.supabaseStorageBucket)
-      .getPublicUrl(path);
-
     return {
       path: data.path,
-      publicUrl: publicUrlData.publicUrl,
+      storedUrl: toStorageReference(data.path),
       size: buffer.length,
       timestamp: new Date().toISOString(),
     };
@@ -194,14 +181,9 @@ export async function uploadCsvFile(
       throw new Error(`Supabase upload error: ${error.message}`);
     }
 
-    // Get public URL
-    const { data: publicUrlData } = supabase.storage
-      .from(env.supabaseStorageBucket)
-      .getPublicUrl(path);
-
     return {
       path: data.path,
-      publicUrl: publicUrlData.publicUrl,
+      storedUrl: toStorageReference(data.path),
       size: buffer.length,
       timestamp: new Date().toISOString(),
     };
@@ -233,15 +215,33 @@ export async function deleteFile(path: string): Promise<void> {
   }
 }
 
-/**
- * Get public URL for a file
- */
-export function getPublicUrl(path: string): string {
-  const { data } = supabase.storage
-    .from(env.supabaseStorageBucket)
-    .getPublicUrl(path);
+export function getStorageReference(path: string): string {
+  return toStorageReference(path);
+}
 
-  return data.publicUrl;
+const MAX_DOWNLOAD_BYTES = 25 * 1024 * 1024;
+
+/** Read a private object with the backend-only service role. */
+export async function downloadStorageObject(
+  location: StoredObjectLocation,
+): Promise<{ buffer: Buffer; contentType: string; filename: string }> {
+  if (location.bucket !== env.supabaseStorageBucket) {
+    throw new Error('Storage bucket mismatch');
+  }
+  const { data, error } = await supabase.storage
+    .from(location.bucket)
+    .download(location.path);
+  if (error || !data) {
+    throw new Error(`Supabase download error: ${error?.message || 'empty response'}`);
+  }
+  if (data.size > MAX_DOWNLOAD_BYTES) {
+    throw new Error(`Storage object exceeds ${MAX_DOWNLOAD_BYTES} bytes`);
+  }
+  return {
+    buffer: Buffer.from(await data.arrayBuffer()),
+    contentType: data.type || 'application/octet-stream',
+    filename: location.path.split('/').pop() || 'document',
+  };
 }
 
 /**
@@ -269,6 +269,11 @@ export async function listFiles(folderPath: string): Promise<string[]> {
  * Verify Supabase Storage connection
  */
 export async function verifyStorageConnection(): Promise<boolean> {
+  if (env.storageDriver === 'local') {
+    console.log('[Storage] Local QA storage enabled.');
+    return true;
+  }
+
   try {
     const { data, error } = await supabase.storage.listBuckets();
 
@@ -277,13 +282,20 @@ export async function verifyStorageConnection(): Promise<boolean> {
       return false;
     }
 
-    const bucketExists = (data || []).some(
+    const bucket = (data || []).find(
       bucket => bucket.name === env.supabaseStorageBucket
     );
 
-    if (!bucketExists) {
+    if (!bucket) {
       console.error(
         `[Supabase] Bucket "${env.supabaseStorageBucket}" not found`
+      );
+      return false;
+    }
+
+    if (bucket.public !== false) {
+      console.error(
+        `[Supabase] Bucket "${env.supabaseStorageBucket}" must be private before this service can start`
       );
       return false;
     }
@@ -304,7 +316,8 @@ export default {
   uploadInvoiceImage,
   uploadCsvFile,
   deleteFile,
-  getPublicUrl,
+  getStorageReference,
+  downloadStorageObject,
   listFiles,
   verifyStorageConnection,
 };

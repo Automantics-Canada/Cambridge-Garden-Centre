@@ -19,13 +19,14 @@ export const getDeliveries = async (req: AuthRequest, res: Response) => {
         return res.status(404).json({ error: 'Driver profile not linked' });
       }
       filters.driverId = ownDriverId;
+      filters.status = { notIn: ['DELIVERED', 'CANCELLED'] };
     }
 
     const result = await DeliveriesService.getDeliveries(
       filters,
-      parsed.page,
-      parsed.limit,
-      parsed.wantsEnvelope ? 'newest' : 'priority',
+      driverRequest ? 1 : parsed.page,
+      driverRequest ? 1 : parsed.limit,
+      driverRequest ? 'priority' : (parsed.wantsEnvelope ? 'newest' : 'priority'),
       driverRequest ? 'driver' : 'operations',
     );
 
@@ -79,12 +80,17 @@ export const updateStatus = async (req: AuthRequest, res: Response) => {
       id,
       decision.to,
       notes,
-      current.status
+      current.status,
+      req.user?.role === 'DRIVER' ? req.user.id : undefined,
+      req.user?.role === 'DRIVER' ? 'driver' : 'operations',
     );
     res.json(delivery);
   } catch (error: any) {
     if (error?.code === 'DELIVERY_TRANSITION_CONFLICT') {
       return res.status(409).json({ error: error.message, code: 'ILLEGAL_TRANSITION' });
+    }
+    if (error?.code === 'DELIVERY_NOT_CURRENT') {
+      return res.status(403).json({ error: error.message, code: error.code });
     }
     res.status(500).json({ error: error.message });
   }
@@ -105,9 +111,19 @@ export const uploadPhoto = async (req: AuthRequest, res: Response) => {
       return res.status(400).json({ error: 'Valid type (pickup, delivery, or ticket) is required' });
     }
 
-    const delivery = await DeliveriesService.uploadPhoto(id, type, req.file.buffer, req.file.originalname);
+    const delivery = await DeliveriesService.uploadPhoto(
+      id,
+      type,
+      req.file.buffer,
+      req.file.originalname,
+      req.user?.role === 'DRIVER' ? req.user.id : undefined,
+      req.user?.role === 'DRIVER' ? 'driver' : 'operations',
+    );
     res.json(delivery);
   } catch (error: any) {
+    if (error?.code === 'DELIVERY_NOT_CURRENT') {
+      return res.status(403).json({ error: error.message, code: error.code });
+    }
     res.status(500).json({ error: error.message }); 
   }
 };

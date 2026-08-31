@@ -77,10 +77,14 @@ export async function canAccessDelivery(
   if (user.role !== 'DRIVER') return true;
 
   const delivery = await client.delivery.findFirst({
-    where: { id: deliveryId, driver: { userId: user.id } },
+    where: {
+      driver: { userId: user.id },
+      status: { notIn: ['DELIVERED', 'CANCELLED'] },
+    },
+    orderBy: [{ priority: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
     select: { id: true },
   });
-  return Boolean(delivery);
+  return delivery?.id === deliveryId;
 }
 
 /** The driver profile id linked to a user account, or null when there is none. */

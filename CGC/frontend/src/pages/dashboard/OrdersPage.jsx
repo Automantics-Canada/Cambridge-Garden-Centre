@@ -21,25 +21,6 @@ import { formatQuantity } from '../../lib/quantity';
 
 const ACTIVE_IMPORT_STORAGE_KEY = 'cgc:active-spruce-import';
 
-function resultFromSummary(jobId, summary = {}, status) {
-  return {
-    jobId,
-    status: status || (((summary.errors?.length ?? 0) + (summary.skipped ?? 0) +
-      (summary.conflicts ?? 0)) > 0 ? 'PARTIAL' : 'COMPLETED'),
-    counts: {
-      total: (summary.created ?? 0) + (summary.updated ?? 0) +
-        (summary.unchanged ?? 0) + (summary.skipped ?? 0),
-      created: summary.created ?? 0,
-      updated: summary.updated ?? 0,
-      unchanged: summary.unchanged ?? 0,
-      absent: summary.absent ?? 0,
-      conflicts: summary.conflicts ?? 0,
-      skipped: summary.skipped ?? 0,
-    },
-    errors: summary.errors ?? [],
-  };
-}
-
 export default function OrdersPage() {
   const [searchParams] = useSearchParams();
   const [orders, setOrders] = useState([]);
@@ -51,7 +32,6 @@ export default function OrdersPage() {
   const [importResult, setImportResult] = useState(null);
   const fileInputRef = useRef(null);
   const pdfInputRef = useRef(null);
-  const importEventSourceRef = useRef(null);
   const importPollTimerRef = useRef(null);
   const pollImportRef = useRef(null);
   const completedImportJobsRef = useRef(new Set());
@@ -125,8 +105,6 @@ export default function OrdersPage() {
   }, [awaitingDateChoice, search, buyerType, supplierId, driverId, hasInvoice, hasLinkedTickets, uploadFilter, selectedUploadDate, page]);
 
   const stopImportTransport = useCallback(() => {
-    importEventSourceRef.current?.close();
-    importEventSourceRef.current = null;
     if (importPollTimerRef.current) clearTimeout(importPollTimerRef.current);
     importPollTimerRef.current = null;
   }, []);
@@ -187,51 +165,6 @@ export default function OrdersPage() {
     pollImportRef.current = pollImport;
   }, [pollImport]);
 
-  const connectImportStream = useCallback((jobId) => {
-    stopImportTransport();
-    const baseUrl = import.meta.env.VITE_API_URL || 'http://localhost:4000';
-    const token = localStorage.getItem('token');
-    const eventSource = new EventSource(
-      `${baseUrl}/api/orders/import/stream?jobId=${encodeURIComponent(jobId)}&token=${encodeURIComponent(token || '')}`
-    );
-    importEventSourceRef.current = eventSource;
-    let processed = 0;
-    setUploadProgressText('Connecting to import...');
-
-    eventSource.onmessage = (event) => {
-      let data;
-      try {
-        data = JSON.parse(event.data);
-      } catch {
-        setUploadProgressText('Importing report...');
-        return;
-      }
-
-      if (data.type === 'progress') {
-        processed++;
-        setUploadProgressText(`Importing... ${processed} order${processed === 1 ? '' : 's'} processed`);
-        return;
-      }
-
-      if (data.type === 'done') {
-        finishImport(resultFromSummary(jobId, data.summary, data.status));
-        return;
-      }
-
-      if (data.type === 'error') {
-        const result = resultFromSummary(jobId, data.summary, 'FAILED');
-        finishImport({ ...result, errorSummary: data.error });
-      }
-    };
-
-    eventSource.onerror = () => {
-      eventSource.close();
-      importEventSourceRef.current = null;
-      setUploadProgressText('Connection interrupted — checking import status...');
-      pollImportRef.current?.(jobId);
-    };
-  }, [finishImport, stopImportTransport]);
-
   useEffect(() => {
     let saved;
     try {
@@ -279,7 +212,9 @@ export default function OrdersPage() {
           JSON.stringify({ jobId, fileName: file.name })
         );
         setImportResult({ jobId, fileName: file.name, status: 'PENDING' });
-        connectImportStream(jobId);
+        stopImportTransport();
+        setUploadProgressText('Import queued...');
+        pollImportRef.current?.(jobId);
       } else {
         toast.success(
           `Import complete! ${res.data?.created ?? 0} created, ${res.data?.updated ?? 0} updated.`

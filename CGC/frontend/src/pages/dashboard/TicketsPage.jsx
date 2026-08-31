@@ -1,4 +1,4 @@
-import { resolveDocumentUrl } from '../../lib/apiBase';
+import { isPdfDocumentUrl, resolveDocumentUrl } from '../../lib/apiBase';
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useSelector } from 'react-redux';
 import { useSearchParams } from 'react-router-dom';
@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { Skeleton } from '../../components/Skeleton';
+import { OcrReviewPanel } from '../../components/OcrReviewPanel';
 import Loader from '../../components/Loader';
 import { useIntervalRefresh } from '../../hooks/useIntervalRefresh';
 import { ticketThumbnailSrc } from '../../utils/ticketImage';
@@ -276,6 +277,7 @@ export default function TicketsPage() {
     60_000
   );
 
+  /** Returns whether the save actually landed, so callers can keep a failed edit. */
   const handleUpdateTicket = async (id, data) => {
     try {
       await api.put(`/api/tickets/${id}`, data);
@@ -293,8 +295,10 @@ export default function TicketsPage() {
           setSelectedTicket(res.data);
         }
       }
+      return true;
     } catch {
       toast.error('Failed to update ticket');
+      return false;
     }
   };
 
@@ -314,12 +318,19 @@ export default function TicketsPage() {
       return;
     }
 
+    const pendingValue = reviewForm[field];
+    const saved = await handleUpdateTicket(ticketId, { [field]: decision.value });
+
+    // Only once the server has it does the edit stop being a draft. If the save
+    // failed the field stays dirty, so the refresh that follows a retry cannot
+    // overwrite what the user typed.
+    if (!saved) return;
+
     savedReviewValuesRef.current = {
       ...savedReviewValuesRef.current,
-      [field]: reviewForm[field],
+      [field]: pendingValue,
     };
     dirtyReviewFieldsRef.current.delete(field);
-    await handleUpdateTicket(ticketId, { [field]: decision.value });
   };
 
   const setReviewField = (field, value) => {
@@ -915,15 +926,15 @@ export default function TicketsPage() {
                 {/* Image Side */}
                 <div className="flex-[1.2] bg-ink p-4 flex items-center justify-center overflow-hidden border-r relative group">
                   {selectedTicket.imageUrl ? (
-                    selectedTicket.imageUrl.toLowerCase().endsWith('.pdf') ? (
+                    isPdfDocumentUrl(selectedTicket.imageUrl) ? (
                       <iframe
-                        src={selectedTicket.imageUrl.startsWith('http') ? selectedTicket.imageUrl : `${import.meta.env.VITE_API_URL || 'http://localhost:4000'}${selectedTicket.imageUrl}`}
+                        src={resolveDocumentUrl(selectedTicket.imageUrl)}
                         className="w-full h-full border-0 bg-surface"
                         title="PDF Ticket"
                       />
                     ) : (
                       <img 
-                        src={selectedTicket.imageUrl.startsWith('http') ? selectedTicket.imageUrl : `${import.meta.env.VITE_API_URL || 'http://localhost:4000'}${selectedTicket.imageUrl}`} 
+                        src={resolveDocumentUrl(selectedTicket.imageUrl)}
                         className="max-w-full max-h-full object-contain shadow-overlay transition-transform duration-300 group-hover:scale-[1.02]"
                         alt="Full ticket"
                       />
@@ -938,7 +949,11 @@ export default function TicketsPage() {
 
                 {/* Data & Linking Side */}
                 <div className="flex-1 overflow-y-auto p-6 bg-surface space-y-8">
-                  
+
+                  {/* Why this ticket still needs a person, if it does. Sits above
+                      the fields so it is read before they are acted on. */}
+                  <OcrReviewPanel ocrJobs={selectedTicket.ocrJobs} />
+
                   {/* OCR Data Section */}
                   <section>
                     <div className="flex items-center justify-between mb-4">

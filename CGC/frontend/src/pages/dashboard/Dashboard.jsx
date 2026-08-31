@@ -161,7 +161,7 @@ export default function Dashboard() {
                     </p>
                   </div>
                   <p className="tabular text-[15px] font-semibold text-ink text-right min-w-[92px]">
-                    ${Number(inv.totalAmount || 0).toFixed(2)}
+                    {inv.totalAmount == null ? '—' : `$${Number(inv.totalAmount).toFixed(2)}`}
                   </p>
                   <StatusBadge status={inv.status} />
                 </button>

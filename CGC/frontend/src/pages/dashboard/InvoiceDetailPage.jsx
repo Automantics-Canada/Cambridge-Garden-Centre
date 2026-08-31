@@ -1,4 +1,4 @@
-import { resolveDocumentUrl } from '../../lib/apiBase';
+import { isPdfDocumentUrl, resolveDocumentUrl } from '../../lib/apiBase';
 import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import api from '../../api/axios';
@@ -22,6 +22,7 @@ import {
   Textarea,
 } from '../../components/ui';
 import { cn } from '../../lib/cn';
+import { OcrReviewPanel } from '../../components/OcrReviewPanel';
 
 const FLAG_ICONS = {
   OK: <CheckCircle className="w-3 h-3" />,
@@ -130,13 +131,21 @@ export default function InvoiceDetailPage() {
   const isLocked = invoice.status === 'VERIFIED' || invoice.status === 'DISPUTED';
 
   // Logic: Calculate expected subtotal using negotiated rates (fallback to billed rate if unknown)
-  const expectedSubtotal = invoice.lineItems?.reduce((acc, item) => {
-    const rate = Number(item.negotiatedRate || item.unitRate || 0);
-    return acc + (Number(item.quantity || 0) * rate);
-  }, 0) || 0;
+  const lineItems = invoice.lineItems || [];
+  const hasCompleteExpectedAmounts = lineItems.length > 0 && lineItems.every(
+    item => item.quantity != null && (item.negotiatedRate != null || item.unitRate != null),
+  );
+  const expectedSubtotal = hasCompleteExpectedAmounts
+    ? lineItems.reduce((acc, item) => {
+      const rate = Number(item.negotiatedRate ?? item.unitRate);
+      return acc + (Number(item.quantity) * rate);
+    }, 0)
+    : null;
 
-  const expectedTotalWithHST = expectedSubtotal * 1.13;
-  const discrepancy = Number(invoice.totalAmount || 0) - expectedTotalWithHST;
+  const expectedTotalWithHST = expectedSubtotal == null ? null : expectedSubtotal * 1.13;
+  const discrepancy = invoice.totalAmount == null || expectedTotalWithHST == null
+    ? null
+    : Number(invoice.totalAmount) - expectedTotalWithHST;
 
   // Approved total is what we expect to pay
   const approvedTotal = expectedTotalWithHST;
@@ -184,7 +193,7 @@ export default function InvoiceDetailPage() {
           </div>
           <div className="flex-1 overflow-hidden bg-ink/[0.04] flex items-center justify-center p-4">
             {invoice.fileUrl ? (
-              invoice.fileUrl.toLowerCase().endsWith('.pdf') ? (
+              isPdfDocumentUrl(invoice.fileUrl) ? (
                 <iframe
                   src={resolveDocumentUrl(invoice.fileUrl)}
                   className="w-full h-full border-none rounded-control shadow-card"
@@ -210,6 +219,8 @@ export default function InvoiceDetailPage() {
             </div>
 
             <div className="p-4 overflow-y-auto space-y-6">
+              <OcrReviewPanel ocrJobs={invoice.ocrJobs} />
+
               <div className="grid grid-cols-2 gap-y-4 gap-x-8 text-sm border-b border-line pb-6">
                 <div>
                   <p className="text-muted text-[12.5px] mb-1">Invoice date</p>
@@ -217,7 +228,9 @@ export default function InvoiceDetailPage() {
                 </div>
                 <div>
                   <p className="text-muted text-[12.5px] mb-1">Total amount</p>
-                  <p className="tabular font-semibold text-lg text-ink">${Number(invoice.totalAmount).toFixed(2)}</p>
+                  <p className="tabular font-semibold text-lg text-ink">
+                    {invoice.totalAmount == null ? 'Pending extraction' : `$${Number(invoice.totalAmount).toFixed(2)}`}
+                  </p>
                 </div>
                 <div>
                   <p className="text-muted text-[12.5px] mb-1">Sender email</p>
@@ -328,18 +341,22 @@ export default function InvoiceDetailPage() {
               <div className="grid grid-cols-2 gap-4">
                 <div className="bg-surface p-3 rounded-control border border-line">
                   <p className="text-[12.5px] text-muted font-medium">Approved amount</p>
-                  <p className="tabular text-lg font-bold text-ink">${Number(approvedTotal).toFixed(2)}</p>
+                  <p className="tabular text-lg font-bold text-ink">
+                    {approvedTotal == null ? 'Pending analysis' : `$${Number(approvedTotal).toFixed(2)}`}
+                  </p>
                 </div>
                 <div className={cn(
                   'p-3 rounded-control border',
-                  Math.abs(discrepancy) > 0.01 ? 'bg-clay/14 border-clay/30' : 'bg-surface border-line'
+                  discrepancy != null && Math.abs(discrepancy) > 0.01
+                    ? 'bg-clay/14 border-clay/30'
+                    : 'bg-surface border-line'
                 )}>
                   <p className="text-[12.5px] text-muted font-medium">Discrepancy</p>
                   <p className={cn(
                     'tabular text-lg font-bold',
-                    Math.abs(discrepancy) > 0.01 ? 'text-clay' : 'text-ink'
+                    discrepancy != null && Math.abs(discrepancy) > 0.01 ? 'text-clay' : 'text-ink'
                   )}>
-                    ${Number(discrepancy).toFixed(2)}
+                    {discrepancy == null ? '—' : `$${Number(discrepancy).toFixed(2)}`}
                   </p>
                 </div>
               </div>
@@ -401,10 +418,14 @@ export default function InvoiceDetailPage() {
                  <div key={job.id} className="flex gap-3">
                    <div className={cn(
                      'w-1.5 h-1.5 rounded-pill mt-1',
-                     job.status === 'COMPLETED' ? 'bg-brand' : 'bg-clay'
+                     job.status === 'COMPLETED' ? 'bg-brand' : job.status === 'FAILED' ? 'bg-clay' : 'bg-ochre'
                    )}></div>
                    <div className="flex-1">
-                     <p className="text-ink font-medium">OCR Job {job.status.toLowerCase()} by {job.provider}</p>
+                     <p className="text-ink font-medium">
+                       {job.status === 'NEEDS_REVIEW'
+                         ? `Document read by ${job.provider}, awaiting review`
+                         : `OCR Job ${job.status.toLowerCase().replace(/_/g, ' ')} by ${job.provider}`}
+                     </p>
                      <p className="tabular text-muted mt-0.5">{new Date(job.finishedAt || job.startedAt).toLocaleString()}</p>
                    </div>
                  </div>

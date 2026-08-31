@@ -1,3 +1,4 @@
+import './setupEnv.js';
 import assert from 'node:assert/strict';
 import { after, beforeEach, describe, it } from 'node:test';
 
@@ -16,11 +17,11 @@ import {
   orderSummaryReport,
 } from './fixtures/spruceLayouts.js';
 
-const disposableConfirmed = process.env.SPRUCE_TEST_CONFIRM_DISPOSABLE === '1';
+const disposableConfirmed = process.env.CGC_TEST_CONFIRM_DISPOSABLE === '1';
 
 async function resetDatabase(): Promise<void> {
   if (!disposableConfirmed) {
-    throw new Error('Refusing to clear a database without SPRUCE_TEST_CONFIRM_DISPOSABLE=1');
+    throw new Error('Refusing to clear a database without CGC_TEST_CONFIRM_DISPOSABLE=1');
   }
   await prisma.$executeRawUnsafe(
     'TRUNCATE TABLE "OrderDocument", "Order", "Supplier", "User", "SpruceImportJob" ' +
