@@ -551,6 +551,7 @@ enum OcrJobType {
 enum OcrProvider {
   GOOGLE_VISION
   AWS_TEXTRACT
+  OPENAI
 }
 
 enum OcrJobStatus {

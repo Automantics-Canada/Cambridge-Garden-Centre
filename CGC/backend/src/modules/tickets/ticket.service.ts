@@ -1,6 +1,6 @@
-import { prisma } from '../../db/prisma.js';
+﻿import { prisma } from '../../db/prisma.js';
 import { saveTicketImage } from '../../services/fileStorage.js';
-import { extractTextFromLocalImage } from '../../services/ocr.service.js';
+import { extractTicketFromUrl } from '../../services/extraction/extraction.service.js';
 import { triggerOcrProcessing } from '../../services/ocrJobProcessor.js';
 import {
   TicketSource,
@@ -89,8 +89,8 @@ export function buildTicketWhere(filters?: TicketFilters) {
 /**
  * Columns the tickets table actually renders.
  *
- * The previous projection pulled whole related rows — supplier, driver, linked
- * order, and every order match with its complete order attached — for all 50
+ * The previous projection pulled whole related rows â€” supplier, driver, linked
+ * order, and every order match with its complete order attached â€” for all 50
  * rows on the page. The review modal refetches the full ticket by id when it
  * opens, so none of that relational payload was ever displayed in the list.
  *
@@ -146,7 +146,7 @@ export const TicketService = {
     const ocrJob = await prisma.ocrJob.create({
       data: {
         type: OcrJobType.TICKET,
-        provider: OcrProvider.AWS_TEXTRACT, // or whatever default you use
+        provider: OcrProvider.OPENAI,
         status: OcrJobStatus.PENDING,
         ticketId: ticket.id,
       },
@@ -186,7 +186,7 @@ export const TicketService = {
     const ocrJob = await prisma.ocrJob.create({
       data: {
         type: OcrJobType.TICKET,
-        provider: OcrProvider.AWS_TEXTRACT,
+        provider: OcrProvider.OPENAI,
         status: OcrJobStatus.PENDING,
         ticketId: ticket.id,
       },
@@ -222,7 +222,7 @@ export const TicketService = {
     const ocrJob = await prisma.ocrJob.create({
       data: {
         type: OcrJobType.TICKET,
-        provider: OcrProvider.AWS_TEXTRACT,
+        provider: OcrProvider.OPENAI,
         status: OcrJobStatus.PENDING,
         ticketId: ticket.id,
       },
@@ -253,52 +253,13 @@ export const TicketService = {
     }
 
     try {
-      const extracted = await extractTextFromLocalImage(ticket.imageUrl);
-
-      // Sanitize extracted values
-      let sanitizedMaterial: string | null = null;
-      if (extracted.material) {
-        if (Array.isArray(extracted.material)) {
-          sanitizedMaterial = extracted.material.map((m: any) => {
-            if (typeof m === 'object' && m !== null) {
-              return m.name || m.description || JSON.stringify(m);
-            }
-            return String(m);
-          }).join(', ');
-        } else if (typeof extracted.material === 'object') {
-          const mObj = extracted.material as any;
-          sanitizedMaterial = mObj.name || mObj.description || JSON.stringify(mObj);
-        } else {
-          sanitizedMaterial = String(extracted.material);
-        }
-      }
-
-      let sanitizedQuantity: number | null = null;
-      if (extracted.quantity !== undefined && extracted.quantity !== null) {
-        if (Array.isArray(extracted.quantity)) {
-          const nums = extracted.quantity.map((q: any) => parseFloat(String(q))).filter((n: any) => !isNaN(n));
-          sanitizedQuantity = nums.length > 0 ? nums.reduce((a: number, b: number) => a + b, 0) : null;
-        } else if (typeof extracted.quantity === 'object') {
-          const qObj = extracted.quantity as any;
-          const val = parseFloat(String(qObj.value || qObj.amount || qObj.quantity));
-          sanitizedQuantity = isNaN(val) ? null : val;
-        } else {
-          const val = parseFloat(String(extracted.quantity));
-          sanitizedQuantity = isNaN(val) ? null : val;
-        }
-      }
-
-      let sanitizedUnit: string | null = null;
-      if (extracted.unit) {
-        if (Array.isArray(extracted.unit)) {
-          sanitizedUnit = extracted.unit.map((u: any) => typeof u === 'object' ? (u.name || JSON.stringify(u)) : String(u)).join(', ');
-        } else if (typeof extracted.unit === 'object') {
-          const uObj = extracted.unit as any;
-          sanitizedUnit = uObj.name || uObj.unit || JSON.stringify(uObj);
-        } else {
-          sanitizedUnit = String(extracted.unit);
-        }
-      }
+      // The fields below arrive schema-validated: material and unit are a
+      // string or null, quantity is a finite number or null. Forty lines of
+      // coercion used to stand here, flattening arrays and digging values out
+      // of objects, because the old pipeline asked a model for JSON in prose
+      // and re-parsed whatever came back. That cannot happen now â€” a response
+      // that does not fit the schema fails the job instead of arriving as junk.
+      const extracted = await extractTicketFromUrl(ticket.imageUrl);
 
       const finalPoNumber = extracted.poNumber || ticket.poNumber;
       const isValidPo = !!(finalPoNumber && /^\d{6}$/.test(finalPoNumber));
@@ -332,7 +293,7 @@ export const TicketService = {
         // This used to link the ticket to whichever delivery happened to be
         // first in the driver's queue when the PO did not match, recorded as
         // AUTO_DRIVER_ASSIGNED. That is a guess, and it was written to the
-        // database indistinguishably from a real PO match — so a ticket for one
+        // database indistinguishably from a real PO match â€” so a ticket for one
         // customer could end up as evidence against another customer's invoice,
         // with nothing on screen to say it had been guessed.
         //
@@ -381,13 +342,16 @@ export const TicketService = {
       const updatedTicket = await prisma.ticket.update({
         where: { id: ticketId },
         data: {
-          ocrRawText: extracted.rawText,
-          ocrConfidence: extracted.ocrConfidence,
+          // There is no intermediate OCR text layer any more â€” the model reads
+          // the document itself â€” so what is kept here is the reading, which is
+          // what a person on the verification desk actually needs to see.
+          ocrRawText: JSON.stringify(extracted),
+          ocrConfidence: extracted.confidence,
           supplierId: updatedSupplierId,
           supplierName: extracted.supplierName || ticket.supplierName,
-          material: sanitizedMaterial || ticket.material,
-          quantity: sanitizedQuantity !== null ? sanitizedQuantity : ticket.quantity,
-          unit: sanitizedUnit || ticket.unit,
+          material: extracted.material || ticket.material,
+          quantity: extracted.quantity !== null ? extracted.quantity : ticket.quantity,
+          unit: extracted.unit || ticket.unit,
           poNumber: finalPoNumber,
           ticketNumber: extracted.ticketNumber || ticket.ticketNumber,
           ticketDate: extracted.ticketDate || ticket.ticketDate,
@@ -455,7 +419,7 @@ export const TicketService = {
   async getTicketStats() {
     // `stuckDocumentCount` is documents whose OCR exhausted its retries. Before
     // this existed, a permanently failed job was indistinguishable from one not
-    // processed yet — the ticket simply never gained its fields and nothing said
+    // processed yet â€” the ticket simply never gained its fields and nothing said
     // why. Surfaced next to the unlinked count so it is seen the same day.
     const [unlinkedCount, stuckDocumentCount] = await Promise.all([
       prisma.ticket.count({ where: { status: TicketStatus.UNLINKED } }),

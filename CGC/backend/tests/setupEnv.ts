@@ -10,3 +10,8 @@ process.env.JWT_SECRET ||= 'test-only-jwt-secret';
 process.env.SUPABASE_URL ||= 'https://test-project.supabase.co';
 process.env.SUPABASE_SERVICE_ROLE_KEY ||= 'test-only-service-role-key';
 process.env.SUPABASE_STORAGE_BUCKET ||= 'test-bucket';
+// Satisfies the env guard so extraction modules can be imported. Tests must
+// never reach a real model API: the unit tests exercise the pure normalisation,
+// and the one test that does call the provider skips unless a genuine key is
+// present in the environment.
+process.env.OPENAI_API_KEY ||= 'test-only-openai-key';
