@@ -4,3 +4,8 @@ generated/prisma
 dist
 ocr_debug.log
 *.log
+
+# Real client paperwork, and it must never be committed:
+# the extraction eval's golden set, and documents downloaded for processing.
+.extraction-eval/
+.temp-ocr/

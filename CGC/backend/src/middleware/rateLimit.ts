@@ -77,8 +77,9 @@ export function rateLimit({ windowMs, max, name }: RateLimitOptions) {
 
 /**
  * Caps simultaneous in-flight requests, which is what actually bounds parallel
- * Textract/Bedrock spend. Rejects with 503 rather than queueing so a caller
- * gets a fast, explicit answer instead of holding a connection open.
+ * model-API spend and keeps us inside the provider's rate limits. Rejects with
+ * 503 rather than queueing so a caller gets a fast, explicit answer instead of
+ * holding a connection open.
  */
 export function limitConcurrency(max: number, name: string) {
   let inFlight = 0;

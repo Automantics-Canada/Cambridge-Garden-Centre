@@ -1,28 +1,31 @@
 import { prisma } from '../db/prisma.js';
-import { extractTextFromLocalImage } from './ocr.service.js';
 import {
   OcrJobStatus,
   TicketStatus,
   OcrJobType,
 } from '@prisma/client';
 import { InvoiceService } from '../modules/invoices/invoice.service.js';
+import { ExtractionError } from './extraction/extraction.service.js';
 import { shouldRunWorkersInProcess } from '../workers/runtime.js';
 
 /**
  * Process a single OCR job asynchronously
- * This function handles the entire OCR pipeline:
- * 1. Extract text from image using AWS Textract
- * 2. Parse extracted data
+ * This function handles the entire pipeline:
+ * 1. Read the document with the extraction service
+ * 2. Write the extracted fields back
  * 3. Auto-link to orders if PO number matches
  * 4. Update ticket and job status
  */
 /**
  * How many times a document is retried before a person has to look at it.
  *
- * Textract and Bedrock both fail transiently. Retrying forever would hide a
- * document that can never be read (a blank scan, a corrupt upload) behind an
- * endlessly retried job, so failures stop being retried and start being
- * reported.
+ * Model APIs fail transiently — rate limits, upstream faults. Retrying forever
+ * would hide a document that can never be read (a blank scan, a corrupt upload)
+ * behind an endlessly retried job, so failures stop being retried and start
+ * being reported.
+ *
+ * Which failures are worth retrying is the extraction provider's judgement, not
+ * a guess made here: see `ExtractionError.retryable`.
  */
 export const MAX_OCR_ATTEMPTS = 4;
 
@@ -87,7 +90,11 @@ export async function processOcrJob(jobId: string): Promise<void> {
         select: { attempts: true },
       });
       const attempts = current?.attempts ?? MAX_OCR_ATTEMPTS;
-      const willRetry = attempts < MAX_OCR_ATTEMPTS;
+      // A failure the provider calls permanent — an unreadable file type, a
+      // refusal, a rejected request — fails identically every time. Retrying it
+      // three more times over an hour only delays the person who has to look.
+      const isPermanent = error instanceof ExtractionError && !error.retryable;
+      const willRetry = !isPermanent && attempts < MAX_OCR_ATTEMPTS;
 
       await prisma.ocrJob.update({
         where: { id: jobId },
@@ -102,7 +109,9 @@ export async function processOcrJob(jobId: string): Promise<void> {
       console.error(
         willRetry
           ? `[OCR] Job ${jobId} failed (attempt ${attempts}/${MAX_OCR_ATTEMPTS}); retrying later.`
-          : `[OCR] Job ${jobId} failed permanently after ${attempts} attempts. Needs a human.`
+          : isPermanent
+            ? `[OCR] Job ${jobId} cannot be processed: ${error?.message}. Needs a human.`
+            : `[OCR] Job ${jobId} failed permanently after ${attempts} attempts. Needs a human.`
       );
     } catch (updateError) {
       console.error(`[OCR] Failed to update job status for ${jobId}:`, updateError);

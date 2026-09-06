@@ -20,6 +20,7 @@
     "spruce:dryrun": "tsx src/scripts/spruceDryRun.ts",
     "backfill:thumbnails": "tsx src/scripts/backfillTicketThumbnails.ts",
     "backfill:order-documents": "tsx src/scripts/backfillOrderDocuments.ts",
+    "extraction:eval": "tsx src/scripts/extractionEval.ts",
     "vendors:list": "tsx src/scripts/manageSpruceVendors.ts list",
     "vendors:add": "tsx src/scripts/manageSpruceVendors.ts add",
     "vendors:deactivate": "tsx src/scripts/manageSpruceVendors.ts deactivate"
@@ -45,9 +46,6 @@
     "typescript": "^6.0.2"
   },
   "dependencies": {
-    "@aws-sdk/client-bedrock-runtime": "^3.1030.0",
-    "@aws-sdk/client-s3": "^3.1042.0",
-    "@aws-sdk/client-textract": "^3.1042.0",
     "@prisma/client": "^6.19.2",
     "@supabase/supabase-js": "^2.38.0",
     "axios": "^1.18.0",
@@ -65,12 +63,14 @@
     "node-cron": "^4.2.1",
     "nodemailer": "^9.0.3",
     "nodemon": "^3.1.14",
+    "openai": "^7.10.0",
     "pdf-lib": "^1.17.1",
     "pdf-parse": "^2.4.5",
     "pdf-to-png-converter": "^4.0.0",
     "pdf2json": "^4.0.3",
     "sharp": "^0.35.3",
     "string-similarity": "^4.0.4",
-    "uuid": "^11.1.1"
+    "uuid": "^11.1.1",
+    "zod": "^4.5.4"
   }
 }

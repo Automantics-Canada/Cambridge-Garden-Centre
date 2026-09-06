@@ -1,7 +1,7 @@
-import { prisma } from '../../db/prisma.js';
+﻿import { prisma } from '../../db/prisma.js';
 import { compareTwoStrings } from 'string-similarity';
 import { saveInvoiceImage } from '../../services/fileStorage.js';
-import { extractExpenseFromLocalImage } from '../../services/invoiceOcr.service.js';
+import { extractInvoiceFromUrl } from '../../services/extraction/extraction.service.js';
 import { compareUnits } from '../../lib/units.js';
 import { normalizeProductName } from '../../lib/productName.js';
 import {
@@ -76,7 +76,7 @@ export const DEFAULT_INVOICE_PAGE_SIZE = 25;
 export const MAX_INVOICE_PAGE_SIZE = 100;
 
 // `exactOptionalPropertyTypes` is on, and the controller builds this object by
-// spreading parsed query params — so each field must accept an explicit
+// spreading parsed query params â€” so each field must accept an explicit
 // undefined rather than merely being absent.
 export interface InvoiceListFilters {
   page?: number | undefined;
@@ -93,8 +93,8 @@ export interface InvoiceListFilters {
 /**
  * Clamped page/limit.
  *
- * `limit` has a hard ceiling so no caller — including a stale frontend still
- * asking for `limit=1000` — can turn the list endpoint back into a full-ledger
+ * `limit` has a hard ceiling so no caller â€” including a stale frontend still
+ * asking for `limit=1000` â€” can turn the list endpoint back into a full-ledger
  * download.
  */
 export function resolveInvoicePaging(filters: InvoiceListFilters = {}) {
@@ -108,7 +108,7 @@ export function resolveInvoicePaging(filters: InvoiceListFilters = {}) {
  * Shared predicate for the list and its count.
  *
  * Both call sites use this one builder; if they drifted apart the reported
- * total would disagree with the rows returned — the same property
+ * total would disagree with the rows returned â€” the same property
  * `buildTicketWhere` protects on the tickets endpoint.
  */
 export function buildInvoiceWhere(filters: InvoiceListFilters = {}): Record<string, any> {
@@ -242,8 +242,8 @@ async function resolveRateByAlias<T extends { productName: string }>(
 /**
  * Re-derives a line item's flag from what is currently recorded against it.
  *
- * Manual link and unlink handlers used to stamp a literal flag — `OK` on link,
- * `NO_ORDER` on unlink — which meant attaching an order cleared an unrelated
+ * Manual link and unlink handlers used to stamp a literal flag â€” `OK` on link,
+ * `NO_ORDER` on unlink â€” which meant attaching an order cleared an unrelated
  * rate or quantity warning, and detaching one erased them too. The flag is a
  * conclusion, so it is recomputed rather than assigned.
  *
@@ -360,7 +360,7 @@ export const InvoiceService = {
     const ocrJob = await prisma.ocrJob.create({
       data: {
         type: OcrJobType.INVOICE,
-        provider: OcrProvider.AWS_TEXTRACT,
+        provider: OcrProvider.OPENAI,
         status: OcrJobStatus.PENDING,
         invoiceId: invoice.id,
       },
@@ -385,7 +385,7 @@ export const InvoiceService = {
     }
 
     try {
-      const extracted = await extractExpenseFromLocalImage(invoice.fileUrl);
+      const extracted = await extractInvoiceFromUrl(invoice.fileUrl);
 
       let updatedSupplierId = invoice.supplierId;
       if (extracted.supplierName) {
@@ -401,7 +401,7 @@ export const InvoiceService = {
           invoiceNumber: extracted.invoiceNumber || invoice.invoiceNumber,
           invoiceDate: extracted.invoiceDate || invoice.invoiceDate,
           totalAmount: extracted.totalAmount || invoice.totalAmount,
-          ocrRawText: JSON.stringify(extracted.rawResponse),
+          ocrRawText: JSON.stringify(extracted),
           OcrJobStatus: OcrJobStatus.COMPLETED,
         },
       });
@@ -420,7 +420,13 @@ export const InvoiceService = {
           const quantity = Number(item.quantity) || 0;
           const unitRate = Number(item.unitPrice) || 0;
           const lineTotal = Number(item.totalPrice) || (quantity * unitRate);
-          const unit = item.unit ? item.unit.trim() : 'ea';
+          // A line whose unit could not be read is recorded as unknown, not as
+          // "each". `normaliseUnit` does not recognise "unknown", so the
+          // quantity check below refuses to compare and the line is flagged for
+          // a person â€” where defaulting to "each" made it silently comparable
+          // against any ticket also counted in each, and produced a confident
+          // verdict from a unit nobody had actually read.
+          const unit = item.unit ?? 'unknown';
 
         let matchedOrderId: string | null = null;
         let matchedTicketIds: string[] = [];
@@ -436,8 +442,8 @@ export const InvoiceService = {
         // say was delivered is what the invoice is charging for.
         //
         // Tickets used to be attached and never looked at again. The ticket is
-        // the only independent record of what actually moved — the supplier
-        // writes the invoice, but the contractor signs the ticket — so an
+        // the only independent record of what actually moved â€” the supplier
+        // writes the invoice, but the contractor signs the ticket â€” so an
         // invoice that bills more than the tickets account for is the single
         // most useful thing this system can catch.
         let ticketedQuantity: number | null = null;
@@ -496,7 +502,7 @@ export const InvoiceService = {
         // The order is what was asked for; the tickets are what was received.
         // Billing is supposed to follow what was received, so tickets win when
         // they are usable. Previously only the order was checked, and only for
-        // over-billing — an invoice for less than was ordered passed silently,
+        // over-billing â€” an invoice for less than was ordered passed silently,
         // which hides a short delivery just as effectively.
         const expectedQuantity =
           ticketedQuantity !== null
@@ -554,7 +560,7 @@ export const InvoiceService = {
             const diff = unitRate - negotiatedRateVal;
 
             // Recorded in both directions. Being under-billed is still a
-            // discrepancy worth seeing — it usually means the wrong rate or the
+            // discrepancy worth seeing â€” it usually means the wrong rate or the
             // wrong product, and the correction tends to arrive later.
             if (Math.abs(diff) > 0.01) {
               flags.push(LineItemFlag.RATE_MISMATCH);
@@ -608,7 +614,7 @@ export const InvoiceService = {
       // unpriced product dragged the expected total far below the billed total
       // and stamped a "total amount mismatch" dispute on an invoice that was
       // very likely correct. On a supplier who has just introduced a product,
-      // that fired on every invoice — and a dispute note that is usually wrong
+      // that fired on every invoice â€” and a dispute note that is usually wrong
       // is one nobody reads.
       //
       // With unpriced lines present the totals are not comparable at all, so
@@ -818,7 +824,7 @@ export const InvoiceService = {
 
   async linkOrderToLineItem(lineItemId: string, orderId: string, userId: string) {
     // Clearing NO_ORDER is all this link earns. It used to set the flag to OK
-    // outright, which also wiped a live RATE_MISMATCH or QTY_MISMATCH — so
+    // outright, which also wiped a live RATE_MISMATCH or QTY_MISMATCH â€” so
     // attaching an order silently dismissed a price warning nobody had looked
     // at. `recomputeLineItemFlag` re-derives the flag from the current facts.
     const updated = await prisma.invoiceLineItem.update({

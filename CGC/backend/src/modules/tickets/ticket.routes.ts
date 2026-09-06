@@ -31,8 +31,8 @@ const OPERATIONS = ['AP_USER', 'OWNER', 'ADMIN'] as const;
 const imageUpload = createUploader({ maxBytes: 15 * 1024 * 1024, kinds: ['image', 'pdf'] });
 const pdfUpload = createUploader({ maxBytes: 50 * 1024 * 1024, kinds: ['pdf'] });
 
-// Every ingest path below reaches Textract/Bedrock, so each one is rate limited
-// in addition to being authenticated.
+// Every ingest path below reaches the extraction provider's API, so each one is
+// rate limited in addition to being authenticated.
 const ingestLimit = rateLimit({ windowMs: 60_000, max: 20, name: 'ticket ingest' });
 const ocrLimit = rateLimit({ windowMs: 60_000, max: 10, name: 'ticket OCR' });
 const ocrConcurrency = limitConcurrency(3, 'Ticket OCR');
