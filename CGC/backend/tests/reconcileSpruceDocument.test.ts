@@ -252,6 +252,30 @@ describe('reconcileDocumentLines', () => {
     assert.deepEqual(plan.absentIds, ['gone']);
   });
 
+  it('handles a real line-count difference by identity, not by row position', () => {
+    const existing = [
+      stored('old-only', 'Old synthetic line', 1, {
+        spruceItemNumber: 'OLD',
+        lineNumber: 1,
+      }),
+      stored('shared', 'Shared synthetic line', 2, {
+        spruceItemNumber: 'SHARED',
+        lineNumber: 2,
+      }),
+    ];
+    const incoming = [
+      row('SHARED', 'Shared synthetic line', 2),
+      row('NEW', 'New synthetic line', 3),
+    ];
+
+    const plan = reconcileDocumentLines(incoming, existing);
+
+    assert.deepEqual(plan.conflicts, []);
+    assert.deepEqual(plan.paired.map(pair => pair.id), ['shared']);
+    assert.deepEqual(plan.createIndices, [1]);
+    assert.deepEqual(plan.absentIds, ['old-only']);
+  });
+
   it('matches uncoded comment lines by their wording', () => {
     const existing = [
       stored('c1', 'Requested: 2 Camden Steps 48" Granite Grey', 1, { lineNumber: 1 }),

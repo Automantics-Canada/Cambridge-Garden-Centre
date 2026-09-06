@@ -12,6 +12,7 @@ import driverRoutes from './modules/drivers/driver.routes.js';
 import dispatchRoutes from './modules/dispatch/dispatch.routes.js';
 import deliveriesRoutes from './modules/deliveries/deliveries.routes.js';
 import internalRoutes from './modules/internal/internal.routes.js';
+import { buildInfo } from './config/buildInfo.js';
 
 const app = express();
 
@@ -56,8 +57,8 @@ app.use(express.json());
 // Serve static files from the uploads directory
 app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
 
-app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', message: 'LegionAutomations CGC Backend is running perfectly' });
+app.get('/api/health', (_req, res) => {
+  res.set('Cache-Control', 'no-store').json({ status: 'ok', ...buildInfo });
 });
 
 app.use('/api/auth', authRoutes);
