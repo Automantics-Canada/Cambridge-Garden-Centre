@@ -8,6 +8,7 @@ import {
   ExtractionError,
   activeProvider,
   extractTicket,
+  extractInvoice,
   mimeTypeForFilename,
 } from '../src/services/extraction/extraction.service.js';
 
@@ -93,5 +94,25 @@ describe('live extraction', { skip: !hasRealKey || !fs.existsSync(fixture) }, ()
     assert.ok(result.unit && /tonne/i.test(result.unit));
     assert.ok(result.supplierName && /millbrook/i.test(result.supplierName));
     assert.equal(result.ticketDate?.toISOString().slice(0, 10), '2026-08-13');
+  });
+
+  test('reads every line of the synthetic invoice PDF', async () => {
+    const result = await extractInvoice(
+      fs.readFileSync(path.join(fixturesDir, 'synthetic-invoice.pdf')),
+      'application/pdf',
+      'synthetic-invoice.pdf'
+    );
+    assert.equal(result.invoiceNumber, 'INV-5512');
+    assert.equal(result.poNumber, '482913');
+    assert.equal(result.invoiceDate?.toISOString().slice(0, 10), '2026-08-31');
+    assert.equal(result.totalAmount, 1120.34);
+    assert.match(result.supplierName ?? '', /millbrook/i);
+    assert.equal(result.lineItems.length, 3);
+    assert.deepEqual(result.lineItems.map(line => line.quantity), [24.6, 18, 1]);
+    assert.deepEqual(result.lineItems.map(line => line.totalPrice), [461.25, 385.2, 145]);
+    for (const line of result.lineItems) {
+      assert.equal(line.poNumber, '482913');
+      assert.ok(line.unit);
+    }
   });
 });

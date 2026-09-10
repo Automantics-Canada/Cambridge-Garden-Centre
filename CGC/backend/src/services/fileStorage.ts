@@ -117,9 +117,12 @@ export async function saveInvoiceImage(
   originalName: string
 ): Promise<string> {
   try {
-    const { buffer: processedBuffer, name: processedName } = await convertPdfToPngIfNecessary(buffer, originalName);
     const invoiceId = uuidv4();
-    const result = await uploadInvoiceImage(processedBuffer, invoiceId, processedName);
+    // The extractor reads PDFs directly. Rasterising page one here discarded
+    // every later invoice page before extraction or staff review could see it.
+    const isPdf = buffer.subarray(0, 4).toString('ascii') === '%PDF';
+    const storedName = isPdf && !/\.pdf$/i.test(originalName) ? `${originalName}.pdf` : originalName;
+    const result = await uploadInvoiceImage(buffer, invoiceId, storedName);
     
     console.log(`[FileStorage] Invoice image uploaded: ${result.publicUrl}`);
     
