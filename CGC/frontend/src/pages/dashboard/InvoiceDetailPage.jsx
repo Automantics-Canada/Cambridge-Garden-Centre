@@ -23,6 +23,7 @@ import {
   Textarea,
 } from '../../components/ui';
 import { cn } from '../../lib/cn';
+import { summariseInvoiceApproval } from '../../lib/invoiceTotals';
 
 const FLAG_ICONS = {
   OK: <CheckCircle className="w-3 h-3" />,
@@ -130,17 +131,9 @@ export default function InvoiceDetailPage() {
 
   const isLocked = invoice.status === 'VERIFIED' || invoice.status === 'DISPUTED';
 
-  // Logic: Calculate expected subtotal using negotiated rates (fallback to billed rate if unknown)
-  const expectedSubtotal = invoice.lineItems?.reduce((acc, item) => {
-    const rate = Number(item.negotiatedRate || item.unitRate || 0);
-    return acc + (Number(item.quantity || 0) * rate);
-  }, 0) || 0;
-
-  const expectedTotalWithHST = expectedSubtotal * 1.13;
-  const discrepancy = Number(invoice.totalAmount || 0) - expectedTotalWithHST;
-
-  // Approved total is what we expect to pay
-  const approvedTotal = expectedTotalWithHST;
+  // Only lines carrying a rate CGC agreed to can produce an approved amount.
+  // See lib/invoiceTotals.js for why there is no fallback to the billed rate.
+  const approval = summariseInvoiceApproval(invoice.lineItems, invoice.totalAmount);
 
   return (
     <div className="flex flex-col h-full space-y-4">
@@ -329,19 +322,43 @@ export default function InvoiceDetailPage() {
               <div className="grid grid-cols-2 gap-4">
                 <div className="bg-surface p-3 rounded-control border border-line">
                   <p className="text-[12.5px] text-muted font-medium">Approved amount</p>
-                  <p className="tabular text-lg font-bold text-ink">${Number(approvedTotal).toFixed(2)}</p>
+                  {approval.canApprove ? (
+                    <p className="tabular text-lg font-bold text-ink">
+                      ${approval.approvedTotal.toFixed(2)}
+                    </p>
+                  ) : (
+                    <>
+                      <p className="text-lg font-bold text-muted">Not established</p>
+                      <p className="text-[12px] text-muted mt-0.5">
+                        {approval.lineCount === 0
+                          ? 'No line items read from this invoice yet'
+                          : `${approval.unpricedCount} of ${approval.lineCount} lines have no agreed rate`}
+                      </p>
+                    </>
+                  )}
                 </div>
                 <div className={cn(
                   'p-3 rounded-control border',
-                  Math.abs(discrepancy) > 0.01 ? 'bg-clay/14 border-clay/30' : 'bg-surface border-line'
+                  approval.canApprove && Math.abs(approval.discrepancy) > 0.01
+                    ? 'bg-clay/14 border-clay/30'
+                    : 'bg-surface border-line'
                 )}>
                   <p className="text-[12.5px] text-muted font-medium">Discrepancy</p>
-                  <p className={cn(
-                    'tabular text-lg font-bold',
-                    Math.abs(discrepancy) > 0.01 ? 'text-clay' : 'text-ink'
-                  )}>
-                    ${Number(discrepancy).toFixed(2)}
-                  </p>
+                  {approval.canApprove ? (
+                    <p className={cn(
+                      'tabular text-lg font-bold',
+                      Math.abs(approval.discrepancy) > 0.01 ? 'text-clay' : 'text-ink'
+                    )}>
+                      ${approval.discrepancy.toFixed(2)}
+                    </p>
+                  ) : (
+                    <>
+                      <p className="text-lg font-bold text-muted">Not checked</p>
+                      <p className="text-[12px] text-muted mt-0.5">
+                        Needs an agreed rate on every line
+                      </p>
+                    </>
+                  )}
                 </div>
               </div>
 
