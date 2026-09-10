@@ -1,4 +1,5 @@
 import { resolveDocumentUrl } from '../../lib/apiBase';
+import DocumentPreview from '../../components/DocumentPreview';
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useSelector } from 'react-redux';
 import api from '../../api/axios';
@@ -569,18 +570,18 @@ export default function VerificationDesk() {
                                         className="aspect-[3/4] rounded-card overflow-hidden relative group cursor-pointer border border-line/80 bg-surface" 
                                         onClick={() => setZoomedImage(getFullUrl(selectedInvoice.fileUrl))}
                                       >
-                                        <img 
+                                        <DocumentPreview
                                           src={getFullUrl(selectedInvoice.fileUrl)} 
                                           className="w-full h-full object-cover grayscale-[15%] group-hover:grayscale-0 transition-all duration-500" 
-                                          alt="Invoice Scan" 
+                                          title="Invoice Scan"
                                         />
-                                        <div className="absolute inset-0 bg-gradient-to-t from-scrim/60 via-transparent to-transparent flex flex-col justify-end p-6">
+                                        <button type="button" aria-label="Expand invoice document" className="absolute bottom-0 inset-x-0 text-left bg-scrim/70 flex flex-col justify-end p-6">
                                           <div className="flex items-center justify-between">
                                             <span className="text-on-brand text-[12.5px] font-semibold opacity-80">Zoom scan</span>
                                             <Maximize2 className="text-on-brand w-4 h-4 opacity-0 group-hover:opacity-100 transition-opacity" />
                                           </div>
                                           <h3 className="text-on-brand text-lg font-light mt-1">{selectedInvoice.invoiceNumber}</h3>
-                                        </div>
+                                        </button>
                                       </div>
                                     </div>
                                   </motion.div>
@@ -956,15 +957,15 @@ export default function VerificationDesk() {
       {/* 4. Fullscreen Zoom Image Lightbox */}
       {zoomedImage && (
         <div className="fixed inset-0 bg-scrim/95 z-[200] flex flex-col pt-12 pb-6 px-4 sm:px-12 animate-in fade-in duration-300" onClick={() => setZoomedImage(null)}>
-          <button className="absolute top-4 right-4 sm:top-8 sm:right-8 z-10 p-3 sm:p-4 bg-surface/10 hover:bg-surface/20 rounded-full text-on-brand transition-all backdrop-blur-md">
+          <button aria-label="Close document preview" className="absolute top-4 right-4 sm:top-8 sm:right-8 z-10 p-3 sm:p-4 bg-surface/10 hover:bg-surface/20 rounded-full text-on-brand transition-all backdrop-blur-md">
             <X className="w-6 h-6 sm:w-8 sm:h-8" />
           </button>
           <div className="flex-1 overflow-y-auto overflow-x-hidden flex justify-center custom-scrollbar rounded-control">
-            <img 
+            <DocumentPreview
               src={zoomedImage} 
-              className="w-full max-w-5xl h-auto shadow-overlay rounded-control animate-in zoom-in-95 duration-500 my-auto" 
+              className="w-full max-w-5xl h-full object-contain shadow-overlay rounded-control animate-in zoom-in-95 duration-500 my-auto"
               onClick={e => e.stopPropagation()} 
-              alt="Expanded Preview"
+              title="Expanded Preview"
             />
           </div>
           <div className="h-16 sm:h-20 flex-shrink-0 flex items-center justify-center gap-8 mt-4">

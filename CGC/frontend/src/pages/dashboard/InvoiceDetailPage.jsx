@@ -1,4 +1,5 @@
 import { resolveDocumentUrl } from '../../lib/apiBase';
+import { isPdfDocument } from '../../lib/documentType';
 import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import api from '../../api/axios';
@@ -184,7 +185,7 @@ export default function InvoiceDetailPage() {
           </div>
           <div className="flex-1 overflow-hidden bg-ink/[0.04] flex items-center justify-center p-4">
             {invoice.fileUrl ? (
-              invoice.fileUrl.toLowerCase().endsWith('.pdf') ? (
+              isPdfDocument(invoice.fileUrl) ? (
                 <iframe
                   src={resolveDocumentUrl(invoice.fileUrl)}
                   className="w-full h-full border-none rounded-control shadow-card"
