@@ -1,6 +1,6 @@
 import React from 'react';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import MatchVerdict from './MatchVerdict';
 
 afterEach(cleanup);
@@ -100,5 +100,95 @@ describe('match verdict', () => {
     fireEvent.click(screen.getByRole('button'));
     expect(screen.getByText('failed')).toBeTruthy();
     expect(screen.getByText('passed')).toBeTruthy();
+  });
+});
+
+describe('recording a decision', () => {
+  const conflict = {
+    id: 'mr-1',
+    status: 'CONFLICT',
+    reason: '2 orders fit this ticket equally well; a person must choose',
+    candidateOrderIds: ['order-a', 'order-b'],
+    evidence: [{ name: 'po', passed: true, detail: 'PO 482913 matches 2 order lines' }],
+  };
+
+  it('offers no decision buttons when the screen cannot act on them', () => {
+    // Read-only contexts pass no handler; the panel must not imply an action
+    // that will not happen.
+    render(<MatchVerdict matchResult={conflict} />);
+    expect(screen.queryByText('Confirm')).toBeNull();
+  });
+
+  it('confirms without demanding a reason', () => {
+    // Confirming agrees with reasoning that is already stored.
+    const onResolve = vi.fn();
+    render(<MatchVerdict matchResult={conflict} onResolve={onResolve} />);
+
+    fireEvent.click(screen.getByText('Confirm'));
+    fireEvent.click(screen.getByText('Record decision'));
+
+    expect(onResolve).toHaveBeenCalledWith({
+      resolution: 'CONFIRMED',
+      orderId: undefined,
+      note: undefined,
+    });
+  });
+
+  it('will not submit an override until an order and a reason are given', () => {
+    const onResolve = vi.fn();
+    render(<MatchVerdict matchResult={conflict} onResolve={onResolve} />);
+
+    fireEvent.click(screen.getByText('Different order'));
+    const submit = screen.getByText('Record decision');
+    expect(submit.hasAttribute('disabled')).toBe(true);
+
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'order-b' } });
+    expect(screen.getByText('Record decision').hasAttribute('disabled')).toBe(true);
+
+    fireEvent.change(screen.getByRole('textbox'), {
+      target: { value: 'Checked with the yard.' },
+    });
+    fireEvent.click(screen.getByText('Record decision'));
+
+    expect(onResolve).toHaveBeenCalledWith({
+      resolution: 'OVERRIDDEN',
+      orderId: 'order-b',
+      note: 'Checked with the yard.',
+    });
+  });
+
+  it('offers the conflicting orders as the choice, rather than free text', () => {
+    render(<MatchVerdict matchResult={conflict} onResolve={vi.fn()} />);
+    fireEvent.click(screen.getByText('Different order'));
+
+    const options = screen.getAllByRole('option').map((option) => option.value);
+    expect(options).toContain('order-a');
+    expect(options).toContain('order-b');
+  });
+
+  it('will not submit a rejection without a reason', () => {
+    const onResolve = vi.fn();
+    render(<MatchVerdict matchResult={conflict} onResolve={onResolve} />);
+
+    fireEvent.click(screen.getByText('Reject'));
+    fireEvent.click(screen.getByText('Record decision'));
+    expect(onResolve).not.toHaveBeenCalled();
+  });
+
+  it('shows a settled verdict as settled, and offers to reopen it', () => {
+    const onReopen = vi.fn();
+    render(
+      <MatchVerdict
+        matchResult={{ ...conflict, resolution: 'OVERRIDDEN', resolutionNote: 'Second order.' }}
+        onResolve={vi.fn()}
+        onReopen={onReopen}
+      />
+    );
+
+    expect(screen.getByText(/Second order\./)).toBeTruthy();
+    expect(screen.queryByText('Confirm')).toBeNull();
+
+    fireEvent.click(screen.getByText('Reopen'));
+    expect(onReopen).toHaveBeenCalled();
   });
 });

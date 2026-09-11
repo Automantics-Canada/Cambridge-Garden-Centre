@@ -1,8 +1,9 @@
 import { Router } from 'express';
 import type { Request, Response } from 'express';
 import { prisma } from '../../db/prisma.js';
-import { authMiddleware, requireRole } from '../../middleware/authMiddleware.js';
+import { authMiddleware, requireRole, type AuthRequest } from '../../middleware/authMiddleware.js';
 import { matchInvoiceById, matchTicketById } from './matching.service.js';
+import { reopenMatchResult, resolveMatchResult, type ResolutionInput } from './resolveMatch.js';
 
 /**
  * Reading and re-running match verdicts.
@@ -64,6 +65,79 @@ router.post('/recompute/invoice/:id', async (req: Request, res: Response) => {
   } catch (error) {
     console.error('[Matching] invoice recompute failed:', error);
     return res.status(500).json({ error: 'Could not evaluate this invoice' });
+  }
+});
+
+const RESOLUTIONS: ResolutionInput[] = ['CONFIRMED', 'OVERRIDDEN', 'REJECTED'];
+
+/** Turns a refusal from the service into the right status and a plain reason. */
+function explain(code: string): { status: number; error: string } {
+  switch (code) {
+    case 'NOT_FOUND':
+      return { status: 404, error: 'That verdict no longer exists' };
+    case 'ALREADY_RESOLVED':
+      return { status: 409, error: 'Someone has already settled this. Reopen it first.' };
+    case 'ORDER_REQUIRED':
+      return { status: 400, error: 'Choose the order this belongs to' };
+    case 'NOTE_REQUIRED':
+      return { status: 400, error: 'Say why, so the decision can be understood later' };
+    case 'ORDER_NOT_FOUND':
+      return { status: 400, error: 'That order does not exist' };
+    default:
+      return { status: 400, error: 'That resolution could not be applied' };
+  }
+}
+
+/** Settle one verdict: accept it, point it at a different order, or reject it. */
+router.post('/results/:id/resolve', async (req: Request, res: Response) => {
+  const user = (req as AuthRequest).user;
+  if (!user) return res.status(401).json({ error: 'Not signed in' });
+
+  const { resolution, orderId, note } = req.body ?? {};
+  if (!RESOLUTIONS.includes(resolution)) {
+    return res.status(400).json({ error: `resolution must be one of ${RESOLUTIONS.join(', ')}` });
+  }
+
+  try {
+    const outcome = await resolveMatchResult({
+      matchResultId: req.params.id as string,
+      resolution,
+      orderId,
+      note,
+      userId: user.id,
+    });
+
+    if (!outcome.ok) {
+      const { status, error } = explain(outcome.code);
+      return res.status(status).json({ error });
+    }
+    return res.json({ ok: true });
+  } catch (error) {
+    console.error('[Matching] resolve failed:', error);
+    return res.status(500).json({ error: 'Could not record that decision' });
+  }
+});
+
+/** Reopen a settled verdict so it can be decided again. */
+router.post('/results/:id/reopen', async (req: Request, res: Response) => {
+  const user = (req as AuthRequest).user;
+  if (!user) return res.status(401).json({ error: 'Not signed in' });
+
+  try {
+    const outcome = await reopenMatchResult({
+      matchResultId: req.params.id as string,
+      note: req.body?.note,
+      userId: user.id,
+    });
+
+    if (!outcome.ok) {
+      const { status, error } = explain(outcome.code);
+      return res.status(status).json({ error });
+    }
+    return res.json({ ok: true });
+  } catch (error) {
+    console.error('[Matching] reopen failed:', error);
+    return res.status(500).json({ error: 'Could not reopen that verdict' });
   }
 });
 

@@ -249,6 +249,40 @@ export default function VerificationDesk() {
     }
   };
 
+  /**
+   * Records a person's decision on a match verdict.
+   *
+   * The invoice is refetched rather than patched locally: resolving also writes
+   * the operational link, so the line's matched order and tickets can change
+   * too, and showing a stale version of those would misrepresent what was just
+   * decided.
+   */
+  const handleResolveMatch = async (matchResultId, body) => {
+    setIsProcessing(true);
+    try {
+      await api.post(`/api/matching/results/${matchResultId}/resolve`, body);
+      toast.success('Decision recorded');
+      fetchInvoiceDetails(selectedInvoice.id);
+    } catch (error) {
+      toast.error(error?.response?.data?.error || 'Could not record that decision');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const handleReopenMatch = async (matchResultId) => {
+    setIsProcessing(true);
+    try {
+      await api.post(`/api/matching/results/${matchResultId}/reopen`, {});
+      toast.success('Reopened');
+      fetchInvoiceDetails(selectedInvoice.id);
+    } catch (error) {
+      toast.error(error?.response?.data?.error || 'Could not reopen that verdict');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
   const handleUnlinkTicket = async (lineItemId, ticketId) => {
     setIsProcessing(true);
     try {
@@ -701,7 +735,13 @@ export default function VerificationDesk() {
                                               deliberately: a person should see the
                                               verdict and its evidence before they
                                               start attaching things by hand. */}
-                                          <MatchVerdict matchResult={li.matchResult} className="mb-4" />
+                                          <MatchVerdict
+                                            matchResult={li.matchResult}
+                                            className="mb-4"
+                                            busy={isProcessing}
+                                            onResolve={(body) => handleResolveMatch(li.matchResult.id, body)}
+                                            onReopen={() => handleReopenMatch(li.matchResult.id)}
+                                          />
 
                                           {/* Ticket and Order Matching Grid */}
                                           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { AlertTriangle, Check, ChevronDown, ChevronRight, HelpCircle, X } from 'lucide-react';
+import { AlertTriangle, Check, ChevronDown, ChevronRight, HelpCircle, RotateCcw, X } from 'lucide-react';
 import { cn } from '../lib/cn';
 import { checkTally, checkTitle, describeVerdict, orderedChecks } from '../lib/matchVerdict';
 
@@ -81,7 +81,126 @@ function formatValue(value) {
   return String(value);
 }
 
-export default function MatchVerdict({ matchResult, className }) {
+/**
+ * The decision box.
+ *
+ * A reason is demanded for rejecting, and for overriding, because those
+ * contradict evidence that is already stored — and in six months the note will
+ * be the only record of why. Confirming agrees with reasoning that explains
+ * itself, so it does not insist.
+ */
+function ResolveActions({ matchResult, onResolve, onReopen, busy }) {
+  const [choice, setChoice] = useState(null);
+  const [note, setNote] = useState('');
+  const [orderId, setOrderId] = useState('');
+
+  const candidates = matchResult?.candidateOrderIds ?? [];
+  const needsOrder = choice === 'OVERRIDDEN';
+  const needsNote = choice === 'OVERRIDDEN' || choice === 'REJECTED';
+  const canSubmit = choice && (!needsOrder || orderId.trim()) && (!needsNote || note.trim());
+
+  if (matchResult?.resolution) {
+    return (
+      <div className="px-4 py-3 border-t border-line flex items-center justify-between gap-3">
+        <p className="text-[12px] text-muted">
+          Settled as <span className="font-semibold text-ink">{matchResult.resolution.toLowerCase()}</span>
+          {matchResult.resolutionNote ? ` — ${matchResult.resolutionNote}` : ''}
+        </p>
+        <button
+          type="button"
+          onClick={onReopen}
+          disabled={busy}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-control border border-line text-[12px] font-semibold text-ink hover:bg-ink/[0.04] disabled:opacity-50"
+        >
+          <RotateCcw className="w-3 h-3" aria-hidden="true" /> Reopen
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="px-4 py-3 border-t border-line space-y-2">
+      <div className="flex flex-wrap gap-2">
+        {[
+          ['CONFIRMED', 'Confirm'],
+          ['OVERRIDDEN', 'Different order'],
+          ['REJECTED', 'Reject'],
+        ].map(([value, label]) => (
+          <button
+            key={value}
+            type="button"
+            onClick={() => setChoice(choice === value ? null : value)}
+            aria-pressed={choice === value}
+            className={cn(
+              'px-3 py-1.5 rounded-control border text-[12px] font-semibold transition-colors',
+              choice === value
+                ? 'bg-ink text-surface border-ink'
+                : 'border-line text-ink hover:bg-ink/[0.04]'
+            )}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {needsOrder && (
+        <label className="block">
+          <span className="text-[12px] text-muted">
+            {candidates.length > 0
+              ? 'Which of these orders is it?'
+              : 'Order this belongs to'}
+          </span>
+          {candidates.length > 0 ? (
+            <select
+              value={orderId}
+              onChange={(event) => setOrderId(event.target.value)}
+              className="mt-1 w-full rounded-control border border-line bg-surface px-2 py-1.5 text-[12.5px] text-ink"
+            >
+              <option value="">Choose an order…</option>
+              {candidates.map((id) => (
+                <option key={id} value={id}>
+                  {id}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <input
+              value={orderId}
+              onChange={(event) => setOrderId(event.target.value)}
+              placeholder="Order id"
+              className="mt-1 w-full rounded-control border border-line bg-surface px-2 py-1.5 text-[12.5px] text-ink"
+            />
+          )}
+        </label>
+      )}
+
+      {needsNote && (
+        <label className="block">
+          <span className="text-[12px] text-muted">Why? This is the record of the decision.</span>
+          <textarea
+            value={note}
+            onChange={(event) => setNote(event.target.value)}
+            rows={2}
+            className="mt-1 w-full rounded-control border border-line bg-surface px-2 py-1.5 text-[12.5px] text-ink"
+          />
+        </label>
+      )}
+
+      {choice && (
+        <button
+          type="button"
+          disabled={!canSubmit || busy}
+          onClick={() => onResolve({ resolution: choice, orderId: orderId.trim() || undefined, note: note.trim() || undefined })}
+          className="px-3 py-1.5 rounded-control bg-brand text-surface text-[12px] font-semibold disabled:opacity-50"
+        >
+          {busy ? 'Saving…' : 'Record decision'}
+        </button>
+      )}
+    </div>
+  );
+}
+
+export default function MatchVerdict({ matchResult, className, onResolve, onReopen, busy = false }) {
   const [open, setOpen] = useState(false);
 
   const verdict = describeVerdict(matchResult);
@@ -145,6 +264,15 @@ export default function MatchVerdict({ matchResult, className }) {
             <CheckRow key={`${check.name}-${index}`} check={check} />
           ))}
         </ul>
+      )}
+
+      {matchResult && onResolve && (
+        <ResolveActions
+          matchResult={matchResult}
+          onResolve={onResolve}
+          onReopen={onReopen}
+          busy={busy}
+        />
       )}
     </div>
   );
