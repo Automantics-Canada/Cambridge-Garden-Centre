@@ -1,3 +1,7 @@
+// The app validates its environment at import time, so the placeholder
+// config has to be in place before anything under src/ is loaded. Without
+// this the suite fails on whichever variable was added most recently.
+import './setupEnv.js';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
