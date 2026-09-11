@@ -1,6 +1,7 @@
 import { resolveDocumentUrl } from '../../lib/apiBase';
 import DocumentPreview from '../../components/DocumentPreview';
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import MatchVerdict from '../../components/MatchVerdict';
 import { useSelector } from 'react-redux';
 import api from '../../api/axios';
 import { getCachedInvoicePage, loadInvoicePage } from '../../data/routeData';
@@ -694,6 +695,13 @@ export default function VerificationDesk() {
                                               </div>
                                             </div>
                                           )}
+
+                                          {/* What the system concluded, and why.
+                                              Sits above the manual linking panels
+                                              deliberately: a person should see the
+                                              verdict and its evidence before they
+                                              start attaching things by hand. */}
+                                          <MatchVerdict matchResult={li.matchResult} className="mb-4" />
 
                                           {/* Ticket and Order Matching Grid */}
                                           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

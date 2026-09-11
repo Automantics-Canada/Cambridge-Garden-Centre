@@ -190,6 +190,22 @@ export const INVOICE_DETAIL_INCLUDE = {
         },
       },
       matchedTickets: true,
+      // The verdict and the reasoning behind it, for the evidence panel. The
+      // desk must never render a status without the checks that produced it.
+      matchResult: {
+        select: {
+          id: true,
+          status: true,
+          reason: true,
+          evidence: true,
+          orderId: true,
+          candidateOrderIds: true,
+          computedAt: true,
+          resolution: true,
+          resolvedAt: true,
+          resolvedBy: { select: VERIFIED_BY_PUBLIC_FIELDS },
+        },
+      },
     },
   },
   verifiedBy: { select: VERIFIED_BY_PUBLIC_FIELDS },

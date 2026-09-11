@@ -33,7 +33,8 @@ async function main(): Promise<void> {
   // Re-runnable: the script is for looking at a screen, so it starts from a
   // known state rather than accumulating duplicates across runs.
   await prisma.$executeRawUnsafe(
-    'TRUNCATE TABLE "InvoiceLineItem", "Invoice", "Supplier", "User" RESTART IDENTITY CASCADE'
+    'TRUNCATE TABLE "MatchResult", "InvoiceLineItem", "Invoice", "Ticket", "Order", ' +
+      '"NegotiatedRate", "Supplier", "User" RESTART IDENTITY CASCADE'
   );
 
   const supplier = await prisma.supplier.create({
@@ -140,6 +141,56 @@ async function main(): Promise<void> {
       flag: LineItemFlag.RATE_MISMATCH,
     },
   });
+
+  // An order and a ticket for PO 482913, plus an agreed rate, so the matching
+  // engine has something real to decide against. The invoice above bills
+  // 18.75 where 18.00 was agreed, and the ticket is 1.6 tonnes short — two
+  // discrepancies a person should see on the desk rather than discover later.
+  const user = await prisma.user.findFirstOrThrow({ select: { id: true } });
+
+  await prisma.order.create({
+    data: {
+      spruceOrderId: 'SEED-DOC-1',
+      poNumber: '482913',
+      customerName: 'A Contractor',
+      product: 'A Gravel 19mm',
+      quantity: 24.6,
+      unit: 'tonnes',
+      supplierId: supplier.id,
+      orderDate: new Date('2026-09-01'),
+    },
+  });
+
+  await prisma.negotiatedRate.create({
+    data: {
+      supplierId: supplier.id,
+      productName: 'A Gravel 19mm',
+      rate: 18,
+      unit: 'tonnes',
+      effectiveFrom: new Date('2026-01-01'),
+      createdById: user.id,
+    },
+  });
+
+  await prisma.ticket.create({
+    data: {
+      source: 'MANUAL',
+      supplierId: supplier.id,
+      poNumber: '482913',
+      material: 'A Gravel 19mm',
+      quantity: 23,
+      unit: 'tonnes',
+      ticketDate: new Date('2026-09-01'),
+      imageUrl: '/uploads/none.png',
+      ocrRawText: '',
+      ocrConfidence: 0.95,
+      status: 'UNLINKED',
+    },
+  });
+
+  const { matchInvoiceById } = await import('../modules/matching/matching.service.js');
+  await matchInvoiceById(mixed.id);
+  await matchInvoiceById(priced.id);
 
   console.log('mixed  (no agreed rate on line 2):', mixed.id);
   console.log('priced (every line has a rate)   :', priced.id);
