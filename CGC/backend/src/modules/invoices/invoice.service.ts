@@ -664,6 +664,16 @@ export const InvoiceService = {
         });
       }
 
+      // Decide, line by line, whether this invoice is backed by orders and by
+      // tickets. Advisory: it records verdicts and their evidence for the desk,
+      // and a failure must not undo a successful extraction.
+      try {
+        const { matchInvoiceById } = await import('../matching/matching.service.js');
+        await matchInvoiceById(invoiceId);
+      } catch (matchError) {
+        console.error(`[Matching] Could not evaluate invoice ${invoiceId}:`, matchError);
+      }
+
       return updatedInvoice;
     } catch (error: any) {
       if (ocrJob) {

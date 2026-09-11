@@ -85,6 +85,7 @@ model Order {
   document       OrderDocument?     @relation(fields: [documentId], references: [id])
   tickets        Ticket[]
   ticketMatches  TicketOrderMatch[]
+  matchResults   MatchResult[]
 
   /// The identity a re-import reconciles on, once the document layer is
   /// populated. `lineNumber` is display order, not identity.
@@ -125,6 +126,7 @@ model Ticket {
   deliveryStatus          DriverTaskStatus   @default(NOT_STARTED)
   spruceMatched           Boolean            @default(false)
   ocrJobs                 OcrJob[]           @relation("TicketOcrJobs")
+  matchResult             MatchResult?
   driver                  Driver?            @relation(fields: [driverId], references: [id])
   linkedBy                User?              @relation(fields: [linkedById], references: [id])
   linkedOrder             Order?             @relation(fields: [linkedOrderId], references: [id])
@@ -216,6 +218,7 @@ model InvoiceLineItem {
   invoice         Invoice      @relation(fields: [invoiceId], references: [id])
   matchedOrder    Order?       @relation(fields: [matchedOrderId], references: [id])
   matchedTickets  Ticket[]     @relation("InvoiceLineItemToTicket")
+  matchResult     MatchResult?
 
   @@index([invoiceId])
   @@index([poNumber])
@@ -317,6 +320,7 @@ model User {
   createdRates     NegotiatedRate[]
   spruceImports    SpruceImportJob[]
   systemSettings   SystemSetting[]
+  resolvedMatches  MatchResult[]
   linkedTickets    Ticket[]
   driver           Driver?
 }
@@ -638,4 +642,64 @@ enum DeliveryStatus {
   ON_HOLD
   DELAYED
   CANCELLED
+}
+
+/// A verdict on whether one document is backed by what CGC ordered and received.
+///
+/// The verdict is never stored without `evidence`: the list of checks that were
+/// run, what each compared, and what it found. A status with no evidence behind
+/// it is how this system previously showed a green MATCHED badge that had been
+/// hard-coded, so the two are stored together or not at all.
+///
+/// A result a person has resolved is theirs. Re-running matching replaces
+/// unresolved rows and leaves resolved ones alone.
+model MatchResult {
+  id            String            @id @default(uuid()) @db.Uuid
+  subjectType   MatchSubjectType
+  ticketId      String?           @db.Uuid
+  invoiceLineId String?           @db.Uuid
+  orderId       String?           @db.Uuid
+  status        MatchStatus
+  /// Every check that ran, with its inputs and result. Rendered on the desk.
+  evidence      Json
+  /// One line summarising why this status was reached.
+  reason        String
+  /// Orders still plausible when the status is CONFLICT.
+  candidateOrderIds String[]
+  /// Bumped when the cascade changes, so old verdicts can be told apart.
+  engineVersion Int               @default(1)
+  computedAt    DateTime          @default(now())
+  resolvedById  String?           @db.Uuid
+  resolvedAt    DateTime?
+  resolution    MatchResolution?
+  resolutionNote String?
+
+  ticket      Ticket?          @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  invoiceLine InvoiceLineItem? @relation(fields: [invoiceLineId], references: [id], onDelete: Cascade)
+  order       Order?           @relation(fields: [orderId], references: [id])
+  resolvedBy  User?            @relation(fields: [resolvedById], references: [id])
+
+  @@unique([ticketId])
+  @@unique([invoiceLineId])
+  @@index([status])
+  @@index([orderId])
+  @@index([status, computedAt])
+}
+
+enum MatchSubjectType {
+  TICKET
+  INVOICE_LINE
+}
+
+enum MatchStatus {
+  MATCHED
+  PARTIAL
+  UNMATCHED
+  CONFLICT
+}
+
+enum MatchResolution {
+  CONFIRMED
+  OVERRIDDEN
+  REJECTED
 }

@@ -372,6 +372,17 @@ export const TicketService = {
         });
       }
 
+      // Decide whether this delivery is backed by an order, now that the
+      // ticket's own fields have been written. Matching is advisory — it
+      // records a verdict and its evidence for the desk — so a failure here
+      // must not undo a successful extraction.
+      try {
+        const { matchTicketById } = await import('../matching/matching.service.js');
+        await matchTicketById(ticketId);
+      } catch (matchError) {
+        console.error(`[Matching] Could not evaluate ticket ${ticketId}:`, matchError);
+      }
+
       return updatedTicket;
     } catch (error: any) {
       if (ocrJob) {
