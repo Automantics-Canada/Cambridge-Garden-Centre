@@ -1,3 +1,6 @@
+// config/env.ts validates the environment at import time, so the placeholder
+// config has to be loaded before anything under src/ is pulled in.
+import './setupEnv.js';
 import assert from 'node:assert/strict';
 import { after, beforeEach, describe, it } from 'node:test';
 

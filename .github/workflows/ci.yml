@@ -1,0 +1,117 @@
+name: CI
+
+# Runs the tests on every pull request and on main.
+#
+# There was no CI on this repository at all. The green checks on pull requests
+# were CodeQL's default setup and Vercel's build, neither of which runs the test
+# suite, so every result anyone quoted came from a laptop. Two defects reached
+# main that way inside a fortnight: #28 and #29 merged a minute apart and broke
+# the health test between them, and orderPdfImport.integration.test.ts sat red
+# for weeks because nothing ran it.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# A new push supersedes whatever was running for the same branch.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: cgctest
+          POSTGRES_PASSWORD: cgctest
+          POSTGRES_DB: cgc_integration
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U cgctest"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    env:
+      DATABASE_URL: postgresql://cgctest:cgctest@127.0.0.1:5432/cgc_integration
+      DIRECT_URL: postgresql://cgctest:cgctest@127.0.0.1:5432/cgc_integration
+
+    defaults:
+      run:
+        working-directory: CGC/backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: CGC/backend/package-lock.json
+
+      - run: npm ci
+
+      # 20260819123000_lock_down_supabase_exposed_tables REVOKEs privileges from
+      # the Supabase roles. They do not exist on a plain PostgreSQL, and without
+      # them the migration chain stops there. That migration is already deployed
+      # and must not be edited, so the roles are created here instead.
+      - name: Create the Supabase roles the migration chain expects
+        run: |
+          PGPASSWORD=cgctest psql -h 127.0.0.1 -U cgctest -d cgc_integration -v ON_ERROR_STOP=1 -c "
+            DO \$\$ BEGIN CREATE ROLE anon NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END \$\$;
+            DO \$\$ BEGIN CREATE ROLE authenticated NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END \$\$;
+            DO \$\$ BEGIN CREATE ROLE service_role NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END \$\$;"
+
+      - name: Apply every migration to an empty database
+        # Proves the chain still builds an environment from nothing, which is
+        # the property that quietly broke once already: eight objects existed in
+        # production only because someone had run `prisma db push`.
+        run: npx prisma migrate deploy
+
+      - name: Check the datamodel matches the migrations
+        # Anything reported here is schema drift — a change made to the model
+        # without a migration to carry it to another environment.
+        run: |
+          npx prisma migrate diff \
+            --from-migrations prisma/migrations \
+            --to-schema-datamodel prisma/schema.prisma \
+            --shadow-database-url "$DATABASE_URL" \
+            --exit-code && echo "no drift" || echo "::warning::schema drift between migrations and datamodel"
+
+      - run: npx tsc --noEmit
+
+      - run: npm test
+
+      - name: Integration tests
+        env:
+          CGC_TEST_CONFIRM_DISPOSABLE: '1'
+        run: npm run test:integration
+
+      - run: npm run build
+
+  frontend:
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: CGC/frontend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: CGC/frontend/package-lock.json
+
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build
