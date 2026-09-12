@@ -3,7 +3,12 @@ import type { Request, Response } from 'express';
 import { prisma } from '../../db/prisma.js';
 import { authMiddleware, requireRole, type AuthRequest } from '../../middleware/authMiddleware.js';
 import { matchInvoiceById, matchTicketById } from './matching.service.js';
-import { reopenMatchResult, resolveMatchResult, type ResolutionInput } from './resolveMatch.js';
+import {
+  reopenMatchResult,
+  resolveMatchResult,
+  type ResolutionInput,
+  type ResolveFailure,
+} from './resolveMatch.js';
 
 /**
  * Reading and re-running match verdicts.
@@ -70,11 +75,26 @@ router.post('/recompute/invoice/:id', async (req: Request, res: Response) => {
 
 const RESOLUTIONS: ResolutionInput[] = ['CONFIRMED', 'OVERRIDDEN', 'REJECTED'];
 
-/** Turns a refusal from the service into the right status and a plain reason. */
-function explain(code: string): { status: number; error: string } {
-  switch (code) {
+/**
+ * Turns a refusal from the service into the right status and a plain reason.
+ *
+ * The whole failure is passed in, not just its code, because two of these
+ * refusals carry a `detail` that names the ticket, the invoice it already paid
+ * and who confirmed it. That sentence is the reason this check exists; a
+ * clerk told only "could not be applied" would retry, escalate, or pay the
+ * invoice outside the system.
+ */
+export function explain(outcome: ResolveFailure): { status: number; error: string } {
+  switch (outcome.code) {
     case 'NOT_FOUND':
       return { status: 404, error: 'That verdict no longer exists' };
+    case 'TICKETS_ALREADY_CLAIMED':
+      return { status: 409, error: outcome.detail };
+    case 'NOTE_REQUIRED_DUPLICATE':
+      return {
+        status: 400,
+        error: `${outcome.detail} Say why this invoice should be paid as well.`,
+      };
     case 'ALREADY_RESOLVED':
       return { status: 409, error: 'Someone has already settled this. Reopen it first.' };
     case 'ORDER_REQUIRED':
@@ -108,7 +128,7 @@ router.post('/results/:id/resolve', async (req: Request, res: Response) => {
     });
 
     if (!outcome.ok) {
-      const { status, error } = explain(outcome.code);
+      const { status, error } = explain(outcome);
       return res.status(status).json({ error });
     }
     return res.json({ ok: true });
@@ -131,7 +151,7 @@ router.post('/results/:id/reopen', async (req: Request, res: Response) => {
     });
 
     if (!outcome.ok) {
-      const { status, error } = explain(outcome.code);
+      const { status, error } = explain(outcome);
       return res.status(status).json({ error });
     }
     return res.json({ ok: true });

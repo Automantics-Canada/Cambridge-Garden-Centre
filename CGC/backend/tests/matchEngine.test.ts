@@ -238,12 +238,35 @@ describe('matchTicket', () => {
 
 describe('matchInvoiceLine', () => {
   const rates = [{ productName: 'A Gravel 19mm', rate: 18, unit: 'tonnes' }];
-  const tickets = [{ id: 'ticket-1', poNumber: '482913', quantity: 24.6, unit: 'tonnes' }];
+
+  /** A delivered load nobody has paid against yet. */
+  const deliveredTicket = (overrides: Record<string, unknown> = {}) => ({
+    id: 'ticket-1',
+    ticketNumber: '88213',
+    poNumber: '482913',
+    quantity: 24.6,
+    unit: 'tonnes',
+    claim: null,
+    ...overrides,
+  });
+
+  /** A person's record that this load already paid a line. */
+  const claim = (overrides: Record<string, unknown> = {}) => ({
+    invoiceLineId: 'other-line',
+    invoiceNumber: 'INV-1001',
+    lineNumber: 2,
+    claimedByName: 'Jane Doe',
+    claimedAt: new Date('2026-09-03T00:00:00Z'),
+    ...overrides,
+  });
+
+  const tickets = [deliveredTicket()];
 
   const lineInputs = (overrides: Partial<Parameters<typeof matchInvoiceLine>[1]> = {}) => ({
     ...inputs(),
     agreedRates: rates,
     tickets,
+    competingLines: [],
     ...overrides,
   });
 
@@ -342,5 +365,135 @@ describe('resolveTolerances', () => {
       const resolved = resolveTolerances([{ key: 'match.quantityTolerancePct', value }]);
       assert.equal(resolved.quantityTolerancePct, DEFAULT_TOLERANCES.quantityTolerancePct);
     }
+  });
+});
+
+describe('paying the same load twice', () => {
+  const rates = [{ productName: 'A Gravel 19mm', rate: 18, unit: 'tonnes' }];
+  const deliveredTicket = (overrides: Record<string, unknown> = {}) => ({
+    id: 'ticket-1',
+    ticketNumber: '88213',
+    poNumber: '482913',
+    quantity: 24.6,
+    unit: 'tonnes',
+    claim: null,
+    ...overrides,
+  });
+  const claim = (overrides: Record<string, unknown> = {}) => ({
+    invoiceLineId: 'other-line',
+    invoiceNumber: 'INV-1001',
+    lineNumber: 2,
+    claimedByName: 'Jane Doe',
+    claimedAt: new Date('2026-09-03T00:00:00Z'),
+    ...overrides,
+  });
+  const base = (overrides: Record<string, unknown> = {}) => ({
+    ...inputs(),
+    agreedRates: rates,
+    tickets: [deliveredTicket()],
+    competingLines: [],
+    ...overrides,
+  });
+
+  test('a load already used to pay another invoice cannot cover this line', () => {
+    // The failure this whole feature exists to stop: before it, both lines
+    // returned MATCHED and the coverage check passed on each.
+    const decision = matchInvoiceLine(
+      invoiceLine(),
+      base({ tickets: [deliveredTicket({ claim: claim() })] })
+    );
+
+    assert.equal(decision.status, 'PARTIAL');
+    assert.equal(check(decision, 'ticketReuse')?.passed, false);
+    assert.match(check(decision, 'ticketReuse')?.detail ?? '', /twice/);
+    assert.match(check(decision, 'ticketReuse')?.detail ?? '', /INV-1001/);
+    // And it is not counted towards coverage.
+    assert.equal(check(decision, 'ticketCoverage')?.found, 0);
+    assert.deepEqual(decision.ticketIds, []);
+  });
+
+  test("a line's own earlier claim is not a conflict with itself", () => {
+    // A recompute must not fight the verdict a person already settled, or the
+    // clerk learns the warning means nothing.
+    const decision = matchInvoiceLine(
+      invoiceLine({ id: 'line-1' }),
+      base({ tickets: [deliveredTicket({ claim: claim({ invoiceLineId: 'line-1' }) })] })
+    );
+
+    assert.equal(decision.status, 'MATCHED');
+    assert.equal(check(decision, 'ticketReuse')?.passed, true);
+    assert.deepEqual(decision.ticketIds, ['ticket-1']);
+  });
+
+  test('a legitimate second load on the same PO still goes through', () => {
+    // One ticket spent, another free and sufficient. Failing this would paint a
+    // normal week yellow and breed reflex overrides.
+    const decision = matchInvoiceLine(
+      invoiceLine(),
+      base({
+        tickets: [
+          deliveredTicket({ id: 'ticket-1', claim: claim() }),
+          deliveredTicket({ id: 'ticket-2', ticketNumber: '88214' }),
+        ],
+      })
+    );
+
+    assert.equal(decision.status, 'MATCHED');
+    assert.equal(check(decision, 'ticketReuse')?.passed, true);
+    assert.match(check(decision, 'ticketReuse')?.detail ?? '', /not counted/);
+    assert.deepEqual(decision.ticketIds, ['ticket-2']);
+  });
+
+  test('a claim by another line on the same invoice still counts as spent', () => {
+    // A supplier double-listing one load on a single invoice.
+    const decision = matchInvoiceLine(
+      invoiceLine({ id: 'line-1' }),
+      base({
+        tickets: [deliveredTicket({ claim: claim({ invoiceLineId: 'line-2' }) })],
+      })
+    );
+    assert.equal(check(decision, 'ticketReuse')?.passed, false);
+  });
+
+  test('two unreviewed invoices billing one PO both refuse to go green', () => {
+    // Neither is green merely for having been matched first.
+    const decision = matchInvoiceLine(
+      invoiceLine({ id: 'line-1' }),
+      base({
+        competingLines: [
+          {
+            invoiceLineId: 'line-9',
+            invoiceNumber: 'INV-1007',
+            lineNumber: 1,
+            invoiceDate: new Date('2026-09-05T00:00:00Z'),
+          },
+        ],
+      })
+    );
+
+    assert.equal(decision.status, 'PARTIAL');
+    assert.equal(check(decision, 'duplicateBilling')?.passed, false);
+    assert.match(check(decision, 'duplicateBilling')?.detail ?? '', /INV-1007/);
+    assert.match(check(decision, 'duplicateBilling')?.detail ?? '', /repeat/);
+  });
+
+  test('a line does not compete with itself', () => {
+    const decision = matchInvoiceLine(
+      invoiceLine({ id: 'line-1' }),
+      base({
+        competingLines: [
+          { invoiceLineId: 'line-1', invoiceNumber: 'INV-1', lineNumber: 1, invoiceDate: null },
+        ],
+      })
+    );
+    assert.equal(decision.status, 'MATCHED');
+    assert.equal(check(decision, 'duplicateBilling'), undefined);
+  });
+
+  test('with no contention and no spent tickets the line is clean', () => {
+    const decision = matchInvoiceLine(invoiceLine(), base());
+    assert.equal(decision.status, 'MATCHED');
+    assert.equal(check(decision, 'ticketReuse')?.passed, true);
+    assert.equal(check(decision, 'duplicateBilling'), undefined);
   });
 });

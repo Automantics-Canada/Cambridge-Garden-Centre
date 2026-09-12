@@ -778,7 +778,96 @@ export const InvoiceService = {
     });
   },
 
+  /**
+   * Marks an invoice checked and payable.
+   *
+   * This is where money is committed, so it is where the evidence has to be
+   * consulted. Until now it flipped the status with no reference to the match
+   * verdicts at all — every check the engine ran, and every discrepancy it
+   * found, could be bypassed by clicking Verify. That made the whole thing
+   * decorative at the only moment it mattered.
+   *
+   * A line that matched cleanly and that nobody has ruled on is confirmed here,
+   * attributed to the verifier, so its tickets are claimed and cannot pay a
+   * second invoice. A line with an unresolved problem stops the verification
+   * and says which one.
+   */
   async verifyInvoice(id: string, userId: string) {
+    const lines = await prisma.invoiceLineItem.findMany({
+      where: { invoiceId: id },
+      select: {
+        id: true,
+        lineNumber: true,
+        matchResult: { select: { id: true, status: true, resolution: true } },
+      },
+      orderBy: { lineNumber: 'asc' },
+    });
+
+    // A line nothing has evaluated is not a pass.
+    //
+    // Matching is advisory on purpose: it runs inside a try/catch during import
+    // so that a matching failure cannot undo a good extraction. The cost of
+    // that choice is that "no verdict" usually means the engine errored — which
+    // is exactly the case where nothing has been checked at all. Verifying such
+    // a line would commit money against no evidence, and because claims are
+    // only written when a verdict is resolved, it would also leave that line's
+    // tickets unspent and free to pay a second invoice. Re-running the check is
+    // cheap; paying twice is not.
+    const unchecked = lines.filter((line) => !line.matchResult);
+
+    if (unchecked.length > 0) {
+      const numbers = unchecked.map((line) => line.lineNumber).join(', ');
+      throw Object.assign(
+        new Error(
+          `Line ${numbers} ${unchecked.length === 1 ? 'has' : 'have'} not been checked against ` +
+            'any order yet. Re-run the check on this invoice, then settle whatever it finds.'
+        ),
+        { status: 409 }
+      );
+    }
+
+    const unresolved = lines.filter(
+      (line) => !line.matchResult!.resolution && line.matchResult!.status !== 'MATCHED'
+    );
+
+    if (unresolved.length > 0) {
+      const numbers = unresolved.map((line) => line.lineNumber).join(', ');
+      throw Object.assign(
+        new Error(
+          `Line ${numbers} ${unresolved.length === 1 ? 'has an unresolved finding' : 'have unresolved findings'}. ` +
+            'Settle them on the verification desk before verifying this invoice.'
+        ),
+        { status: 409 }
+      );
+    }
+
+    // Clean lines nobody has ruled on are confirmed as part of verifying, so
+    // that verifying an invoice really does spend its tickets.
+    const toConfirm = lines.filter(
+      (line) => line.matchResult && !line.matchResult.resolution && line.matchResult.status === 'MATCHED'
+    );
+
+    if (toConfirm.length > 0) {
+      const { resolveMatchResult } = await import('../matching/resolveMatch.js');
+      for (const line of toConfirm) {
+        const outcome = await resolveMatchResult({
+          matchResultId: line.matchResult!.id,
+          resolution: 'CONFIRMED',
+          note: 'Confirmed as part of verifying this invoice.',
+          userId,
+        });
+        if (!outcome.ok) {
+          throw Object.assign(
+            new Error(
+              `Line ${line.lineNumber} could not be confirmed: ` +
+                ('detail' in outcome ? outcome.detail : outcome.code)
+            ),
+            { status: 409 }
+          );
+        }
+      }
+    }
+
     const updated = await prisma.invoice.update({
       where: { id },
       data: {
@@ -876,7 +965,46 @@ export const InvoiceService = {
     return { ...updated, flag };
   },
 
+  /**
+   * Attaches tickets to a line by hand.
+   *
+   * This predates the matching engine and stays because the desk still needs a
+   * way to say "these are the loads" when the engine cannot work it out. It is
+   * not a payment decision, so it deliberately writes no claim — a load is
+   * spent only when somebody resolves a verdict.
+   *
+   * What it must not do is quietly attach a load another invoice has already
+   * been paid for. The engine would not be fooled (it gathers tickets by PO,
+   * not through this link), but the person reading the line would be: the
+   * NO_TICKET flag clears and the line looks backed.
+   */
   async linkTicketsToLineItem(lineItemId: string, ticketIds: string[], userId: string) {
+    const claimed = await prisma.ticketClaim.findMany({
+      where: { ticketId: { in: ticketIds }, invoiceLineId: { not: lineItemId } },
+      select: {
+        ticket: { select: { ticketNumber: true } },
+        invoiceLine: {
+          select: { lineNumber: true, invoice: { select: { invoiceNumber: true } } },
+        },
+      },
+    });
+
+    if (claimed.length > 0) {
+      const where = claimed
+        .map((claim) => {
+          const ticket = claim.ticket.ticketNumber ?? 'without a number';
+          return `${ticket} (paid on ${claim.invoiceLine.invoice.invoiceNumber} line ${claim.invoiceLine.lineNumber})`;
+        })
+        .join('; ');
+      throw Object.assign(
+        new Error(
+          `${claimed.length === 1 ? 'Ticket' : 'Tickets'} ${where}. ` +
+            'Reopen that decision first if this line is the one that should be paid.'
+        ),
+        { status: 409 }
+      );
+    }
+
     const updated = await prisma.invoiceLineItem.update({
       where: { id: lineItemId },
       data: {

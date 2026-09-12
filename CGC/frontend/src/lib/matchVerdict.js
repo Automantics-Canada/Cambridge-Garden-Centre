@@ -109,6 +109,10 @@ export function checkTitle(name) {
       return 'Rate';
     case 'ticketCoverage':
       return 'Delivery tickets';
+    case 'ticketReuse':
+      return 'Tickets already paid against';
+    case 'duplicateBilling':
+      return 'Also billed elsewhere';
     default:
       return name;
   }

@@ -32,7 +32,16 @@ export type MatchStatus = 'MATCHED' | 'PARTIAL' | 'UNMATCHED' | 'CONFLICT';
 
 /** One thing that was checked, and what it found. Written for a person to read. */
 export interface MatchCheck {
-  name: 'po' | 'supplier' | 'date' | 'product' | 'quantity' | 'rate' | 'ticketCoverage';
+  name:
+    | 'po'
+    | 'supplier'
+    | 'date'
+    | 'product'
+    | 'quantity'
+    | 'rate'
+    | 'ticketCoverage'
+    | 'ticketReuse'
+    | 'duplicateBilling';
   passed: boolean;
   /** A sentence naming what was compared and what came back. */
   detail: string;
@@ -87,12 +96,41 @@ export interface InvoiceLineSubject {
   invoiceDate: Date | null;
 }
 
+/**
+ * A person's record that this ticket has been used to justify paying one
+ * specific invoice line. Only a resolution creates one; the engine never does.
+ */
+export interface TicketClaimRef {
+  invoiceLineId: string;
+  invoiceNumber: string;
+  lineNumber: number;
+  claimedByName: string | null;
+  claimedAt: Date;
+}
+
 /** A ticket already accepted as evidence, used to cover an invoice line. */
 export interface DeliveredTicket {
   id: string;
+  /** For wording only, so a person can find the paper. */
+  ticketNumber: string | null;
   poNumber: string | null;
   quantity: number | null;
   unit: string | null;
+  /** Set when somebody has already paid a line against this load. */
+  claim: TicketClaimRef | null;
+}
+
+/**
+ * Another invoice line billing the same PO that nobody has ruled on yet.
+ *
+ * Contention is derived rather than stored: both lines see each other, so
+ * neither goes green merely for being matched first.
+ */
+export interface CompetingLine {
+  invoiceLineId: string;
+  invoiceNumber: string;
+  lineNumber: number;
+  invoiceDate: Date | null;
 }
 
 /** A rate a person entered and confirmed. */
@@ -421,6 +459,8 @@ export function matchInvoiceLine(
   inputs: MatchInputs & {
     tickets: ReadonlyArray<DeliveredTicket>;
     agreedRates: ReadonlyArray<AgreedRate>;
+    /** Other unreviewed lines billing this PO. Empty is the normal case. */
+    competingLines: ReadonlyArray<CompetingLine>;
   }
 ): MatchDecision {
   const productName = resolveProduct(line.supplierId, line.description, inputs.aliases);
@@ -506,10 +546,27 @@ export function matchInvoiceLine(
   // tickets are summed — but only those recorded in a unit the line can be
   // compared against, because a mixed total would be confidently wrong.
   const relevant = inputs.tickets.filter((ticket) => ticket.poNumber === line.poNumber);
-  const comparable = relevant.filter(
+
+  // A load already paid for on another line is spent. Counting it again is how
+  // the same delivery gets paid twice, which is the one thing this system
+  // exists to prevent — and before this check it did so with every status
+  // green, which is worse than not checking.
+  //
+  // A claim made by *this* line is this line's own history: a recompute must
+  // not conflict with the verdict a person already settled.
+  const usedElsewhere = relevant.filter(
+    // `!= null` on purpose: an absent claim and a null claim both mean nobody
+    // has paid against this load.
+    (ticket) => ticket.claim != null && ticket.claim.invoiceLineId !== line.id
+  );
+  const available = relevant.filter((ticket) => !usedElsewhere.includes(ticket));
+
+  const comparable = available.filter(
     (ticket) => ticket.quantity !== null && compareUnits(line.unit, ticket.unit).comparable
   );
-  const ticketIds = relevant.map((ticket) => ticket.id);
+  // What a later resolution will claim: what this verdict actually counted,
+  // never whatever happens to exist when somebody clicks Confirm.
+  const ticketIds = available.map((ticket) => ticket.id);
 
   if (relevant.length === 0) {
     checks.push({
@@ -519,12 +576,23 @@ export function matchInvoiceLine(
       expected: line.quantity,
       found: 0,
     });
+  } else if (available.length === 0) {
+    // Every load on this PO is already spoken for. Saying "no comparable unit"
+    // here would send a clerk hunting for the wrong problem entirely.
+    checks.push({
+      name: 'ticketCoverage',
+      passed: false,
+      detail: `Every ticket on this PO has already been used to pay another invoice line, so nothing is left to cover this one`,
+      expected: line.quantity,
+      found: 0,
+    });
   } else if (comparable.length === 0) {
     checks.push({
       name: 'ticketCoverage',
       passed: false,
-      detail: `${relevant.length} ticket${relevant.length === 1 ? '' : 's'} carry this PO, but none are recorded in a unit comparable with "${line.unit ?? 'none'}"`,
+      detail: `${available.length} ticket${available.length === 1 ? '' : 's'} carry this PO, but none are recorded in a unit comparable with "${line.unit ?? 'none'}"`,
       expected: line.quantity,
+      found: 0,
     });
   } else if (line.quantity === null) {
     checks.push({
@@ -545,6 +613,58 @@ export function matchInvoiceLine(
       expected: line.quantity,
       found: delivered,
       delta: Number((delivered - line.quantity).toFixed(4)),
+    });
+  }
+
+  const coveragePassed = checks.find((check) => check.name === 'ticketCoverage')?.passed === true;
+
+  // Reuse only *fails* when the remaining tickets cannot cover the line.
+  //
+  // A supplier legitimately sends a second invoice for a second load on the
+  // same PO, and failing that every time would paint a normal week yellow —
+  // which teaches a clerk to click through warnings, and a warning nobody
+  // reads protects nobody.
+  if (usedElsewhere.length > 0) {
+    const first = usedElsewhere[0]!.claim as TicketClaimRef;
+    const names = usedElsewhere
+      .map((ticket) => ticket.ticketNumber ?? ticket.id.slice(0, 6))
+      .join(' and ');
+    const total = usedElsewhere.reduce((sum, ticket) => sum + (ticket.quantity ?? 0), 0);
+    const plural = usedElsewhere.length > 1;
+    const claimedBy = first.claimedByName ? `, confirmed by ${first.claimedByName}` : '';
+
+    checks.push({
+      name: 'ticketReuse',
+      passed: coveragePassed,
+      detail: coveragePassed
+        ? `Ticket${plural ? 's' : ''} ${names} on this PO ${plural ? 'were' : 'was'} already used to pay invoice ${first.invoiceNumber} and ${plural ? 'were' : 'was'} not counted. The remaining tickets cover this line.`
+        : `Ticket${plural ? 's' : ''} ${names}${total ? ` (${Number(total.toFixed(4))} ${line.unit ?? ''})`.trimEnd() : ''} ${plural ? 'were' : 'was'} already used to pay invoice ${first.invoiceNumber} line ${first.lineNumber}${claimedBy}. Paying this line would pay for ${plural ? 'those loads' : 'that load'} twice.`,
+      expected: line.quantity,
+      found: usedElsewhere.length,
+    });
+  } else if (relevant.length > 0) {
+    checks.push({
+      name: 'ticketReuse',
+      passed: true,
+      detail: 'No ticket on this line has been used to pay another invoice.',
+    });
+  }
+
+  // Unsettled contention. Both lines see each other, so neither is green purely
+  // for having been matched first.
+  const competitors = inputs.competingLines.filter(
+    (competitor) => competitor.invoiceLineId !== line.id
+  );
+  if (competitors.length > 0) {
+    const first = competitors[0]!;
+    const dated = first.invoiceDate
+      ? ` (dated ${first.invoiceDate.toISOString().slice(0, 10)})`
+      : '';
+    checks.push({
+      name: 'duplicateBilling',
+      passed: false,
+      detail: `PO ${line.poNumber} is also billed on invoice ${first.invoiceNumber} line ${first.lineNumber}${dated}, which has not been reviewed yet. The same tickets would count towards both. Check whether one of these invoices is a repeat.`,
+      found: competitors.length,
     });
   }
 

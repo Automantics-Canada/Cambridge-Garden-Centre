@@ -39,6 +39,8 @@ export type ResolutionInput = 'CONFIRMED' | 'OVERRIDDEN' | 'REJECTED';
 
 export type ResolveFailure =
   | { ok: false; code: 'NOT_FOUND' }
+  | { ok: false; code: 'TICKETS_ALREADY_CLAIMED'; detail: string }
+  | { ok: false; code: 'NOTE_REQUIRED_DUPLICATE'; detail: string }
   | { ok: false; code: 'ALREADY_RESOLVED'; resolvedAt: Date | null }
   | { ok: false; code: 'ORDER_REQUIRED' }
   | { ok: false; code: 'NOTE_REQUIRED' }
@@ -79,6 +81,8 @@ export async function resolveMatchResult(params: {
       status: true,
       resolution: true,
       resolvedAt: true,
+      ticketIds: true,
+      evidence: true,
     },
   });
 
@@ -91,6 +95,41 @@ export async function resolveMatchResult(params: {
 
   if (resolution === 'OVERRIDDEN' && !orderId) return { ok: false, code: 'ORDER_REQUIRED' };
   if (noteRequired(resolution) && !note) return { ok: false, code: 'NOTE_REQUIRED' };
+
+  // Two gates that only apply when this resolution commits money.
+  //
+  // The evidence already says these loads were paid for elsewhere, or that
+  // another unreviewed invoice bills the same PO. Letting Confirm through
+  // anyway would make the check decorative — one click and the same delivery
+  // is paid twice, which is the failure this whole feature exists to stop.
+  const commits = resolution === 'CONFIRMED' || resolution === 'OVERRIDDEN';
+  if (commits && existing.subjectType === MatchSubjectType.INVOICE_LINE) {
+    const checks = Array.isArray(existing.evidence)
+      ? (existing.evidence as Array<{ name?: string; passed?: boolean; detail?: string }>)
+      : [];
+
+    const reuse = checks.find((check) => check.name === 'ticketReuse' && check.passed === false);
+    if (reuse) {
+      return {
+        ok: false,
+        code: 'TICKETS_ALREADY_CLAIMED',
+        detail:
+          reuse.detail ??
+          'These tickets have already been used to pay another invoice line.',
+      };
+    }
+
+    const contested = checks.find(
+      (check) => check.name === 'duplicateBilling' && check.passed === false
+    );
+    if (contested && !note) {
+      return {
+        ok: false,
+        code: 'NOTE_REQUIRED_DUPLICATE',
+        detail: contested.detail ?? 'Another unreviewed invoice bills this PO.',
+      };
+    }
+  }
 
   // The order the link will point at afterwards. A rejection points at nothing;
   // an override points where the person said; a confirmation keeps what the
@@ -106,6 +145,7 @@ export async function resolveMatchResult(params: {
     if (!order) return { ok: false, code: 'ORDER_NOT_FOUND' };
   }
 
+  try {
   await prisma.$transaction(async (tx) => {
     await tx.matchResult.update({
       where: { id: matchResultId },
@@ -164,6 +204,27 @@ export async function resolveMatchResult(params: {
     }
 
     if (existing.subjectType === MatchSubjectType.INVOICE_LINE && existing.invoiceLineId) {
+      const invoiceLineId = existing.invoiceLineId;
+
+      // Claim, or release, the loads this decision pays for.
+      //
+      // This is the moment money is committed, so it is the only moment a
+      // ticket becomes spent. The claim is on exactly what the verdict counted
+      // (`ticketIds`), not on whatever carries the PO now — a load photographed
+      // after the verdict was computed was never part of what anyone approved.
+      if (targetOrderId) {
+        for (const ticketId of existing.ticketIds) {
+          await tx.ticketClaim.create({
+            data: { ticketId, invoiceLineId, matchResultId, claimedById: userId },
+          });
+        }
+      } else {
+        // Rejected: the loads go back in the pot for whichever invoice really
+        // covers them. Without this a rejected duplicate would block the real
+        // invoice permanently.
+        await tx.ticketClaim.deleteMany({ where: { invoiceLineId } });
+      }
+
       await tx.invoiceLineItem.update({
         where: { id: existing.invoiceLineId },
         data: {
@@ -192,10 +253,30 @@ export async function resolveMatchResult(params: {
           engineStatus: existing.status,
           engineOrderId: existing.orderId,
           resolvedOrderId: targetOrderId,
+          claimedTicketIds: targetOrderId ? existing.ticketIds : [],
         },
       },
     });
   });
+
+  } catch (error) {
+    // Two clerks confirming competing lines at the same moment: the unique
+    // constraint on TicketClaim.ticketId is the last line of defence, and it
+    // holds even when both requests passed their checks a moment earlier.
+    if (
+      typeof error === 'object' &&
+      error !== null &&
+      (error as { code?: string }).code === 'P2002'
+    ) {
+      return {
+        ok: false,
+        code: 'TICKETS_ALREADY_CLAIMED',
+        detail:
+          'Somebody claimed one of these tickets for another invoice line while you were deciding. Reload and look again.',
+      };
+    }
+    throw error;
+  }
 
   return { ok: true, matchResultId };
 }
@@ -232,6 +313,11 @@ export async function reopenMatchResult(params: {
         resolvedAt: null,
       },
     });
+
+    // Reopening un-commits the money, so the loads are no longer spent.
+    if (existing.invoiceLineId) {
+      await tx.ticketClaim.deleteMany({ where: { invoiceLineId: existing.invoiceLineId } });
+    }
 
     await tx.auditLog.create({
       data: {

@@ -127,6 +127,7 @@ model Ticket {
   spruceMatched           Boolean            @default(false)
   ocrJobs                 OcrJob[]           @relation("TicketOcrJobs")
   matchResult             MatchResult?
+  claim                   TicketClaim?
   driver                  Driver?            @relation(fields: [driverId], references: [id])
   linkedBy                User?              @relation(fields: [linkedById], references: [id])
   linkedOrder             Order?             @relation(fields: [linkedOrderId], references: [id])
@@ -219,6 +220,7 @@ model InvoiceLineItem {
   matchedOrder    Order?       @relation(fields: [matchedOrderId], references: [id])
   matchedTickets  Ticket[]     @relation("InvoiceLineItemToTicket")
   matchResult     MatchResult?
+  ticketClaims    TicketClaim[]
 
   @@index([invoiceId])
   @@index([poNumber])
@@ -321,6 +323,7 @@ model User {
   spruceImports    SpruceImportJob[]
   systemSettings   SystemSetting[]
   resolvedMatches  MatchResult[]
+  ticketClaims     TicketClaim[]
   linkedTickets    Ticket[]
   driver           Driver?
 }
@@ -668,6 +671,8 @@ model MatchResult {
   reason        String
   /// Orders still plausible when the status is CONFLICT.
   candidateOrderIds String[]
+  /// Tickets this verdict actually counted — what a resolution will claim.
+  ticketIds     String[]          @default([])
   /// Bumped when the cascade changes, so old verdicts can be told apart.
   engineVersion Int               @default(1)
   computedAt    DateTime          @default(now())
@@ -704,4 +709,30 @@ enum MatchResolution {
   CONFIRMED
   OVERRIDDEN
   REJECTED
+}
+
+/// A person's record that this delivery ticket paid one specific invoice line.
+///
+/// The engine never writes one of these. A claim is created only when somebody
+/// CONFIRMS or OVERRIDES a line — the moment money is actually committed — and
+/// released when that decision is rejected or reopened.
+///
+/// `ticketId` is unique, which is the whole mechanism: a load is one scale
+/// reading and can pay for exactly one line. Before this existed, the same
+/// 24.6 tonne ticket satisfied two invoice lines and both reported MATCHED.
+model TicketClaim {
+  id            String   @id @default(uuid()) @db.Uuid
+  /// One load, one claim. This constraint is the protection.
+  ticketId      String   @unique @db.Uuid
+  invoiceLineId String   @db.Uuid
+  /// The verdict this claim was made against, for tracing it back.
+  matchResultId String?  @db.Uuid
+  claimedById   String   @db.Uuid
+  claimedAt     DateTime @default(now())
+
+  ticket      Ticket          @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  invoiceLine InvoiceLineItem @relation(fields: [invoiceLineId], references: [id], onDelete: Cascade)
+  claimedBy   User            @relation(fields: [claimedById], references: [id])
+
+  @@index([invoiceLineId])
 }
