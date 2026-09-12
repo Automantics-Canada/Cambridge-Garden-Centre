@@ -1,4 +1,5 @@
 import { spawnSync } from 'node:child_process';
+import fs from 'node:fs';
 import process from 'node:process';
 
 /**
@@ -22,10 +23,10 @@ import process from 'node:process';
  */
 
 if (!process.env.OPENAI_API_KEY) {
-  // dotenv has not run yet; .env is loaded by config/env.ts on import.
+  // dotenv has not run yet; config/env.ts loads .env when it is imported.
   const hasDotEnv = (() => {
     try {
-      return require('node:fs').readFileSync('.env', 'utf8').includes('OPENAI_API_KEY');
+      return /^OPENAI_API_KEY=.+/m.test(fs.readFileSync('.env', 'utf8'));
     } catch {
       return false;
     }

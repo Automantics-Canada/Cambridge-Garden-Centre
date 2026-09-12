@@ -384,10 +384,10 @@ async function main(): Promise<void> {
       // The heavily degraded ones are where a confident wrong answer is worst.
       unreadable: condition === 'carbon_copy' || condition === 'motion_blur',
       expected: {
-        supplierName: spec.supplier
-          .replace(/\b(LTD\.|INC\.)/g, '')
-          .replace(/\s+/g, ' ')
-          .trim(),
+        // Exactly as printed, legal suffix included. Stripping "LTD." made the
+        // harness mark a correct reading wrong, which is worse than no
+        // measurement at all — it hid a real failure behind six fake ones.
+        supplierName: spec.supplier,
         ticketNumber: spec.ticketNumber,
         ticketDate: spec.date,
         poNumber: spec.po.replace('equals ', ''),
@@ -437,7 +437,7 @@ async function main(): Promise<void> {
       kind: 'invoice',
       condition: invoice.twoPages ? 'two_pages' : 'clean',
       expected: {
-        supplierName: invoice.supplier.replace(/\b(LTD\.|INC\.)/g, '').replace(/\s+/g, ' ').trim(),
+        supplierName: invoice.supplier,
         invoiceNumber: invoice.invoiceNumber,
         invoiceDate: invoice.date,
         poNumber: invoice.po,
