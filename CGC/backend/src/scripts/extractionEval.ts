@@ -56,6 +56,8 @@ const OTHER_BAR = 0.85;
 interface GoldenCase {
   file: string;
   kind: 'ticket' | 'invoice';
+  /** Free-text label for how the document was degraded, e.g. "glare". */
+  condition?: string;
   /** True when the document is barely legible: it must not be answered confidently. */
   unreadable?: boolean;
   expected: Record<string, unknown>;
@@ -63,12 +65,22 @@ interface GoldenCase {
 
 interface FieldOutcome {
   document: string;
+  condition: string;
   field: string;
   expected: unknown;
   actual: unknown;
   correct: boolean;
   /** A value invented where the document had none. */
   hallucinated: boolean;
+  /**
+   * A wrong value stated confidently on a document marked barely legible.
+   *
+   * This is the failure that matters most on rough paperwork. Reading a
+   * smudged 604412 as 504412 and saying so without hesitation attaches a
+   * delivery to the wrong order; returning null would merely have asked a
+   * person to look.
+   */
+  confidentMisread: boolean;
 }
 
 function loadManifest(directory: string): GoldenCase[] {
@@ -117,10 +129,12 @@ function scoreCase(
     const correct = valuesMatch(expected, actual);
     return {
       document: testCase.file,
+      condition: testCase.condition ?? 'unspecified',
       field,
       expected,
       actual,
       correct,
+      confidentMisread: Boolean(testCase.unreadable) && !correct && actual !== null,
       // The failure that matters most: the document did not say, and the model
       // answered anyway. A null costs someone a minute; an invented PO number
       // attaches a delivery to the wrong order.
@@ -173,6 +187,7 @@ async function main(): Promise<void> {
   const criticalCorrect = critical.filter((o) => o.correct).length;
   const otherCorrect = other.filter((o) => o.correct).length;
   const hallucinations = outcomes.filter((o) => o.hallucinated);
+  const confidentMisreads = outcomes.filter((o) => o.confidentMisread);
 
   const criticalRate = critical.length === 0 ? 1 : criticalCorrect / critical.length;
   const otherRate = other.length === 0 ? 1 : otherCorrect / other.length;
@@ -181,6 +196,21 @@ async function main(): Promise<void> {
   console.log(`  poNumber + quantity : ${percent(criticalCorrect, critical.length)}  (bar ${CRITICAL_BAR * 100}%)`);
   console.log(`  other fields        : ${percent(otherCorrect, other.length)}  (bar ${OTHER_BAR * 100}%)`);
   console.log(`  invented values     : ${hallucinations.length}  (bar 0)`);
+  console.log(`  confident misreads  : ${confidentMisreads.length}  (on documents marked barely legible)`);
+
+  // Which real-world condition actually breaks it. This is the line that tells
+  // you what to fix — a model that is perfect on clean scans and hopeless in
+  // low light needs better photographs, not a better model.
+  const conditions = [...new Set(outcomes.map((o) => o.condition))].sort();
+  if (conditions.length > 1) {
+    console.log('');
+    console.log('By condition');
+    for (const condition of conditions) {
+      const forCondition = outcomes.filter((o) => o.condition === condition);
+      const right = forCondition.filter((o) => o.correct).length;
+      console.log(`  ${condition.padEnd(20)}: ${percent(right, forCondition.length)}`);
+    }
+  }
 
   const wrong = outcomes.filter((o) => !o.correct);
   if (wrong.length > 0) {
@@ -202,6 +232,7 @@ async function main(): Promise<void> {
     criticalRate >= CRITICAL_BAR &&
     otherRate >= OTHER_BAR &&
     hallucinations.length === 0 &&
+    confidentMisreads.length === 0 &&
     failures.length === 0;
 
   console.log(
