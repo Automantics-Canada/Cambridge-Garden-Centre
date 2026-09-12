@@ -19,6 +19,7 @@
     "spruce:dryrun": "tsx src/scripts/spruceDryRun.ts",
     "backfill:thumbnails": "tsx src/scripts/backfillTicketThumbnails.ts",
     "backfill:order-documents": "tsx src/scripts/backfillOrderDocuments.ts",
+    "backfill:ticket-claims": "tsx src/scripts/backfillTicketClaims.ts",
     "extraction:eval": "node scripts/run-eval.mjs",
     "vendors:list": "tsx src/scripts/manageSpruceVendors.ts list",
     "vendors:add": "tsx src/scripts/manageSpruceVendors.ts add",
