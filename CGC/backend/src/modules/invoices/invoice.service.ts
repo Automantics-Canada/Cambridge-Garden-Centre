@@ -803,11 +803,31 @@ export const InvoiceService = {
       orderBy: { lineNumber: 'asc' },
     });
 
+    // A line nothing has evaluated is not a pass.
+    //
+    // Matching is advisory on purpose: it runs inside a try/catch during import
+    // so that a matching failure cannot undo a good extraction. The cost of
+    // that choice is that "no verdict" usually means the engine errored — which
+    // is exactly the case where nothing has been checked at all. Verifying such
+    // a line would commit money against no evidence, and because claims are
+    // only written when a verdict is resolved, it would also leave that line's
+    // tickets unspent and free to pay a second invoice. Re-running the check is
+    // cheap; paying twice is not.
+    const unchecked = lines.filter((line) => !line.matchResult);
+
+    if (unchecked.length > 0) {
+      const numbers = unchecked.map((line) => line.lineNumber).join(', ');
+      throw Object.assign(
+        new Error(
+          `Line ${numbers} ${unchecked.length === 1 ? 'has' : 'have'} not been checked against ` +
+            'any order yet. Re-run the check on this invoice, then settle whatever it finds.'
+        ),
+        { status: 409 }
+      );
+    }
+
     const unresolved = lines.filter(
-      (line) =>
-        !line.matchResult?.resolution &&
-        line.matchResult?.status !== undefined &&
-        line.matchResult.status !== 'MATCHED'
+      (line) => !line.matchResult!.resolution && line.matchResult!.status !== 'MATCHED'
     );
 
     if (unresolved.length > 0) {
@@ -945,7 +965,46 @@ export const InvoiceService = {
     return { ...updated, flag };
   },
 
+  /**
+   * Attaches tickets to a line by hand.
+   *
+   * This predates the matching engine and stays because the desk still needs a
+   * way to say "these are the loads" when the engine cannot work it out. It is
+   * not a payment decision, so it deliberately writes no claim — a load is
+   * spent only when somebody resolves a verdict.
+   *
+   * What it must not do is quietly attach a load another invoice has already
+   * been paid for. The engine would not be fooled (it gathers tickets by PO,
+   * not through this link), but the person reading the line would be: the
+   * NO_TICKET flag clears and the line looks backed.
+   */
   async linkTicketsToLineItem(lineItemId: string, ticketIds: string[], userId: string) {
+    const claimed = await prisma.ticketClaim.findMany({
+      where: { ticketId: { in: ticketIds }, invoiceLineId: { not: lineItemId } },
+      select: {
+        ticket: { select: { ticketNumber: true } },
+        invoiceLine: {
+          select: { lineNumber: true, invoice: { select: { invoiceNumber: true } } },
+        },
+      },
+    });
+
+    if (claimed.length > 0) {
+      const where = claimed
+        .map((claim) => {
+          const ticket = claim.ticket.ticketNumber ?? 'without a number';
+          return `${ticket} (paid on ${claim.invoiceLine.invoice.invoiceNumber} line ${claim.invoiceLine.lineNumber})`;
+        })
+        .join('; ');
+      throw Object.assign(
+        new Error(
+          `${claimed.length === 1 ? 'Ticket' : 'Tickets'} ${where}. ` +
+            'Reopen that decision first if this line is the one that should be paid.'
+        ),
+        { status: 409 }
+      );
+    }
+
     const updated = await prisma.invoiceLineItem.update({
       where: { id: lineItemId },
       data: {

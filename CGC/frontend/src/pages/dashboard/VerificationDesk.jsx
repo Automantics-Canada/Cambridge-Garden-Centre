@@ -227,8 +227,11 @@ export default function VerificationDesk() {
       toast.success('Ticket linked successfully');
       setLinkingLineItem(null);
       fetchInvoiceDetails(selectedInvoice.id);
-    } catch {
-      toast.error('Ticket linking failed');
+    } catch (error) {
+      // The server refuses a load that another invoice has already been paid
+      // for, and says which invoice. Swallowing that for a generic failure
+      // would leave the clerk with no idea why.
+      toast.error(error?.response?.data?.error || 'Ticket linking failed');
     } finally {
       setIsProcessing(false);
     }

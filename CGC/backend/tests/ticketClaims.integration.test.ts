@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import { prisma } from '../src/db/prisma.js';
 import { matchInvoiceLineById } from '../src/modules/matching/matching.service.js';
 import { reopenMatchResult, resolveMatchResult } from '../src/modules/matching/resolveMatch.js';
+import { InvoiceService } from '../src/modules/invoices/invoice.service.js';
 
 /**
  * Paying the same delivery twice, against a real database.
@@ -224,6 +225,64 @@ describe('one load pays one line', { skip: !runnable }, () => {
     const second = await prisma.matchResult.findFirstOrThrow({ where: { invoiceLineId: lineB } });
     const reuse = checksOf(second.evidence).find((c) => c.name === 'ticketReuse');
     assert.notEqual(reuse?.passed, false);
+  });
+
+  it('an invoice with an unchecked line cannot be verified', async () => {
+    const { lineA } = await seed();
+
+    // No matching has run, so no verdict exists. This is not hypothetical:
+    // matching is advisory during import, so an engine error leaves lines in
+    // exactly this state — nothing checked, and nothing saying so.
+    assert.equal(await prisma.matchResult.count({ where: { invoiceLineId: lineA } }), 0);
+
+    const invoiceId = (
+      await prisma.invoiceLineItem.findUniqueOrThrow({
+        where: { id: lineA },
+        select: { invoiceId: true },
+      })
+    ).invoiceId;
+
+    await assert.rejects(
+      () => InvoiceService.verifyInvoice(invoiceId, USER_ID),
+      (error: Error & { status?: number }) => {
+        assert.equal(error.status, 409);
+        assert.match(error.message, /not been checked/);
+        return true;
+      },
+      'verifying a line nothing has evaluated would commit money against no evidence'
+    );
+
+    // And nothing was spent or marked verified on the way out.
+    assert.equal(await prisma.ticketClaim.count(), 0);
+    const invoice = await prisma.invoice.findUniqueOrThrow({ where: { id: invoiceId } });
+    assert.notEqual(invoice.status, 'VERIFIED');
+  });
+
+  it('a load already paid for cannot be hand-linked to another line', async () => {
+    const { lineA, lineB } = await seed();
+
+    await matchInvoiceLineById(lineA);
+    const first = await prisma.matchResult.findFirstOrThrow({ where: { invoiceLineId: lineA } });
+    await resolveMatchResult({
+      matchResultId: first.id,
+      resolution: 'CONFIRMED',
+      note: 'the real one',
+      userId: USER_ID,
+    });
+
+    // The manual link predates the engine and writes no claim, so it must at
+    // least refuse to attach a load somebody has already been paid for.
+    await assert.rejects(
+      () => InvoiceService.linkTicketsToLineItem(lineB, [TICKET_ID], USER_ID),
+      (error: Error & { status?: number }) => {
+        assert.equal(error.status, 409);
+        assert.match(error.message, /INV-1001/);
+        return true;
+      }
+    );
+
+    // Linking the line that already owns it is still allowed.
+    await InvoiceService.linkTicketsToLineItem(lineA, [TICKET_ID], USER_ID);
   });
 
   it('two simultaneous confirmations cannot both spend the load', async () => {
