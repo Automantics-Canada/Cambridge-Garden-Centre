@@ -778,7 +778,76 @@ export const InvoiceService = {
     });
   },
 
+  /**
+   * Marks an invoice checked and payable.
+   *
+   * This is where money is committed, so it is where the evidence has to be
+   * consulted. Until now it flipped the status with no reference to the match
+   * verdicts at all — every check the engine ran, and every discrepancy it
+   * found, could be bypassed by clicking Verify. That made the whole thing
+   * decorative at the only moment it mattered.
+   *
+   * A line that matched cleanly and that nobody has ruled on is confirmed here,
+   * attributed to the verifier, so its tickets are claimed and cannot pay a
+   * second invoice. A line with an unresolved problem stops the verification
+   * and says which one.
+   */
   async verifyInvoice(id: string, userId: string) {
+    const lines = await prisma.invoiceLineItem.findMany({
+      where: { invoiceId: id },
+      select: {
+        id: true,
+        lineNumber: true,
+        matchResult: { select: { id: true, status: true, resolution: true } },
+      },
+      orderBy: { lineNumber: 'asc' },
+    });
+
+    const unresolved = lines.filter(
+      (line) =>
+        !line.matchResult?.resolution &&
+        line.matchResult?.status !== undefined &&
+        line.matchResult.status !== 'MATCHED'
+    );
+
+    if (unresolved.length > 0) {
+      const numbers = unresolved.map((line) => line.lineNumber).join(', ');
+      throw Object.assign(
+        new Error(
+          `Line ${numbers} ${unresolved.length === 1 ? 'has an unresolved finding' : 'have unresolved findings'}. ` +
+            'Settle them on the verification desk before verifying this invoice.'
+        ),
+        { status: 409 }
+      );
+    }
+
+    // Clean lines nobody has ruled on are confirmed as part of verifying, so
+    // that verifying an invoice really does spend its tickets.
+    const toConfirm = lines.filter(
+      (line) => line.matchResult && !line.matchResult.resolution && line.matchResult.status === 'MATCHED'
+    );
+
+    if (toConfirm.length > 0) {
+      const { resolveMatchResult } = await import('../matching/resolveMatch.js');
+      for (const line of toConfirm) {
+        const outcome = await resolveMatchResult({
+          matchResultId: line.matchResult!.id,
+          resolution: 'CONFIRMED',
+          note: 'Confirmed as part of verifying this invoice.',
+          userId,
+        });
+        if (!outcome.ok) {
+          throw Object.assign(
+            new Error(
+              `Line ${line.lineNumber} could not be confirmed: ` +
+                ('detail' in outcome ? outcome.detail : outcome.code)
+            ),
+            { status: 409 }
+          );
+        }
+      }
+    }
+
     const updated = await prisma.invoice.update({
       where: { id },
       data: {

@@ -5,6 +5,7 @@ import {
   matchTicket,
   type AgreedRate,
   type CandidateOrder,
+  type CompetingLine,
   type DeliveredTicket,
   type MatchDecision,
   type ProductAlias,
@@ -26,7 +27,7 @@ import { resolveTolerances, type Tolerances } from './tolerances.js';
  */
 
 /** Bump when the cascade changes, so old verdicts can be told apart. */
-export const ENGINE_VERSION = 1;
+export const ENGINE_VERSION = 2;
 
 type Decimalish = Prisma.Decimal | number | string | null;
 
@@ -108,6 +109,52 @@ async function loadCandidateOrders(
 }
 
 /**
+ * Other invoice lines billing this PO that nobody has ruled on yet.
+ *
+ * Contention is derived rather than stored, so both lines see each other and
+ * neither goes green purely for having been matched first. Lines on the same
+ * invoice are excluded: a supplier listing one PO twice on one document is a
+ * question about that document, not a competing claim between invoices.
+ */
+async function loadCompetingLines(
+  poNumber: string | null,
+  supplierId: string | null,
+  excludeLineId: string
+): Promise<CompetingLine[]> {
+  if (!poNumber) return [];
+
+  const thisLine = await prisma.invoiceLineItem.findUnique({
+    where: { id: excludeLineId },
+    select: { invoiceId: true },
+  });
+  if (!thisLine) return [];
+
+  const rows = await prisma.invoiceLineItem.findMany({
+    where: {
+      poNumber,
+      invoiceId: { not: thisLine.invoiceId },
+      ...(supplierId ? { invoice: { supplierId } } : {}),
+      // A settled line is not contention: it has either claimed its tickets,
+      // in which case ticketReuse reports it, or been rejected.
+      OR: [{ matchResult: null }, { matchResult: { resolution: null } }],
+    },
+    select: {
+      id: true,
+      lineNumber: true,
+      invoice: { select: { invoiceNumber: true, invoiceDate: true } },
+    },
+    take: 20,
+  });
+
+  return rows.map((row) => ({
+    invoiceLineId: row.id,
+    invoiceNumber: row.invoice.invoiceNumber,
+    lineNumber: row.lineNumber,
+    invoiceDate: row.invoice.invoiceDate,
+  }));
+}
+
+/**
  * Writes a verdict, unless a person has already settled this one.
  *
  * Returns the decision that now stands, so a caller can log what happened
@@ -140,6 +187,9 @@ async function persist(
     evidence: decision.checks as unknown as Prisma.InputJsonValue,
     reason: decision.reason,
     candidateOrderIds: decision.candidateOrderIds,
+    // Stored so a resolution claims exactly what this verdict counted, rather
+    // than whatever tickets happen to exist when somebody clicks Confirm.
+    ticketIds: decision.ticketIds,
     engineVersion: ENGINE_VERSION,
     computedAt: new Date(),
   };
@@ -226,7 +276,24 @@ export async function matchInvoiceLineById(lineId: string): Promise<MatchDecisio
     line.poNumber
       ? prisma.ticket.findMany({
           where: { poNumber: line.poNumber, ...(supplierId ? { supplierId } : {}) },
-          select: { id: true, poNumber: true, quantity: true, unit: true },
+          select: {
+            id: true,
+            ticketNumber: true,
+            poNumber: true,
+            quantity: true,
+            unit: true,
+            // Whether somebody has already paid a line against this load.
+            claim: {
+              select: {
+                invoiceLineId: true,
+                claimedAt: true,
+                claimedBy: { select: { name: true } },
+                invoiceLine: {
+                  select: { lineNumber: true, invoice: { select: { invoiceNumber: true } } },
+                },
+              },
+            },
+          },
           take: 100,
         })
       : Promise.resolve([]),
@@ -244,10 +311,22 @@ export async function matchInvoiceLineById(lineId: string): Promise<MatchDecisio
 
   const deliveredTickets: DeliveredTicket[] = tickets.map((ticket) => ({
     id: ticket.id,
+    ticketNumber: ticket.ticketNumber,
     poNumber: ticket.poNumber,
     quantity: toNumber(ticket.quantity),
     unit: ticket.unit,
+    claim: ticket.claim
+      ? {
+          invoiceLineId: ticket.claim.invoiceLineId,
+          invoiceNumber: ticket.claim.invoiceLine.invoice.invoiceNumber,
+          lineNumber: ticket.claim.invoiceLine.lineNumber,
+          claimedByName: ticket.claim.claimedBy?.name ?? null,
+          claimedAt: ticket.claim.claimedAt,
+        }
+      : null,
   }));
+
+  const competingLines = await loadCompetingLines(line.poNumber, supplierId, line.id);
 
   const agreedRates: AgreedRate[] = rates.flatMap((rate) => {
     const value = toNumber(rate.rate);
@@ -265,7 +344,7 @@ export async function matchInvoiceLineById(lineId: string): Promise<MatchDecisio
       supplierId,
       invoiceDate,
     },
-    { orders, aliases, tolerances, tickets: deliveredTickets, agreedRates }
+    { orders, aliases, tolerances, tickets: deliveredTickets, agreedRates, competingLines }
   );
 
   const outcome = await persist(MatchSubjectType.INVOICE_LINE, line.id, decision);
