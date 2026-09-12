@@ -12,6 +12,7 @@
     "start:worker": "node dist/worker.js",
     "pretest": "prisma generate",
     "db:push": "prisma db push",
+    "db:migrate": "prisma migrate deploy",
     "db:generate": "prisma generate",
     "bootstrap:admin": "tsx src/scripts/bootstrapAdmin.ts",
     "test": "node scripts/run-tests.mjs unit",
