@@ -19,12 +19,13 @@
     "spruce:dryrun": "tsx src/scripts/spruceDryRun.ts",
     "backfill:thumbnails": "tsx src/scripts/backfillTicketThumbnails.ts",
     "backfill:order-documents": "tsx src/scripts/backfillOrderDocuments.ts",
-    "extraction:eval": "tsx src/scripts/extractionEval.ts",
+    "extraction:eval": "node scripts/run-eval.mjs",
     "vendors:list": "tsx src/scripts/manageSpruceVendors.ts list",
     "vendors:add": "tsx src/scripts/manageSpruceVendors.ts add",
     "vendors:deactivate": "tsx src/scripts/manageSpruceVendors.ts deactivate",
     "test:integration": "node scripts/run-tests.mjs integration",
-    "test:all": "npm run test && npm run test:integration"
+    "test:all": "npm run test && npm run test:integration",
+    "extraction:eval-set": "tsx tests/fixtures/makeEvalSet.ts"
   },
   "keywords": [],
   "author": "",
