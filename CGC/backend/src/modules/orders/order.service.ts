@@ -152,9 +152,17 @@ export const OrderImportService = {
     let updated = 0;
     let skipped = 0;
     const errors: ImportSummary['errors'] = [];
+    /**
+     * POs this import touched, so their verdicts can be re-decided afterwards.
+     *
+     * A ticket photographed before its order was imported is UNMATCHED, and
+     * without this nothing ever looks at it again — the ticket sits on the
+     * verification desk forever over an order that has since arrived.
+     */
+    const touchedPoNumbers: string[] = [];
 
     for (let i = 0; i < records.length; i++) {
-      const rowNumber = i + 2; 
+      const rowNumber = i + 2;
       const row = records[i];
       if (!row) continue;
       
@@ -193,9 +201,14 @@ export const OrderImportService = {
             },
           });
           updated++;
+          if (data.poNumber) touchedPoNumbers.push(data.poNumber);
+          // The PO the row used to carry matters too: a line moved from one PO
+          // to another leaves verdicts behind on the old one.
+          if (existing.poNumber) touchedPoNumbers.push(existing.poNumber);
         } else {
           await prisma.order.create({ data });
           created++;
+          if (data.poNumber) touchedPoNumbers.push(data.poNumber);
         }
       } catch (e: any) {
         skipped++;
@@ -205,6 +218,11 @@ export const OrderImportService = {
         });
       }
     }
+
+    // After the rows are committed, never before: a verdict computed against an
+    // order that then failed to write would be worse than a stale one.
+    const { recomputeForPoNumbersSafely } = await import('../matching/matching.service.js');
+    await recomputeForPoNumbersSafely(touchedPoNumbers, 'CSV order import');
 
     return { created, updated, skipped, errors };
   },

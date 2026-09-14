@@ -93,7 +93,13 @@ export async function processOcrJob(jobId: string): Promise<void> {
       // A failure the provider calls permanent — an unreadable file type, a
       // refusal, a rejected request — fails identically every time. Retrying it
       // three more times over an hour only delays the person who has to look.
-      const isPermanent = error instanceof ExtractionError && !error.retryable;
+      //
+      // The same applies to a refusal raised by our own code: re-reading an
+      // invoice whose lines somebody has already ruled on is declined until a
+      // person reopens them, and retrying it declines identically.
+      const isPermanent =
+        (error instanceof ExtractionError && !error.retryable) ||
+        (error as { retryable?: boolean } | null)?.retryable === false;
       const willRetry = !isPermanent && attempts < MAX_OCR_ATTEMPTS;
 
       await prisma.ocrJob.update({
