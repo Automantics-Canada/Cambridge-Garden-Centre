@@ -17,7 +17,7 @@ describe('GET /api/health', () => {
     assert.equal(shortCommit('not-a-commit-or-secret'), 'unknown');
   });
 
-  it('is unauthenticated and exposes only status, commit, and build time', async () => {
+  it('is unauthenticated and exposes only status, commit, build time and the worker block', async () => {
     process.env.DATABASE_URL = 'postgresql://test:test@127.0.0.1:5432/test';
     process.env.JWT_SECRET = 'health-test-secret';
     process.env.SUPABASE_URL = 'https://health-test.supabase.co';
@@ -37,11 +37,26 @@ describe('GET /api/health', () => {
 
       assert.equal(response.status, 200);
       assert.equal(response.headers.get('cache-control'), 'no-store');
-      assert.deepEqual(Object.keys(payload).sort(), ['builtAt', 'commit', 'status']);
+      assert.deepEqual(Object.keys(payload).sort(), ['builtAt', 'commit', 'status', 'worker']);
       assert.equal(payload.status, 'ok');
       assert.match(String(payload.commit), /^(?:unknown|[0-9a-f]{7})$/);
       assert.ok(Number.isFinite(Date.parse(String(payload.builtAt))));
       assert.equal(secondPayload.builtAt, payload.builtAt, 'build time must not change per request');
+
+      // There is no database behind this test, so the heartbeat cannot be read.
+      // That must still answer the question rather than fail the check: an
+      // unreachable database is a worker nobody can account for, and `status`
+      // stays ok because the API itself is fine. Railway restarts an API whose
+      // health check fails, so tying the two together would turn a database
+      // blip into a restart loop.
+      const worker = payload.worker as Record<string, unknown>;
+      assert.deepEqual(
+        Object.keys(worker).sort(),
+        ['builtAt', 'commit', 'lastSeenAt', 'matchesApi', 'mode', 'stale']
+      );
+      assert.equal(worker.stale, true);
+      assert.equal(worker.matchesApi, false);
+      assert.equal(worker.commit, null);
     } finally {
       await new Promise<void>((resolve, reject) => {
         server.close(error => error ? reject(error) : resolve());

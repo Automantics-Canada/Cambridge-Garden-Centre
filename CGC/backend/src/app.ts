@@ -14,6 +14,11 @@ import dispatchRoutes from './modules/dispatch/dispatch.routes.js';
 import deliveriesRoutes from './modules/deliveries/deliveries.routes.js';
 import internalRoutes from './modules/internal/internal.routes.js';
 import { buildInfo } from './config/buildInfo.js';
+import {
+  deriveWorkerHealth,
+  readWorkerHeartbeat,
+  type WorkerHeartbeat,
+} from './workers/heartbeat.js';
 
 const app = express();
 
@@ -58,8 +63,50 @@ app.use(express.json());
 // Serve static files from the uploads directory
 app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
 
-app.get('/api/health', (_req, res) => {
-  res.set('Cache-Control', 'no-store').json({ status: 'ok', ...buildInfo });
+/**
+ * Liveness, plus which code the background worker is running.
+ *
+ * The `worker` block is the only place the worker service is visible at all.
+ * It has no HTTP surface of its own, so a worker left behind on an older deploy
+ * runs old logic against the current database with nothing on screen to say so.
+ * See workers/heartbeat.ts for the failure that prompted this.
+ *
+ * Two properties this endpoint has to keep:
+ *
+ *   - **`status` never depends on the database.** Railway polls this to decide
+ *     whether the API is healthy, so letting a database blip fail the check
+ *     would restart-loop a perfectly good API. The heartbeat read is
+ *     best-effort: a failure reports an unaccounted-for worker, not a sick API.
+ *   - **It stays fast.** The read is raced against a short deadline for the
+ *     same reason — an unreachable database must not hold a health check open.
+ *
+ * Still unauthenticated, and still discloses nothing an attacker gains from: a
+ * short commit, a build time, and whether two of our own processes agree.
+ */
+const WORKER_HEARTBEAT_READ_TIMEOUT_MS = 1_500;
+
+app.get('/api/health', async (_req, res) => {
+  // The catch is on the read itself rather than around the race, so a failure
+  // is logged even when the deadline wins and nobody is left waiting for it.
+  // Logged rather than returned: the caller learns the worker is unaccounted
+  // for, and the reason belongs in the server log.
+  const read = readWorkerHeartbeat().catch((error: unknown) => {
+    console.error('[Health] Could not read the worker heartbeat:', error);
+    return null;
+  });
+
+  const heartbeat: WorkerHeartbeat | null = await Promise.race([
+    read,
+    new Promise<null>((resolve) =>
+      setTimeout(() => resolve(null), WORKER_HEARTBEAT_READ_TIMEOUT_MS).unref?.()
+    ),
+  ]);
+
+  res.set('Cache-Control', 'no-store').json({
+    status: 'ok',
+    ...buildInfo,
+    worker: deriveWorkerHealth(heartbeat, buildInfo.commit),
+  });
 });
 
 app.use('/api/auth', authRoutes);
