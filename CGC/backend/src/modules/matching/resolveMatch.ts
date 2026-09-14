@@ -83,6 +83,10 @@ export async function resolveMatchResult(params: {
       resolvedAt: true,
       ticketIds: true,
       evidence: true,
+      // Which PO this decision changes the picture for; see the recompute
+      // after the transaction below.
+      ticket: { select: { poNumber: true } },
+      invoiceLine: { select: { poNumber: true } },
     },
   });
 
@@ -278,6 +282,19 @@ export async function resolveMatchResult(params: {
     throw error;
   }
 
+  // What this decision changed for everything else on the same PO.
+  //
+  // Confirming a line spends its loads, so a competing line that read "matched"
+  // a second ago is now billing tickets that are gone; rejecting one hands them
+  // back. Contention is derived, not stored, so the only way the other lines
+  // learn about it is by being asked again. Outside the transaction and
+  // best-effort: the decision above has committed and stands regardless.
+  const poNumber = existing.ticket?.poNumber ?? existing.invoiceLine?.poNumber ?? null;
+  if (poNumber) {
+    const { recomputeInvoiceLinesSafely } = await import('./matching.service.js');
+    await recomputeInvoiceLinesSafely([poNumber], `resolution of ${matchResultId}`);
+  }
+
   return { ok: true, matchResultId };
 }
 
@@ -292,12 +309,30 @@ export async function reopenMatchResult(params: {
   matchResultId: string;
   note?: string | null;
   userId: string;
+  /**
+   * Whether to re-decide the other unsettled lines on this PO afterwards.
+   *
+   * Defaults to true, which is what somebody reopening one verdict wants: the
+   * loads it was holding are free again and the competing lines need to know.
+   * The one caller that passes false is re-extracting an invoice, where every
+   * line being reopened is about to be deleted and the lines replacing them are
+   * decided a moment later.
+   */
+  recomputeOthers?: boolean;
 }): Promise<ResolveResult> {
   const note = params.note?.trim() || null;
 
   const existing = await prisma.matchResult.findUnique({
     where: { id: params.matchResultId },
-    select: { id: true, subjectType: true, ticketId: true, invoiceLineId: true, resolution: true },
+    select: {
+      id: true,
+      subjectType: true,
+      ticketId: true,
+      invoiceLineId: true,
+      resolution: true,
+      ticket: { select: { poNumber: true } },
+      invoiceLine: { select: { poNumber: true } },
+    },
   });
 
   if (!existing) return { ok: false, code: 'NOT_FOUND' };
@@ -332,6 +367,15 @@ export async function reopenMatchResult(params: {
       },
     });
   });
+
+  // Reopening released this line's loads, so every other unsettled line on the
+  // PO has more to work with than it did a moment ago — including this one,
+  // which is unresolved again and so gets a fresh verdict here.
+  const poNumber = existing.ticket?.poNumber ?? existing.invoiceLine?.poNumber ?? null;
+  if (poNumber && params.recomputeOthers !== false) {
+    const { recomputeInvoiceLinesSafely } = await import('./matching.service.js');
+    await recomputeInvoiceLinesSafely([poNumber], `reopening of ${existing.id}`);
+  }
 
   return { ok: true, matchResultId: existing.id };
 }

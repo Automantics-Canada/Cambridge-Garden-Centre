@@ -63,6 +63,8 @@ export interface MatchDecision {
   checks: MatchCheck[];
   /** One line explaining the status, for the desk and the audit log. */
   reason: string;
+  /** Set for an invoice line, null for a ticket, which has no such columns. */
+  totals: LineTotals | null;
 }
 
 export interface CandidateOrder {
@@ -116,8 +118,55 @@ export interface DeliveredTicket {
   poNumber: string | null;
   quantity: number | null;
   unit: string | null;
+  /**
+   * What the load was, as written on the ticket.
+   *
+   * A PO routinely carries two products — gravel on one line, sand on the next
+   * — and before this was here every line on that PO summed every ticket on it.
+   * Both lines then failed coverage, or both passed on a total neither of them
+   * had earned.
+   */
+  material: string | null;
+  /**
+   * Who delivered it, where the ticket says so.
+   *
+   * Null is common and must not be fatal: when OCR cannot read the supplier,
+   * the load still happened. A ticket from a *different* supplier on the same
+   * PO is a different matter and is excluded.
+   */
+  supplierId: string | null;
   /** Set when somebody has already paid a line against this load. */
   claim: TicketClaimRef | null;
+}
+
+/**
+ * The few conclusions the invoice line row stores as columns of its own.
+ *
+ * The invoice screens read `negotiatedRate`, `rateDiscrepancy` and
+ * `qtyDiscrepancy` off the line itself rather than off the evidence. Those
+ * columns used to be computed a second time, by a second comparison with a
+ * different idea of what counts as the same product — so the line said one
+ * thing and the verdict beside it said another. They are derived from this
+ * instead, which means there is one comparison and it is the one shown.
+ */
+export interface LineTotals {
+  /** The agreed rate actually compared against, or null when none could be. */
+  agreedRate: number | null;
+  /** Signed difference from the agreed rate, only when beyond tolerance. */
+  rateDiscrepancy: number | null;
+  /**
+   * How much more was billed than the tickets account for, only when beyond
+   * tolerance. Positive means over-billed, which is the direction the screens
+   * word it in.
+   */
+  quantityDiscrepancy: number | null;
+  /**
+   * An agreed rate exists for this product but is priced per a unit the line
+   * cannot be compared against. A different problem from having no rate at
+   * all — it is fixed by correcting a unit, not by adding a rate — and the
+   * line's flag distinguishes the two.
+   */
+  rateUnitMismatch: boolean;
 }
 
 /**
@@ -182,6 +231,14 @@ function daysBetween(a: Date, b: Date): number {
   return Math.abs(a.getTime() - b.getTime()) / 86_400_000;
 }
 
+/**
+ * Difference as a percentage of what was expected, or Infinity against zero.
+ *
+ * Infinity is the honest answer — nothing is a meaningful percentage of zero —
+ * but it must never reach a person's screen as "Infinity%", which reads as a
+ * broken system rather than as the data problem it actually is. Every caller
+ * checks `Number.isFinite` and says what happened in words instead.
+ */
 function percentDifference(expected: number, found: number): number {
   if (expected === 0) return found === 0 ? 0 : Infinity;
   return Math.abs((found - expected) / expected) * 100;
@@ -245,7 +302,9 @@ function checkQuantity(
     passed,
     detail: passed
       ? `Quantity is within ${tolerancePct}% of the order`
-      : `Quantity differs from the order by ${difference.toFixed(1)}%, beyond the ${tolerancePct}% allowed`,
+      : Number.isFinite(difference)
+        ? `Quantity differs from the order by ${difference.toFixed(1)}%, beyond the ${tolerancePct}% allowed`
+        : `The order records a quantity of 0, so the delivered ${deliveredQuantity} cannot be expressed as a percentage of it`,
     expected: orderedQuantity,
     found: deliveredQuantity,
     delta: Number((deliveredQuantity - orderedQuantity).toFixed(4)),
@@ -346,6 +405,54 @@ function disambiguate(
   return agreeing.length === 1 ? (agreeing[0] as CandidateOrder) : null;
 }
 
+/**
+ * The order an automatic ticket link may point at, or null to leave it alone.
+ *
+ * Attaching a ticket to an order answers "which delivery is this". It is an
+ * operational fact, not a payment: money is committed by resolving an invoice
+ * line, which has its own gates and writes a TicketClaim. So this asks less
+ * than MATCHED does, on purpose.
+ *
+ * What it asks is that the order was identified *by its purchase order number*.
+ * A six digit PO naming exactly one order line is the identity evidence — it is
+ * what the yard wrote on the paper — and the engine only ever reaches an
+ * orderId through the PO or through the supplier/date/product fallback.
+ *
+ * Requiring MATCHED here was wrong and would have unlinked most of the yard's
+ * tickets on sight. MATCHED additionally wants the ticket's material wording to
+ * equal the order's exactly: a ticket reading "3/4 clear" against a Spruce line
+ * reading "STONE 3/4 CLEAR LIMESTONE" is PARTIAL until somebody records the
+ * alias, and almost none are recorded yet. That discrepancy still has to be
+ * seen — and it is, as PARTIAL on the verification desk, with the failing check
+ * spelled out beside it. It is not a reason to detach a delivery everybody at
+ * the yard knows the destination of.
+ *
+ * The fallback route is excluded: an order found only by supplier, date and
+ * product is a plausible pairing, not an identification, and pairing one of
+ * those automatically is the guess this engine exists not to make.
+ */
+export function shouldAutoLink(decision: MatchDecision): string | null {
+  if (!decision.orderId) return null;
+  const po = decision.checks.find((check) => check.name === 'po');
+  return po?.passed === true ? decision.orderId : null;
+}
+
+/**
+ * Whether an existing automatic link should be taken away.
+ *
+ * Only when nothing is identifiable any more: CONFLICT means several orders now
+ * fit the same PO, UNMATCHED means none does. Both make the stored link a claim
+ * the engine can no longer support, and a link the ticket list shows as settled
+ * while the desk shows a problem is worse than no link.
+ *
+ * A PARTIAL is deliberately not grounds for removal. The order is still
+ * identified; something about it disagrees, which is what the evidence is for.
+ */
+export function shouldRemoveAutoLink(decision: MatchDecision): boolean {
+  if (shouldAutoLink(decision) !== null) return false;
+  return decision.status === 'CONFLICT' || decision.status === 'UNMATCHED';
+}
+
 function decide(
   order: CandidateOrder | null,
   candidates: CandidateOrder[],
@@ -443,7 +550,7 @@ export function matchTicket(ticket: TicketSubject, inputs: MatchInputs): MatchDe
     }
   }
 
-  return { ...decide(order, candidates, checks, 'ticket'), ticketIds: [], checks };
+  return { ...decide(order, candidates, checks, 'ticket'), ticketIds: [], checks, totals: null };
 }
 
 /**
@@ -496,11 +603,28 @@ export function matchInvoiceLine(
 
   // Rate. An agreed rate in a different unit is not a discrepancy, it is a
   // comparison that cannot be made.
-  const agreed = productName
-    ? inputs.agreedRates.find(
+  //
+  // A product is sometimes priced twice — per tonne for bulk and per skid for
+  // bagged — and taking whichever row came back first meant a line billed per
+  // tonne could be measured against a per-skid price and reported as a 400%
+  // overcharge. The rate that can actually be compared is preferred; if none
+  // can, the first is still reported, so the evidence names a real agreed
+  // price rather than saying nothing is on file.
+  const forProduct = productName
+    ? inputs.agreedRates.filter(
         (rate) => normalizeProductName(rate.productName) === productName
       )
-    : undefined;
+    : [];
+  const agreed =
+    forProduct.find((rate) => compareUnits(line.unit, rate.unit).comparable) ?? forProduct[0];
+
+  /** Filled in as the checks below run; see LineTotals for why it exists. */
+  const totals: LineTotals = {
+    agreedRate: null,
+    rateDiscrepancy: null,
+    quantityDiscrepancy: null,
+    rateUnitMismatch: false,
+  };
 
   if (!agreed) {
     checks.push({
@@ -519,6 +643,9 @@ export function matchInvoiceLine(
   } else {
     const units = compareUnits(line.unit, agreed.unit);
     if (!units.comparable) {
+      // Recorded distinctly from "no rate on file": this one is resolved by
+      // correcting a unit, not by agreeing a price.
+      totals.rateUnitMismatch = true;
       checks.push({
         name: 'rate',
         passed: false,
@@ -529,15 +656,22 @@ export function matchInvoiceLine(
     } else {
       const difference = percentDifference(agreed.rate, line.unitRate);
       const passed = withinTolerance(difference, inputs.tolerances.priceTolerancePct);
+      const delta = Number((line.unitRate - agreed.rate).toFixed(4));
+
+      totals.agreedRate = agreed.rate;
+      if (!passed) totals.rateDiscrepancy = delta;
+
       checks.push({
         name: 'rate',
         passed,
         detail: passed
           ? 'Billed rate matches the agreed rate'
-          : `Billed at ${line.unitRate} against an agreed ${agreed.rate} per ${agreed.unit}, ${difference.toFixed(1)}% above the ${inputs.tolerances.priceTolerancePct}% allowed`,
+          : Number.isFinite(difference)
+            ? `Billed at ${line.unitRate} against an agreed ${agreed.rate} per ${agreed.unit}, ${difference.toFixed(1)}% above the ${inputs.tolerances.priceTolerancePct}% allowed`
+            : `Billed at ${line.unitRate} against an agreed rate of 0 per ${agreed.unit}, which cannot be expressed as a percentage`,
         expected: agreed.rate,
         found: line.unitRate,
-        delta: Number((line.unitRate - agreed.rate).toFixed(4)),
+        delta,
       });
     }
   }
@@ -545,7 +679,76 @@ export function matchInvoiceLine(
   // Ticket coverage. One invoice line can cover several truckloads, so the
   // tickets are summed — but only those recorded in a unit the line can be
   // compared against, because a mixed total would be confidently wrong.
-  const relevant = inputs.tickets.filter((ticket) => ticket.poNumber === line.poNumber);
+  //
+  // Narrowing from "every ticket on the PO" to "every ticket on the PO that is
+  // this line's product, from this supplier" is what stops a two-product PO
+  // grading both of its invoice lines against one combined total. The
+  // exclusions are named in the detail rather than applied silently: a load
+  // that was left out is exactly the thing a person needs told about.
+  const onPo =
+    line.poNumber === null
+      ? []
+      : inputs.tickets.filter((ticket) => ticket.poNumber === line.poNumber);
+
+  // A ticket whose supplier is plainly somebody else is not evidence for this
+  // invoice. A ticket with no readable supplier still is: the load happened,
+  // and dropping it would report "no delivery ticket" over an OCR miss.
+  const fromOtherSupplier = onPo.filter(
+    (ticket) =>
+      ticket.supplierId !== null &&
+      line.supplierId !== null &&
+      ticket.supplierId !== line.supplierId
+  );
+  // Same rule for the material: a different product is excluded, an unreadable
+  // one is counted and said so. Where the line's own product could not be read
+  // there is nothing to compare against, so nothing is excluded on that basis.
+  const onPoThisSupplier = onPo.filter((ticket) => !fromOtherSupplier.includes(ticket));
+  const ticketProduct = (ticket: DeliveredTicket): string | null =>
+    resolveProduct(ticket.supplierId ?? line.supplierId, ticket.material, inputs.aliases);
+
+  const carryingAnotherProduct =
+    productName === null
+      ? []
+      : onPoThisSupplier.filter((ticket) => {
+          const material = ticketProduct(ticket);
+          return material !== null && material !== productName;
+        });
+
+  const relevant = onPoThisSupplier.filter((ticket) => !carryingAnotherProduct.includes(ticket));
+  // Counted, but with something missing from the paper. Reported so a person
+  // can see what the total actually rests on — measured over the tickets that
+  // were counted, not over everything on the PO.
+  const materialUnknown = relevant.filter((ticket) => ticketProduct(ticket) === null);
+  const supplierUnknown = relevant.filter((ticket) => ticket.supplierId === null);
+
+  /** What was set aside and why, appended to whatever the coverage check says. */
+  const exclusions: string[] = [];
+  if (fromOtherSupplier.length > 0) {
+    exclusions.push(
+      `${fromOtherSupplier.length} ticket${fromOtherSupplier.length === 1 ? '' : 's'} on this PO ` +
+        `${fromOtherSupplier.length === 1 ? 'belongs' : 'belong'} to another supplier and ${fromOtherSupplier.length === 1 ? 'was' : 'were'} not counted`
+    );
+  }
+  if (carryingAnotherProduct.length > 0) {
+    exclusions.push(
+      `${carryingAnotherProduct.length} ticket${carryingAnotherProduct.length === 1 ? '' : 's'} on this PO ` +
+        `${carryingAnotherProduct.length === 1 ? 'carries' : 'carry'} a different product and ${carryingAnotherProduct.length === 1 ? 'was' : 'were'} not counted`
+    );
+  }
+  if (materialUnknown.length > 0) {
+    exclusions.push(
+      `${materialUnknown.length} counted ticket${materialUnknown.length === 1 ? '' : 's'} ` +
+        `${materialUnknown.length === 1 ? 'does' : 'do'} not say what ${materialUnknown.length === 1 ? 'it was' : 'they were'} carrying`
+    );
+  }
+  if (supplierUnknown.length > 0) {
+    exclusions.push(
+      `${supplierUnknown.length} counted ticket${supplierUnknown.length === 1 ? '' : 's'} ` +
+        `${supplierUnknown.length === 1 ? 'does' : 'do'} not name a supplier`
+    );
+  }
+  const noted = (detail: string): string =>
+    exclusions.length === 0 ? detail : `${detail}. ${exclusions.join('; ')}`;
 
   // A load already paid for on another line is spent. Counting it again is how
   // the same delivery gets paid twice, which is the one thing this system
@@ -564,25 +767,34 @@ export function matchInvoiceLine(
   const comparable = available.filter(
     (ticket) => ticket.quantity !== null && compareUnits(line.unit, ticket.unit).comparable
   );
-  // What a later resolution will claim: what this verdict actually counted,
-  // never whatever happens to exist when somebody clicks Confirm.
-  const ticketIds = available.map((ticket) => ticket.id);
+  // What a later resolution will claim: what this verdict actually counted, and
+  // nothing else. Claiming everything merely *available* spent loads this line
+  // never used — a ticket in an incomparable unit, or a second product's load
+  // on the same PO — and the line that really needed them then read "every
+  // ticket on this PO has already been used".
+  const ticketIds = comparable.map((ticket) => ticket.id);
 
   if (relevant.length === 0) {
     checks.push({
       name: 'ticketCoverage',
       passed: false,
-      detail: 'No delivery ticket accounts for this line',
+      detail: noted(
+        onPo.length === 0
+          ? 'No delivery ticket accounts for this line'
+          : `${onPo.length} ticket${onPo.length === 1 ? '' : 's'} carry this PO, but none of them belong to this line`
+      ),
       expected: line.quantity,
       found: 0,
     });
   } else if (available.length === 0) {
-    // Every load on this PO is already spoken for. Saying "no comparable unit"
-    // here would send a clerk hunting for the wrong problem entirely.
+    // Every load left for this line is already spoken for. Saying "no
+    // comparable unit" here would send a clerk hunting for the wrong problem.
     checks.push({
       name: 'ticketCoverage',
       passed: false,
-      detail: `Every ticket on this PO has already been used to pay another invoice line, so nothing is left to cover this one`,
+      detail: noted(
+        'Every ticket that could cover this line has already been used to pay another invoice line, so nothing is left'
+      ),
       expected: line.quantity,
       found: 0,
     });
@@ -590,7 +802,9 @@ export function matchInvoiceLine(
     checks.push({
       name: 'ticketCoverage',
       passed: false,
-      detail: `${available.length} ticket${available.length === 1 ? '' : 's'} carry this PO, but none are recorded in a unit comparable with "${line.unit ?? 'none'}"`,
+      detail: noted(
+        `${available.length} ticket${available.length === 1 ? '' : 's'} could cover this line, but none are recorded in a unit comparable with "${line.unit ?? 'none'}"`
+      ),
       expected: line.quantity,
       found: 0,
     });
@@ -598,18 +812,30 @@ export function matchInvoiceLine(
     checks.push({
       name: 'ticketCoverage',
       passed: false,
-      detail: 'No quantity could be read from the invoice line, so coverage was not checked',
+      detail: noted('No quantity could be read from the invoice line, so coverage was not checked'),
     });
   } else {
     const delivered = comparable.reduce((total, ticket) => total + (ticket.quantity as number), 0);
     const difference = percentDifference(line.quantity, delivered);
     const passed = withinTolerance(difference, inputs.tolerances.quantityTolerancePct);
+
+    // Worded as the screens word it: positive means billed for more than
+    // arrived. The engine's own delta below keeps the opposite sign because it
+    // reads as "found against expected" everywhere else in the evidence.
+    if (!passed) {
+      totals.quantityDiscrepancy = Number((line.quantity - delivered).toFixed(4));
+    }
+
     checks.push({
       name: 'ticketCoverage',
       passed,
-      detail: passed
-        ? `${comparable.length} ticket${comparable.length === 1 ? '' : 's'} account for the billed quantity`
-        : `Billed ${line.quantity} but tickets account for ${delivered}, a difference of ${difference.toFixed(1)}%`,
+      detail: noted(
+        passed
+          ? `${comparable.length} ticket${comparable.length === 1 ? '' : 's'} account for the billed quantity`
+          : Number.isFinite(difference)
+            ? `Billed ${line.quantity} but tickets account for ${delivered}, a difference of ${difference.toFixed(1)}%`
+            : `The line bills a quantity of 0 but tickets account for ${delivered}`
+      ),
       expected: line.quantity,
       found: delivered,
       delta: Number((delivered - line.quantity).toFixed(4)),
@@ -668,5 +894,5 @@ export function matchInvoiceLine(
     });
   }
 
-  return { ...decide(order, candidates, checks, 'invoice line'), ticketIds, checks };
+  return { ...decide(order, candidates, checks, 'invoice line'), ticketIds, checks, totals };
 }

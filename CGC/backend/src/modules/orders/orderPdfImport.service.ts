@@ -395,6 +395,12 @@ export const OrderPdfImportService = {
     let conflicts = 0;
     let skipped = 0;
     const errors: ImportSummary['errors'] = [];
+    /**
+     * POs whose documents committed, so their verdicts can be re-decided after
+     * the import. A ticket photographed before its order was imported reads
+     * UNMATCHED, and nothing else would ever look at it again.
+     */
+    const touchedPoNumbers: string[] = [];
 
     try {
       console.log(
@@ -445,6 +451,12 @@ export const OrderPdfImportService = {
           unchanged += result.unchanged;
           absent += result.absent;
 
+          // Collected only once the transaction has committed, for the same
+          // reason the events below are.
+          for (const row of rows) {
+            if (row.poNumber) touchedPoNumbers.push(row.poNumber);
+          }
+
           // Emitted only once the transaction has committed, so the stream
           // never announces a row that a rollback then took back.
           for (const event of result.events) {
@@ -478,6 +490,18 @@ export const OrderPdfImportService = {
       console.error('[OrderPdfImport] Import failed:', err);
       errors.push({ rowNumber: 0, error: message });
       return { created, updated, unchanged, absent, conflicts, skipped, errors };
+    }
+
+    // Best effort, after every document has committed. An import that landed
+    // correctly must not be reported as failed because a later recompute was
+    // unlucky; the periodic sweep and the next import both pick it up again.
+    //
+    // Only for the real client. This method takes an injected one so that
+    // persistence can be driven by a stub, and recomputing through the global
+    // connection would write to a database this caller never chose.
+    if (client === prisma) {
+      const { recomputeForPoNumbersSafely } = await import('../matching/matching.service.js');
+      await recomputeForPoNumbersSafely(touchedPoNumbers, 'Spruce PDF order import');
     }
 
     const summary = { created, updated, unchanged, absent, conflicts, skipped, errors };

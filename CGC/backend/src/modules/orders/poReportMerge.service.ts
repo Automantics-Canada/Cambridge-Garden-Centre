@@ -493,6 +493,15 @@ export async function applyPoReportMerge(
   let linesUnmatched = 0;
   let skippedConflicts = 0;
   const lineConflicts: PoApplySummary['lineConflicts'] = [];
+  /**
+   * Every PO written here, and every PO replaced.
+   *
+   * This merge is often the moment an order first acquires the PO a ticket has
+   * been carrying for days, so it is the moment that ticket can finally be
+   * matched. Both sides are collected: verdicts on the PO a line no longer
+   * carries are just as stale as those on the one it now does.
+   */
+  const touchedPoNumbers: string[] = [];
 
   for (const row of rows) {
     const result = await prisma.$transaction(async tx => {
@@ -626,7 +635,9 @@ export async function applyPoReportMerge(
         };
       }
 
+      const storedById = new Map(stored.map(line => [line.id, line]));
       let changedLines = 0;
+      const changedPoNumbers: string[] = [];
       for (const update of plan.updates) {
         if (!update.changed) continue;
         await tx.order.update({
@@ -638,6 +649,9 @@ export async function applyPoReportMerge(
           select: { id: true },
         });
         changedLines++;
+        if (update.poNumber) changedPoNumbers.push(update.poNumber);
+        const previous = storedById.get(update.orderId)?.poNumber;
+        if (previous) changedPoNumbers.push(previous);
       }
 
       // A singular header is useful for the common one-PO case. For a split
@@ -659,6 +673,7 @@ export async function applyPoReportMerge(
         linesUnmatched: 0,
         skippedConflict: false,
         conflicts: [],
+        poNumbers: changedPoNumbers,
       };
     }, {
       timeout: 30_000,
@@ -670,7 +685,12 @@ export async function applyPoReportMerge(
     linesUnmatched += result.linesUnmatched;
     if (result.skippedConflict) skippedConflicts++;
     lineConflicts.push(...result.conflicts);
+    // Only the POs of a transaction that actually committed.
+    touchedPoNumbers.push(...(result.poNumbers ?? []));
   }
+
+  const { recomputeForPoNumbersSafely } = await import('../matching/matching.service.js');
+  await recomputeForPoNumbersSafely(touchedPoNumbers, 'PO report merge');
 
   const unmappedVendors = preview.unmappedVendors.map(v => v.code);
 

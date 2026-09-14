@@ -1,138 +1,75 @@
 import cron from 'node-cron';
 import { prisma } from '../db/prisma.js';
+import { matchTicketById } from '../modules/matching/matching.service.js';
+
+/**
+ * A periodic sweep that re-asks the engine about tickets nobody has settled.
+ *
+ * This job used to be a second matching system. It linked a ticket to an order
+ * on PO plus driver alone — no supplier, no product, no quantity — and ran
+ * every minute, so the ticket list and the verification desk routinely
+ * disagreed about the same ticket, and a ticket with no driver (email, WhatsApp
+ * or a manual upload) was never linked however cleanly it matched. All of that
+ * bespoke logic is gone: the engine decides, `matchTicketById` writes both the
+ * verdict and the link, and this only decides *when* to ask.
+ *
+ * `driverId` is deliberately not part of matching. Which driver carried a load
+ * is a dispatch fact; whether the load was ordered is a question about the PO,
+ * the supplier, the product and the quantity, and a driver who happened to be
+ * assigned something else is no reason to refuse an otherwise exact match.
+ *
+ * Re-asking is safe for a ticket that is already linked. The engine relinks one
+ * whose PO now names a different single order, and takes a link away only on
+ * CONFLICT or UNMATCHED — where several orders fit, or none does. A PARTIAL
+ * keeps its link and shows the discrepancy on the desk instead, because a link
+ * records which delivery a load was and commits no money. On a rule that
+ * unlinked every PARTIAL, the first sweep after a deploy would detach most of
+ * the yard's correct deliveries over product wording nobody has aliased yet.
+ *
+ * Five minutes rather than one. The real triggers are OCR completing and an
+ * order import landing, both of which recompute immediately; this is the net
+ * under them, and a net does not need to be checked sixty times an hour.
+ */
+
+/** Tickets touched per sweep. A backlog is drained over several runs. */
+const BATCH_SIZE = 200;
 
 export const startMatchTicketsOrdersJob = () => {
-  // Runs every minute for real-time matching
-  cron.schedule('* * * * *', async () => {
-    console.log('[Cron] Starting Ticket-Order Match Job...');
+  cron.schedule('*/5 * * * *', async () => {
     try {
-      const unlinkedTickets = await prisma.ticket.findMany({
+      const tickets = await prisma.ticket.findMany({
         where: {
-          OR: [
-            { status: 'UNLINKED' },
-            { linkMethod: 'AUTO' }, // Re-verify auto-links to ensure they remain valid (single order)
-            { 
-              status: 'LINKED',
-              orderMatches: { none: {} }
-            }
-          ]
+          // Never re-decide something a person has settled. `persist` refuses
+          // it anyway; this keeps the batch for tickets that can still change.
+          OR: [{ matchResult: null }, { matchResult: { resolution: null } }],
+          // Unlinked tickets are the ones waiting for an answer. Auto-linked
+          // ones are re-verified because the order behind the link can be
+          // corrected or re-imported after the link was made. A manual link is
+          // somebody's decision and is left alone.
+          AND: [{ OR: [{ status: 'UNLINKED' }, { linkMethod: 'AUTO' }] }],
         },
+        select: { id: true },
+        // Newest first. A permanent backlog of tickets nothing will ever match
+        // must not crowd out the ticket that arrived this morning; the POs that
+        // genuinely became matchable are recomputed directly by the import that
+        // made them so, not by waiting for this sweep to reach them.
+        orderBy: { receivedAt: 'desc' },
+        take: BATCH_SIZE,
       });
 
-      if (unlinkedTickets.length === 0) {
-        console.log('[Cron] No unlinked or inconsistent tickets found.');
-        return;
-      }
+      if (tickets.length === 0) return;
 
-      console.log(`[Cron] Processing ${unlinkedTickets.length} unlinked tickets...`);
-
-      for (const ticket of unlinkedTickets) {
-        if (!ticket.driverId) {
-          // Cleanup any existing auto-matches for non-driver tickets
-          if (ticket.status === 'LINKED' && ticket.linkMethod === 'AUTO') {
-            console.log(`[Cron] Unlinking Ticket ${ticket.id} because it has no driverId and was auto-linked.`);
-            await prisma.ticketOrderMatch.deleteMany({
-              where: {
-                ticketId: ticket.id,
-                matchMethod: { in: ['AUTO_PO', 'AUTO_FALLBACK', 'AUTO_DRIVER_ASSIGNED'] }
-              }
-            });
-            await prisma.ticket.update({
-              where: { id: ticket.id },
-              data: {
-                status: 'UNLINKED',
-                linkedOrderId: null,
-                linkMethod: null
-              }
-            });
-          }
-          continue;
-        }
-
-        let matchingOrders: any[] = [];
-        let matchMethod = 'AUTO_PO';
-
-        // 1. PO matching (Absolute Priority) - restrict to orders assigned to this driver
-        // Ensure PO is exactly 6 digits as per requirements
-        if (ticket.poNumber && /^\d{6}$/.test(ticket.poNumber)) {
-          const allMatchingOrders = await prisma.order.findMany({
-            where: {
-              poNumber: ticket.poNumber,
-              driverId: ticket.driverId, // MUST be assigned to this driver
-            },
-            orderBy: { orderDate: 'desc' },
-          });
-          
-          if (allMatchingOrders.length > 1) {
-            if (ticket.status !== 'UNLINKED' || ticket.linkedOrderId !== null || ticket.linkMethod !== null) {
-              console.log(`[Cron] Multiple orders (${allMatchingOrders.length}) found for PO ${ticket.poNumber} assigned to driver ${ticket.driverId}. Cleaning up auto-links for Ticket ${ticket.id}.`);
-              
-              await prisma.ticketOrderMatch.deleteMany({
-                where: {
-                  ticketId: ticket.id,
-                  matchMethod: { in: ['AUTO_PO', 'AUTO_DRIVER_ASSIGNED'] }
-                }
-              });
-
-              await prisma.ticket.update({
-                where: { id: ticket.id },
-                data: {
-                  status: 'UNLINKED',
-                  linkedOrderId: null,
-                  linkMethod: null
-                }
-              });
-            }
-
-            continue;
-          } else if (allMatchingOrders.length === 1) {
-            matchingOrders = [allMatchingOrders[0]];
-            matchMethod = 'AUTO_PO';
-          }
-        } else if (ticket.poNumber) {
-          console.log(`[Cron] Ticket ${ticket.id} has invalid PO format: ${ticket.poNumber}. Skipping PO matching.`);
-        }
-
-        // No fallback. This previously linked the ticket to whatever sat first
-        // in the driver's queue when the PO did not match — a guess, stored as
-        // fact and used downstream as delivery evidence against invoices. A
-        // ticket that cannot be matched on its PO stays UNLINKED and goes to
-        // the verification desk for a person to resolve.
-
-        if (matchingOrders.length === 1) {
-          const order = matchingOrders[0];
-          
-          // Skip if already correctly linked to avoid redundant updates that trigger realtime loops
-          if (ticket.linkedOrderId === order.id && ticket.status === 'LINKED' && ticket.linkMethod === 'AUTO') {
-            continue;
-          }
-
-          try {
-            await prisma.ticketOrderMatch.upsert({
-              where: { ticketId_orderId: { ticketId: ticket.id, orderId: order.id } },
-              update: {},
-              create: {
-                ticketId: ticket.id,
-                orderId: order.id,
-                matchMethod: matchMethod,
-              }
-            });
-
-            await prisma.ticket.update({
-              where: { id: ticket.id },
-              data: { linkedOrderId: order.id, status: 'LINKED', linkMethod: 'AUTO' },
-            });
-            console.log(`[Cron] Linked Ticket ${ticket.id} to order ${order.id} on PO ${ticket.poNumber}.`);
-          } catch (err) {
-            console.error(`[Cron] Error linking Ticket ${ticket.id}:`, err);
-          }
+      console.log(`[Cron] Re-evaluating ${tickets.length} unsettled ticket(s).`);
+      for (const ticket of tickets) {
+        try {
+          await matchTicketById(ticket.id);
+        } catch (error) {
+          // One unreadable row must not stop the sweep for the rest.
+          console.error(`[Cron] Could not evaluate ticket ${ticket.id}:`, error);
         }
       }
-
-      console.log('[Cron] Ticket-Order Match Job completed.');
     } catch (error) {
       console.error('[Cron] Ticket-Order Match Job failed:', error);
     }
   });
 };
-

@@ -4,7 +4,10 @@ import assert from 'node:assert/strict';
 import {
   matchInvoiceLine,
   matchTicket,
+  shouldAutoLink,
+  shouldRemoveAutoLink,
   type CandidateOrder,
+  type DeliveredTicket,
   type InvoiceLineSubject,
   type MatchInputs,
   type TicketSubject,
@@ -240,12 +243,14 @@ describe('matchInvoiceLine', () => {
   const rates = [{ productName: 'A Gravel 19mm', rate: 18, unit: 'tonnes' }];
 
   /** A delivered load nobody has paid against yet. */
-  const deliveredTicket = (overrides: Record<string, unknown> = {}) => ({
+  const deliveredTicket = (overrides: Partial<DeliveredTicket> = {}): DeliveredTicket => ({
     id: 'ticket-1',
     ticketNumber: '88213',
     poNumber: '482913',
     quantity: 24.6,
     unit: 'tonnes',
+    material: 'A Gravel 19mm',
+    supplierId: SUPPLIER,
     claim: null,
     ...overrides,
   });
@@ -297,10 +302,7 @@ describe('matchInvoiceLine', () => {
       invoiceLine({ quantity: 49.2 }),
       lineInputs({
         orders: [order({ quantity: 49.2 })],
-        tickets: [
-          { id: 'ticket-1', poNumber: '482913', quantity: 24.6, unit: 'tonnes' },
-          { id: 'ticket-2', poNumber: '482913', quantity: 24.6, unit: 'tonnes' },
-        ],
+        tickets: [deliveredTicket({ id: 'ticket-1' }), deliveredTicket({ id: 'ticket-2' })],
       })
     );
     assert.equal(check(decision, 'ticketCoverage')?.passed, true);
@@ -311,9 +313,7 @@ describe('matchInvoiceLine', () => {
     // A mixed total would be confidently wrong, which is worse than no total.
     const decision = matchInvoiceLine(
       invoiceLine(),
-      lineInputs({
-        tickets: [{ id: 'ticket-1', poNumber: '482913', quantity: 24.6, unit: 'cy' }],
-      })
+      lineInputs({ tickets: [deliveredTicket({ unit: 'cy' })] })
     );
     assert.equal(check(decision, 'ticketCoverage')?.passed, false);
     assert.match(check(decision, 'ticketCoverage')?.detail ?? '', /comparable/i);
@@ -370,12 +370,14 @@ describe('resolveTolerances', () => {
 
 describe('paying the same load twice', () => {
   const rates = [{ productName: 'A Gravel 19mm', rate: 18, unit: 'tonnes' }];
-  const deliveredTicket = (overrides: Record<string, unknown> = {}) => ({
+  const deliveredTicket = (overrides: Partial<DeliveredTicket> = {}): DeliveredTicket => ({
     id: 'ticket-1',
     ticketNumber: '88213',
     poNumber: '482913',
     quantity: 24.6,
     unit: 'tonnes',
+    material: 'A Gravel 19mm',
+    supplierId: SUPPLIER,
     claim: null,
     ...overrides,
   });
@@ -495,5 +497,464 @@ describe('paying the same load twice', () => {
     assert.equal(decision.status, 'MATCHED');
     assert.equal(check(decision, 'ticketReuse')?.passed, true);
     assert.equal(check(decision, 'duplicateBilling'), undefined);
+  });
+});
+
+/**
+ * When a ticket may be attached to an order without asking anybody.
+ *
+ * These are written around the deploy: the rule runs against every unsettled
+ * ticket in the yard within five minutes of shipping, so the case that matters
+ * most is the ordinary one — a ticket whose PO names its order and whose
+ * material wording nobody has aliased yet. Unlinking those would read as the
+ * system breaking, and the people who had to put them back would trust the
+ * next warning less.
+ *
+ * Linking says which delivery a load was. It commits no money: that happens
+ * when somebody resolves an invoice line, which writes a TicketClaim and
+ * refuses to spend a load twice.
+ */
+describe('automatic ticket linking', () => {
+  test('a clean ticket is linked', () => {
+    const decision = matchTicket(ticket(), inputs());
+    assert.equal(decision.status, 'MATCHED');
+    assert.equal(shouldAutoLink(decision), 'order-1');
+    assert.equal(shouldRemoveAutoLink(decision), false);
+  });
+
+  test('wording nobody has aliased yet does not stop the link', () => {
+    // The case this rule exists for. Tickets say "3/4 clear"; Spruce says
+    // "STONE 3/4 CLEAR LIMESTONE". The PO identifies the order either way, and
+    // the disagreement is shown on the desk as PARTIAL rather than acted on by
+    // detaching a delivery the yard is certain about.
+    const decision = matchTicket(
+      ticket({ material: '3/4 clear' }),
+      inputs({ orders: [order({ product: 'STONE 3/4 CLEAR LIMESTONE' })] })
+    );
+
+    assert.equal(decision.status, 'PARTIAL');
+    assert.equal(check(decision, 'product')?.passed, false);
+    assert.equal(shouldAutoLink(decision), 'order-1');
+    assert.equal(shouldRemoveAutoLink(decision), false);
+  });
+
+  test('a short load keeps its link and argues about it on the desk', () => {
+    const decision = matchTicket(ticket({ quantity: 22 }), inputs());
+    assert.equal(decision.status, 'PARTIAL');
+    assert.equal(shouldAutoLink(decision), 'order-1');
+  });
+
+  test('a load dated outside the window keeps its link too', () => {
+    const decision = matchTicket(
+      ticket({ ticketDate: new Date('2026-09-20T00:00:00Z') }),
+      inputs()
+    );
+    assert.equal(check(decision, 'date')?.passed, false);
+    assert.equal(shouldAutoLink(decision), 'order-1');
+  });
+
+  test('an order found only by supplier, date and product is never linked', () => {
+    // A plausible pairing is not an identification. Without the PO the only
+    // evidence is that somebody sold this product around this date, which fits
+    // every other customer's load of the same material that week.
+    const decision = matchTicket(ticket({ poNumber: null }), inputs());
+
+    assert.equal(decision.status, 'PARTIAL');
+    assert.equal(decision.orderId, 'order-1');
+    assert.equal(check(decision, 'po')?.passed, false);
+    assert.equal(shouldAutoLink(decision), null);
+    // Nor is an existing link taken away: the order is still the likely one.
+    assert.equal(shouldRemoveAutoLink(decision), false);
+  });
+
+  test('a misread PO that falls back to supplier and date is not linked', () => {
+    const decision = matchTicket(ticket({ poNumber: '999999' }), inputs());
+    assert.equal(decision.orderId, 'order-1');
+    assert.equal(shouldAutoLink(decision), null);
+    assert.equal(shouldRemoveAutoLink(decision), false);
+  });
+
+  test('two orders on one PO unlink, because neither can be identified', () => {
+    const decision = matchTicket(
+      ticket({ quantity: null }),
+      inputs({ orders: [order({ id: 'order-1' }), order({ id: 'order-2' })] })
+    );
+
+    assert.equal(decision.status, 'CONFLICT');
+    assert.equal(shouldAutoLink(decision), null);
+    assert.equal(shouldRemoveAutoLink(decision), true);
+  });
+
+  test('nothing on file at all unlinks', () => {
+    const decision = matchTicket(
+      ticket({ poNumber: '999999', material: 'Limestone Screenings' }),
+      inputs()
+    );
+
+    assert.equal(decision.status, 'UNMATCHED');
+    assert.equal(shouldAutoLink(decision), null);
+    assert.equal(shouldRemoveAutoLink(decision), true);
+  });
+
+  test('the PO now naming a different order relinks to that one', () => {
+    const decision = matchTicket(
+      ticket({ quantity: 12 }),
+      inputs({
+        orders: [order({ id: 'order-1', quantity: 24.6 }), order({ id: 'order-2', quantity: 12 })],
+      })
+    );
+    assert.equal(shouldAutoLink(decision), 'order-2');
+  });
+});
+
+/**
+ * One PO, two products.
+ *
+ * Cambridge orders gravel and sand on the same purchase order all the time, and
+ * the supplier bills them as two lines. Before this, each line summed every
+ * ticket on the PO: both lines failed coverage against a total neither of them
+ * was, or both passed against a total that covered the pair. Worse, confirming
+ * the first line claimed the second product's loads too, and the second line
+ * then read "every ticket on this PO has already been used".
+ */
+describe('two products on one PO', () => {
+  const GRAVEL = 'A Gravel 19mm';
+  const SAND = 'Concrete Sand';
+
+  const rates = [
+    { productName: GRAVEL, rate: 18, unit: 'tonnes' },
+    { productName: SAND, rate: 22, unit: 'tonnes' },
+  ];
+
+  const load = (overrides: Partial<DeliveredTicket> = {}): DeliveredTicket => ({
+    id: 'ticket-1',
+    ticketNumber: '88213',
+    poNumber: '482913',
+    quantity: 24.6,
+    unit: 'tonnes',
+    material: GRAVEL,
+    supplierId: SUPPLIER,
+    claim: null,
+    ...overrides,
+  });
+
+  const gravelLoad = load({ id: 'gravel-load', ticketNumber: '88213' });
+  const sandLoad = load({ id: 'sand-load', ticketNumber: '88214', material: SAND, quantity: 18 });
+
+  const orders = [
+    order({ id: 'order-gravel', product: GRAVEL, quantity: 24.6 }),
+    order({ id: 'order-sand', product: SAND, quantity: 18 }),
+  ];
+
+  const lineInputs = (tickets: DeliveredTicket[]) => ({
+    ...inputs({ orders }),
+    agreedRates: rates,
+    tickets,
+    competingLines: [],
+  });
+
+  test('each line counts only the loads of its own product', () => {
+    const gravel = matchInvoiceLine(
+      invoiceLine({ id: 'line-gravel', description: GRAVEL, quantity: 24.6, unitRate: 18 }),
+      lineInputs([gravelLoad, sandLoad])
+    );
+    const sand = matchInvoiceLine(
+      invoiceLine({ id: 'line-sand', description: SAND, quantity: 18, unitRate: 22 }),
+      lineInputs([gravelLoad, sandLoad])
+    );
+
+    assert.equal(check(gravel, 'ticketCoverage')?.passed, true);
+    assert.equal(check(gravel, 'ticketCoverage')?.found, 24.6);
+    assert.equal(check(sand, 'ticketCoverage')?.passed, true);
+    assert.equal(check(sand, 'ticketCoverage')?.found, 18);
+  });
+
+  test('a line claims exactly the loads it counted, never the other product', () => {
+    // The bug this replaces: confirming the gravel line spent the sand load as
+    // well, and the sand line was then told its own delivery had been used up.
+    const gravel = matchInvoiceLine(
+      invoiceLine({ id: 'line-gravel', description: GRAVEL, quantity: 24.6, unitRate: 18 }),
+      lineInputs([gravelLoad, sandLoad])
+    );
+    assert.deepEqual(gravel.ticketIds, ['gravel-load']);
+  });
+
+  test('the other product is named rather than quietly dropped', () => {
+    const gravel = matchInvoiceLine(
+      invoiceLine({ id: 'line-gravel', description: GRAVEL, quantity: 24.6, unitRate: 18 }),
+      lineInputs([gravelLoad, sandLoad])
+    );
+    assert.match(
+      check(gravel, 'ticketCoverage')?.detail ?? '',
+      /1 ticket on this PO carries a different product/i
+    );
+  });
+
+  test('a load whose material could not be read still counts, and says so', () => {
+    // An unreadable ticket is an OCR problem, not an absent delivery. Excluding
+    // it would report "billed 24.6 but tickets account for 0" over a load that
+    // is sitting in the yard.
+    const decision = matchInvoiceLine(
+      invoiceLine({ description: GRAVEL, quantity: 24.6, unitRate: 18 }),
+      lineInputs([load({ id: 'unreadable', material: null })])
+    );
+
+    assert.equal(check(decision, 'ticketCoverage')?.passed, true);
+    assert.deepEqual(decision.ticketIds, ['unreadable']);
+    assert.match(
+      check(decision, 'ticketCoverage')?.detail ?? '',
+      /does not say what it was carrying/i
+    );
+  });
+
+  test('a load in an incomparable unit is not claimed by the line it could not cover', () => {
+    // It was counted as "available" before, so a resolution spent it — a load
+    // measured in cubic yards paid for a line billed in tonnes, invisibly.
+    const decision = matchInvoiceLine(
+      invoiceLine({ description: GRAVEL, quantity: 24.6, unitRate: 18 }),
+      lineInputs([load({ id: 'in-yards', unit: 'cy' })])
+    );
+
+    assert.equal(check(decision, 'ticketCoverage')?.passed, false);
+    assert.deepEqual(decision.ticketIds, []);
+  });
+
+  test('a ticket on this PO from another supplier is excluded and reported', () => {
+    const decision = matchInvoiceLine(
+      invoiceLine({ description: GRAVEL, quantity: 24.6, unitRate: 18 }),
+      lineInputs([load({ id: 'someone-else', supplierId: OTHER_SUPPLIER })])
+    );
+
+    assert.equal(check(decision, 'ticketCoverage')?.passed, false);
+    assert.deepEqual(decision.ticketIds, []);
+    assert.match(
+      check(decision, 'ticketCoverage')?.detail ?? '',
+      /belongs to another supplier/i
+    );
+  });
+
+  test('a ticket whose supplier could not be read is counted, and said so', () => {
+    // Dropping it reported "no delivery ticket accounts for this line" over a
+    // load that had plainly arrived — an OCR miss presented as a missing truck.
+    const decision = matchInvoiceLine(
+      invoiceLine({ description: GRAVEL, quantity: 24.6, unitRate: 18 }),
+      lineInputs([load({ id: 'no-supplier', supplierId: null })])
+    );
+
+    assert.equal(check(decision, 'ticketCoverage')?.passed, true);
+    assert.deepEqual(decision.ticketIds, ['no-supplier']);
+    assert.match(check(decision, 'ticketCoverage')?.detail ?? '', /does not name a supplier/i);
+  });
+
+  test('a confirmed alias makes a supplier wording count for the right line', () => {
+    const decision = matchInvoiceLine(
+      invoiceLine({ description: GRAVEL, quantity: 24.6, unitRate: 18 }),
+      {
+        ...lineInputs([load({ id: 'aliased', material: '3/4 CLEAR' })]),
+        aliases: [{ supplierId: SUPPLIER, aliasText: '3/4 CLEAR', productName: GRAVEL }],
+      }
+    );
+
+    assert.equal(check(decision, 'ticketCoverage')?.passed, true);
+    assert.deepEqual(decision.ticketIds, ['aliased']);
+  });
+
+  test('a reuse warning on the other product does not land on this line', () => {
+    // The sand load being spent says nothing about the gravel line, and a
+    // warning that is usually irrelevant is one people learn to click through.
+    const decision = matchInvoiceLine(
+      invoiceLine({ id: 'line-gravel', description: GRAVEL, quantity: 24.6, unitRate: 18 }),
+      lineInputs([
+        gravelLoad,
+        load({
+          id: 'sand-load',
+          material: SAND,
+          claim: {
+            invoiceLineId: 'some-other-line',
+            invoiceNumber: 'INV-1001',
+            lineNumber: 2,
+            claimedByName: 'Jane Doe',
+            claimedAt: new Date('2026-09-03T00:00:00Z'),
+          },
+        }),
+      ])
+    );
+
+    assert.equal(check(decision, 'ticketReuse')?.passed, true);
+    assert.equal(check(decision, 'ticketReuse')?.detail, 'No ticket on this line has been used to pay another invoice.');
+  });
+});
+
+/**
+ * Numbers a person has to read.
+ *
+ * A percentage against zero is Infinity, and "Infinity%" on the verification
+ * desk reads as a broken system rather than as the data problem it is.
+ */
+describe('differences against zero', () => {
+  const load = (overrides: Partial<DeliveredTicket> = {}): DeliveredTicket => ({
+    id: 'ticket-1',
+    ticketNumber: '88213',
+    poNumber: '482913',
+    quantity: 24.6,
+    unit: 'tonnes',
+    material: 'A Gravel 19mm',
+    supplierId: SUPPLIER,
+    claim: null,
+    ...overrides,
+  });
+
+  test('an order recorded at zero is explained, not printed as Infinity%', () => {
+    const decision = matchTicket(ticket(), inputs({ orders: [order({ quantity: 0 })] }));
+    const quantity = check(decision, 'quantity');
+
+    assert.equal(quantity?.passed, false);
+    assert.doesNotMatch(quantity?.detail ?? '', /Infinity/);
+    assert.match(quantity?.detail ?? '', /quantity of 0/i);
+  });
+
+  test('an agreed rate of zero is explained, not printed as Infinity%', () => {
+    const decision = matchInvoiceLine(invoiceLine(), {
+      ...inputs(),
+      agreedRates: [{ productName: 'A Gravel 19mm', rate: 0, unit: 'tonnes' }],
+      tickets: [load()],
+      competingLines: [],
+    });
+    const rate = check(decision, 'rate');
+
+    assert.equal(rate?.passed, false);
+    assert.doesNotMatch(rate?.detail ?? '', /Infinity/);
+  });
+
+  test('a line billing zero is explained, not printed as Infinity%', () => {
+    const decision = matchInvoiceLine(invoiceLine({ quantity: 0 }), {
+      ...inputs(),
+      agreedRates: [{ productName: 'A Gravel 19mm', rate: 18, unit: 'tonnes' }],
+      tickets: [load()],
+      competingLines: [],
+    });
+    const coverage = check(decision, 'ticketCoverage');
+
+    assert.equal(coverage?.passed, false);
+    assert.doesNotMatch(coverage?.detail ?? '', /Infinity/);
+  });
+});
+
+/**
+ * The agreed rate chosen when a product is priced more than once.
+ *
+ * Taking whichever row came back first measured a line billed per tonne against
+ * a price agreed per skid, and reported the result as a several-hundred-percent
+ * overcharge that nobody had committed.
+ */
+describe('choosing between agreed rates', () => {
+  const load = (): DeliveredTicket => ({
+    id: 'ticket-1',
+    ticketNumber: '88213',
+    poNumber: '482913',
+    quantity: 24.6,
+    unit: 'tonnes',
+    material: 'A Gravel 19mm',
+    supplierId: SUPPLIER,
+    claim: null,
+  });
+
+  test('the rate in a unit the line can be compared against is preferred', () => {
+    const decision = matchInvoiceLine(invoiceLine({ unitRate: 18 }), {
+      ...inputs(),
+      agreedRates: [
+        { productName: 'A Gravel 19mm', rate: 260, unit: 'skid' },
+        { productName: 'A Gravel 19mm', rate: 18, unit: 'tonnes' },
+      ],
+      tickets: [load()],
+      competingLines: [],
+    });
+
+    assert.equal(check(decision, 'rate')?.passed, true);
+    assert.equal(check(decision, 'rate')?.expected, 18);
+    assert.equal(decision.totals?.agreedRate, 18);
+  });
+
+  test('with no comparable unit the rate is still named, and not applied', () => {
+    const decision = matchInvoiceLine(invoiceLine({ unitRate: 18 }), {
+      ...inputs(),
+      agreedRates: [{ productName: 'A Gravel 19mm', rate: 260, unit: 'skid' }],
+      tickets: [load()],
+      competingLines: [],
+    });
+
+    assert.equal(check(decision, 'rate')?.passed, false);
+    assert.match(check(decision, 'rate')?.detail ?? '', /not checked/);
+    assert.equal(decision.totals?.agreedRate, null);
+    assert.equal(decision.totals?.rateUnitMismatch, true);
+  });
+});
+
+/**
+ * The numbers the invoice screens store on the line itself.
+ *
+ * They used to be computed a second time, by a looser comparison, so the line
+ * and the verdict beside it could disagree. They are a projection of the
+ * verdict now, and these tests pin the direction of each sign: positive means
+ * "billed more than agreed" and "billed more than arrived".
+ */
+describe('what the line columns are derived from', () => {
+  const load = (overrides: Partial<DeliveredTicket> = {}): DeliveredTicket => ({
+    id: 'ticket-1',
+    ticketNumber: '88213',
+    poNumber: '482913',
+    quantity: 24.6,
+    unit: 'tonnes',
+    material: 'A Gravel 19mm',
+    supplierId: SUPPLIER,
+    claim: null,
+    ...overrides,
+  });
+
+  const lineInputs = (overrides: Record<string, unknown> = {}) => ({
+    ...inputs(),
+    agreedRates: [{ productName: 'A Gravel 19mm', rate: 18, unit: 'tonnes' }],
+    tickets: [load()],
+    competingLines: [],
+    ...overrides,
+  });
+
+  test('a clean line carries no discrepancy at all', () => {
+    const decision = matchInvoiceLine(invoiceLine(), lineInputs());
+    assert.deepEqual(decision.totals, {
+      agreedRate: 18,
+      rateDiscrepancy: null,
+      quantityDiscrepancy: null,
+      rateUnitMismatch: false,
+    });
+  });
+
+  test('being over-billed on rate is positive', () => {
+    const decision = matchInvoiceLine(invoiceLine({ unitRate: 21.4 }), lineInputs());
+    assert.equal(decision.totals?.rateDiscrepancy, 3.4);
+  });
+
+  test('being under-billed on rate is negative, and still recorded', () => {
+    // It usually means the wrong rate or the wrong product, and the correction
+    // tends to arrive later.
+    const decision = matchInvoiceLine(invoiceLine({ unitRate: 15 }), lineInputs());
+    assert.equal(decision.totals?.rateDiscrepancy, -3);
+  });
+
+  test('being billed for more than arrived is positive', () => {
+    const decision = matchInvoiceLine(
+      invoiceLine({ quantity: 40 }),
+      lineInputs({ orders: [order({ quantity: 40 })] })
+    );
+    assert.equal(decision.totals?.quantityDiscrepancy, 15.4);
+  });
+
+  test('a difference inside tolerance is not a discrepancy', () => {
+    const decision = matchInvoiceLine(invoiceLine({ quantity: 24.9 }), lineInputs());
+    assert.equal(decision.totals?.quantityDiscrepancy, null);
+  });
+
+  test('a ticket verdict carries no line columns', () => {
+    assert.equal(matchTicket(ticket(), inputs()).totals, null);
   });
 });

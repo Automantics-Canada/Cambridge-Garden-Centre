@@ -1,9 +1,7 @@
 ﻿import { prisma } from '../../db/prisma.js';
-import { compareTwoStrings } from 'string-similarity';
 import { saveInvoiceImage } from '../../services/fileStorage.js';
 import { extractInvoiceFromUrl } from '../../services/extraction/extraction.service.js';
-import { compareUnits } from '../../lib/units.js';
-import { normalizeProductName } from '../../lib/productName.js';
+import { deriveLineItemFlag } from '../../lib/lineItemFlag.js';
 import {
   InvoiceStatus,
   SenderType,
@@ -215,47 +213,6 @@ export const INVOICE_DETAIL_INCLUDE = {
 
 
 /**
- * Normalizes product names for fuzzy matching.
- * e.g., "Type A Gravel" -> "a gravel"
- */
-/**
- * Shared with the alias writer in SupplierService. Both ends of an alias
- * lookup must normalise identically or every alias misses.
- */
-const normalizeString = normalizeProductName;
-
-
-/**
- * Agreed rate for a line, resolved through a recorded alias.
- *
- * An alias is a person's confirmed answer to "which of our products is this
- * supplier's wording?", so it is exact and beats the fuzzy fallback outright.
- * Returns null when nothing has been mapped, leaving the caller to fall back.
- */
-async function resolveRateByAlias<T extends { productName: string }>(
-  supplierId: string,
-  description: string,
-  rates: T[]
-): Promise<T | null> {
-  if (!supplierId || !description.trim()) return null;
-
-  const alias = await prisma.supplierProductAlias.findUnique({
-    where: {
-      supplierId_aliasText: {
-        supplierId,
-        aliasText: normalizeString(description),
-      },
-    },
-    select: { productName: true },
-  });
-
-  if (!alias) return null;
-
-  const target = normalizeString(alias.productName);
-  return rates.find(r => normalizeString(r.productName) === target) ?? null;
-}
-
-/**
  * Re-derives a line item's flag from what is currently recorded against it.
  *
  * Manual link and unlink handlers used to stamp a literal flag â€” `OK` on link,
@@ -266,6 +223,10 @@ async function resolveRateByAlias<T extends { productName: string }>(
  * `UNIT_MISMATCH` cannot be re-derived after the fact: like `RATE_UNKNOWN` it
  * leaves `negotiatedRate` null, and the schema keeps one flag per line rather
  * than a set. It is therefore carried over when it was already the verdict.
+ *
+ * The rule itself lives in `deriveLineItemFlag`, shared with the match engine's
+ * projection, because the two reaching different conclusions about the same
+ * line is the problem this whole change is about.
  */
 async function recomputeLineItemFlag(lineItemId: string): Promise<LineItemFlag> {
   const line = await prisma.invoiceLineItem.findUnique({
@@ -282,36 +243,125 @@ async function recomputeLineItemFlag(lineItemId: string): Promise<LineItemFlag> 
 
   if (!line) throw new Error(`Line item not found: ${lineItemId}`);
 
-  const flags: LineItemFlag[] = [];
-
-  if (!line.matchedOrderId) flags.push(LineItemFlag.NO_ORDER);
-  if (line.matchedTickets.length === 0) flags.push(LineItemFlag.NO_TICKET);
-  if (line.qtyDiscrepancy !== null) flags.push(LineItemFlag.QTY_MISMATCH);
-
-  if (line.rateDiscrepancy !== null) {
-    flags.push(LineItemFlag.RATE_MISMATCH);
-  } else if (line.negotiatedRate === null) {
-    flags.push(
-      line.flag === LineItemFlag.UNIT_MISMATCH
-        ? LineItemFlag.UNIT_MISMATCH
-        : LineItemFlag.RATE_UNKNOWN
-    );
-  }
-
-  const flag =
-    flags.length > 1 ? LineItemFlag.MULTIPLE_FLAGS
-    : flags.length === 1 ? flags[0]!
-    : LineItemFlag.OK;
+  const flag = deriveLineItemFlag({
+    hasOrder: line.matchedOrderId !== null,
+    ticketCount: line.matchedTickets.length,
+    hasQuantityDiscrepancy: line.qtyDiscrepancy !== null,
+    hasRateDiscrepancy: line.rateDiscrepancy !== null,
+    hasAgreedRate: line.negotiatedRate !== null,
+    // Carried over rather than re-derived: like RATE_UNKNOWN it leaves
+    // `negotiatedRate` null, so nothing stored on the row afterwards can tell
+    // the two apart. The engine says which it is when it writes the verdict.
+    rateUnitMismatch: line.flag === LineItemFlag.UNIT_MISMATCH,
+  });
 
   await prisma.invoiceLineItem.update({ where: { id: lineItemId }, data: { flag } });
   return flag;
 }
 
-function stringsMatchFuzzy(a: string, b: string): boolean {
-  const normA = normalizeString(a);
-  const normB = normalizeString(b);
-  const similarity = compareTwoStrings(normA, normB);
-  return similarity > 0.6 || normA.includes(normB) || normB.includes(normA);
+/**
+ * Re-extracting an invoice would have destroyed decisions somebody made.
+ *
+ * Carries a `code` so a route can say which failure this was, and
+ * `retryable: false` so the OCR worker does not spend three attempts on
+ * something no retry can fix.
+ */
+export class InvoiceLinesResolvedError extends Error {
+  readonly code = 'INVOICE_LINES_RESOLVED';
+  readonly retryable = false;
+  readonly status = 409;
+
+  constructor(message: string) {
+    super(message);
+    this.name = 'InvoiceLinesResolvedError';
+  }
+}
+
+/**
+ * Refuses to re-extract an invoice whose lines carry settled decisions.
+ *
+ * `processInvoiceOcr` deletes every line before writing the new ones, and both
+ * `MatchResult` and `TicketClaim` cascade with the line. So re-running OCR
+ * silently erased resolved verdicts — who approved what, and why — and
+ * released the loads those approvals had spent, which frees them to be paid
+ * for a second time on another invoice. That is precisely the failure the
+ * claim mechanism exists to prevent, so it is refused rather than reported
+ * afterwards.
+ *
+ * `force` is the deliberate way through: each verdict is reopened first, which
+ * writes an audit entry naming who did it and releases the claims in the open.
+ */
+async function refuseOrReleaseSettledLines(
+  invoiceId: string,
+  options: { force?: boolean; userId?: string }
+): Promise<void> {
+  const settled = await prisma.invoiceLineItem.findMany({
+    where: {
+      invoiceId,
+      OR: [{ matchResult: { resolution: { not: null } } }, { ticketClaims: { some: {} } }],
+    },
+    select: {
+      id: true,
+      lineNumber: true,
+      matchResult: { select: { id: true, resolution: true } },
+      _count: { select: { ticketClaims: true } },
+    },
+    orderBy: { lineNumber: 'asc' },
+  });
+
+  if (settled.length === 0) return;
+
+  const described = settled
+    .map((line) => {
+      const parts = [
+        line.matchResult?.resolution ? line.matchResult.resolution.toLowerCase() : null,
+        line._count.ticketClaims > 0
+          ? `${line._count.ticketClaims} claimed ticket${line._count.ticketClaims === 1 ? '' : 's'}`
+          : null,
+      ].filter(Boolean);
+      return `line ${line.lineNumber} (${parts.join(', ')})`;
+    })
+    .join('; ');
+
+  if (!options.force) {
+    throw new InvoiceLinesResolvedError(
+      `This invoice cannot be read again: ${described} already carry decisions somebody made. ` +
+        'Reopen them first if the extraction really needs to be replaced.'
+    );
+  }
+
+  if (!options.userId) {
+    throw new InvoiceLinesResolvedError(
+      'Re-reading an invoice with settled lines has to be attributed to somebody, ' +
+        'because reopening their decisions is recorded against a user.'
+    );
+  }
+
+  const { reopenMatchResult } = await import('../matching/resolveMatch.js');
+  for (const line of settled) {
+    if (!line.matchResult) continue;
+    await reopenMatchResult({
+      matchResultId: line.matchResult.id,
+      userId: options.userId,
+      note: 'Reopened automatically so this invoice could be read again.',
+      // Every line being reopened here is about to be deleted, and the lines
+      // replacing them are decided a moment later. Re-deciding each one on its
+      // way out is work thrown away.
+      recomputeOthers: false,
+    });
+  }
+
+  // A claim with no verdict behind it cannot be reopened, and deleting it
+  // silently is the data loss this function exists to stop.
+  const stranded = await prisma.ticketClaim.count({
+    where: { invoiceLineId: { in: settled.map((line) => line.id) } },
+  });
+  if (stranded > 0) {
+    throw new InvoiceLinesResolvedError(
+      `${stranded} ticket claim(s) on this invoice are not attached to a verdict that could be ` +
+        'reopened. Release them on the verification desk before re-reading the invoice.'
+    );
+  }
 }
 
 export const InvoiceService = {
@@ -385,12 +435,27 @@ export const InvoiceService = {
     return { invoice, ocrJob };
   },
 
-  async processInvoiceOcr(invoiceId: string) {
+  /**
+   * Reads an invoice and decides, line by line, whether it is safe to pay.
+   *
+   * `force` replaces an extraction whose lines somebody has already ruled on,
+   * reopening those decisions first and recording who asked for it. Without it
+   * such an invoice is refused, because re-reading destroys the decisions.
+   */
+  async processInvoiceOcr(
+    invoiceId: string,
+    options: { force?: boolean; userId?: string } = {}
+  ) {
     const invoice = await prisma.invoice.findUnique({
       where: { id: invoiceId },
       include: { ocrJobs: { orderBy: { startedAt: 'desc' }, take: 1 } },
     });
     if (!invoice) throw new Error('Invoice not found');
+
+    // Checked before the job is marked PROCESSING and before the model is
+    // called: refusing costs nothing, and an extraction that cannot be stored
+    // should not be paid for.
+    await refuseOrReleaseSettledLines(invoiceId, options);
 
     const ocrJob = invoice.ocrJobs[0];
     if (ocrJob) {
@@ -424,183 +489,36 @@ export const InvoiceService = {
 
       console.log(`[InvoiceService] OCR COMPLETE for Invoice ${invoiceId}. Final Supplier: ${updatedSupplierId}. Raw extracted name: "${extracted.supplierName}"`);
 
-        await prisma.invoiceLineItem.deleteMany({ where: { invoiceId } });
-        console.log(`[InvoiceService] Processing ${extracted.lineItems.length} line items for invoice ${invoiceId}`);
+      await prisma.invoiceLineItem.deleteMany({ where: { invoiceId } });
+      console.log(`[InvoiceService] Processing ${extracted.lineItems.length} line items for invoice ${invoiceId}`);
 
-        for (let i = 0; i < extracted.lineItems.length; i++) {
-          const item = extracted.lineItems[i];
-          if (!item) continue;
-          
-          // Normalize values to avoid null crashes on required DB fields
-          const description = item.description || 'Unknown Item';
-          const quantity = Number(item.quantity) || 0;
-          const unitRate = Number(item.unitPrice) || 0;
-          const lineTotal = Number(item.totalPrice) || (quantity * unitRate);
-          // A line whose unit could not be read is recorded as unknown, not as
-          // "each". `normaliseUnit` does not recognise "unknown", so the
-          // quantity check below refuses to compare and the line is flagged for
-          // a person â€” where defaulting to "each" made it silently comparable
-          // against any ticket also counted in each, and produced a confident
-          // verdict from a unit nobody had actually read.
-          const unit = item.unit ?? 'unknown';
+      // Pass one: write the lines exactly as they were read, and nothing more.
+      //
+      // Every line has to exist before any of them is judged, because two lines
+      // billing one PO contend for the same tickets and each verdict has to be
+      // able to see the other. Judging line 1 before line 2 was written let it
+      // go green on tickets line 2 also claimed.
+      const created: Array<{ id: string; description: string }> = [];
 
-        let matchedOrderId: string | null = null;
-        let matchedTicketIds: string[] = [];
-        let negotiatedRateVal: number | null = null;
-        let flags: LineItemFlag[] = [];
-        let rateDiscrepancy: number | null = null;
-        let qtyDiscrepancy: number | null = null;
+      for (let i = 0; i < extracted.lineItems.length; i++) {
+        const item = extracted.lineItems[i];
+        if (!item) continue;
 
+        // Normalize values to avoid null crashes on required DB fields
+        const description = item.description || 'Unknown Item';
+        const quantity = Number(item.quantity) || 0;
+        const unitRate = Number(item.unitPrice) || 0;
+        const lineTotal = Number(item.totalPrice) || (quantity * unitRate);
+        // A line whose unit could not be read is recorded as unknown, not as
+        // "each". `normaliseUnit` does not recognise "unknown", so the
+        // quantity check below refuses to compare and the line is flagged for
+        // a person â€” where defaulting to "each" made it silently comparable
+        // against any ticket also counted in each, and produced a confident
+        // verdict from a unit nobody had actually read.
+        const unit = item.unit ?? 'unknown';
         const linePo = item.poNumber || extracted.poNumber || null;
 
-        // --- MATCH 1: Invoice Line to Ticket ---
-        // Link the tickets carrying this PO, then check that what the tickets
-        // say was delivered is what the invoice is charging for.
-        //
-        // Tickets used to be attached and never looked at again. The ticket is
-        // the only independent record of what actually moved â€” the supplier
-        // writes the invoice, but the contractor signs the ticket â€” so an
-        // invoice that bills more than the tickets account for is the single
-        // most useful thing this system can catch.
-        let ticketedQuantity: number | null = null;
-        if (linePo) {
-          const matchingTickets = await prisma.ticket.findMany({
-            where: { poNumber: linePo, supplierId: updatedSupplierId },
-            select: { id: true, quantity: true, unit: true, material: true },
-          });
-
-          if (matchingTickets.length > 0) {
-            matchedTicketIds = matchingTickets.map(t => t.id);
-
-            // Only tickets recorded in the same unit as the invoice line can be
-            // summed against it. Mixing tonnes and cubic yards into one total
-            // would produce a confident, wrong number.
-            const comparable = matchingTickets.filter(
-              t => t.quantity !== null && compareUnits(unit, t.unit).comparable
-            );
-
-            if (comparable.length > 0) {
-              ticketedQuantity = comparable.reduce((sum, t) => sum + Number(t.quantity), 0);
-            } else {
-              console.warn(
-                `[InvoiceService] PO ${linePo}: ${matchingTickets.length} ticket(s) attached but ` +
-                `none are recorded in "${unit}", so the quantity was not checked.`
-              );
-            }
-          }
-        }
-
-        if (matchedTicketIds.length === 0) {
-          flags.push(LineItemFlag.NO_TICKET);
-        }
-
-        // --- MATCH 2: Invoice Line to Order ---
-        // Match 2: Match via PO number AND material name (fuzzy)
-        if (linePo) {
-          const potentialOrders = await prisma.order.findMany({
-            where: { poNumber: linePo, supplierId: updatedSupplierId },
-          });
-          
-          const orderMatch = potentialOrders.find(o => stringsMatchFuzzy(o.product ?? '', description ?? ''));
-
-          if (orderMatch) {
-            matchedOrderId = orderMatch.id;
-          } else {
-            flags.push(LineItemFlag.NO_ORDER);
-          }
-        } else {
-          flags.push(LineItemFlag.NO_ORDER);
-        }
-
-        // --- Quantity check ---
-        // Preference order: signed tickets first, then the order.
-        //
-        // The order is what was asked for; the tickets are what was received.
-        // Billing is supposed to follow what was received, so tickets win when
-        // they are usable. Previously only the order was checked, and only for
-        // over-billing â€” an invoice for less than was ordered passed silently,
-        // which hides a short delivery just as effectively.
-        const expectedQuantity =
-          ticketedQuantity !== null
-            ? ticketedQuantity
-            : matchedOrderId
-            ? Number((await prisma.order.findUnique({
-                where: { id: matchedOrderId },
-                select: { quantity: true },
-              }))?.quantity ?? Number.NaN)
-            : Number.NaN;
-
-        if (Number.isFinite(expectedQuantity) && expectedQuantity !== 0) {
-          const diff = quantity - expectedQuantity;
-          const tolerance = Math.abs(expectedQuantity) * 0.02; // 2% either way
-          if (Math.abs(diff) > tolerance) {
-            flags.push(LineItemFlag.QTY_MISMATCH);
-            qtyDiscrepancy = diff;
-          }
-        }
-
-        // --- MATCH 3: Rate Match ---
-        // 7.1 Match 3: Look up negotiated_rates table
-        const allRates = await prisma.negotiatedRate.findMany({
-          where: {
-            supplierId: updatedSupplierId,
-            effectiveFrom: { lte: new Date(updatedInvoice.invoiceDate) },
-            OR: [
-              { effectiveTo: null },
-              { effectiveTo: { gte: new Date(updatedInvoice.invoiceDate) } }
-            ]
-          },
-        });
-
-        // An alias recorded for this supplier is an exact, human-confirmed
-        // answer and always beats guessing at the product name.
-        const aliasRate = await resolveRateByAlias(updatedSupplierId, description, allRates);
-        const rateMatch = aliasRate ?? allRates.find(r => stringsMatchFuzzy(r.productName, description));
-
-        if (!rateMatch) {
-          flags.push(LineItemFlag.RATE_UNKNOWN);
-        } else {
-          // Both sides must be priced per the same unit before the numbers mean
-          // anything. Without this, $8.10/tonne against $9.10/ton reads as a
-          // clean ten percent overcharge that nobody committed.
-          const units = compareUnits(unit, rateMatch.unit);
-
-          if (!units.comparable) {
-            flags.push(LineItemFlag.UNIT_MISMATCH);
-            console.warn(
-              `[InvoiceService] Line "${description}": invoice unit "${unit}" and agreed rate ` +
-              `unit "${rateMatch.unit}" are not comparable (${units.reason}). Rate not applied.`
-            );
-          } else {
-            negotiatedRateVal = Number(rateMatch.rate);
-            const diff = unitRate - negotiatedRateVal;
-
-            // Recorded in both directions. Being under-billed is still a
-            // discrepancy worth seeing â€” it usually means the wrong rate or the
-            // wrong product, and the correction tends to arrive later.
-            if (Math.abs(diff) > 0.01) {
-              flags.push(LineItemFlag.RATE_MISMATCH);
-              rateDiscrepancy = diff;
-            }
-          }
-        }
-
-        // --- Final Flagging ---
-        // 7.2 Flag Definitions
-        let finalFlag: LineItemFlag = LineItemFlag.OK;
-        if (flags.length > 1) {
-          finalFlag = LineItemFlag.MULTIPLE_FLAGS;
-        } else if (flags.length === 1) {
-          finalFlag = flags[0] as LineItemFlag;
-        }
-
-        // --- Calculation ---
-        let approvedTotal: number | null = null;
-        if (negotiatedRateVal) {
-          approvedTotal = quantity * negotiatedRateVal;
-        }
-
-        await prisma.invoiceLineItem.create({
+        const row = await prisma.invoiceLineItem.create({
           data: {
             invoiceId,
             lineNumber: i + 1,
@@ -610,17 +528,47 @@ export const InvoiceService = {
             unit,
             unitRate,
             lineTotal,
-            matchedOrderId,
-            matchedTickets: {
-              connect: matchedTicketIds.map(id => ({ id }))
-            },
-            negotiatedRate: negotiatedRateVal,
-            rateDiscrepancy,
-            qtyDiscrepancy,
-            approvedTotal,
-            flag: finalFlag,
-          }
+            // Derived from what is true right now: no order, no ticket, no
+            // rate. If the pass below fails, that is what the line should
+            // still say — a line nothing has looked at must never be
+            // indistinguishable from one that cleared every check.
+            flag: deriveLineItemFlag({
+              hasOrder: false,
+              ticketCount: 0,
+              hasQuantityDiscrepancy: false,
+              hasRateDiscrepancy: false,
+              hasAgreedRate: false,
+              rateUnitMismatch: false,
+            }),
+          },
+          select: { id: true },
         });
+
+        created.push({ id: row.id, description });
+      }
+
+      // Pass two: the engine decides, and writes both its verdict and the
+      // line's own columns from that one decision.
+      //
+      // This used to be a second matcher living here, comparing product names
+      // at a 0.6 similarity score or on a substring — which makes "A Gravel"
+      // and "B Gravel" the same product, and "3/4 clear" the same as "3/4
+      // crusher run". It wrote `matchedOrderId`, `negotiatedRate` and the flag
+      // that the invoice screens show, and then the engine wrote a verdict that
+      // could say the opposite about the same line.
+      const { matchInvoiceLineById } = await import('../matching/matching.service.js');
+      for (const line of created) {
+        try {
+          await matchInvoiceLineById(line.id);
+        } catch (matchError) {
+          // Matching is advisory: a failure here must not undo an extraction
+          // that succeeded. The line keeps its unchecked flag and shows up on
+          // the desk as needing a person, which is the truth.
+          console.error(
+            `[Matching] Could not evaluate line "${line.description}" of invoice ${invoiceId}:`,
+            matchError
+          );
+        }
       }
 
       // --- Total Discrepancy Match ---
@@ -680,15 +628,9 @@ export const InvoiceService = {
         });
       }
 
-      // Decide, line by line, whether this invoice is backed by orders and by
-      // tickets. Advisory: it records verdicts and their evidence for the desk,
-      // and a failure must not undo a successful extraction.
-      try {
-        const { matchInvoiceById } = await import('../matching/matching.service.js');
-        await matchInvoiceById(invoiceId);
-      } catch (matchError) {
-        console.error(`[Matching] Could not evaluate invoice ${invoiceId}:`, matchError);
-      }
+      // The verdicts were written in pass two above, where their conclusions
+      // were also projected onto the line columns. Running the engine a second
+      // time here would only overwrite them with the same answer.
 
       return updatedInvoice;
     } catch (error: any) {
@@ -977,6 +919,12 @@ export const InvoiceService = {
    * been paid for. The engine would not be fooled (it gathers tickets by PO,
    * not through this link), but the person reading the line would be: the
    * NO_TICKET flag clears and the line looks backed.
+   *
+   * Note that this link lasts until the line is next evaluated. The engine now
+   * writes `matchedTickets` from the loads its verdict actually counted, so a
+   * recompute — a Spruce import, a ticket read, a resolution on the same PO —
+   * replaces what was set here. Settling the verdict on the desk is what makes
+   * a decision stick; this is a working note until then.
    */
   async linkTicketsToLineItem(lineItemId: string, ticketIds: string[], userId: string) {
     const claimed = await prisma.ticketClaim.findMany({

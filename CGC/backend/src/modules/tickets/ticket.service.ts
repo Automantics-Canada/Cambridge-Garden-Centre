@@ -262,72 +262,16 @@ export const TicketService = {
       const extracted = await extractTicketFromUrl(ticket.imageUrl);
 
       const finalPoNumber = extracted.poNumber || ticket.poNumber;
-      const isValidPo = !!(finalPoNumber && /^\d{6}$/.test(finalPoNumber));
 
-      let linkedOrderId: string | null = ticket.linkedOrderId;
-      let ticketStatus: TicketStatus = ticket.status;
-      let linkMethod: string | null = ticket.linkMethod;
-
-      // ONLY automatically link if the ticket is uploaded by a driver (has driverId)
-      if (ticketStatus === TicketStatus.UNLINKED && ticket.driverId) {
-        let matchedOrder = null;
-        let matchMethod = 'AUTO_PO';
-
-        if (isValidPo) {
-          // 1. Try to find the order by PO number that was assigned to this driver
-          const matchingOrders = await prisma.order.findMany({
-            where: {
-              poNumber: finalPoNumber as string,
-              driverId: ticket.driverId,
-            },
-          });
-
-          if (matchingOrders.length === 1) {
-            matchedOrder = matchingOrders[0];
-            matchMethod = 'AUTO_PO';
-          }
-        }
-
-        // There is deliberately no fallback here.
-        //
-        // This used to link the ticket to whichever delivery happened to be
-        // first in the driver's queue when the PO did not match, recorded as
-        // AUTO_DRIVER_ASSIGNED. That is a guess, and it was written to the
-        // database indistinguishably from a real PO match â€” so a ticket for one
-        // customer could end up as evidence against another customer's invoice,
-        // with nothing on screen to say it had been guessed.
-        //
-        // An unmatched ticket now stays UNLINKED and surfaces on the
-        // verification desk, which exists precisely for a human to resolve this.
-
-        if (matchedOrder) {
-          await prisma.ticketOrderMatch.upsert({
-            where: {
-              ticketId_orderId: {
-                ticketId: ticketId,
-                orderId: matchedOrder.id,
-              },
-            },
-            update: {},
-            create: {
-              ticketId: ticketId,
-              orderId: matchedOrder.id,
-              matchMethod: matchMethod,
-            },
-          });
-
-          linkedOrderId = matchedOrder.id;
-          ticketStatus = TicketStatus.LINKED;
-          linkMethod = 'AUTO';
-          console.log(`[TicketService] Automatically linked driver ticket ${ticketId} to assigned order ${matchedOrder.id} (method: ${matchMethod})`);
-        }
-      } else {
-        if (!ticket.driverId) {
-          console.log(`[TicketService] Ticket ${ticketId} was not uploaded by a driver. Skipping auto-linking.`);
-        } else if (ticketStatus !== TicketStatus.UNLINKED) {
-          console.log(`[TicketService] Ticket ${ticketId} is already linked. Skipping auto-linking.`);
-        }
-      }
+      // Nothing here links the ticket any more.
+      //
+      // This used to link a ticket to an order on PO plus driverId alone, and
+      // only for tickets a driver had uploaded. It checked no supplier, no
+      // product and no quantity, it wrote the link before the engine had seen
+      // the ticket at all, and a ticket that arrived by email, WhatsApp or a
+      // manual upload was never linked however cleanly it matched. The fields
+      // below are written first; `matchTicketById` then decides and, when the
+      // verdict is MATCHED, writes the link itself.
 
       // Find or create supplier if extracted
       let updatedSupplierId = ticket.supplierId;
@@ -355,9 +299,6 @@ export const TicketService = {
           poNumber: finalPoNumber,
           ticketNumber: extracted.ticketNumber || ticket.ticketNumber,
           ticketDate: extracted.ticketDate || ticket.ticketDate,
-          linkedOrderId,
-          status: ticketStatus,
-          linkMethod,
         },
       });
 
@@ -377,8 +318,21 @@ export const TicketService = {
       // records a verdict and its evidence for the desk — so a failure here
       // must not undo a successful extraction.
       try {
-        const { matchTicketById } = await import('../matching/matching.service.js');
+        const { matchTicketById, recomputeInvoiceLinesSafely } = await import(
+          '../matching/matching.service.js'
+        );
         await matchTicketById(ticketId);
+
+        // A load that has just been read changes what the invoice lines on its
+        // PO are covered by, and nothing else would ever look at them again: an
+        // invoice that arrived before its tickets stayed "no delivery ticket
+        // accounts for this line" permanently.
+        if (updatedTicket.poNumber) {
+          await recomputeInvoiceLinesSafely(
+            [updatedTicket.poNumber],
+            `ticket ${ticketId} read`
+          );
+        }
       } catch (matchError) {
         console.error(`[Matching] Could not evaluate ticket ${ticketId}:`, matchError);
       }
