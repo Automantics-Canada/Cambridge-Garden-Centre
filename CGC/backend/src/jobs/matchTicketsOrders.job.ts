@@ -1,6 +1,7 @@
 import cron from 'node-cron';
 import { prisma } from '../db/prisma.js';
 import { matchTicketById } from '../modules/matching/matching.service.js';
+import { buildInfo } from '../config/buildInfo.js';
 
 /**
  * A periodic sweep that re-asks the engine about tickets nobody has settled.
@@ -57,9 +58,17 @@ export const startMatchTicketsOrdersJob = () => {
         take: BATCH_SIZE,
       });
 
-      if (tickets.length === 0) return;
+      // Logged on every sweep, the empty ones included, and stamped with the
+      // build. Which code this cron is running is otherwise invisible: the
+      // worker service has no HTTP surface, and the version of this job that
+      // preceded it announced itself with a different line entirely. So the
+      // wording of this line, and the commit in it, is what tells somebody
+      // reading Railway logs whether the worker is on the deploy they expect.
+      console.log(
+        `[Cron] Ticket sweep (build ${buildInfo.commit}): ${tickets.length} unsettled ticket(s).`
+      );
 
-      console.log(`[Cron] Re-evaluating ${tickets.length} unsettled ticket(s).`);
+      if (tickets.length === 0) return;
       for (const ticket of tickets) {
         try {
           await matchTicketById(ticket.id);

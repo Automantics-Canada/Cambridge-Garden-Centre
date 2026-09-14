@@ -17,7 +17,10 @@ async function main() {
     await prisma.$connect();
     console.log(`Worker connected to the database in ${env.nodeEnv} mode.`);
 
-    const stop = startWorkers();
+    // `separate` so the heartbeat records which process did the work. An API
+    // still running the workers inline writes `inline` instead, and telling
+    // those two apart is most of the point when a deploy has half landed.
+    const stop = startWorkers('separate');
 
     // Railway sends SIGTERM on redeploy. Stopping the timers and closing the
     // pool lets an in-flight OCR job finish rather than being cut mid-write.
