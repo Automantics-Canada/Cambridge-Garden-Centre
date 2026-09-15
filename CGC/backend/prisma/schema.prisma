@@ -105,6 +105,11 @@ model Ticket {
   supplierId              String?            @db.Uuid
   supplierName            String?
   poNumber                String?
+  /// Ticket and PO numbers reduced to lower-case letters and digits, so search
+  /// finds "T-88213" from "T88213" or "#t 88213". A database trigger recomputes
+  /// it on every write (migration 20260915120000_ticket_number_search_key), so
+  /// anything the application writes here is discarded.
+  numberSearchKey         String?
   material                String?
   quantity                Decimal?           @db.Decimal
   unit                    String?

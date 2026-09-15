@@ -26,9 +26,10 @@ import { Skeleton } from '../../components/Skeleton';
 import Loader from '../../components/Loader';
 import { useIntervalRefresh } from '../../hooks/useIntervalRefresh';
 import { ticketThumbnailSrc } from '../../utils/ticketImage';
-import { EmptyState, Input, PageHeader, Select, StatusBadge } from '../../components/ui';
+import { Button, EmptyState, Input, PageHeader, Select, StatusBadge } from '../../components/ui';
 import { formatDate } from '../../lib/date';
 import { decideReviewCommit, reviewValuesFromTicket } from '../../lib/ticketReviewForm';
+import { narrowingTicketFilters, ticketsEmptyState } from '../../lib/ticketSearchEmptyState';
 import {
   getCachedSupplierOptions,
   getCachedTicketPage,
@@ -518,6 +519,27 @@ export default function TicketsPage() {
     }
   };
 
+  const emptyState = ticketsEmptyState({
+    search: debouncedSearch,
+    filters: narrowingTicketFilters({
+      activeTab,
+      supplierId,
+      supplierName: suppliers.find((s) => s.id === supplierId)?.name,
+      source,
+      startDate,
+      endDate,
+    }),
+  });
+
+  // Keeps the search term and drops everything that was hiding its matches.
+  const searchAllTickets = () => {
+    setActiveTab('ALL');
+    setSupplierId('');
+    setSource('');
+    setStartDate('');
+    setEndDate('');
+  };
+
   const orderSearchTimeoutRef = useRef(null);
 
   const searchOrders = async (query) => {
@@ -734,7 +756,17 @@ export default function TicketsPage() {
               {loading ? (
                 <TicketsTableSkeleton />
               ) : tickets.length === 0 ? (
-                <tr><td colSpan="8"><EmptyState title="No tickets match" message="Try another tab, search, or date range — or upload a ticket photo." /></td></tr>
+                <tr>
+                  <td colSpan="8">
+                    <EmptyState
+                      title={emptyState.title}
+                      message={emptyState.message}
+                      action={emptyState.offerSearchAll && (
+                        <Button size="sm" onClick={searchAllTickets}>Search all tickets</Button>
+                      )}
+                    />
+                  </td>
+                </tr>
               ) : (
                 tickets.map((ticket) => (
                   <tr key={ticket.id} className="hover:bg-ink/[0.03] transition-colors group">

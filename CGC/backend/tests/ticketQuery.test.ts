@@ -11,7 +11,38 @@
 import './setupEnv.js';
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { buildTicketWhere } from '../src/modules/tickets/ticket.service.js';
+import {
+  buildTicketWhere,
+  escapeLikePattern,
+  numberSearchKey,
+} from '../src/modules/tickets/ticket.service.js';
+
+describe('numberSearchKey', () => {
+  it('finds a number however its separators were typed', () => {
+    for (const typed of ['T-88213', 'T88213', 't 88213', '#T-88213', ' T.88213 ']) {
+      assert.equal(numberSearchKey(typed), 't88213', typed);
+    }
+    assert.equal(numberSearchKey('HBY 10512'), numberSearchKey('HBY-10512'));
+    assert.equal(numberSearchKey('#7387'), '7387');
+  });
+
+  it('is empty for a term with no letters or digits', () => {
+    assert.equal(numberSearchKey('#'), '');
+    assert.equal(numberSearchKey(' - / '), '');
+  });
+});
+
+describe('escapeLikePattern', () => {
+  it('turns LIKE wildcards into literal characters', () => {
+    assert.equal(escapeLikePattern('100%'), '100\\%');
+    assert.equal(escapeLikePattern('A_1'), 'A\\_1');
+    assert.equal(escapeLikePattern('C:\\scan'), 'C:\\\\scan');
+  });
+
+  it('leaves ordinary text alone', () => {
+    assert.equal(escapeLikePattern("19mm (3/4') Drainage Stone"), "19mm (3/4') Drainage Stone");
+  });
+});
 
 describe('buildTicketWhere', () => {
   it('is empty when no filters are supplied', () => {
@@ -49,13 +80,32 @@ describe('buildTicketWhere', () => {
   it('searches across the fields the UI offers', () => {
     const where = buildTicketWhere({ search: '  A-1234 ' });
     assert.equal(Array.isArray(where.OR), true);
-    assert.equal(where.OR.length, 5);
+    const [numberKey, ...literal] = [...where.OR].reverse();
+    assert.equal(literal.length, 5);
     // Trimmed once, at the boundary, so every branch searches the same term.
-    for (const clause of where.OR) {
+    for (const clause of literal) {
       const value = JSON.stringify(clause);
-      assert.ok(value.includes('A-1234'), value);
+      assert.ok(value.includes('"A-1234"'), value);
       assert.ok(!value.includes('  A-1234 '), 'search term must be trimmed');
     }
+    assert.deepEqual(numberKey, { numberSearchKey: { contains: 'a1234' } });
+  });
+
+  it('matches a ticket or PO number typed without its separators', () => {
+    const where = buildTicketWhere({ search: '#T 88213' });
+    assert.deepEqual(where.OR.at(-1), { numberSearchKey: { contains: 't88213' } });
+  });
+
+  it('searches for wildcard characters literally', () => {
+    const where = buildTicketWhere({ search: '100%' });
+    assert.deepEqual(where.OR[0], { ticketNumber: { contains: '100\\%', mode: 'insensitive' } });
+  });
+
+  it('does not search the number key for a term of only punctuation', () => {
+    // The key would be empty, and every ticket's key contains the empty string.
+    const where = buildTicketWhere({ search: '%' });
+    assert.equal(where.OR.length, 5);
+    assert.ok(!JSON.stringify(where.OR).includes('numberSearchKey'));
   });
 
   it('ignores a whitespace-only search rather than matching everything', () => {
