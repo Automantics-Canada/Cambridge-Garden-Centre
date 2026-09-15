@@ -53,6 +53,29 @@ export interface TicketFilters {
 }
 
 /**
+ * Makes a search term match only itself.
+ *
+ * Prisma's `contains` wraps the value in `%` and passes it to LIKE unescaped, so
+ * the term's own `%` and `_` acted as wildcards: searching "%" returned every
+ * ticket with any text on it. Backslash is Postgres's LIKE escape character.
+ */
+export function escapeLikePattern(term: string): string {
+  return term.replace(/[\\%_]/g, '\\$&');
+}
+
+/**
+ * A ticket or PO number reduced to lower-case letters and digits.
+ *
+ * People type a number the way the paper prints it and the extraction stores it
+ * the way it read it, so "T88213", "#t 88213" and "T-88213" must all find the
+ * same ticket. Mirrors the trigger that fills `Ticket.numberSearchKey` in
+ * migration 20260915120000_ticket_number_search_key; change both or neither.
+ */
+export function numberSearchKey(term: string): string {
+  return term.replace(/[^A-Za-z0-9]+/g, '').toLowerCase();
+}
+
+/**
  * Single source of truth for ticket filtering.
  *
  * The list query and the pagination count must apply identical predicates or
@@ -73,13 +96,17 @@ export function buildTicketWhere(filters?: TicketFilters) {
   }
 
   if (filters?.search && filters.search.trim()) {
-    const s = filters.search.trim();
+    const term = escapeLikePattern(filters.search.trim());
+    const key = numberSearchKey(filters.search);
     where.OR = [
-      { ticketNumber: { contains: s, mode: 'insensitive' } },
-      { poNumber: { contains: s, mode: 'insensitive' } },
-      { material: { contains: s, mode: 'insensitive' } },
-      { supplierName: { contains: s, mode: 'insensitive' } },
-      { supplier: { name: { contains: s, mode: 'insensitive' } } },
+      { ticketNumber: { contains: term, mode: 'insensitive' } },
+      { poNumber: { contains: term, mode: 'insensitive' } },
+      { material: { contains: term, mode: 'insensitive' } },
+      { supplierName: { contains: term, mode: 'insensitive' } },
+      { supplier: { name: { contains: term, mode: 'insensitive' } } },
+      // A term of only punctuation has no key. Searching the empty key would
+      // match every ticket, so it searches the literal fields alone.
+      ...(key ? [{ numberSearchKey: { contains: key } }] : []),
     ];
   }
 
