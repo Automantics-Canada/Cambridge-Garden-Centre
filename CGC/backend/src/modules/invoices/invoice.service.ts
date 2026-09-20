@@ -957,7 +957,11 @@ export const InvoiceService = {
       where: { id: lineItemId },
       data: {
         matchedTickets: {
-          set: ticketIds.map(id => ({ id }))
+          // `connect`, not `set`. One invoice line is commonly satisfied by
+          // several loads, and the desk links them one at a time -- `set`
+          // replaced the whole relation, so linking a second ticket silently
+          // dropped the first. Removing a ticket has its own endpoint.
+          connect: ticketIds.map(id => ({ id }))
         },
       },
       include: { invoice: true }

@@ -303,6 +303,27 @@ export default function VerificationDesk() {
   };
 
   const manualSearchTimeoutRef = useRef(null);
+  // Bumped every time the lookup panel is opened or closed, so a reply that
+  // arrives after the panel has moved on is dropped instead of drawn.
+  const manualSearchRunRef = useRef(0);
+
+  /**
+   * One panel serves every lookup: orders and tickets, one line after another.
+   * Its results are component state, so without this reset the last lookup's
+   * rows are still on screen when it reopens. A clerk who linked a ticket and
+   * then opened "Find order link" was shown the tickets they had just searched,
+   * sitting under an order heading and rendered by the order branch -- which is
+   * also why the rows appeared with raw ids instead of Spruce order numbers.
+   */
+  useEffect(() => {
+    manualSearchRunRef.current += 1;
+    if (manualSearchTimeoutRef.current) {
+      clearTimeout(manualSearchTimeoutRef.current);
+      manualSearchTimeoutRef.current = null;
+    }
+    setSearchResults([]);
+    setSearching(false);
+  }, [linkingLineItem]);
 
   const searchManualLinks = async (query) => {
     if (manualSearchTimeoutRef.current) {
@@ -315,16 +336,18 @@ export default function VerificationDesk() {
       return;
     }
 
+    const run = manualSearchRunRef.current;
     setSearching(true);
     manualSearchTimeoutRef.current = setTimeout(async () => {
       try {
         const endpoint = linkingLineItem.type === 'order' ? '/api/orders' : '/api/tickets';
         const res = await api.get(endpoint, { params: { search: query } });
+        if (manualSearchRunRef.current !== run) return;
         setSearchResults(res.data?.data || res.data || []);
       } catch (err) {
         console.error('Search error', err);
       } finally {
-        setSearching(false);
+        if (manualSearchRunRef.current === run) setSearching(false);
       }
     }, 300);
   };
