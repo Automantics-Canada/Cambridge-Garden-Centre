@@ -99,14 +99,14 @@ export default function Dashboard() {
           value={stats.pendingCount}
           tone={stats.pendingCount > 0 ? 'warn' : 'default'}
           hint="Invoices nobody has checked yet"
-          onClick={() => navigate('/dashboard/invoices')}
+          onClick={() => navigate('/dashboard/invoices?status=PENDING_REVIEW')}
         />
         <StatTile
           label="Disputed"
           value={stats.disputedCount}
           tone={stats.disputedCount > 0 ? 'bad' : 'default'}
           hint="Charges that don't match the agreed rate"
-          onClick={() => navigate('/dashboard/invoices')}
+          onClick={() => navigate('/dashboard/invoices?status=DISPUTED')}
         />
         <StatTile
           label="Processed this month"

@@ -57,15 +57,55 @@ export default function InvoicesPage() {
   const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef(null);
   const [suppliers, setSuppliers] = useState([]);
-  const [search, setSearch] = useState('');
+  const [search, setSearch] = useState(() => searchParams.get('q') || '');
   const debouncedSearch = useDebouncedValue(search, 350);
-  const [filters, setFilters] = useState({
-    supplierId: 'ALL',
-    senderType: 'ALL',
-    hasDiscrepancies: false,
-    dateStart: '',
-    dateEnd: ''
-  });
+
+  // Every filter lives in the query string, next to the tab, rather than in
+  // component state. A clerk opens an invoice from a filtered list and comes
+  // straight back with the browser's back button; component state does not
+  // survive that round trip and the list they returned to was the unfiltered
+  // one. A query string does survive it, and makes the view shareable.
+  const filters = useMemo(() => ({
+    supplierId: searchParams.get('supplier') || 'ALL',
+    senderType: searchParams.get('sender') || 'ALL',
+    hasDiscrepancies: searchParams.get('flagged') === '1',
+    dateStart: searchParams.get('from') || '',
+    dateEnd: searchParams.get('to') || '',
+  }), [searchParams]);
+
+  // `replace` throughout: a filter is an adjustment to the list being looked
+  // at, not a place to go back to. Pushing each one would bury the page the
+  // clerk actually came from under a dozen entries.
+  const updateFilters = useCallback((patch) => {
+    const merged = { ...filters, ...patch };
+    const next = new URLSearchParams(searchParams);
+    const put = (key, value, blank) => {
+      if (value === blank) next.delete(key);
+      else next.set(key, value);
+    };
+    put('supplier', merged.supplierId, 'ALL');
+    put('sender', merged.senderType, 'ALL');
+    put('from', merged.dateStart, '');
+    put('to', merged.dateEnd, '');
+    if (merged.hasDiscrepancies) next.set('flagged', '1');
+    else next.delete('flagged');
+    setSearchParams(next, { replace: true });
+  }, [filters, searchParams, setSearchParams]);
+
+  // The box stays on local state so typing is not throttled by the router;
+  // only the settled term is written to the URL.
+  useEffect(() => {
+    const current = searchParams.get('q') || '';
+    if (current === debouncedSearch) return;
+    const next = new URLSearchParams(searchParams);
+    if (debouncedSearch) next.set('q', debouncedSearch);
+    else next.delete('q');
+    setSearchParams(next, { replace: true });
+    // `searchParams` is deliberately not a dependency: this effect mirrors the
+    // search box into the URL, and re-running it whenever any other parameter
+    // changes would fight the filter writes above.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [debouncedSearch]);
 
   // Narrowing the result set can leave the current page out of range, so the
   // page resets whenever a filter changes. This is done during render rather
@@ -289,7 +329,7 @@ export default function InvoicesPage() {
             <label className="block text-[12.5px] font-medium text-muted mb-1.5">Supplier</label>
             <Select
               value={filters.supplierId}
-              onChange={e => setFilters({...filters, supplierId: e.target.value})}
+              onChange={e => updateFilters({ supplierId: e.target.value })}
             >
               <option value="ALL">All suppliers</option>
               {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
@@ -300,7 +340,7 @@ export default function InvoicesPage() {
             <label className="block text-[12.5px] font-medium text-muted mb-1.5">Type</label>
             <Select
               value={filters.senderType}
-              onChange={e => setFilters({...filters, senderType: e.target.value})}
+              onChange={e => updateFilters({ senderType: e.target.value })}
             >
               <option value="ALL">All types</option>
               <option value="SUPPLIER">Supplier</option>
@@ -319,7 +359,7 @@ export default function InvoicesPage() {
                 // greys out the impossible dates rather than accepting a range
                 // that can only ever return nothing.
                 max={filters.dateEnd || undefined}
-                onChange={e => setFilters({...filters, dateStart: e.target.value})}
+                onChange={e => updateFilters({ dateStart: e.target.value })}
               />
             </div>
             <div>
@@ -329,7 +369,7 @@ export default function InvoicesPage() {
                 className="tabular"
                 value={filters.dateEnd}
                 min={filters.dateStart || undefined}
-                onChange={e => setFilters({...filters, dateEnd: e.target.value})}
+                onChange={e => updateFilters({ dateEnd: e.target.value })}
               />
             </div>
           </div>
@@ -340,7 +380,7 @@ export default function InvoicesPage() {
               id="discrepancy"
               className="w-4 h-4 rounded border-line text-brand accent-brand"
               checked={filters.hasDiscrepancies}
-              onChange={e => setFilters({...filters, hasDiscrepancies: e.target.checked})}
+              onChange={e => updateFilters({ hasDiscrepancies: e.target.checked })}
             />
             <label htmlFor="discrepancy" className="text-sm font-medium text-ink">Flagged only</label>
           </div>
