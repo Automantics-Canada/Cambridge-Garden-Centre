@@ -1,6 +1,6 @@
 import type { Response } from 'express';
 import type { AuthRequest } from '../../middleware/authMiddleware.js';
-import { DriverService } from './driver.service.js';
+import { DriverService, assertCompanyNameForIndependent } from './driver.service.js';
 import { prisma } from '../../db/prisma.js';
 import { resolveDriverDeliveriesScope } from '../../services/authorization.js';
 import nodemailer from 'nodemailer';
@@ -70,6 +70,7 @@ export const createDriver = async (req: AuthRequest, res: Response) => {
     if (!name || !phone) {
       return res.status(400).json({ error: 'Name and phone are required' });
     }
+    assertCompanyNameForIndependent(type, companyName);
     const driver = await DriverService.createDriver({ 
       name, phone, email, password, type, companyName,
       ratePerDelivery: Number(ratePerDelivery || 0), 
@@ -153,7 +154,7 @@ export const createDriver = async (req: AuthRequest, res: Response) => {
 
     res.status(201).json(driver);
   } catch (error: any) {
-    res.status(500).json({ error: error.message });
+    res.status(error?.status ?? 500).json({ error: error.message });
   }
 };
 
@@ -169,7 +170,7 @@ export const updateDriver = async (req: AuthRequest, res: Response) => {
     const driver = await DriverService.updateDriver(id, data);
     res.json(driver);
   } catch (error: any) {
-    res.status(500).json({ error: error.message });
+    res.status(error?.status ?? 500).json({ error: error.message });
   }
 };
 
