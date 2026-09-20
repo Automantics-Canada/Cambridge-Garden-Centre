@@ -88,6 +88,16 @@ export default function DispatchBoard() {
     { enabled: !draggingOrderId }
   );
 
+  // An open row whose last order has just been unassigned has nothing left to
+  // show, so it closes itself rather than sitting open and empty.
+  useEffect(() => {
+    if (!expandedDriverId) return;
+    const expanded = board.drivers.find(d => d.id === expandedDriverId);
+    if (expanded && expanded.deliveries.length === 0) {
+      setExpandedDriverId(null);
+    }
+  }, [board, expandedDriverId]);
+
   const handleStatusUpdate = async (deliveryId, newStatus) => {
     // Optimistic UI update
     setBoard(prev => {
@@ -176,6 +186,10 @@ export default function DispatchBoard() {
       return;
     }
 
+    // The optimistic row needs an id before the server has given it one, and
+    // the same id afterwards to find the row again and swap the real one in.
+    const optimisticDeliveryId = `temp-${Date.now()}`;
+
     try {
       // Optimistic updates
       setExpandedDriverId(targetDriverId);
@@ -199,7 +213,7 @@ export default function DispatchBoard() {
                 : 0;
 
               updatedDeliveries.push({
-                id: `temp-${Date.now()}`,
+                id: optimisticDeliveryId,
                 orderId,
                 driverId: targetDriverId,
                 status: 'PLACED',
@@ -228,7 +242,36 @@ export default function DispatchBoard() {
         };
       });
 
-      await api.post('/api/dispatch/assign', { orderId, driverId: targetDriverId });
+      const { data: created } = await api.post('/api/dispatch/assign', {
+        orderId,
+        driverId: targetDriverId,
+      });
+
+      // Without this the row keeps its `temp-...` id until something else
+      // refetches the board, and the status dropdown next to it sends that id
+      // to /api/deliveries/:id/status. The column is a uuid, so Postgres threw
+      // on the way in and the clerk got a raw Prisma error for picking "Out
+      // for delivery" on an order they had just dragged across.
+      if (created?.id) {
+        setBoard(prev => ({
+          ...prev,
+          drivers: prev.drivers.map(d => d.id !== targetDriverId ? d : {
+            ...d,
+            deliveries: d.deliveries
+              .map(del => del.id !== optimisticDeliveryId ? del : {
+                ...del,
+                id: created.id,
+                status: created.status ?? del.status,
+                priority: created.priority ?? del.priority,
+              })
+              .sort((a, b) => (a.priority || 0) - (b.priority || 0)),
+          }),
+        }));
+      } else {
+        // No record came back, so nothing on screen can be trusted to match.
+        fetchBoard();
+      }
+
       toast.success(`Assigned ${orderObj.spruceOrderId} to ${driverObj.name}`);
     } catch (err) {
       console.error(err);
@@ -623,8 +666,15 @@ export default function DispatchBoard() {
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
-                              if (filteredDeliveries.length > 0) {
-                                setExpandedDriverId(isExpanded ? null : driver.id);
+                              // Closing always works. Guarding the whole toggle
+                              // on there being something to show left the row
+                              // stuck open once the driver's last order was
+                              // unassigned, answering the click to close it
+                              // with an error toast.
+                              if (isExpanded) {
+                                setExpandedDriverId(null);
+                              } else if (filteredDeliveries.length > 0) {
+                                setExpandedDriverId(driver.id);
                               } else {
                                 toast.error('No assignments assigned to this driver');
                               }
