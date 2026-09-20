@@ -4,6 +4,25 @@ import bcrypt from 'bcryptjs';
 
 import { GmailService } from '../../services/gmail.service.js';
 
+/**
+ * An independent driver works for a haulage company, and that company is who
+ * CGC is actually dealing with: it is what dispatch reads off the board and
+ * what an invoice is checked against. A driver marked INDEPENDENT with the
+ * field left blank looks like a CGC truck everywhere downstream, so the record
+ * is refused rather than saved half-formed.
+ */
+export function assertCompanyNameForIndependent(
+  type: string | null | undefined,
+  companyName: string | null | undefined
+): void {
+  if (type !== 'INDEPENDENT') return;
+  if (companyName && companyName.trim()) return;
+  throw Object.assign(
+    new Error('An independent driver needs the name of the company they drive for.'),
+    { status: 400 }
+  );
+}
+
 export const DriverService = {
   async getDrivers() {
     const today = new Date();
@@ -233,8 +252,18 @@ export const DriverService = {
         driverUpdateData.phone = phoneNormalized;
       }
       
+      // The payload may change only one of the two, so both are resolved
+      // against the stored record before the pair is judged.
+      const effectiveType = type !== undefined ? type : existingDriver.type;
+      const effectiveCompanyName =
+        companyName !== undefined ? companyName : existingDriver.companyName;
+      assertCompanyNameForIndependent(effectiveType, effectiveCompanyName);
+
       if (type !== undefined) driverUpdateData.type = type;
-      if (companyName !== undefined) driverUpdateData.companyName = type === 'INDEPENDENT' ? companyName : null;
+      if (companyName !== undefined || type !== undefined) {
+        driverUpdateData.companyName =
+          effectiveType === 'INDEPENDENT' ? effectiveCompanyName!.trim() : null;
+      }
       if (ratePerDelivery !== undefined) driverUpdateData.ratePerDelivery = ratePerDelivery;
       if (ratePerTrip !== undefined) driverUpdateData.ratePerTrip = ratePerTrip;
       if (active !== undefined) driverUpdateData.active = active;

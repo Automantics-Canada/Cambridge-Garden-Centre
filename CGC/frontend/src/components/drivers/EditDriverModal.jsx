@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { X, Eye, EyeOff } from 'lucide-react';
 import api from '../../api/axios';
-import { Button, Field, Input, Select } from '../ui';
+import { Button, Field, Input, ModalOverlay, Select } from '../ui';
 
 export default function EditDriverModal({ isOpen, onClose, onSuccess, driver }) {
   const [formData, setFormData] = useState({
@@ -49,6 +49,15 @@ export default function EditDriverModal({ isOpen, onClose, onSuccess, driver }) 
       return;
     }
 
+    // An independent driver drives for a haulage company, and that company is
+    // what dispatch and invoice checks read. Saving one without it produces a
+    // record that looks like a CGC truck.
+    if (formData.type === 'INDEPENDENT' && !formData.companyName.trim()) {
+      setError('An independent driver needs the name of the company they drive for.');
+      setLoading(false);
+      return;
+    }
+
     try {
       const payload = {
         name: formData.name,
@@ -78,7 +87,7 @@ export default function EditDriverModal({ isOpen, onClose, onSuccess, driver }) 
   if (!isOpen || !driver) return null;
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-scrim/50 backdrop-blur-[2px] transition-all">
+    <ModalOverlay>
       <div className="bg-surface rounded-card w-full max-w-md overflow-hidden shadow-lift border border-line animate-in fade-in zoom-in duration-200">
         <div className="flex justify-between items-center p-6 border-b border-line">
           <h2 className="text-xl font-bold text-ink">Edit driver</h2>
@@ -166,7 +175,7 @@ export default function EditDriverModal({ isOpen, onClose, onSuccess, driver }) 
           </Field>
 
           {formData.type === 'INDEPENDENT' && (
-            <Field label="Company name" htmlFor="edit-driver-company">
+            <Field label="Company name (required)" htmlFor="edit-driver-company">
               <Input
                 id="edit-driver-company"
                 type="text"
@@ -227,6 +236,6 @@ export default function EditDriverModal({ isOpen, onClose, onSuccess, driver }) 
           </div>
         </form>
       </div>
-    </div>
+    </ModalOverlay>
   );
 }

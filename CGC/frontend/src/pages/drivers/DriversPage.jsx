@@ -7,7 +7,7 @@ import EditDriverModal from '../../components/drivers/EditDriverModal';
 import { DriverCardSkeleton } from '../../components/Skeleton';
 import { FadeInUp, StaggerContainer, StaggerItem } from '../../components/Animated';
 import toast from 'react-hot-toast';
-import { Button, EmptyState, PageHeader } from '../../components/ui';
+import { Button, EmptyState, ModalOverlay, PageHeader } from '../../components/ui';
 
 export default function DriversPage() {
   const [drivers, setDrivers] = useState([]);
@@ -128,7 +128,7 @@ export default function DriversPage() {
       )}
 
       {deletingDriver && (
-        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-scrim/50 backdrop-blur-[2px] transition-all">
+        <ModalOverlay zIndexClass="z-[110]">
           <div className="bg-surface rounded-card w-full max-w-md overflow-hidden shadow-lift p-6 space-y-6 animate-in fade-in zoom-in duration-200 border border-line">
             <div className="flex flex-col items-center text-center space-y-3">
               <div className="w-12 h-12 rounded-pill bg-clay/14 text-clay flex items-center justify-center">
@@ -160,7 +160,7 @@ export default function DriversPage() {
               </Button>
             </div>
           </div>
-        </div>
+        </ModalOverlay>
       )}
     </div>
   );
