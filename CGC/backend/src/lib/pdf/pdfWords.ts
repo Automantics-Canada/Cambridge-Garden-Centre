@@ -24,7 +24,8 @@ export type SprucePdfErrorCode =
   | 'NO_TEXT_LAYER'
   | 'UNKNOWN_REPORT'
   | 'MISSING_HEADERS'
-  | 'NO_READABLE_ROWS';
+  | 'NO_READABLE_ROWS'
+  | 'ROW_COUNT_MISMATCH';
 
 export class SprucePdfError extends Error {
   readonly code: SprucePdfErrorCode;

@@ -173,6 +173,40 @@ function mergeStripe(stripe: BandedPage[]): Array<{ cells: Record<string, string
   return merged;
 }
 
+/**
+ * Refuses a stripe whose pages disagree about how many rows it holds.
+ *
+ * Every row prints a document number on the leftmost band and an item code or
+ * quantity on the next. If those counts differ, some half-row has nowhere
+ * correct to go, and any pairing — by height or by position — would hand one
+ * order's item or address to another. The whole report is refused: a gap on a
+ * delivery is noticed, a wrong address on one is not.
+ */
+function assertStripeRowCounts(stripe: BandedPage[]): void {
+  const left = stripe.filter(page => page.bandIndex === 0);
+  const middle = stripe.filter(page => page.bandIndex === 1);
+  if (left.length === 0 || middle.length === 0) return;
+
+  const documents = left
+    .flatMap(page => page.rows)
+    .filter(row => DOCUMENT_NUMBER_PATTERN.test(row.cells.documentNumber?.trim() ?? '')).length;
+  // A description alone is not a row: an overflowing one prints apart from
+  // its item code, a little above it.
+  const items = middle
+    .flatMap(page => page.rows)
+    .filter(row => row.cells.itemNumber?.trim() || parseSpruceNumber(row.cells.qty) !== null).length;
+
+  if (documents !== items) {
+    const pages = stripe.map(page => page.page.pageIndex + 1).join(', ');
+    throw new SprucePdfError(
+      'ROW_COUNT_MISMATCH',
+      `Pages ${pages} of this Sales Order Item Tracking report disagree about how many rows they hold ` +
+        `(${documents} orders on the left, ${items} items on the right), so addresses and items cannot be ` +
+        'paired safely. Export it again from Spruce.'
+    );
+  }
+}
+
 export function parseItemTrackingReport(pages: PdfTextPage[]): ParsedSpruceReport {
   const banded = pages.map(readPage).filter((page): page is BandedPage => page !== null);
 
@@ -188,11 +222,14 @@ export function parseItemTrackingReport(pages: PdfTextPage[]): ParsedSpruceRepor
   const unreadable: UnreadableSpruceRow[] = [];
 
   for (const stripe of groupIntoStripes(banded)) {
+    assertStripeRowCounts(stripe);
+
     for (const { cells, page, row } of mergeStripe(stripe)) {
       const documentNumber = cells.documentNumber?.trim();
       const product = cells.itemDesc?.trim();
       const quantity = parseSpruceNumber(cells.qty);
       const itemNumber = cells.itemNumber?.trim();
+      const poValue = parseSpruceNumber(cells.poValue);
 
       const hasDocumentNumber = Boolean(documentNumber && DOCUMENT_NUMBER_PATTERN.test(documentNumber));
       const hasLineData = Boolean(itemNumber || product || quantity !== null);
@@ -231,6 +268,10 @@ export function parseItemTrackingReport(pages: PdfTextPage[]): ParsedSpruceRepor
         ...(cells.vendor?.trim() ? { vendorName: cells.vendor.trim() } : {}),
         ...(cells.shippingAddress?.trim() ? { shippingAddress: cells.shippingAddress.trim() } : {}),
         ...(cells.orderNotes?.trim() ? { orderNotes: cells.orderNotes.trim() } : {}),
+        ...(cells.deliveryInstructions?.trim() ? { deliveryInstructions: cells.deliveryInstructions.trim() } : {}),
+        ...(cells.deliveryTruck?.trim() ? { deliveryTruck: cells.deliveryTruck.trim() } : {}),
+        ...(cells.vendorLocation?.trim() ? { vendorLocation: cells.vendorLocation.trim() } : {}),
+        ...(poValue !== null ? { poValue } : {}),
         source: { page, row },
       });
     }

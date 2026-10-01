@@ -41,6 +41,58 @@ export interface ParsedSpruceRow {
   vendorName?: string;
   shippingAddress?: string;
   orderNotes?: string;
+
+  // Order-level facts. Like `customerName`, each is repeated on every line of
+  // its order, and is absent wherever the report does not print it.
+
+  /** Spruce account code, e.g. `CASH` or `TWINCITY`. */
+  accountCode?: string;
+  /**
+   * The account's own name where the report prints one apart from the person,
+   * e.g. "Cash Sales" above "Dylan Budnick". Delivery report only.
+   */
+  accountName?: string;
+  /** As printed, extension included: `519-621-5491 EXT.1`. Delivery report only. */
+  phone?: string;
+  /** Delivery route code, e.g. `KITCH`. Often blank. Delivery report only. */
+  route?: string;
+  /** Who rang the order up. Order summary only. */
+  cashier?: string;
+  /**
+   * Spruce's own status word, as printed. The reports use different
+   * vocabularies — "Open" on the order summary, "Sched" on the delivery
+   * report — so this is kept raw rather than mapped onto ours.
+   */
+  spruceStatus?: string;
+  /** "SCH" where the order summary marks a scheduled delivery. */
+  deliveryFlag?: string;
+  /** Order total including tax. */
+  totalWithTax?: number;
+  /**
+   * The order summary's "Rem Dep" and "Remaining" columns, raw. What they mean
+   * is not confirmed: on the samples "Remaining" equals the pre-tax subtotal,
+   * and "Rem Dep" sometimes equals the total and sometimes neither. Stored as
+   * printed so the meaning can be settled later without re-reading reports.
+   */
+  remainingDeposit?: number;
+  remaining?: number;
+  /** Order-level gross margin, as a percentage (45.8 for "45.80%"). */
+  grossMarginPct?: number;
+  /** Free text for the driver. Item tracking report only. */
+  deliveryInstructions?: string;
+  deliveryTruck?: string;
+
+  // Line-level facts.
+
+  /** Selling price per unit. Order summary only. */
+  unitPrice?: number;
+  /** Cost per unit. Order summary only. */
+  unitCost?: number;
+  /** Where the vendor ships from. Item tracking report only. */
+  vendorLocation?: string;
+  /** Value of the whole PO, repeated on each of its lines. Item tracking only. */
+  poValue?: number;
+
   /** Where this came from, for error messages. Both 1-based. */
   source: { page: number; row: number };
 }

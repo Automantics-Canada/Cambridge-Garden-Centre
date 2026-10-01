@@ -229,6 +229,32 @@ describe('matchTicket', () => {
     assert.match(check(decision, 'po')?.detail ?? '', /six digit/i);
   });
 
+  test('an order with no order date is measured from its delivery date', () => {
+    // An order first seen on the delivery report: that report prints only
+    // when the order goes out, so it has no order date yet.
+    const undated = order({ orderDate: null, deliveryDate: new Date('2026-08-14T00:00:00Z') });
+
+    const byPo = matchTicket(ticket(), inputs({ orders: [undated] }));
+    assert.equal(byPo.status, 'MATCHED');
+    assert.equal(check(byPo, 'date')?.passed, true);
+
+    const withoutPo = matchTicket(ticket({ poNumber: null }), inputs({ orders: [undated] }));
+    assert.equal(withoutPo.orderId, 'order-1');
+  });
+
+  test('an order with no date at all is never assumed near, and is left to a person', () => {
+    const undated = order({ orderDate: null, deliveryDate: null });
+
+    const byPo = matchTicket(ticket(), inputs({ orders: [undated] }));
+    assert.equal(byPo.status, 'PARTIAL');
+    assert.equal(check(byPo, 'date')?.passed, false);
+    assert.match(check(byPo, 'date')?.detail ?? '', /no order or delivery date/);
+
+    // Without a PO the date is the evidence, and there is none.
+    const withoutPo = matchTicket(ticket({ poNumber: null }), inputs({ orders: [undated] }));
+    assert.equal(withoutPo.status, 'UNMATCHED');
+  });
+
   test('every decision carries its evidence', () => {
     const decision = matchTicket(ticket(), inputs());
     assert.ok(decision.checks.length > 0);

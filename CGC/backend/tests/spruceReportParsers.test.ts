@@ -101,6 +101,32 @@ describe('parseItemTrackingReport', () => {
     assert.ok(!rows.some(row => row.documentNumber.includes('Revision')));
   });
 
+  it('carries the instructions, truck and PO details the driver and the merge need', () => {
+    const { rows } = parseItemTrackingReport(itemTrackingReport());
+    const instructed = rows.find(r => r.itemNumber === 'BCAM48GG');
+    const ordered = rows.find(r => r.itemNumber === 'RETURNCOMM');
+
+    // The double space Spruce joins wrapped lines with is not part of the text.
+    assert.equal(instructed?.deliveryInstructions, 'CALL BEFORE ARRIVAL');
+    assert.equal(instructed?.deliveryTruck, 'TRI-AXLE');
+    assert.equal(ordered?.vendorLocation, 'Brantford');
+    assert.equal(ordered?.poValue, 1204.55);
+    assert.equal(rows.find(r => r.itemNumber === 'SOILGRDNA')?.deliveryInstructions, undefined);
+  });
+
+  it('refuses a stripe whose pages disagree about how many rows there are', () => {
+    // Pairing halves of rows that do not line up would hand one order's
+    // address or item to another. A gap is noticed; a wrong address is not.
+    const [left, middle, right] = itemTrackingReport();
+    const missingAnItem = page(1, middle!.runs.filter(r => r.y !== 9.28));
+
+    assert.throws(
+      () => parseItemTrackingReport([left!, missingAnItem, right!]),
+      (err: unknown) =>
+        err instanceof SprucePdfError && err.code === 'ROW_COUNT_MISMATCH' && /4 orders.*3 items/.test(err.message)
+    );
+  });
+
   it('refuses a report whose leading columns are missing', () => {
     const onlyBandTwo = [itemTrackingReport()[1]!];
 
@@ -174,6 +200,51 @@ describe('parseOrderSummaryReport', () => {
     assert.deepEqual(parseOrderSummaryReport(orderSummaryReport()).unreadable, []);
   });
 
+  it('copies the order row\'s own facts onto each of its lines', () => {
+    const { rows } = parseOrderSummaryReport(orderSummaryReport());
+    const unscheduled = rows.find(r => r.itemNumber === 'SOILGRDNA');
+    const scheduled = rows.find(r => r.itemNumber === 'BST24X24GR');
+
+    assert.equal(unscheduled?.accountCode, 'RIVERBEN01');
+    assert.equal(unscheduled?.cashier, 'TESTER');
+    assert.equal(unscheduled?.spruceStatus, 'Open');
+    assert.equal(unscheduled?.deliveryFlag, undefined);
+    assert.equal(unscheduled?.totalWithTax, 118.65);
+    assert.equal(unscheduled?.remainingDeposit, 0);
+    assert.equal(unscheduled?.remaining, 105);
+    assert.equal(unscheduled?.grossMarginPct, 100);
+
+    assert.equal(scheduled?.deliveryFlag, 'SCH');
+    assert.equal(scheduled?.totalWithTax, 1250);
+    assert.equal(scheduled?.remaining, 1106.19);
+    assert.equal(scheduled?.grossMarginPct, 42.1);
+  });
+
+  it('reads the order figures when the margin heading drops out of the heading row', () => {
+    // On the real report's last page the GM% heading prints a hair below its
+    // neighbours and is clustered on its own, leaving no band for the margin.
+    // The figures are placed by the percent sign instead, so none shifts.
+    const [only] = orderSummaryReport();
+    const withoutMarginHeading = page(0, only!.runs.filter(r => !(r.text === 'GM%' && r.y === 6.61)));
+    const { rows } = parseOrderSummaryReport([withoutMarginHeading]);
+    const soil = rows.find(r => r.itemNumber === 'SOILGRDNA');
+
+    assert.equal(soil?.totalWithTax, 118.65);
+    assert.equal(soil?.grossMarginPct, 100);
+    assert.equal(soil?.remaining, 105);
+  });
+
+  it('reads unit price and unit cost off each line', () => {
+    const { rows } = parseOrderSummaryReport(orderSummaryReport());
+
+    assert.equal(rows.find(r => r.itemNumber === 'SOILGRDNA')?.unitPrice, 35);
+    assert.equal(rows.find(r => r.itemNumber === 'SOILGRDNA')?.unitCost, 0);
+    assert.equal(rows.find(r => r.itemNumber === 'BSKID')?.unitPrice, 40);
+    assert.equal(rows.find(r => r.itemNumber === 'BSKID')?.unitCost, 40);
+    // Quantities received and sold sit left of the price; neither is read as it.
+    assert.equal(rows.find(r => r.itemNumber === 'BST24X24GR')?.unitPrice, undefined);
+  });
+
   it('refuses a report whose order headings sit above no item lines', () => {
     const headersOnly = [page(0, [
       run(1.0, 6.61, 'Order#'),
@@ -206,6 +277,60 @@ describe('parseDeliveryReport', () => {
     const { rows } = parseDeliveryReport(deliveryReport());
 
     assert.equal(rows[0]?.customerName, 'Priya Raman');
+    assert.equal(rows[0]?.accountName, 'Cash Sales');
+  });
+
+  it('reads its one date as the delivery date, because the report is filtered on it', () => {
+    // Orders keyed weeks earlier print the day they go out here. Read as the
+    // order date, it dated them all today and gave none a delivery date.
+    const { rows } = parseDeliveryReport(deliveryReport());
+
+    for (const row of rows) {
+      assert.equal(row.deliveryDateRaw, '09/02/26');
+      assert.equal(row.orderDateRaw, undefined);
+    }
+  });
+
+  it('reads the account, route, status, phone and total off the order row', () => {
+    const { rows } = parseDeliveryReport(deliveryReport());
+    const first = rows[0];
+    const second = rows.find(row => row.itemNumber === 'AGG01');
+
+    assert.equal(first?.accountCode, 'CASH');
+    assert.equal(first?.route, 'NORTH');
+    assert.equal(first?.spruceStatus, 'Sched');
+    assert.equal(first?.phone, '519-555-0128');
+    assert.equal(first?.totalWithTax, 176.28);
+
+    // A row without type and status gives no route to guess at.
+    assert.equal(second?.route, undefined);
+    assert.equal(second?.accountCode, undefined);
+    assert.equal(second?.totalWithTax, 2149.57);
+  });
+
+  it('keeps a phone extension that wraps onto the line below, and a bracketed area code', () => {
+    const { rows } = parseDeliveryReport([page(0, [
+      run(1.5, 5.53, '09/02/26 - 09/02/26 (Inv / Tkt / Ord)    Qty Branch'),
+      run(1.5, 8.72, '09/02/26'),
+      run(4.2, 8.72, '2608-700010'),
+      run(8.2, 8.72, 'Order'),
+      run(10.5, 8.72, 'Sched'),
+      run(16.4, 8.72, 'GOLFCLUB'),
+      run(21.4, 8.72, 'Fairway Golf Club'),
+      run(37.1, 8.72, '(519) 555-7719 '),
+      run(42.6, 8.72, '485.34'),
+      run(16.4, 9.63, '0'),
+      run(21.4, 9.63, 'Fairway Golf Club'),
+      run(37.1, 9.63, 'EXT.12'),
+      run(4.5, 11.38, 'SOILSCRNA'),
+      run(12.4, 11.38, 'Screened Soil Bulk'),
+      run(28.8, 11.38, '21.0000'),
+      run(31.3, 11.38, 'CY'),
+    ])]);
+
+    assert.equal(rows[0]?.phone, '(519) 555-7719 EXT.12');
+    assert.equal(rows[0]?.customerName, 'Fairway Golf Club');
+    assert.equal(rows[0]?.accountCode, 'GOLFCLUB');
   });
 
   it('joins a wrapped description', () => {
@@ -263,6 +388,7 @@ describe('parseDeliveryReport', () => {
     const { rows } = parseDeliveryReport(pages);
 
     assert.equal(rows[0]?.customerName, 'Cambridge Golf Course');
+    assert.equal(rows[0]?.phone, '519-555-0144 EXT.1');
   });
 
   it('refuses a report whose headings sit above no readable item lines', () => {
