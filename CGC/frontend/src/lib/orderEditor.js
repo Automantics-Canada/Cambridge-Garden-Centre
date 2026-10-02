@@ -91,3 +91,26 @@ export function spruceText(override, field) {
   if (field === 'deliveryType') return DELIVERY_TYPE_OPTIONS.find((option) => option.value === value)?.label ?? value;
   return value;
 }
+
+/** What today's upload changed on a field, if it did. `lineId` null for the order's own. */
+export function updateFor(order, field, lineId = null) {
+  return (order?.updates ?? []).find((update) => update.field === field && (update.lineId ?? null) === lineId) ?? null;
+}
+
+/** A line today's upload added, or took off the order. */
+export function lineUpdateFor(order, lineId) {
+  return updateFor(order, 'lineAdded', lineId) ?? updateFor(order, 'lineRemoved', lineId);
+}
+
+/** How the value before today's upload reads: "nothing" rather than blank. */
+export function wasText(update, field) {
+  return spruceText({ spruceValue: update?.oldValue }, field);
+}
+
+/** The note under a field today's upload changed. */
+export function updateNote(update, field) {
+  if (!update) return null;
+  if (update.field === 'lineAdded') return "Added by today's upload.";
+  if (update.field === 'lineRemoved') return "Not in today's upload: Spruce took this item off the order.";
+  return `Updated by today's upload (was ${wasText(update, field)}).`;
+}

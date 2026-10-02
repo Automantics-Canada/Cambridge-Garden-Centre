@@ -55,6 +55,13 @@ describe('wording', () => {
       .toBe('1 delivery for 8/14, 0 upcoming, 1 pickup.');
   });
 
+  it('counts the orders a later upload changed, when there are any', () => {
+    expect(summaryLine({ deliveries: 16, upcoming: 3, pickups: 5, updated: 2, dispatchDate: '2026-08-14' }))
+      .toBe('16 deliveries for 8/14, 3 upcoming, 5 pickups, 2 updated.');
+    expect(summaryLine({ deliveries: 16, upcoming: 3, pickups: 5, updated: 0, dispatchDate: '2026-08-14' }))
+      .toBe('16 deliveries for 8/14, 3 upcoming, 5 pickups.');
+  });
+
   it('names every flag, and an unknown one by its code rather than not at all', () => {
     expect(flagInfo('NO_ADDRESS')).toEqual({ label: 'No address', tone: 'bad' });
     expect(flagInfo('SOMETHING_NEW')).toEqual({ label: 'SOMETHING_NEW', tone: 'neutral' });

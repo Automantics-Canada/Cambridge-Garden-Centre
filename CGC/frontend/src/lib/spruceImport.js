@@ -101,9 +101,14 @@ const MISSING_EFFECT = {
   ITEM_TRACKING: 'addresses, delivery instructions and supplier POs will not be refreshed.',
 };
 
-/** "16 deliveries for 8/14, 3 upcoming, 5 pickups." */
+/**
+ * "16 deliveries for 8/14, 3 upcoming, 5 pickups, 2 updated." The updated
+ * count — orders already imported that Spruce has changed since — is only said
+ * when there are some, so the morning's first upload reads as before.
+ */
 export function summaryLine(summary) {
   const deliveries = `${summary.deliveries} ${summary.deliveries === 1 ? 'delivery' : 'deliveries'}`;
   const pickups = `${summary.pickups} ${summary.pickups === 1 ? 'pickup' : 'pickups'}`;
-  return `${deliveries} for ${shortDay(summary.dispatchDate)}, ${summary.upcoming} upcoming, ${pickups}.`;
+  const updated = summary.updated > 0 ? `, ${summary.updated} updated` : '';
+  return `${deliveries} for ${shortDay(summary.dispatchDate)}, ${summary.upcoming} upcoming, ${pickups}${updated}.`;
 }

@@ -8,6 +8,7 @@ import {
   stateFlags,
   type OrderFlag,
 } from '../import/mergeOrderFacts.js';
+import { NO_UPDATES, updatesForDay } from '../import/orderChanges.js';
 import {
   EditValidationError,
   columnToStored,
@@ -260,8 +261,14 @@ export async function resetOrderEdit(documentId: string, field: string, lineId: 
 /**
  * Everything the edit screen shows for one order. No prices or costs: the
  * screen is for what the driver needs, and Spruce owns the money.
+ *
+ * `updatedFields` and `updates` are what today's uploads changed (America/
+ * Toronto), each with what it was, so the screen can say "Updated by today's
+ * upload (was …)". A field the dispatcher has corrected is not among them.
+ *
+ * @param today 'YYYY-MM-DD' in the yard's timezone; for tests.
  */
-export async function getOrderForEditing(idOrNumber: string) {
+export async function getOrderForEditing(idOrNumber: string, today?: string) {
   const byNumber = /^\d{4}-\d{6}$/.test(idOrNumber);
   const document = await prisma.orderDocument.findUnique({
     where: byNumber ? { documentNumber: idOrNumber } : { id: idOrNumber },
@@ -299,7 +306,12 @@ export async function getOrderForEditing(idOrNumber: string) {
   });
   if (!document) throw new OrderEditError(404, 'That order is not in the system.');
 
-  return { ...document, addressSuggestion: await addressSuggestion(document) };
+  const [suggestion, changed] = await Promise.all([
+    addressSuggestion(document),
+    updatesForDay(prisma, [document.id], today),
+  ]);
+  const { updatedFields, updates } = changed.get(document.id) ?? NO_UPDATES;
+  return { ...document, addressSuggestion: suggestion, updatedFields, updates };
 }
 
 /**

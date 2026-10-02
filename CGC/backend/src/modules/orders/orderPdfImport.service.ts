@@ -205,7 +205,18 @@ interface DocumentResult {
   unchanged: number;
   absent: number;
   events: ProgressEvent[];
+  /** Stored lines this report printed, whether or not they changed. */
+  pairedIds: string[];
+  /** Lines this report added to the document. */
+  createdIds: string[];
 }
+
+/**
+ * Told, once a document's transaction has committed, which of its lines the
+ * report printed and which it created. The morning import uses it to tell a
+ * line Spruce took off an order from one the report merely left alone.
+ */
+export type DocumentObserver = (documentNumber: string, lines: { pairedIds: string[]; createdIds: string[] }) => void;
 
 /**
  * Imports one document inside its own transaction.
@@ -321,6 +332,8 @@ export async function importDocument(
     unchanged: 0,
     absent: plan.absentIds.length,
     events: [],
+    pairedIds: plan.paired.map(paired => paired.id),
+    createdIds: [],
   };
 
   for (const paired of plan.paired) {
@@ -373,6 +386,7 @@ export async function importDocument(
       },
     });
     result.events.push({ action: 'created', order: createdOrder });
+    result.createdIds.push(createdOrder.id);
     result.created++;
   }
 
@@ -418,7 +432,8 @@ export const OrderPdfImportService = {
   async applyReport(
     client: PrismaClient,
     report: Awaited<ReturnType<typeof parseSprucePdf>>,
-    jobId: string
+    jobId: string,
+    onDocument?: DocumentObserver
   ): Promise<ImportSummary> {
     let created = 0;
     let updated = 0;
@@ -482,6 +497,7 @@ export const OrderPdfImportService = {
           updated += result.updated;
           unchanged += result.unchanged;
           absent += result.absent;
+          onDocument?.(documentNumber, { pairedIds: result.pairedIds, createdIds: result.createdIds });
 
           // Collected only once the transaction has committed, for the same
           // reason the events below are.

@@ -91,3 +91,31 @@ export function stopSummary(delivery) {
     unit: sharedUnit ?? first?.unit ?? null,
   };
 }
+
+/** What each field Spruce can change is called on the screens. */
+export const CHANGE_FIELD_LABELS = {
+  customerName: 'Customer',
+  phone: 'Phone',
+  route: 'Route',
+  shippingAddress: 'Delivery address',
+  deliveryInstructions: 'Delivery instructions',
+  deliveryTruck: 'Truck needed',
+  deliveryDate: 'Delivery date',
+  deliveryType: 'Delivery type',
+  product: 'Item description',
+  quantity: 'Quantity',
+  lineAdded: 'Item added',
+  lineRemoved: 'Item removed',
+};
+
+export const changeFieldLabel = (field) => CHANGE_FIELD_LABELS[field] ?? field;
+
+/**
+ * The hover text of an order's "Updated" badge: which fields today's upload
+ * changed. Null when it changed none, and the badge is not shown.
+ */
+export function updatedTitle(order) {
+  const fields = order?.updatedFields ?? [];
+  if (fields.length === 0) return null;
+  return `Changed by today's upload: ${fields.map(changeFieldLabel).join(', ')}`;
+}

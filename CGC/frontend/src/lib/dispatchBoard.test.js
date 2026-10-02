@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { assignWarning, flagBadges, mergeUnassignedOrders, orderRef, stopSummary } from './dispatchBoard';
+import { assignWarning, flagBadges, mergeUnassignedOrders, orderRef, stopSummary, updatedTitle } from './dispatchBoard';
 
 describe('mergeUnassignedOrders', () => {
   it('returns unassigned deliveries to the dispatch pool', () => {
@@ -65,5 +65,21 @@ describe('stopSummary', () => {
   it('shows the line itself for a stop made before orders were dispatched whole', () => {
     const order = { spruceOrderId: 'OLD-1', product: 'Soil', quantity: '3', unit: 'CY' };
     expect(stopSummary({ order, document: null })).toBe(order);
+  });
+});
+
+describe('orders the reports changed today', () => {
+  it('names the changed fields under the Updated badge', () => {
+    expect(updatedTitle({ updatedFields: ['shippingAddress', 'quantity', 'lineAdded'] }))
+      .toBe("Changed by today's upload: Delivery address, Quantity, Item added");
+  });
+
+  it('shows no badge for an order nothing changed on, or a stop from before', () => {
+    expect(updatedTitle({ updatedFields: [] })).toBeNull();
+    expect(updatedTitle({ id: 'line-1', wholeOrder: false })).toBeNull();
+  });
+
+  it('names a field it has no word for by its code rather than not at all', () => {
+    expect(updatedTitle({ updatedFields: ['somethingNew'] })).toBe("Changed by today's upload: somethingNew");
   });
 });
