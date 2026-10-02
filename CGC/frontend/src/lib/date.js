@@ -56,4 +56,27 @@ export function formatDate(value, locale, options) {
   return date.toLocaleDateString(locale, options);
 }
 
+/**
+ * Format a calendar date (a `@db.Date` column such as an invoice date) for the
+ * UI, taking the same arguments as `formatDate`.
+ *
+ * The API sends calendar dates as UTC midnight, "2026-08-14T00:00:00.000Z".
+ * `formatDate` prints that in the viewer's zone, which in Ontario is Aug 13.
+ * The day is read off the string instead, as `formatDeliveryDay` does.
+ * Real timestamps (receivedAt, verifiedAt) still go through `formatDate`.
+ */
+export function formatCalendarDate(value, locale, options) {
+  let text = value;
+  if (value instanceof Date) {
+    text = Number.isNaN(value.getTime()) ? '' : value.toISOString();
+  }
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(text == null ? '' : String(text));
+  if (!match) return formatDate(null);
+  const [year, month, day] = match.slice(1).map(Number);
+  const date = new Date(year, month - 1, day);
+  // Reject days that roll over, such as 2026-02-30.
+  if (date.getMonth() !== month - 1 || date.getDate() !== day) return formatDate(null);
+  return formatDate(date, locale, options);
+}
+
 export default formatDate;

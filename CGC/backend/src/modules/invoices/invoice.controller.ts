@@ -3,7 +3,7 @@ import { v4 as uuidv4 } from 'uuid';
 import type { InvoiceStatus, SenderType } from '@prisma/client';
 import { InvoiceService } from './invoice.service.js';
 import { triggerOcrProcessing } from '../../services/ocrJobProcessor.js';
-import { parseQueryDate, QueryDateError } from '../../lib/queryDate.js';
+import { parseCalendarDateRange, QueryDateError } from '../../lib/queryDate.js';
 
 /** Signals a malformed query parameter, answered as 400 rather than 500. */
 export class BadRequestError extends Error {}
@@ -117,8 +117,8 @@ export const InvoiceController = {
 
       // An unparseable date must not silently widen the result set to the whole
       // ledger, so anything non-numeric/non-date is rejected rather than ignored.
-      const parsedStart = parseQueryDate(startDate, 'startDate', 'start');
-      const parsedEnd = parseQueryDate(endDate, 'endDate', 'end');
+      // The invoice date is a calendar date, so the range is too.
+      const { startDate: parsedStart, endDate: parsedEnd } = parseCalendarDateRange(startDate, endDate);
 
       const invoices = await InvoiceService.getInvoices({
         page: parseIntParam(page),
