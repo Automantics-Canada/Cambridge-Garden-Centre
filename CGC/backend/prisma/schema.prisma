@@ -78,6 +78,11 @@ model OrderDocument {
   lines           Order[]
   /// The stop that delivers this order, once it is dispatched.
   delivery        Delivery?
+  /// A dispatcher's note for the driver. Ours, not Spruce's: no report writes it.
+  dispatcherNotes String?
+  /// Fields a dispatcher has corrected. The columns above hold the corrected
+  /// value; each override keeps what Spruce says.
+  overrides       OrderOverride[]
 
   @@index([orderDate])
   @@index([deliveryDate])
@@ -137,6 +142,7 @@ model Order {
   driver         Driver?            @relation(fields: [driverId], references: [id])
   supplier       Supplier?          @relation(fields: [supplierId], references: [id])
   document       OrderDocument?     @relation(fields: [documentId], references: [id])
+  overrides      OrderOverride[]
   tickets        Ticket[]
   ticketMatches  TicketOrderMatch[]
   matchResults   MatchResult[]
@@ -381,6 +387,7 @@ model User {
   createdRates     NegotiatedRate[]
   spruceImports    SpruceImportJob[]
   importBatches    ImportBatch[]
+  orderOverrides   OrderOverride[]
   systemSettings   SystemSetting[]
   resolvedMatches  MatchResult[]
   ticketClaims     TicketClaim[]
@@ -484,6 +491,40 @@ model ImportBatch {
   documents    OrderDocument[]
 
   @@index([dispatchDate])
+}
+
+/// A dispatcher's correction to what Spruce says about an order.
+///
+/// Spruce is often incomplete — no address, a project name for one, a missing
+/// town — and it is the source of truth only for what it knows. The corrected
+/// value is written into the order's own column, so every screen and the
+/// driver's phone show it without knowing overrides exist. This row keeps
+/// Spruce's value beside it, and a later import that brings a different one
+/// records it here and puts the correction back rather than losing it.
+model OrderOverride {
+  id                String        @id @default(uuid()) @db.Uuid
+  documentId        String        @db.Uuid
+  /// The line corrected, or null for a field of the order itself.
+  lineId            String?       @db.Uuid
+  /// `lineId` or "ORDER", so one override per field and line is enforceable.
+  targetKey         String
+  field             String
+  /// The corrected value, as text.
+  value             String?
+  /// What Spruce says now. Updated by every import that prints the field.
+  spruceValue       String?
+  /// What Spruce said when the correction was made.
+  spruceValueAtEdit String?
+  /// Spruce has changed its mind since the correction; someone should look.
+  spruceChanged     Boolean       @default(false)
+  editedById        String        @db.Uuid
+  editedAt          DateTime      @default(now())
+  document          OrderDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  line              Order?        @relation(fields: [lineId], references: [id], onDelete: Cascade)
+  editedBy          User          @relation(fields: [editedById], references: [id])
+
+  @@unique([documentId, targetKey, field])
+  @@index([documentId])
 }
 
 /// One report within a batch, with everything read from it.
@@ -715,6 +756,8 @@ enum AuditActionType {
   INVOICE_LINE_OVERRIDDEN
   MATCH_RESOLVED
   MATCH_REOPENED
+  ORDER_EDITED
+  ORDER_EDIT_RESET
 }
 
 enum ImportStatus {

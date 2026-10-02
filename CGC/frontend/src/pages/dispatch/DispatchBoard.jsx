@@ -11,6 +11,7 @@ import { cn } from '../../lib/cn';
 import { isTerminal, statusErrorMessage, statusOptionsFor } from '../../lib/deliveryTransitions';
 import { formatQuantity } from '../../lib/quantity';
 import { assignWarning, deliveryTypeLabel, flagBadges, mergeUnassignedOrders, orderRef } from '../../lib/dispatchBoard';
+import OrderEditor from '../../components/orders/OrderEditor';
 
 /**
  * Who the order is for and where it goes, under the customer's name. A whole
@@ -47,11 +48,26 @@ function OrderLoad({ order }) {
 
 function OrderFlags({ order }) {
   const badges = flagBadges(order);
-  if (badges.length === 0) return null;
+  if (badges.length === 0 && !order?.edited) return null;
   return (
     <div className="flex flex-wrap gap-1.5 mt-1.5">
+      {order?.edited && <Badge tone="neutral">Edited</Badge>}
       {badges.map(({ flag, label, tone }) => <Badge key={flag} tone={tone}>{label}</Badge>)}
     </div>
+  );
+}
+
+/** Opens the editor for a whole order; stops made before have nothing to edit. */
+function EditButton({ order, onEdit }) {
+  if (!order?.wholeOrder) return null;
+  return (
+    <button
+      type="button"
+      onClick={(e) => { e.stopPropagation(); onEdit(order.id); }}
+      className="px-2.5 py-1.5 rounded-control border border-line text-ink hover:bg-brand/10 text-[12.5px] font-bold transition-colors bg-surface"
+    >
+      Edit
+    </button>
   );
 }
 
@@ -60,6 +76,8 @@ export default function DispatchBoard() {
   const [loading, setLoading] = useState(true);
   const [expandedDriverId, setExpandedDriverId] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
+  // The order open in the editor, by id.
+  const [editingOrderId, setEditingOrderId] = useState(null);
 
   const [draggingOrderId, setDraggingOrderId] = useState(null);
   const [draggingFromDriverId, setDraggingFromDriverId] = useState(null);
@@ -842,6 +860,7 @@ export default function DispatchBoard() {
                                                   </select>
 
 
+                                                  <EditButton order={del.order} onEdit={setEditingOrderId} />
                                                   <button
                                                     onClick={(e) => {
                                                       e.stopPropagation();
@@ -1018,35 +1037,38 @@ export default function DispatchBoard() {
 
                     {/* Assign Column */}
                     <td className="px-6 py-4 whitespace-nowrap text-right">
-                      <select
-                        className="border border-line rounded-control px-2 py-1 text-[12.5px] font-bold bg-surface focus:ring-1 focus:ring-brand outline-none cursor-pointer text-muted hover:border-brand/40 transition-all"
-                        onChange={(e) => {
-                          if (e.target.value) {
-                            const driverObj = board.drivers.find(d => d.id === e.target.value);
-                            const warning = assignWarning(order);
-                            if (driverObj && (!warning || window.confirm(warning))) {
-                              api.post('/api/dispatch/assign', { ...orderRef(order), driverId: driverObj.id })
-                                .then(() => {
-                                  toast.success(`Assigned ${order.spruceOrderId} to ${driverObj.name}`);
-                                  fetchBoard();
-                                })
-                                .catch((err) => {
-                                  toast.error(err.response?.data?.error || 'Failed to assign driver');
-                                  fetchBoard();
-                                });
+                      <div className="flex items-center justify-end gap-2">
+                        <EditButton order={order} onEdit={setEditingOrderId} />
+                        <select
+                          className="border border-line rounded-control px-2 py-1 text-[12.5px] font-bold bg-surface focus:ring-1 focus:ring-brand outline-none cursor-pointer text-muted hover:border-brand/40 transition-all"
+                          onChange={(e) => {
+                            if (e.target.value) {
+                              const driverObj = board.drivers.find(d => d.id === e.target.value);
+                              const warning = assignWarning(order);
+                              if (driverObj && (!warning || window.confirm(warning))) {
+                                api.post('/api/dispatch/assign', { ...orderRef(order), driverId: driverObj.id })
+                                  .then(() => {
+                                    toast.success(`Assigned ${order.spruceOrderId} to ${driverObj.name}`);
+                                    fetchBoard();
+                                  })
+                                  .catch((err) => {
+                                    toast.error(err.response?.data?.error || 'Failed to assign driver');
+                                    fetchBoard();
+                                  });
+                              }
                             }
-                          }
-                        }}
-                        onClick={(e) => e.stopPropagation()} // prevent row drag trigger on dropdown click
-                        value=""
-                      >
-                        <option value="" disabled>Quick Assign...</option>
-                        {board.drivers.map(d => (
-                          <option key={d.id} value={d.id}>
-                            {d.name} {d.type === 'INDEPENDENT' && d.companyName ? `(${d.companyName})` : ''}
-                          </option>
-                        ))}
-                      </select>
+                          }}
+                          onClick={(e) => e.stopPropagation()} // prevent row drag trigger on dropdown click
+                          value=""
+                        >
+                          <option value="" disabled>Quick Assign...</option>
+                          {board.drivers.map(d => (
+                            <option key={d.id} value={d.id}>
+                              {d.name} {d.type === 'INDEPENDENT' && d.companyName ? `(${d.companyName})` : ''}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
                     </td>
                   </tr>
                 ))
@@ -1055,6 +1077,16 @@ export default function DispatchBoard() {
           </table>
         </div>
       </div>
+
+      {editingOrderId && (
+        <OrderEditor
+          orderRef={editingOrderId}
+          onClose={() => setEditingOrderId(null)}
+          // A corrected date moves the order off this day; a filled address
+          // clears its flag. Either way the board is redrawn from the server.
+          onSaved={() => fetchBoard(true)}
+        />
+      )}
     </div>
   );
 }

@@ -19,6 +19,7 @@ import { cn } from '../../lib/cn';
 import { businessDayOffset, formatDate } from '../../lib/date';
 import { formatQuantity } from '../../lib/quantity';
 import SpruceImportPanel from '../../components/orders/SpruceImportPanel';
+import OrderEditor from '../../components/orders/OrderEditor';
 
 export default function OrdersPage() {
   const [searchParams] = useSearchParams();
@@ -30,6 +31,8 @@ export default function OrdersPage() {
   const fileInputRef = useRef(null);
   // The three Spruce reports are imported together; see SpruceImportPanel.
   const [showReportImport, setShowReportImport] = useState(false);
+  // An order opened from the import's list of orders needing attention.
+  const [editingOrder, setEditingOrder] = useState(null);
 
   const [search, setSearch] = useState('');
   const [buyerType, setBuyerType] = useState('');
@@ -182,12 +185,22 @@ export default function OrdersPage() {
         />
       </FadeInUp>
 
+      {editingOrder && (
+        <OrderEditor
+          orderRef={editingOrder}
+          onClose={() => setEditingOrder(null)}
+          onSaved={() => fetchOrders()}
+        />
+      )}
+
       {showReportImport && (
         <FadeInUp>
           <SpruceImportPanel
             onClose={() => setShowReportImport(false)}
             onImported={() => { if (page !== 1) setPage(1); else fetchOrders(); }}
-            onShowOrder={(documentNumber) => setSearch(documentNumber)}
+            // Most of a morning's issues are a missing address: open the
+            // order to fill it in, rather than only finding it.
+            onShowOrder={(documentNumber) => setEditingOrder(documentNumber)}
           />
         </FadeInUp>
       )}

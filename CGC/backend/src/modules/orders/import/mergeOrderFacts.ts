@@ -120,6 +120,9 @@ export const ORDER_FLAGS = [
   'EXTRACTION_CHECK_FAILED',
   'NOT_IN_LATEST_REPORT',
   'NOT_OPEN',
+  // A dispatcher corrected a field and Spruce has since said something else.
+  // Kept by the order's corrections, never decided by an import.
+  'SPRUCE_VALUE_CHANGED',
 ] as const;
 
 export type OrderFlag = (typeof ORDER_FLAGS)[number];

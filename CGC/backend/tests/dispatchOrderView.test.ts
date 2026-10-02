@@ -22,7 +22,9 @@ function document(lines: Array<Partial<DispatchDocument['lines'][number]>>): Dis
     deliveryInstructions: 'CUSTOMER ON SITE',
     deliveryType: 'SLINGER',
     flags: ['CUSTOMER_ON_SITE'],
+    dispatcherNotes: null,
     createdAt: new Date('2026-09-01T12:00:00Z'),
+    _count: { overrides: 0 },
     lines: lines.map((line, index) => ({
       id: `line-${index + 1}`,
       product: 'Synthetic Product',
