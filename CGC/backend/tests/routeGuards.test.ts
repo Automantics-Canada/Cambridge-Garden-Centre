@@ -103,6 +103,8 @@ describe('dispatch routes', () => {
   // Every dispatch route was reachable anonymously before stabilization.
   const routes: Array<[string, string]> = [
     ['get', '/'],
+    ['get', '/upcoming'],
+    ['get', '/pickups'],
     ['post', '/assign'],
     ['post', '/unassign'],
     ['post', '/reorder'],

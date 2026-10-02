@@ -22,12 +22,14 @@ import {
  * Prices and the order number are not here: Spruce owns them.
  *
  * @param orderRef the order's id or its Spruce number, e.g. 2608-712600
+ * @param readOnly show the order without letting it change, for a past day
  */
-export default function OrderEditor({ orderRef, onClose, onSaved }) {
+export default function OrderEditor({ orderRef, onClose, onSaved, readOnly = false }) {
   const [order, setOrder] = useState(null);
   const [form, setForm] = useState(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
+  const locked = saving || readOnly;
 
   const show = useCallback((loaded) => {
     setOrder(loaded);
@@ -85,14 +87,16 @@ export default function OrderEditor({ orderRef, onClose, onSaved }) {
       <div
         role="dialog"
         aria-modal="true"
-        aria-label={order ? `Edit order ${order.documentNumber}` : 'Edit order'}
+        aria-label={order ? `${readOnly ? 'View' : 'Edit'} order ${order.documentNumber}` : `${readOnly ? 'View' : 'Edit'} order`}
         className="bg-surface rounded-card w-full max-w-2xl max-h-[90vh] flex flex-col shadow-lift border border-line mx-4"
       >
         <div className="flex items-start justify-between gap-4 px-6 py-5 border-b border-line">
           <div>
             <h2 className="text-lg font-bold text-ink tabular">{order?.documentNumber ?? 'Order'}</h2>
             <p className="text-[13px] text-muted mt-0.5">
-              Changes here are kept when the Spruce reports are uploaded again.
+              {readOnly
+                ? 'This day is history, so the order can only be viewed here.'
+                : 'Changes here are kept when the Spruce reports are uploaded again.'}
             </p>
             {order?.flags?.length > 0 && (
               <div className="flex flex-wrap gap-1.5 mt-2">
@@ -115,11 +119,11 @@ export default function OrderEditor({ orderRef, onClose, onSaved }) {
                 const override = overrideFor(order, key);
                 const id = `order-edit-${key}`;
                 const control = type === 'deliveryType' ? (
-                  <Select id={id} aria-label={label} value={form.fields[key]} onChange={(e) => setField(key, e.target.value)} disabled={saving}>
+                  <Select id={id} aria-label={label} value={form.fields[key]} onChange={(e) => setField(key, e.target.value)} disabled={locked}>
                     {DELIVERY_TYPE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
                   </Select>
                 ) : multiline ? (
-                  <Textarea id={id} aria-label={label} rows={3} value={form.fields[key]} onChange={(e) => setField(key, e.target.value)} disabled={saving} />
+                  <Textarea id={id} aria-label={label} rows={3} value={form.fields[key]} onChange={(e) => setField(key, e.target.value)} disabled={locked} />
                 ) : (
                   <Input
                     id={id}
@@ -129,14 +133,14 @@ export default function OrderEditor({ orderRef, onClose, onSaved }) {
                     className={type === 'date' ? 'tabular w-48' : undefined}
                     value={form.fields[key]}
                     onChange={(e) => setField(key, e.target.value)}
-                    disabled={saving}
+                    disabled={locked}
                   />
                 );
 
                 return (
                   <Field key={key} htmlFor={id} label={<FieldLabel label={label} override={override} />}>
                     {control}
-                    {key === 'shippingAddress' && !form.fields.shippingAddress && order.addressSuggestion && (
+                    {!readOnly && key === 'shippingAddress' && !form.fields.shippingAddress && order.addressSuggestion && (
                       <button
                         type="button"
                         className="self-start text-[12.5px] font-semibold text-brand hover:underline"
@@ -145,7 +149,7 @@ export default function OrderEditor({ orderRef, onClose, onSaved }) {
                         Use this account&apos;s last address: {order.addressSuggestion.address}
                       </button>
                     )}
-                    <SpruceNote override={override} field={key} onReset={() => reset(key)} disabled={saving} />
+                    <SpruceNote override={override} field={key} onReset={() => reset(key)} disabled={saving} readOnly={readOnly} />
                   </Field>
                 );
               })}
@@ -156,7 +160,7 @@ export default function OrderEditor({ orderRef, onClose, onSaved }) {
                   rows={2}
                   value={form.dispatcherNotes}
                   onChange={(e) => setForm((current) => ({ ...current, dispatcherNotes: e.target.value }))}
-                  disabled={saving}
+                  disabled={locked}
                 />
               </Field>
 
@@ -177,7 +181,7 @@ export default function OrderEditor({ orderRef, onClose, onSaved }) {
                             aria-label={`Description of ${line.spruceItemNumber ?? 'item'}`}
                             value={form.lines[line.id]?.product ?? ''}
                             onChange={(e) => setLine(line.id, 'product', e.target.value)}
-                            disabled={saving}
+                            disabled={locked}
                           />
                           <Input
                             aria-label={`Quantity of ${line.spruceItemNumber ?? 'item'}`}
@@ -185,12 +189,12 @@ export default function OrderEditor({ orderRef, onClose, onSaved }) {
                             inputMode="decimal"
                             value={form.lines[line.id]?.quantity ?? ''}
                             onChange={(e) => setLine(line.id, 'quantity', e.target.value)}
-                            disabled={saving}
+                            disabled={locked}
                           />
                           <span className="self-center text-[13px] text-muted w-12">{line.unit}</span>
                         </div>
-                        <SpruceNote override={productOverride} field="product" onReset={() => reset('product', line.id)} disabled={saving} />
-                        <SpruceNote override={quantityOverride} field="quantity" onReset={() => reset('quantity', line.id)} disabled={saving} />
+                        <SpruceNote override={productOverride} field="product" onReset={() => reset('product', line.id)} disabled={saving} readOnly={readOnly} />
+                        <SpruceNote override={quantityOverride} field="quantity" onReset={() => reset('quantity', line.id)} disabled={saving} readOnly={readOnly} />
                       </div>
                     );
                   })}
@@ -201,10 +205,16 @@ export default function OrderEditor({ orderRef, onClose, onSaved }) {
         </div>
 
         <div className="flex justify-end gap-3 px-6 py-4 border-t border-line">
-          <Button onClick={onClose} disabled={saving}>Cancel</Button>
-          <Button variant="primary" onClick={save} disabled={!order || saving}>
-            {saving ? 'Saving…' : 'Save changes'}
-          </Button>
+          {readOnly ? (
+            <Button onClick={onClose}>Close</Button>
+          ) : (
+            <>
+              <Button onClick={onClose} disabled={saving}>Cancel</Button>
+              <Button variant="primary" onClick={save} disabled={!order || saving}>
+                {saving ? 'Saving…' : 'Save changes'}
+              </Button>
+            </>
+          )}
         </div>
       </div>
     </ModalOverlay>
@@ -221,7 +231,7 @@ function FieldLabel({ label, override }) {
 }
 
 /** What Spruce says beside a correction, and the way back to it. */
-function SpruceNote({ override, field, onReset, disabled }) {
+function SpruceNote({ override, field, onReset, disabled, readOnly }) {
   if (!override) return null;
   return (
     <div className="flex flex-wrap items-center gap-2 text-[12.5px]">
@@ -229,14 +239,16 @@ function SpruceNote({ override, field, onReset, disabled }) {
         {override.spruceChanged ? 'Spruce changed this since your edit, to ' : 'Spruce has '}
         {spruceText(override, field)}.
       </span>
-      <button
-        type="button"
-        className="inline-flex items-center gap-1 font-semibold text-brand hover:underline disabled:opacity-50"
-        onClick={onReset}
-        disabled={disabled}
-      >
-        <RotateCcw size={12} /> Reset to Spruce value
-      </button>
+      {!readOnly && (
+        <button
+          type="button"
+          className="inline-flex items-center gap-1 font-semibold text-brand hover:underline disabled:opacity-50"
+          onClick={onReset}
+          disabled={disabled}
+        >
+          <RotateCcw size={12} /> Reset to Spruce value
+        </button>
+      )}
     </div>
   );
 }
