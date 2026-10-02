@@ -14,6 +14,7 @@ import {
 } from './matchEngine.js';
 import { resolveTolerances, type Tolerances } from './tolerances.js';
 import { deriveLineItemFlag } from '../../lib/lineItemFlag.js';
+import { onSamePo, poKey } from './poKey.js';
 
 /**
  * Runs the match engine against stored rows and records what it decided.
@@ -46,7 +47,7 @@ import { deriveLineItemFlag } from '../../lib/lineItemFlag.js';
  */
 
 /** Bump when the cascade changes, so old verdicts can be told apart. */
-export const ENGINE_VERSION = 3;
+export const ENGINE_VERSION = 4;
 
 /**
  * `matchMethod` recorded for a link the engine made.
@@ -74,6 +75,23 @@ function toNumber(value: Decimalish): number | null {
   if (value === null || value === undefined) return null;
   const parsed = typeof value === 'number' ? value : Number(value);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+/**
+ * Rows whose stored PO could be this one, for a `where: { OR: [...] }`.
+ *
+ * POs are compared on a key (poKey.ts), but the column holds whatever was
+ * printed or typed: `2608-355356`, `PO# 2608-355356`, `355356`. Every one of
+ * those spellings contains the six digit suffix, so the database is asked for
+ * that — plus the exact text, so a value that is not a PO in either form still
+ * finds its exact twin as it always did. This is deliberately wider than a
+ * match; the engine, or the filter beside each caller, narrows it on the key.
+ */
+function poNumberConditions(poNumber: string): Array<{ poNumber: string | { contains: string } }> {
+  const conditions: Array<{ poNumber: string | { contains: string } }> = [{ poNumber }];
+  const key = poKey(poNumber);
+  if (key) conditions.push({ poNumber: { contains: key.suffix } });
+  return conditions;
 }
 
 async function loadTolerances(): Promise<Tolerances> {
@@ -109,7 +127,7 @@ async function loadCandidateOrders(
 ): Promise<CandidateOrder[]> {
   const where: Prisma.OrderWhereInput[] = [];
 
-  if (poNumber) where.push({ poNumber });
+  if (poNumber) where.push(...poNumberConditions(poNumber));
 
   if (supplierId && date) {
     const from = new Date(date.getTime() - windowDays * 86_400_000);
@@ -175,22 +193,25 @@ async function loadCompetingLines(
 
   const rows = await prisma.invoiceLineItem.findMany({
     where: {
-      poNumber,
       invoiceId: { not: thisLine.invoiceId },
       ...(supplierId ? { invoice: { supplierId } } : {}),
-      // A settled line is not contention: it has either claimed its tickets,
-      // in which case ticketReuse reports it, or been rejected.
-      OR: [{ matchResult: null }, { matchResult: { resolution: null } }],
+      AND: [
+        { OR: poNumberConditions(poNumber) },
+        // A settled line is not contention: it has either claimed its tickets,
+        // in which case ticketReuse reports it, or been rejected.
+        { OR: [{ matchResult: null }, { matchResult: { resolution: null } }] },
+      ],
     },
     select: {
       id: true,
+      poNumber: true,
       lineNumber: true,
       invoice: { select: { invoiceNumber: true, invoiceDate: true } },
     },
     take: 20,
   });
 
-  return rows.map((row) => ({
+  return rows.filter((row) => onSamePo(row.poNumber, poNumber)).map((row) => ({
     invoiceLineId: row.id,
     invoiceNumber: row.invoice.invoiceNumber,
     lineNumber: row.lineNumber,
@@ -485,13 +506,16 @@ export async function matchInvoiceLineById(lineId: string): Promise<MatchDecisio
     line.poNumber
       ? prisma.ticket.findMany({
           where: {
-            poNumber: line.poNumber,
-            // A ticket whose supplier OCR could not read used to be dropped
-            // here, and the line then reported "no delivery ticket accounts for
-            // this line" over a load that had plainly arrived. Both are loaded
-            // and the engine decides: a different supplier is excluded with a
-            // reason, an unknown one is counted and said so.
-            ...(supplierId ? { OR: [{ supplierId }, { supplierId: null }] } : {}),
+            AND: [
+              // Every spelling of this PO; the engine keeps those on its key.
+              { OR: poNumberConditions(line.poNumber) },
+              // A ticket whose supplier OCR could not read used to be dropped
+              // here, and the line then reported "no delivery ticket accounts
+              // for this line" over a load that had plainly arrived. Both are
+              // loaded and the engine decides: a different supplier is excluded
+              // with a reason, an unknown one is counted and said so.
+              ...(supplierId ? [{ OR: [{ supplierId }, { supplierId: null }] }] : []),
+            ],
           },
           select: {
             id: true,
@@ -600,6 +624,30 @@ const RECOMPUTE_PO_LIMIT = 200;
 const RECOMPUTE_SUBJECT_LIMIT = 500;
 
 /**
+ * Whether a stored PO is any of these. A Spruce import touches
+ * `2608-355356`; the ticket that load arrived on may say `355356` or
+ * `PO# 2608-355356`, and it is exactly the one that needs re-deciding.
+ */
+function onAnyOf(stored: string | null, poNumbers: string[]): boolean {
+  return poNumbers.some((po) => onSamePo(stored, po));
+}
+
+/** Unresolved invoice lines carrying any spelling of these POs. */
+async function loadUnsettledLinesOnPos(poNumbers: string[]): Promise<Array<{ id: string }>> {
+  const rows = await prisma.invoiceLineItem.findMany({
+    where: {
+      AND: [
+        { OR: poNumbers.flatMap(poNumberConditions) },
+        { OR: [{ matchResult: null }, { matchResult: { resolution: null } }] },
+      ],
+    },
+    select: { id: true, poNumber: true },
+    take: RECOMPUTE_SUBJECT_LIMIT,
+  });
+  return rows.filter((row) => onAnyOf(row.poNumber, poNumbers));
+}
+
+/**
  * POs a recompute is currently running for, in this process.
  *
  * The paths that trigger a recompute can reach each other — resolving a line
@@ -632,27 +680,24 @@ export async function recomputeForPoNumbers(
 
   for (const po of unique) recomputing.add(po);
   try {
-    const tickets = await prisma.ticket.findMany({
-      where: {
-        poNumber: { in: unique },
-        OR: [{ matchResult: null }, { matchResult: { resolution: null } }],
-      },
-      select: { id: true },
-      take: RECOMPUTE_SUBJECT_LIMIT,
-    });
+    const tickets = (
+      await prisma.ticket.findMany({
+        where: {
+          AND: [
+            { OR: unique.flatMap(poNumberConditions) },
+            { OR: [{ matchResult: null }, { matchResult: { resolution: null } }] },
+          ],
+        },
+        select: { id: true, poNumber: true },
+        take: RECOMPUTE_SUBJECT_LIMIT,
+      })
+    ).filter((ticket) => onAnyOf(ticket.poNumber, unique));
 
     for (const ticket of tickets) {
       await matchTicketById(ticket.id);
     }
 
-    const lines = await prisma.invoiceLineItem.findMany({
-      where: {
-        poNumber: { in: unique },
-        OR: [{ matchResult: null }, { matchResult: { resolution: null } }],
-      },
-      select: { id: true },
-      take: RECOMPUTE_SUBJECT_LIMIT,
-    });
+    const lines = await loadUnsettledLinesOnPos(unique);
 
     for (const line of lines) {
       await matchInvoiceLineById(line.id);
@@ -673,14 +718,7 @@ export async function recomputeInvoiceLinesForPoNumbers(poNumbers: string[]): Pr
 
   for (const po of unique) recomputing.add(po);
   try {
-    const lines = await prisma.invoiceLineItem.findMany({
-      where: {
-        poNumber: { in: unique },
-        OR: [{ matchResult: null }, { matchResult: { resolution: null } }],
-      },
-      select: { id: true },
-      take: RECOMPUTE_SUBJECT_LIMIT,
-    });
+    const lines = await loadUnsettledLinesOnPos(unique);
 
     for (const line of lines) {
       await matchInvoiceLineById(line.id);

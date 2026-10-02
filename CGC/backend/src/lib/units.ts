@@ -23,7 +23,8 @@ export type CanonicalUnit =
   | 'SKID'
   | 'EACH'
   | 'LOAD'
-  | 'HOUR';
+  | 'HOUR'
+  | 'SQUARE_FOOT';
 
 /**
  * Alias table, lower-cased and stripped of punctuation before lookup.
@@ -98,6 +99,18 @@ const UNIT_ALIASES: Record<string, CanonicalUnit> = {
   hrs: 'HOUR',
   hour: 'HOUR',
   hours: 'HOUR',
+
+  // Area, for pavers and slabs: Spruce prints `SQFT`. A family of its own —
+  // square feet are never turned into skids, pieces or anything by weight,
+  // because how many square feet a skid holds depends on the product. Linear
+  // feet (`ft`) are deliberately absent: they measure something else.
+  sqft: 'SQUARE_FOOT',
+  sqfeet: 'SQUARE_FOOT',
+  sqfoot: 'SQUARE_FOOT',
+  sf: 'SQUARE_FOOT',
+  ft2: 'SQUARE_FOOT',
+  squarefoot: 'SQUARE_FOOT',
+  squarefeet: 'SQUARE_FOOT',
 };
 
 /**
@@ -111,6 +124,9 @@ export function normaliseUnit(raw: string | null | undefined): CanonicalUnit | n
 
   const key = raw
     .toLowerCase()
+    // `ft²` is `ft2`. Stripped as punctuation it would read as `ft`, which is
+    // a length, not an area.
+    .replace(/²/g, '2')
     .replace(/[^a-z0-9]/g, '');
 
   if (!key) return null;

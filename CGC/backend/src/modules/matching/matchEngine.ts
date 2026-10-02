@@ -1,5 +1,6 @@
 import { compareUnits } from '../../lib/units.js';
 import { normalizeProductName } from '../../lib/productName.js';
+import { formatPoKey, onSamePo, poKey, poNumbersMatch } from './poKey.js';
 import type { Tolerances } from './tolerances.js';
 
 /**
@@ -217,8 +218,6 @@ export interface MatchInputs {
   tolerances: Tolerances;
 }
 
-const PO_PATTERN = /^\d{6}$/;
-
 /** Resolves a supplier's wording to a CGC product name, or null if unmapped. */
 function resolveProduct(
   supplierId: string | null,
@@ -335,14 +334,42 @@ function findCandidates(
   const checks: MatchCheck[] = [];
   const po = subject.poNumber;
 
-  if (po && PO_PATTERN.test(po)) {
-    const byPo = inputs.orders.filter((order) => order.poNumber === po);
+  const key = poKey(po);
+
+  if (po && key) {
+    // Compared on the PO key (see poKey.ts), not on the text: `2608-355356`,
+    // `2608 355356`, `PO# 2608-355356` and a bare `355356` are one PO, and
+    // `2607-355356` is another.
+    const compatible = inputs.orders.filter((order) => poNumbersMatch(order.poNumber, po));
+    // A document that printed the prefix prefers the orders that carry the
+    // same one. A bare six digit order is only compatible with it, and falling
+    // back to that when a fully agreeing order exists would trade the stronger
+    // evidence for the weaker.
+    const samePrefix = key.prefix
+      ? compatible.filter((order) => poKey(order.poNumber)?.prefix === key.prefix)
+      : [];
+    const byPo = samePrefix.length > 0 ? samePrefix : compatible;
+
+    const written = formatPoKey(key);
+    const orderPos = [
+      ...new Set(
+        byPo.map((order) => {
+          const orderKey = poKey(order.poNumber);
+          return orderKey ? formatPoKey(orderKey) : order.poNumber ?? '';
+        })
+      ),
+    ];
+    const onOtherSpelling =
+      orderPos.length > 0 && !(orderPos.length === 1 && orderPos[0] === written)
+        ? ` (on PO ${orderPos.join(', ')})`
+        : '';
+
     checks.push({
       name: 'po',
       passed: byPo.length > 0,
       detail:
         byPo.length > 0
-          ? `PO ${po} matches ${byPo.length} order line${byPo.length === 1 ? '' : 's'}`
+          ? `PO ${po} matches ${byPo.length} order line${byPo.length === 1 ? '' : 's'}${onOtherSpelling}`
           : `PO ${po} matches no order`,
       found: po,
     });
@@ -352,7 +379,7 @@ function findCandidates(
       name: 'po',
       passed: false,
       detail: po
-        ? `"${po}" is not a six digit purchase order number`
+        ? `"${po}" is not a purchase order number (six digits, or four digits, a dash and six digits)`
         : 'No purchase order number was read from the document',
       found: po,
     });
@@ -432,7 +459,8 @@ function disambiguate(
  * than MATCHED does, on purpose.
  *
  * What it asks is that the order was identified *by its purchase order number*.
- * A six digit PO naming exactly one order line is the identity evidence — it is
+ * A PO naming exactly one order line is the identity evidence — six digits, or
+ * Spruce's `2608-355356`, compared on the key in poKey.ts — it is
  * what the yard wrote on the paper — and the engine only ever reaches an
  * orderId through the PO or through the supplier/date/product fallback.
  *
@@ -710,10 +738,24 @@ export function matchInvoiceLine(
   // grading both of its invoice lines against one combined total. The
   // exclusions are named in the detail rather than applied silently: a load
   // that was left out is exactly the thing a person needs told about.
-  const onPo =
+  const onLinePo =
     line.poNumber === null
       ? []
-      : inputs.tickets.filter((ticket) => ticket.poNumber === line.poNumber);
+      : inputs.tickets.filter((ticket) => onSamePo(ticket.poNumber, line.poNumber));
+
+  // A bare six digit line is compatible with every prefix, so once the order
+  // has been identified by its PO, a ticket printing a *different* prefix is a
+  // different PO that merely shares six digits, and is not this line's load.
+  const identifiedByPo = order !== null && checks.find((entry) => entry.name === 'po')?.passed === true;
+  const orderPoKey = identifiedByPo ? poKey(order.poNumber) : null;
+  const orderPrefix = orderPoKey?.prefix ?? null;
+  const onAnotherPrefix = orderPrefix
+    ? onLinePo.filter((ticket) => {
+        const ticketPrefix = poKey(ticket.poNumber)?.prefix ?? null;
+        return ticketPrefix !== null && ticketPrefix !== orderPrefix;
+      })
+    : [];
+  const onPo = onLinePo.filter((ticket) => !onAnotherPrefix.includes(ticket));
 
   // A ticket whose supplier is plainly somebody else is not evidence for this
   // invoice. A ticket with no readable supplier still is: the load happened,
@@ -748,6 +790,14 @@ export function matchInvoiceLine(
 
   /** What was set aside and why, appended to whatever the coverage check says. */
   const exclusions: string[] = [];
+  if (onAnotherPrefix.length > 0) {
+    exclusions.push(
+      `${onAnotherPrefix.length} ticket${onAnotherPrefix.length === 1 ? '' : 's'} ` +
+        `${onAnotherPrefix.length === 1 ? 'names' : 'name'} a PO with a different prefix from the order's ` +
+        `${orderPoKey ? formatPoKey(orderPoKey) : ''} and ` +
+        `${onAnotherPrefix.length === 1 ? 'was' : 'were'} not counted`
+    );
+  }
   if (fromOtherSupplier.length > 0) {
     exclusions.push(
       `${fromOtherSupplier.length} ticket${fromOtherSupplier.length === 1 ? '' : 's'} on this PO ` +

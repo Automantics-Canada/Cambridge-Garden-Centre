@@ -223,7 +223,7 @@ describe('matchTicket', () => {
     assert.match(check(decision, 'product')?.detail ?? '', /no confirmed alias/i);
   });
 
-  test('a PO that is not six digits does not match by PO', () => {
+  test('a PO in neither accepted form does not match by PO', () => {
     const decision = matchTicket(ticket({ poNumber: '4829' }), inputs());
     assert.equal(check(decision, 'po')?.passed, false);
     assert.match(check(decision, 'po')?.detail ?? '', /six digit/i);
@@ -982,5 +982,162 @@ describe('what the line columns are derived from', () => {
 
   test('a ticket verdict carries no line columns', () => {
     assert.equal(matchTicket(ticket(), inputs()).totals, null);
+  });
+});
+
+describe('Spruce POs', () => {
+  /**
+   * The shape of one Spruce document on the sample day: two paver lines in
+   * square feet and two skid deposits, all four on one supplier PO. Products
+   * and quantities are the ones reconcileSpruceDocument.test.ts already uses.
+   */
+  const SPRUCE_PO = '2608-355356';
+  const ordered = new Date('2026-08-14T00:00:00Z');
+  const sprucePavers = (): CandidateOrder[] => [
+    order({ id: 'midnight', poNumber: SPRUCE_PO, product: 'BeaconHill Smooth 60mm Midnight', quantity: 104.91, unit: 'SQFT', orderDate: ordered }),
+    order({ id: 'fossil', poNumber: SPRUCE_PO, product: 'BeaconHill Smooth 60mm Fossil', quantity: 629.46, unit: 'SQFT', orderDate: ordered }),
+    order({ id: 'skid-1', poNumber: SPRUCE_PO, product: 'Unilock Skid Deposit', quantity: 1, unit: null, orderDate: ordered }),
+    order({ id: 'skid-6', poNumber: SPRUCE_PO, product: 'Unilock Skid Deposit', quantity: 6, unit: null, orderDate: ordered }),
+  ];
+  const fossil = () => sprucePavers()[1]!;
+  const fossilTicket = (overrides: Partial<TicketSubject> = {}) =>
+    ticket({
+      poNumber: SPRUCE_PO,
+      material: 'BeaconHill Smooth 60mm Fossil',
+      quantity: 629.46,
+      unit: 'SQFT',
+      ticketDate: ordered,
+      ...overrides,
+    });
+  const delivered = (id: string, poNumber: string, overrides: Partial<DeliveredTicket> = {}): DeliveredTicket => ({
+    id,
+    ticketNumber: id,
+    poNumber,
+    quantity: 629.46,
+    unit: 'SQFT',
+    material: 'BeaconHill Smooth 60mm Fossil',
+    supplierId: SUPPLIER,
+    claim: null,
+    ...overrides,
+  });
+  const fossilLine = (overrides: Partial<InvoiceLineSubject> = {}) =>
+    invoiceLine({
+      poNumber: SPRUCE_PO,
+      description: 'BeaconHill Smooth 60mm Fossil',
+      quantity: 629.46,
+      unit: 'SQFT',
+      unitRate: 4.1,
+      invoiceDate: ordered,
+      ...overrides,
+    });
+
+  test('a ticket on a Spruce PO finds its line by PO and square feet, and is linked', () => {
+    const decision = matchTicket(fossilTicket(), inputs({ orders: sprucePavers() }));
+    assert.equal(check(decision, 'po')?.passed, true);
+    assert.equal(check(decision, 'quantity')?.passed, true);
+    assert.equal(decision.status, 'MATCHED');
+    assert.equal(decision.orderId, 'fossil');
+    assert.equal(shouldAutoLink(decision), 'fossil');
+  });
+
+  test('every spelling of the PO finds the same line', () => {
+    for (const poNumber of ['2608-355356', '2608 355356', 'PO# 2608-355356', '355356']) {
+      const decision = matchTicket(fossilTicket({ poNumber }), inputs({ orders: sprucePavers() }));
+      assert.equal(decision.orderId, 'fossil', poNumber);
+      assert.equal(shouldAutoLink(decision), 'fossil', poNumber);
+    }
+  });
+
+  test('a bare six digit PO says which Spruce PO it matched', () => {
+    const decision = matchTicket(fossilTicket({ poNumber: '355356' }), inputs({ orders: sprucePavers() }));
+    assert.match(check(decision, 'po')?.detail ?? '', /on PO 2608-355356/);
+  });
+
+  test('another prefix with the same six digits is a different PO, and matches nothing', () => {
+    const decision = matchTicket(
+      fossilTicket({ poNumber: '2607-355356', supplierId: null }),
+      inputs({ orders: sprucePavers() })
+    );
+    assert.equal(check(decision, 'po')?.passed, false);
+    assert.equal(decision.orderId, null);
+    assert.equal(shouldAutoLink(decision), null);
+  });
+
+  test('a ticket printing the prefix prefers the order with that prefix over a bare one', () => {
+    const orders = [
+      ...sprucePavers(),
+      order({ id: 'legacy', poNumber: '355356', product: 'BeaconHill Smooth 60mm Fossil', quantity: 629.46, unit: 'SQFT' }),
+    ];
+    const decision = matchTicket(fossilTicket(), inputs({ orders }));
+    assert.equal(decision.orderId, 'fossil');
+  });
+
+  test('a bare PO that fits two prefixes equally is a CONFLICT, never a guess', () => {
+    const orders = [
+      order({ id: 'august', poNumber: '2608-355356', product: 'BeaconHill Smooth 60mm Fossil', quantity: 629.46, unit: 'SQFT' }),
+      order({ id: 'july', poNumber: '2607-355356', product: 'BeaconHill Smooth 60mm Fossil', quantity: 629.46, unit: 'SQFT' }),
+    ];
+    const decision = matchTicket(fossilTicket({ poNumber: '355356' }), inputs({ orders }));
+    assert.equal(decision.status, 'CONFLICT');
+    assert.deepEqual([...decision.candidateOrderIds].sort(), ['august', 'july']);
+    assert.equal(shouldAutoLink(decision), null);
+  });
+
+  test('without square feet the lines on one PO could not be told apart', () => {
+    // The failure on the sample day: an unrecognised unit compares nothing,
+    // so the lines sharing one PO stayed a CONFLICT and nothing linked.
+    const decision = matchTicket(fossilTicket({ unit: 'bundles' }), inputs({ orders: sprucePavers() }));
+    assert.equal(decision.status, 'CONFLICT');
+  });
+
+  test('square feet are never compared with another unit', () => {
+    const decision = matchTicket(fossilTicket({ unit: 'skids', quantity: 6 }), inputs({ orders: [fossil()] }));
+    assert.equal(decision.orderId, 'fossil');
+    assert.match(check(decision, 'quantity')?.detail ?? '', /different units/i);
+  });
+
+  test('an invoice line on the Spruce PO matches the same line and is covered by the ticket', () => {
+    const decision = matchInvoiceLine(fossilLine(), {
+      ...inputs({ orders: sprucePavers() }),
+      agreedRates: [{ productName: 'BeaconHill Smooth 60mm Fossil', rate: 4.1, unit: 'sq ft' }],
+      tickets: [delivered('ticket-fossil', 'PO# 2608 355356', { unit: 'SF' })],
+      competingLines: [],
+    });
+    assert.equal(decision.orderId, 'fossil');
+    assert.equal(check(decision, 'po')?.passed, true);
+    assert.equal(check(decision, 'ticketCoverage')?.passed, true);
+    assert.equal(check(decision, 'rate')?.passed, true);
+    assert.deepEqual(decision.ticketIds, ['ticket-fossil']);
+    assert.equal(decision.status, 'MATCHED');
+  });
+
+  test("a bare-PO line does not count a load on another prefix's PO", () => {
+    const decision = matchInvoiceLine(fossilLine({ poNumber: '355356' }), {
+      ...inputs({ orders: [fossil()] }),
+      agreedRates: [],
+      tickets: [delivered('ours', '2608-355356'), delivered('theirs', '2607-355356')],
+      competingLines: [],
+    });
+    assert.equal(decision.orderId, 'fossil');
+    assert.deepEqual(decision.ticketIds, ['ours']);
+    assert.equal(check(decision, 'ticketCoverage')?.passed, true);
+    assert.match(check(decision, 'ticketCoverage')?.detail ?? '', /different prefix/);
+  });
+
+  test('a load on another prefix is not counted by a Spruce-PO line either', () => {
+    const decision = matchInvoiceLine(fossilLine({ unitRate: null }), {
+      ...inputs({ orders: [fossil()] }),
+      agreedRates: [],
+      tickets: [delivered('theirs', '2607-355356')],
+      competingLines: [],
+    });
+    assert.deepEqual(decision.ticketIds, []);
+    assert.equal(check(decision, 'ticketCoverage')?.passed, false);
+  });
+
+  test('six digit POs behave exactly as before', () => {
+    const decision = matchTicket(ticket(), inputs());
+    assert.equal(decision.status, 'MATCHED');
+    assert.equal(check(decision, 'po')?.detail, 'PO 482913 matches 1 order line');
   });
 });

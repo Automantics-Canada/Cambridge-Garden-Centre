@@ -1,4 +1,5 @@
 import { normaliseUnit } from '../../lib/units.js';
+import { formatPoKey, poKey } from '../../modules/matching/poKey.js';
 import {
   READABILITY_CONFIDENCE,
   type InvoiceExtraction,
@@ -71,19 +72,32 @@ export function cleanText(value: string | null | undefined): string | null {
 }
 
 /**
- * A PO is six digits. Anything else is kept as read, not discarded.
+ * A PO is six digits, or Spruce's four digits, a dash and six digits. Anything
+ * else is kept as read, not discarded.
  *
  * `"PO# 123456"` and `"123-456"` are the same order and are cleaned to
- * `123456`. A value that is not six digits after cleaning is passed through
- * unchanged: it fails the six-digit test downstream so it will not auto-link
+ * `123456`. `"PO# 2608-355356"` and `"2608 355356"` are cleaned to
+ * `2608-355356`, the way Spruce prints it — the prefix is kept, because
+ * `2607-355356` is a different PO. A value that is neither is passed through
+ * unchanged: it fails the PO test downstream so it will not auto-link
  * anything, but a person on the verification desk can still see what was
  * printed. Blanking it would destroy the only clue to the right order.
+ *
+ * Matching does not depend on this spelling: it compares on the key in
+ * modules/matching/poKey.ts, so values stored before this rule still match.
  */
 export function normalizePoNumber(value: string | null | undefined): string | null {
   const text = cleanText(value);
   if (text === null) return null;
+  const key = poKey(text);
+  if (key?.prefix) return formatPoKey(key);
   const digitsOnly = text.replace(/\D/g, '');
   return digitsOnly.length === 6 ? digitsOnly : text;
+}
+
+/** Whether a cleaned PO is one matching can use. */
+function isUsablePo(poNumber: string): boolean {
+  return poKey(poNumber) !== null;
 }
 
 /**
@@ -136,7 +150,7 @@ function flag(uncertain: string[], field: string): void {
  * Field names that need a human, whatever the model thought.
  *
  * A unit nobody recognises cannot be compared against an order or a ticket, and
- * a PO that is not six digits will not link. Both are quiet failures otherwise:
+ * a PO that is in neither accepted form will not link. Both are quiet failures otherwise:
  * the document processes "successfully" and simply never matches anything.
  */
 function flagUnreadableUnits(unit: string | null, fieldName: string, uncertain: string[]): void {
@@ -147,7 +161,7 @@ export function normalizeTicket(raw: TicketExtraction): NormalizedTicket {
   const uncertainFields = [...raw.uncertainFields];
 
   const poNumber = normalizePoNumber(raw.poNumber);
-  if (poNumber !== null && !/^\d{6}$/.test(poNumber)) flag(uncertainFields, 'poNumber');
+  if (poNumber !== null && !isUsablePo(poNumber)) flag(uncertainFields, 'poNumber');
 
   const unit = cleanText(raw.unit);
   flagUnreadableUnits(unit, 'unit', uncertainFields);
@@ -170,11 +184,11 @@ export function normalizeInvoice(raw: InvoiceExtraction): NormalizedInvoice {
   const uncertainFields = [...raw.uncertainFields];
 
   const poNumber = normalizePoNumber(raw.poNumber);
-  if (poNumber !== null && !/^\d{6}$/.test(poNumber)) flag(uncertainFields, 'poNumber');
+  if (poNumber !== null && !isUsablePo(poNumber)) flag(uncertainFields, 'poNumber');
 
   const lineItems = raw.lineItems.map((item, index) => {
     const linePo = normalizePoNumber(item.poNumber);
-    if (linePo !== null && !/^\d{6}$/.test(linePo)) {
+    if (linePo !== null && !isUsablePo(linePo)) {
       flag(uncertainFields, `lineItems[${index}].poNumber`);
     }
 
