@@ -26,7 +26,9 @@ export const DISPATCH_DOCUMENT_SELECT = {
   deliveryInstructions: true,
   deliveryType: true,
   flags: true,
+  dispatcherNotes: true,
   createdAt: true,
+  _count: { select: { overrides: true } },
   lines: {
     select: {
       id: true,
@@ -70,6 +72,9 @@ export interface DispatchOrderView {
   deliveryInstructions: string | null;
   deliveryType: string | null;
   flags: string[];
+  dispatcherNotes: string | null;
+  /** A dispatcher has corrected something Spruce said. */
+  edited: boolean;
   /** Refundable skids the order ships on. */
   skids: number;
   /** What goes on the truck. Delivery charges, deposits and comments are not. */
@@ -112,6 +117,8 @@ export function toDispatchOrder(document: DispatchDocument): DispatchOrderView {
     deliveryInstructions: document.deliveryInstructions,
     deliveryType: document.deliveryType,
     flags: document.flags,
+    dispatcherNotes: document.dispatcherNotes,
+    edited: document._count.overrides > 0,
     skids,
     lines: products.map(line => ({
       product: line.product,
