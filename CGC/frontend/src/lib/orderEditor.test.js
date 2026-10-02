@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { editRequest, formFromOrder, overrideFor, spruceText } from './orderEditor';
+import { editRequest, formFromOrder, lineUpdateFor, overrideFor, spruceText, updateFor, updateNote } from './orderEditor';
 
 const order = {
   id: 'doc-1',
@@ -55,5 +55,36 @@ describe('corrections beside Spruce', () => {
     expect(spruceText(override, 'phone')).toBe('nothing');
     expect(overrideFor(order, 'phone', 'line-1')).toBeNull();
     expect(spruceText({ spruceValue: 'DUMP' }, 'deliveryType')).toBe('Dump');
+  });
+});
+
+describe("what today's upload changed", () => {
+  const updated = {
+    ...order,
+    updates: [
+      { field: 'shippingAddress', lineId: null, oldValue: '64 Example St, Kitchener', newValue: '70 Example St, Kitchener' },
+      { field: 'deliveryType', lineId: null, oldValue: 'DUMP', newValue: 'SLINGER' },
+      { field: 'deliveryTruck', lineId: null, oldValue: null, newValue: 'Small truck' },
+      { field: 'quantity', lineId: 'line-1', oldValue: '10', newValue: '12' },
+      { field: 'lineAdded', lineId: 'line-2', oldValue: null, newValue: '2 BAG Polymeric Sand' },
+      { field: 'lineRemoved', lineId: 'line-3', oldValue: '1 EA Delivery', newValue: null },
+    ],
+  };
+
+  it('says what each updated field was', () => {
+    expect(updateNote(updateFor(updated, 'shippingAddress'), 'shippingAddress'))
+      .toBe("Updated by today's upload (was 64 Example St, Kitchener).");
+    expect(updateNote(updateFor(updated, 'deliveryType'), 'deliveryType')).toBe("Updated by today's upload (was Dump).");
+    expect(updateNote(updateFor(updated, 'deliveryTruck'), 'deliveryTruck')).toBe("Updated by today's upload (was nothing).");
+    expect(updateNote(updateFor(updated, 'quantity', 'line-1'), 'quantity')).toBe("Updated by today's upload (was 10).");
+  });
+
+  it('marks a line added or taken off, and nothing that did not change', () => {
+    expect(updateNote(lineUpdateFor(updated, 'line-2'))).toBe("Added by today's upload.");
+    expect(updateNote(lineUpdateFor(updated, 'line-3'))).toMatch(/^Not in today's upload/);
+    expect(updateFor(updated, 'phone')).toBeNull();
+    expect(updateFor(updated, 'quantity')).toBeNull();
+    expect(updateNote(null, 'phone')).toBeNull();
+    expect(updateFor(order, 'shippingAddress')).toBeNull();
   });
 });

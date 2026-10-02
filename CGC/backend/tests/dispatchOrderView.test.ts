@@ -6,6 +6,7 @@ import {
   DISPATCH_DOCUMENT_SELECT,
   representativeLineId,
   toDispatchOrder,
+  withUpdatedFields,
   type DispatchDocument,
 } from '../src/modules/dispatch/dispatchOrderView.js';
 
@@ -92,5 +93,53 @@ describe('a whole order on the dispatch board', () => {
     for (const key of ['unitPrice', 'unitCost', 'poValue', 'totalWithTax', 'remaining', 'grossMarginPct', 'supplier']) {
       assert.equal(selected.includes(`"${key}"`), false, `${key} must not be selected`);
     }
+  });
+
+  it('starts with no fields marked Updated', () => {
+    assert.deepEqual(toDispatchOrder(document([{}])).updatedFields, []);
+  });
+});
+
+describe('orders Spruce changed today', () => {
+  /** Answers like the database would: one change today on doc-1. */
+  function fakeDb(seen: { ids?: string[]; range?: { gte: Date; lte: Date } }) {
+    return {
+      orderChange: {
+        findMany: async ({ where }: { where: { documentId: { in: string[] }; createdAt: { gte: Date; lte: Date } } }) => {
+          seen.ids = where.documentId.in;
+          seen.range = where.createdAt;
+          return where.documentId.in.includes('doc-1')
+            ? [{ documentId: 'doc-1', lineId: null, field: 'shippingAddress', oldValue: 'A St', newValue: 'B St', createdAt: new Date() }]
+            : [];
+        },
+      },
+      orderOverride: { findMany: async () => [] },
+    } as unknown as Parameters<typeof withUpdatedFields>[0];
+  }
+
+  it('marks them wherever the board holds them, in one read', async () => {
+    const pooled = toDispatchOrder(document([{}]));
+    const onRun = { ...toDispatchOrder(document([{}])), id: 'doc-2' };
+    const olderStop = { id: 'line-9', wholeOrder: false as const };
+    const seen: { ids?: string[]; range?: { gte: Date; lte: Date } } = {};
+
+    const board = await withUpdatedFields(fakeDb(seen), {
+      carriedOver: [],
+      unassignedOrders: [pooled],
+      drivers: [{ deliveries: [{ order: onRun }, { order: olderStop }] }],
+    }, '2026-09-02');
+
+    assert.deepEqual(seen.ids, ['doc-1', 'doc-2'], 'whole orders only, in one query');
+    assert.deepEqual(board.unassignedOrders[0], { ...pooled, updatedFields: ['shippingAddress'] });
+    assert.deepEqual(onRun.updatedFields, []);
+    assert.equal('updatedFields' in olderStop, false);
+    // Today in Cambridge: 9/2 starts at 04:00 UTC in summer.
+    assert.equal(seen.range?.gte.toISOString(), '2026-09-02T04:00:00.000Z');
+  });
+
+  it('marks a plain list of rows too', async () => {
+    const rows = [toDispatchOrder(document([{}]))];
+    await withUpdatedFields(fakeDb({}), rows, '2026-09-02');
+    assert.deepEqual(rows[0]!.updatedFields, ['shippingAddress']);
   });
 });

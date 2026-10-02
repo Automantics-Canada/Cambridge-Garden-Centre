@@ -6,6 +6,7 @@ import { OrderPdfImportService, type ImportSummary } from '../orderPdfImport.ser
 import type { ParsedSpruceReport, SpruceReportType } from '../spruce/spruceReportTypes.js';
 import { deliveryTypeOf } from './lineClass.js';
 import { reassertOverrides } from '../edits/orderEdits.service.js';
+import { diffOrder, isOverridden, snapshotOrders, type ChangeRow, type OrderSnapshot } from './orderChanges.js';
 import {
   batchFlags,
   combineFlags,
@@ -104,6 +105,11 @@ export interface BatchSummary {
   upcoming: number;
   /** Orders in this upload collected from the yard. */
   pickups: number;
+  /**
+   * Orders imported before whose details Spruce has changed since, as the
+   * board marks them "Updated". Absent from summaries of older uploads.
+   */
+  updated: number;
   /** Every order this upload described, with its flags. */
   orders: BatchOrder[];
   /** Orders needing a person, including any no longer on the delivery report. */
@@ -309,12 +315,29 @@ async function mergeBatch(
   });
   const droppedDay = new Map(droppedFromDay.map(document => [document.documentNumber, document.deliveryDate!]));
 
+  // What the orders this upload describes said before it, so what it changes
+  // can be logged. Orders not stored yet are new, not updated.
+  const described = rowsByDocument(files);
+  const existing = await client.orderDocument.findMany({
+    where: { documentNumber: { in: [...described.keys()] } },
+    select: { id: true, documentNumber: true },
+  });
+  const before = await snapshotOrders(client, existing.map(document => document.id));
+  const seen = new Map<string, { paired: Set<string>; created: Set<string> }>();
+  const noteLines = (documentNumber: string, lines: { pairedIds: string[]; createdIds: string[] }) => {
+    const entry = seen.get(documentNumber) ?? { paired: new Set<string>(), created: new Set<string>() };
+    for (const id of lines.pairedIds) entry.paired.add(id);
+    for (const id of lines.createdIds) entry.created.add(id);
+    seen.set(documentNumber, entry);
+  };
+
   // 2. Each report through the per-report importer, which owns the lines.
   for (const file of files) {
     const result: ImportSummary = await OrderPdfImportService.applyReport(
       client,
       file.report,
-      `batch-${batchId}-${file.reportType}`
+      `batch-${batchId}-${file.reportType}`,
+      noteLines
     );
     const range = reportRange(file.report);
     reports.push({
@@ -345,7 +368,7 @@ async function mergeBatch(
   const alsoDecided: OrderFlag[] = presentReports.has('DELIVERY') ? ['NOT_IN_LATEST_REPORT'] : [];
 
   const orders: BatchOrder[] = [];
-  for (const [documentNumber, rows] of rowsByDocument(files)) {
+  for (const [documentNumber, rows] of described) {
     const stored = await client.orderDocument.findUnique({
       where: { documentNumber },
       select: {
@@ -419,7 +442,11 @@ async function mergeBatch(
     orders.push(toOrder(written));
   }
 
-  // 4. Dropped orders no report in this upload mentions at all. Nothing new
+  // 4. What changed on the orders that were already here, read back after
+  // every write — the merge, the corrections put back — and logged.
+  const updated = await logChanges(client, batchId, existing, before, seen);
+
+  // 5. Dropped orders no report in this upload mentions at all. Nothing new
   // is known about them, so every flag they had stays.
   const merged = new Set(orders.map(order => order.documentNumber));
   const dropped: BatchOrder[] = [];
@@ -444,9 +471,50 @@ async function mergeBatch(
     deliveries,
     upcoming: orders.filter(order => order.deliveryDate !== null && order.deliveryDate > iso(dispatchDate)).length,
     pickups: orders.filter(order => order.isPickup).length,
+    updated,
     orders,
     issues: [...orders, ...dropped].filter(needsAttention),
     warnings,
     errors,
   };
+}
+
+/**
+ * Logs what this upload changed on orders that existed before it, and returns
+ * how many of them changed in a way the board marks "Updated": a change to a
+ * field the dispatcher has corrected is logged with Spruce's values but does
+ * not count, since the driver still sees the correction.
+ */
+async function logChanges(
+  client: PrismaClient,
+  batchId: string,
+  existing: Array<{ id: string; documentNumber: string }>,
+  before: Map<string, OrderSnapshot>,
+  seen: Map<string, { paired: Set<string>; created: Set<string> }>
+): Promise<number> {
+  const after = await snapshotOrders(client, existing.map(document => document.id));
+  const overrides = await client.orderOverride.findMany({
+    where: { documentId: { in: existing.map(document => document.id) } },
+    select: { documentId: true, field: true, lineId: true },
+  });
+
+  const rows: Array<ChangeRow & { documentId: string; batchId: string }> = [];
+  let updated = 0;
+  for (const document of existing) {
+    const was = before.get(document.id);
+    const now = after.get(document.id);
+    if (!was || !now) continue;
+
+    // A document every report refused had no line written: nothing about its
+    // lines can be concluded, least of all that Spruce took them all off.
+    const lines = seen.get(document.documentNumber)
+      ?? { paired: new Set(was.lines.filter(line => !line.removed).map(line => line.id)), created: new Set<string>() };
+    const changes = diffOrder(was, now, lines);
+    const corrected = overrides.filter(override => override.documentId === document.id);
+    if (changes.some(change => !isOverridden(corrected, change))) updated++;
+    rows.push(...changes.map(change => ({ ...change, documentId: document.id, batchId })));
+  }
+
+  if (rows.length > 0) await client.orderChange.createMany({ data: rows });
+  return updated;
 }

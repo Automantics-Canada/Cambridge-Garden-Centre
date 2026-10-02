@@ -1,6 +1,7 @@
 import type { Prisma } from '@prisma/client';
 
 import { classifyLine } from '../orders/import/lineClass.js';
+import { updatesForDay } from '../orders/import/orderChanges.js';
 
 /**
  * A Spruce order as the dispatch board draws it.
@@ -75,6 +76,12 @@ export interface DispatchOrderView {
   dispatcherNotes: string | null;
   /** A dispatcher has corrected something Spruce said. */
   edited: boolean;
+  /**
+   * Fields Spruce changed in today's uploads, for the "Updated" badge. Empty
+   * until `withUpdatedFields` fills it: the changes are read apart from
+   * DISPATCH_DOCUMENT_SELECT, which also shapes what drivers are sent.
+   */
+  updatedFields: string[];
   /** Refundable skids the order ships on. */
   skids: number;
   /** What goes on the truck. Delivery charges, deposits and comments are not. */
@@ -119,6 +126,7 @@ export function toDispatchOrder(document: DispatchDocument): DispatchOrderView {
     flags: document.flags,
     dispatcherNotes: document.dispatcherNotes,
     edited: document._count.overrides > 0,
+    updatedFields: [],
     skids,
     lines: products.map(line => ({
       product: line.product,
@@ -139,4 +147,43 @@ export function toDispatchOrder(document: DispatchDocument): DispatchOrderView {
 export function representativeLineId(document: Pick<DispatchDocument, 'lines'>): string | null {
   const product = document.lines.find(line => lineClassOf(line) === 'PRODUCT');
   return (product ?? document.lines[0])?.id ?? null;
+}
+
+/** Anything a board response holds whole orders in. */
+interface BoardLike {
+  carriedOver?: unknown[];
+  unassignedOrders?: unknown[];
+  drivers?: Array<{ deliveries?: Array<{ order?: unknown }> }>;
+}
+
+const isWholeOrder = (row: unknown): row is DispatchOrderView =>
+  typeof row === 'object' && row !== null && (row as DispatchOrderView).wholeOrder === true;
+
+/**
+ * Marks the orders Spruce changed today, wherever a board response holds
+ * them: the pool, carried over, and every driver's run. Takes a list of rows
+ * too, for the undated list.
+ *
+ * One query for the whole board, keyed by order id, rather than a relation on
+ * DISPATCH_DOCUMENT_SELECT: that select is also how a driver's stop is read,
+ * and the driver's payload must not grow.
+ *
+ * @param today 'YYYY-MM-DD' in the yard's timezone, America/Toronto
+ */
+export async function withUpdatedFields<T extends BoardLike | unknown[]>(
+  db: Prisma.TransactionClient,
+  board: T,
+  today?: string
+): Promise<T> {
+  const rows: unknown[] = Array.isArray(board)
+    ? board
+    : [
+        ...(board.carriedOver ?? []),
+        ...(board.unassignedOrders ?? []),
+        ...(board.drivers ?? []).flatMap(driver => (driver.deliveries ?? []).map(delivery => delivery.order)),
+      ];
+  const orders = rows.filter(isWholeOrder);
+  const updates = await updatesForDay(db, orders.map(order => order.id), today);
+  for (const order of orders) order.updatedFields = updates.get(order.id)?.updatedFields ?? [];
+  return board;
 }

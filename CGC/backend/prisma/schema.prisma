@@ -83,6 +83,8 @@ model OrderDocument {
   /// Fields a dispatcher has corrected. The columns above hold the corrected
   /// value; each override keeps what Spruce says.
   overrides       OrderOverride[]
+  /// What Spruce changed on this order when its reports were uploaded again.
+  changes         OrderChange[]
 
   @@index([orderDate])
   @@index([deliveryDate])
@@ -143,6 +145,7 @@ model Order {
   supplier       Supplier?          @relation(fields: [supplierId], references: [id])
   document       OrderDocument?     @relation(fields: [documentId], references: [id])
   overrides      OrderOverride[]
+  changes        OrderChange[]
   tickets        Ticket[]
   ticketMatches  TicketOrderMatch[]
   matchResults   MatchResult[]
@@ -525,6 +528,36 @@ model OrderOverride {
 
   @@unique([documentId, targetKey, field])
   @@index([documentId])
+}
+
+/// A value Spruce changed on an order that already existed, written by the
+/// upload that brought it.
+///
+/// A re-upload later the same day refreshes orders in place; this is how the
+/// dispatcher learns what moved. Only the fields a driver works from are kept
+/// here, never money. Values are text in the same form as `OrderOverride`:
+/// dates `YYYY-MM-DD`, quantities plain decimals, null for "nothing". On a
+/// field the dispatcher has corrected, the values are Spruce's, not the
+/// correction.
+model OrderChange {
+  id         String        @id @default(uuid()) @db.Uuid
+  documentId String        @db.Uuid
+  /// The line changed, or null for a field of the order itself.
+  lineId     String?       @db.Uuid
+  /// The import batch that brought the change. Not a foreign key, so the log
+  /// outlives the batch.
+  batchId    String?       @db.Uuid
+  /// The column changed (`shippingAddress`, `quantity`), or `lineAdded` /
+  /// `lineRemoved` for a whole line.
+  field      String
+  oldValue   String?
+  newValue   String?
+  createdAt  DateTime      @default(now())
+  document   OrderDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  line       Order?        @relation(fields: [lineId], references: [id], onDelete: SetNull)
+
+  @@index([documentId, createdAt])
+  @@index([lineId])
 }
 
 /// One report within a batch, with everything read from it.

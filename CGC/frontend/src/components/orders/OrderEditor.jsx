@@ -10,14 +10,19 @@ import {
   ORDER_FIELDS,
   editRequest,
   formFromOrder,
+  lineUpdateFor,
   overrideFor,
   spruceText,
+  updateFor,
+  updateNote,
 } from '../../lib/orderEditor';
 
 /**
  * Correct one Spruce order: fill in what the reports left out, fix what they
  * got wrong. Corrections survive the reports being uploaded again; each
  * corrected field is marked, says what Spruce has, and can be reset to it.
+ *
+ * A field the reports changed in today's upload says so, with what it was.
  *
  * Prices and the order number are not here: Spruce owns them.
  *
@@ -150,6 +155,7 @@ export default function OrderEditor({ orderRef, onClose, onSaved, readOnly = fal
                       </button>
                     )}
                     <SpruceNote override={override} field={key} onReset={() => reset(key)} disabled={saving} readOnly={readOnly} />
+                    <UpdateNote update={updateFor(order, key)} field={key} />
                   </Field>
                 );
               })}
@@ -195,6 +201,9 @@ export default function OrderEditor({ orderRef, onClose, onSaved, readOnly = fal
                         </div>
                         <SpruceNote override={productOverride} field="product" onReset={() => reset('product', line.id)} disabled={saving} readOnly={readOnly} />
                         <SpruceNote override={quantityOverride} field="quantity" onReset={() => reset('quantity', line.id)} disabled={saving} readOnly={readOnly} />
+                        <UpdateNote update={lineUpdateFor(order, line.id)} />
+                        <UpdateNote update={updateFor(order, 'product', line.id)} field="product" />
+                        <UpdateNote update={updateFor(order, 'quantity', line.id)} field="quantity" />
                       </div>
                     );
                   })}
@@ -249,6 +258,17 @@ function SpruceNote({ override, field, onReset, disabled, readOnly }) {
           <RotateCcw size={12} /> Reset to Spruce value
         </button>
       )}
+    </div>
+  );
+}
+
+/** What today's upload changed on a field, beside it, as the Spruce note is. */
+function UpdateNote({ update, field }) {
+  const note = updateNote(update, field);
+  if (!note) return null;
+  return (
+    <div className="flex flex-wrap items-center gap-2 text-[12.5px]">
+      <span className="text-ochre font-semibold">{note}</span>
     </div>
   );
 }

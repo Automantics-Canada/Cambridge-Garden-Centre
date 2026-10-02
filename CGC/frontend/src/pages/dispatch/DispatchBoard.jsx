@@ -11,7 +11,7 @@ import { businessDayOffset, formatDate } from '../../lib/date';
 import { cn } from '../../lib/cn';
 import { isTerminal, statusErrorMessage, statusOptionsFor } from '../../lib/deliveryTransitions';
 import { formatQuantity } from '../../lib/quantity';
-import { assignWarning, deliveryTypeLabel, flagBadges, mergeUnassignedOrders, orderRef } from '../../lib/dispatchBoard';
+import { assignWarning, deliveryTypeLabel, flagBadges, mergeUnassignedOrders, orderRef, updatedTitle } from '../../lib/dispatchBoard';
 import { canCorrectHistory, formatDeliveryDay, isPastDay, returnsTo, upcomingSummary } from '../../lib/dispatchDays';
 import OrderEditor from '../../components/orders/OrderEditor';
 
@@ -53,9 +53,11 @@ function OrderLoad({ order }) {
 
 function OrderFlags({ order }) {
   const badges = flagBadges(order);
-  if (badges.length === 0 && !order?.edited) return null;
+  const updated = updatedTitle(order);
+  if (badges.length === 0 && !order?.edited && !updated) return null;
   return (
     <div className="flex flex-wrap gap-1.5 mt-1.5">
+      {updated && <span className="inline-flex" title={updated}><Badge tone="warn">Updated</Badge></span>}
       {order?.edited && <Badge tone="neutral">Edited</Badge>}
       {badges.map(({ flag, label, tone }) => <Badge key={flag} tone={tone}>{label}</Badge>)}
     </div>
