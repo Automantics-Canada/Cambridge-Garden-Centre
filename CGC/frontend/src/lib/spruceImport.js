@@ -26,6 +26,7 @@ export const ORDER_FLAG_INFO = {
   SMALL_TRUCK: { label: 'Small truck', tone: 'neutral' },
   CUSTOMER_ON_SITE: { label: 'Customer on site', tone: 'neutral' },
   NOT_OPEN: { label: 'No longer open', tone: 'neutral' },
+  SPRUCE_VALUE_CHANGED: { label: 'Spruce changed an edit', tone: 'warn' },
 };
 
 export const flagInfo = (flag) => ORDER_FLAG_INFO[flag] ?? { label: flag, tone: 'neutral' };

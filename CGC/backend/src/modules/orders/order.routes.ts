@@ -9,6 +9,7 @@ import {
   uploadErrorHandler,
 } from '../../middleware/uploadValidation.js';
 import { importSpruceReports, previewSpruceReport, REPORT_SLOTS } from './import/importBatch.controller.js';
+import { editOrder, getOrderEditor, resetOrderField } from './edits/orderEdits.controller.js';
 import { rateLimit, limitConcurrency } from '../../middleware/rateLimit.js';
 import { UserRole } from '@prisma/client';
 
@@ -79,6 +80,12 @@ router.post(
   validateUploadedFiles(['pdf']),
   importSpruceReports
 );
+
+// A dispatcher's corrections to one order: what Spruce left out or got wrong
+// about where it goes and what it is. Never prices, which Spruce owns.
+router.get('/documents/:id', getOrderEditor);
+router.patch('/documents/:id', editOrder);
+router.post('/documents/:id/reset', resetOrderField);
 
 // Step two of the Spruce import: merge the PO report onto documents already
 // imported from the delivery report, joined on document number. Same rate and

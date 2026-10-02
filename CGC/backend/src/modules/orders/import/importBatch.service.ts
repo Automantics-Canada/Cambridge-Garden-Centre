@@ -5,6 +5,7 @@ import { parseSpruceDate } from '../../../lib/spruceDate.js';
 import { OrderPdfImportService, type ImportSummary } from '../orderPdfImport.service.js';
 import type { ParsedSpruceReport, SpruceReportType } from '../spruce/spruceReportTypes.js';
 import { deliveryTypeOf } from './lineClass.js';
+import { reassertOverrides } from '../edits/orderEdits.service.js';
 import {
   batchFlags,
   combineFlags,
@@ -301,6 +302,8 @@ async function mergeBatch(
       deliveryDate: { gte: deliveryRange.from, lte: deliveryRange.to },
       sourceReports: { has: 'DELIVERY' },
       documentNumber: { notIn: listed },
+      // A dispatcher who moved an order to this day knows why it is here.
+      overrides: { none: { field: 'deliveryDate' } },
     },
     select: { id: true, documentNumber: true, flags: true, deliveryDate: true },
   });
@@ -387,7 +390,7 @@ async function mergeBatch(
       ]
     );
 
-    const written = await client.orderDocument.update({
+    let written = await client.orderDocument.update({
       where: { id: stored.id },
       data: {
         ...patch,
@@ -404,6 +407,14 @@ async function mergeBatch(
     // last; the order's merged date is the one that holds.
     if (state.deliveryDate) {
       await client.order.updateMany({ where: { documentId: stored.id }, data: { deliveryDate: state.deliveryDate } });
+    }
+    // The merge wrote Spruce's word; a dispatcher's corrections go back over
+    // it, and what follows from them — the address flag, the day — with them.
+    if (await reassertOverrides(client, stored.id)) {
+      written = await client.orderDocument.findUniqueOrThrow({
+        where: { id: stored.id },
+        select: { documentNumber: true, customerName: true, deliveryDate: true, isPickup: true, flags: true },
+      });
     }
     orders.push(toOrder(written));
   }

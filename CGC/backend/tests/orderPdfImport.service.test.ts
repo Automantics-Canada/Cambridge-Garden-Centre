@@ -65,6 +65,8 @@ function makeClient(): FakeClient {
   let seq = 0;
 
   const tx = {
+    // No dispatcher has corrected anything in these tests.
+    orderOverride: { findMany: async () => [] },
     orderDocument: {
       upsert: async ({ where, update, create }: any) => {
         const existing = documents.get(where.documentNumber);

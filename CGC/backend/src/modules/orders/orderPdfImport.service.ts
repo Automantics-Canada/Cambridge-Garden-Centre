@@ -11,6 +11,7 @@ import {
 } from './spruce/reconcileSpruceDocument.js';
 import type { ParsedSpruceRow, SpruceReportType } from './spruce/spruceReportTypes.js';
 import { classifyLine } from './import/lineClass.js';
+import { reassertOverrides } from './edits/orderEdits.service.js';
 
 export interface ImportSummary {
   created: number;
@@ -374,6 +375,10 @@ export async function importDocument(
     result.events.push({ action: 'created', order: createdOrder });
     result.created++;
   }
+
+  // A dispatcher's corrections outlive the report: whatever it just wrote over
+  // them is kept as Spruce's latest word, and the corrections go back.
+  await reassertOverrides(tx, document.id);
 
   return result;
 }
