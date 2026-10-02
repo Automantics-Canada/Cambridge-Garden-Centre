@@ -2,7 +2,12 @@ import { prisma } from '../../db/prisma.js';
 import { DeliveryStatus } from '@prisma/client';
 import { MailService } from '../../services/mail.service.js';
 import { businessDayOf, businessDayRange } from '../../lib/businessDay.js';
-import { DISPATCH_DOCUMENT_SELECT, representativeLineId, toDispatchOrder } from './dispatchOrderView.js';
+import {
+  DISPATCH_DOCUMENT_SELECT,
+  representativeLineId,
+  toDispatchOrder,
+  withUpdatedFields,
+} from './dispatchOrderView.js';
 import {
   FINISHED_STATUSES as FINISHED,
   carriedOverWhere,
@@ -115,7 +120,9 @@ export const DispatchService = {
       }
     });
 
-    return {
+    // What today's upload changed is read apart from the rows: the same select
+    // reaches drivers' screens, which must not gain it.
+    return withUpdatedFields(prisma, {
       day: requestedDay,
       readOnly,
       carriedOver: carriedOver.map(toDispatchOrder),
@@ -134,7 +141,7 @@ export const DispatchService = {
           completedToday: deliveries.filter(del => del.status === 'DELIVERED').length
         };
       })
-    };
+    }, today);
   },
 
   /**
@@ -168,7 +175,10 @@ export const DispatchService = {
       orderBy: { documentNumber: 'desc' },
       take: UNDATED_LIMIT,
     });
-    return documents.map(({ isPickup, ...document }) => ({ ...toDispatchOrder(document), isPickup }));
+    return withUpdatedFields(
+      prisma,
+      documents.map(({ isPickup, ...document }) => ({ ...toDispatchOrder(document), isPickup }))
+    );
   },
 
   /**

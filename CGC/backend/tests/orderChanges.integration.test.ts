@@ -8,7 +8,6 @@ import { prisma } from '../src/db/prisma.js';
 import { businessDayOf } from '../src/lib/businessDay.js';
 import { DeliveriesService } from '../src/modules/deliveries/deliveries.service.js';
 import { DispatchService } from '../src/modules/dispatch/dispatch.service.js';
-import { withUpdatedFields } from '../src/modules/dispatch/dispatchOrderView.js';
 import { parseEditRequest } from '../src/modules/orders/edits/editableFields.js';
 import { applyOrderEdits, getOrderForEditing } from '../src/modules/orders/edits/orderEdits.service.js';
 import { runImportBatch, type BatchFile } from '../src/modules/orders/import/importBatch.service.js';
@@ -163,7 +162,7 @@ describe('re-uploading the reports later the same day (PostgreSQL)', { skip: !di
     assert.ok(riverbendNow.flags.includes('SPRUCE_VALUE_CHANGED'));
 
     // 3. The board. Its pool and the driver's run both carry the marks.
-    const board = await withUpdatedFields(prisma, await DispatchService.getDispatchBoard('2026-09-02', today), today);
+    const board = await DispatchService.getDispatchBoard('2026-09-02', today);
     const onRun = board.drivers.flatMap(driver => driver.deliveries).find(stop => stop.order.id === riverbend)!.order;
     assert.deepEqual('updatedFields' in onRun ? onRun.updatedFields : null, ['shippingAddress'], 'not the corrected phone');
     const harrowgate = board.unassignedOrders.find(order => order.spruceOrderId === '2608-700002')!;
