@@ -22,6 +22,9 @@ const UNDATED_LIMIT = 100;
  * Who the order is for and where it goes, under the customer's name. A whole
  * Spruce order carries both; a stop made before orders were dispatched whole
  * carries neither, and shows only the name as before.
+ *
+ * The delivery instructions follow on one line, cut to the column's width so
+ * a long one never widens it; the whole text is on hover.
  */
 function OrderDestination({ order }) {
   if (!order?.wholeOrder) return null;
@@ -30,6 +33,11 @@ function OrderDestination({ order }) {
       <p className={order.address ? 'text-muted' : 'text-clay font-semibold'}>
         {order.address || 'No address'}
       </p>
+      {order.deliveryInstructions && (
+        <p className="text-muted truncate w-0 min-w-full" title={order.deliveryInstructions}>
+          {order.deliveryInstructions}
+        </p>
+      )}
       {order.phone && <p className="text-muted tabular">{order.phone}</p>}
     </div>
   );

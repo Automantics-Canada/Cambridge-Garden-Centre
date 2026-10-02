@@ -46,12 +46,30 @@ export function assignWarning(order) {
   return `${order.spruceOrderId}: ${named}. Assign anyway?`;
 }
 
+/**
+ * The "Awaiting supplier" badge with who and which PO, as the spec words it:
+ * "Awaiting supplier: Unilock PO 2608-355356". Several POs are joined. Just
+ * "Awaiting supplier" when the order names none.
+ */
+export function awaitingSupplierText(order) {
+  const label = flagInfo('AWAITING_SUPPLIER').label;
+  const named = (order?.awaitingSupplier ?? [])
+    .map(({ supplierName, poNumber }) => [supplierName, poNumber && `PO ${poNumber}`].filter(Boolean).join(' '))
+    .filter(Boolean);
+  return named.length > 0 ? `${label}: ${named.join(', ')}` : label;
+}
+
+/** What a flag's badge says on this order. */
+export function flagLabel(order, flag) {
+  return flag === 'AWAITING_SUPPLIER' ? awaitingSupplierText(order) : flagInfo(flag).label;
+}
+
 /** Badges for an order's flags, the ones needing attention first. */
 export function flagBadges(order) {
   const flags = order?.flags ?? [];
   const first = flags.filter((flag) => ASSIGN_WARNING_FLAGS.includes(flag));
   const rest = flags.filter((flag) => !ASSIGN_WARNING_FLAGS.includes(flag));
-  return [...first, ...rest].map((flag) => ({ flag, ...flagInfo(flag) }));
+  return [...first, ...rest].map((flag) => ({ flag, ...flagInfo(flag), label: flagLabel(order, flag) }));
 }
 
 const DELIVERY_TYPE_LABELS = {
