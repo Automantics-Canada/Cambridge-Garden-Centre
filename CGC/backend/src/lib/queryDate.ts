@@ -33,3 +33,23 @@ export function parseQueryDate(
   }
   return parsed;
 }
+
+/**
+ * A from/to filter on a calendar-date column (`@db.Date`), such as an invoice
+ * date.
+ *
+ * Such a column holds the day at midnight UTC. The business-day boundaries
+ * used for timestamps would end "Aug 14" at 03:59 UTC on Aug 15, which a
+ * stored Aug 15 is earlier than, so a one-day filter returned the next day
+ * too. A calendar date is compared as the calendar date: both ends at midnight
+ * UTC, inclusive.
+ */
+export function parseCalendarDateRange(
+  start: unknown,
+  end: unknown
+): { startDate: Date | undefined; endDate: Date | undefined } {
+  return {
+    startDate: parseQueryDate(start, 'startDate', 'exact'),
+    endDate: parseQueryDate(end, 'endDate', 'exact'),
+  };
+}
