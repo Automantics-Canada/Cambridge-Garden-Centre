@@ -1,9 +1,9 @@
 import { prisma } from '../db/prisma.js';
-import nodemailer from 'nodemailer';
+import nodemailer, { type Transporter } from 'nodemailer';
 import { createDriverAccessToken } from './driverAccessToken.js';
 import { formatQuantity } from '../lib/quantity.js';
 
-let transporter: nodemailer.Transporter | null = null;
+let transporter: Transporter | null = null;
 
 function getTransporter() {
   if (transporter) return transporter;
