@@ -19,9 +19,36 @@ const PARSERS: Record<SpruceReportType, (pages: PdfTextPage[]) => ParsedSpruceRe
   DELIVERY: parseDeliveryReport,
 };
 
+/** A printed range: `08/14/26 - 08/14/26`, or `8/14/2026 To 8/14/2026`. */
+const DATE_RANGE = /(\d{1,2}\/\d{1,2}\/\d{2,4})\s*(?:-|to)\s*(\d{1,2}\/\d{1,2}\/\d{2,4})/i;
+
+/**
+ * The range a report was filtered on, from the parameter line near the top of
+ * its first page. Every layout prints one, worded differently; the first
+ * date pair on the page is it, since nothing above it carries two dates.
+ */
+export function readReportDateRange(pages: PdfTextPage[]): ParsedSpruceReport['dateRange'] {
+  const first = pages[0];
+  if (!first) return undefined;
+
+  const ordered = [...first.runs].sort((a, b) => a.y - b.y || a.x - b.x);
+  for (const run of ordered) {
+    const match = DATE_RANGE.exec(run.text);
+    if (match) return { fromRaw: match[1]!, toRaw: match[2]! };
+  }
+  return undefined;
+}
+
 /** Reads already-extracted pages. Separated so parsing can be tested alone. */
 export function parseSprucePages(pages: PdfTextPage[]): ParsedSpruceReport {
-  return PARSERS[detectSpruceReport(pages)](pages);
+  const report = PARSERS[detectSpruceReport(pages)](pages);
+  const dateRange = readReportDateRange(pages);
+
+  return {
+    ...report,
+    pageCount: pages.length,
+    ...(dateRange ? { dateRange } : {}),
+  };
 }
 
 /**

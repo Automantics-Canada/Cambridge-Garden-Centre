@@ -114,6 +114,14 @@ export interface ParsedSpruceReport {
    * missing without anyone noticing it went.
    */
   unreadable: UnreadableSpruceRow[];
+  /** Pages in the PDF. Set when read from a file. */
+  pageCount?: number;
+  /**
+   * The date range the report says it was filtered on, as printed. Each
+   * report filters on a different date: the delivery report on delivery
+   * date, the other two on entry date.
+   */
+  dateRange?: { fromRaw: string; toRaw: string };
 }
 
 /** Spruce document number, e.g. `2608-712589`. */

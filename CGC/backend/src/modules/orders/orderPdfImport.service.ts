@@ -10,6 +10,7 @@ import {
   type ExistingLine,
 } from './spruce/reconcileSpruceDocument.js';
 import type { ParsedSpruceRow, SpruceReportType } from './spruce/spruceReportTypes.js';
+import { classifyLine } from './import/lineClass.js';
 
 export interface ImportSummary {
   created: number;
@@ -179,6 +180,22 @@ function documentHeader(prepared: PreparedRow[], updatesCustomer: boolean) {
   };
 }
 
+/**
+ * Line facts only some reports print: prices from the order summary, vendor
+ * details from item tracking. Written only where this report printed them, so
+ * a report without prices never blanks the ones another report gave.
+ */
+function lineEnrichment(row: ParsedSpruceRow) {
+  return {
+    ...(row.unitPrice !== undefined ? { unitPrice: row.unitPrice.toString() } : {}),
+    ...(row.unitCost !== undefined ? { unitCost: row.unitCost.toString() } : {}),
+    ...(row.vendorName ? { vendorCode: row.vendorName.trim() } : {}),
+    ...(row.vendorLocation ? { vendorLocation: row.vendorLocation } : {}),
+    ...(row.poValue !== undefined ? { poValue: row.poValue.toString() } : {}),
+    lineClass: classifyLine(row.itemNumber, row.product),
+  };
+}
+
 type ProgressEvent = { action: 'created' | 'updated'; order: unknown };
 
 interface DocumentResult {
@@ -322,6 +339,7 @@ export async function importDocument(
       ...(p.deliveryDate ? { deliveryDate: p.deliveryDate } : {}),
       ...(source.poNumber ? { poNumber: source.poNumber } : {}),
       ...(p.supplierId ? { supplierId: p.supplierId } : {}),
+      ...lineEnrichment(source),
       documentId: document.id,
     };
 
@@ -349,6 +367,7 @@ export async function importDocument(
         unit: p.unit,
         orderDate: p.orderDate,
         deliveryDate: p.deliveryDate,
+        ...lineEnrichment(p.row),
         hasInvoice: false,
       },
     });
