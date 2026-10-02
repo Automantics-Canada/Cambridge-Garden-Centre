@@ -1,5 +1,6 @@
 import { prisma } from '../../db/prisma.js';
 import { DELIVERY_DRIVER_RESPONSE_SELECT } from '../deliveries/deliveries.service.js';
+import { businessDayOf, businessDayRange } from '../../lib/businessDay.js';
 import { DriverType } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 
@@ -388,43 +389,46 @@ export const DriverService = {
     });
   },
 
+  /**
+   * A driver's own profile, for their phone: who they are and how the day is
+   * going, as counts. Never the stops themselves — the phone asks for the
+   * current stop separately, and is given only that one. This used to carry
+   * the whole day's run, customers and addresses included, to a screen that
+   * showed none of it.
+   */
   async getDriverByUserId(userId: string) {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
     const driver = await prisma.driver.findUnique({
       where: { userId },
-      include: {
-        deliveries: {
-          where: {
-            OR: [
-              { status: { notIn: ['DELIVERED', 'CANCELLED'] } },
-              { completedAt: { gte: today } }
-            ]
-          },
-          // The driver's own profile: the same field list as their deliveries,
-          // so no order line's prices or supplier reach the phone.
-          select: DELIVERY_DRIVER_RESPONSE_SELECT,
-        }
-      }
+      select: {
+        id: true,
+        name: true,
+        type: true,
+        phone: true,
+        email: true,
+        active: true,
+        ratePerDelivery: true,
+        ratePerTrip: true,
+        userId: true,
+        companyName: true,
+      },
     });
-
     if (!driver) return null;
 
-    const todayDeliveries = driver.deliveries;
-    const completedDeliveries = todayDeliveries.filter(d => d.status === 'DELIVERED');
-    const currentTask = todayDeliveries.find(d => 
-      ['PLACED', 'OUT_FOR_DELIVERY', 'IN_TRANSIT', 'ON_HOLD', 'DELAYED'].includes(d.status)
-    );
+    // "Today" in Cambridge, not wherever the server happens to run.
+    const today = businessDayRange(businessDayOf())!;
+    const [open, completedToday] = await Promise.all([
+      prisma.delivery.count({ where: { driverId: driver.id, status: { notIn: ['DELIVERED', 'CANCELLED'] } } }),
+      prisma.delivery.count({ where: { driverId: driver.id, status: 'DELIVERED', completedAt: { gte: today.gte, lte: today.lte } } }),
+    ]);
+    const totalToday = open + completedToday;
 
     return {
       ...driver,
       stats: {
-        totalToday: todayDeliveries.length,
-        completedToday: completedDeliveries.length,
-        progress: todayDeliveries.length > 0 ? Math.round((completedDeliveries.length / todayDeliveries.length) * 100) : 0
+        totalToday,
+        completedToday,
+        progress: totalToday > 0 ? Math.round((completedToday / totalToday) * 100) : 0,
       },
-      currentTask: currentTask || null
     };
   },
 

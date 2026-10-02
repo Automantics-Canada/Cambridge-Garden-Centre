@@ -82,7 +82,7 @@ describe('driver responses carry no prices (PostgreSQL)', { skip: !disposableCon
 
   it('keeps prices out of the driver\'s own profile and run', async () => {
     const profile = await DriverService.getDriverByUserId(userId);
-    assert.ok(profile?.deliveries.length, 'the seeded stop is visible');
+    assert.equal(profile?.stats.totalToday, 1, 'the seeded stop is counted');
     assert.deepEqual(moneyKeysIn(profile), []);
 
     assert.deepEqual(moneyKeysIn(await DriverService.getDriverDeliveries(driverId)), []);
@@ -92,6 +92,11 @@ describe('driver responses carry no prices (PostgreSQL)', { skip: !disposableCon
     const list = await DeliveriesService.getDeliveries({ driverId }, 1, 50, 'priority', 'driver');
     assert.equal(list.data.length, 1);
     assert.deepEqual(moneyKeysIn(list), []);
+
+    // What the phone is actually given: the current stop.
+    const current = await DeliveriesService.getCurrentStop(driverId);
+    assert.equal(current.data.length, 1);
+    assert.deepEqual(moneyKeysIn(current), []);
   });
 
   it('keeps prices out of the answer to a driver\'s status update', async () => {
