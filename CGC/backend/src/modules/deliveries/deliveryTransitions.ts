@@ -54,6 +54,32 @@ export const DRIVER_ALLOWED_TARGETS: readonly DeliveryStatus[] = [
 ];
 
 /**
+ * The roles that may correct a finished stop (spec §8: past days are
+ * "read-only except status corrections by an admin").
+ *
+ * A stop is finished when DELIVERED or CANCELLED, whatever day it was due. An
+ * unfinished stop from an earlier day is not history: it is Carried over work,
+ * still live, and a driver may be on it now, so it is never locked here.
+ */
+export const HISTORY_CORRECTION_ROLES: readonly UserRole[] = ['ADMIN', 'OWNER'];
+
+/**
+ * Whether `role` is an office user kept off a finished stop.
+ *
+ * Drivers are left to the current-stop rule, which already refuses them any
+ * stop but the one on their screen, and a finished stop never is.
+ */
+export function isLockedFinishedStop(status: DeliveryStatus, role: UserRole): boolean {
+  return (
+    TERMINAL_STATUSES.includes(status) &&
+    role !== 'DRIVER' &&
+    !HISTORY_CORRECTION_ROLES.includes(role)
+  );
+}
+
+export const FINISHED_STOP_REFUSAL = 'Only an admin or owner may correct a finished stop';
+
+/**
  * Evidence a state requires before it can be entered.
  *
  * `DELIVERED` is the proof-of-delivery gate: the whole AP chain downstream
@@ -86,6 +112,7 @@ export type TransitionDenialCode =
   | 'TERMINAL_STATE'
   | 'ILLEGAL_TRANSITION'
   | 'ROLE_NOT_PERMITTED'
+  | 'FINISHED_STOP_ADMIN_ONLY'
   | 'MISSING_EVIDENCE';
 
 export type TransitionResult =
@@ -104,6 +131,11 @@ export function isDeliveryStatus(value: unknown): value is DeliveryStatus {
  * Order matters: an unknown value is rejected before anything else, and the
  * role check runs before the evidence check so a driver attempting a forbidden
  * cancel is told it is forbidden rather than being asked for a photo.
+ *
+ * An office user who may not correct history is refused a finished stop (403)
+ * before the state machine is consulted, so they are told who may change it
+ * rather than that nobody can. Admins and owners go on to the state machine,
+ * which today allows no move out of DELIVERED or CANCELLED at all (409).
  */
 export function evaluateTransition(request: TransitionRequest): TransitionResult {
   const { from, to, role, evidence } = request;
@@ -114,6 +146,10 @@ export function evaluateTransition(request: TransitionRequest): TransitionResult
       code: 'INVALID_STATUS',
       reason: `Unknown delivery status: ${String(to)}`,
     };
+  }
+
+  if (isLockedFinishedStop(from, role)) {
+    return { allowed: false, code: 'FINISHED_STOP_ADMIN_ONLY', reason: FINISHED_STOP_REFUSAL };
   }
 
   // A no-op repeat is not an error, but it must not re-stamp timestamps or
@@ -168,5 +204,6 @@ export const DENIAL_HTTP_STATUS: Record<TransitionDenialCode, number> = {
   ILLEGAL_TRANSITION: 409,
   TERMINAL_STATE: 409,
   ROLE_NOT_PERMITTED: 403,
+  FINISHED_STOP_ADMIN_ONLY: 403,
   MISSING_EVIDENCE: 422,
 };
