@@ -19,7 +19,12 @@ import { DriverService } from '../src/modules/drivers/driver.service.js';
 const disposableConfirmed = process.env.SPRUCE_TEST_CONFIRM_DISPOSABLE === '1';
 
 /** Every key that would put money in front of a driver. */
-const MONEY_KEYS = ['unitPrice', 'unitCost', 'poValue', 'totalWithTax', 'remaining', 'remainingDeposit', 'grossMarginPct', 'supplier'];
+const MONEY_KEYS = [
+  'unitPrice', 'unitCost', 'poValue', 'totalWithTax', 'remaining', 'remainingDeposit', 'grossMarginPct', 'supplier',
+  // Who an order was bought from, and under which PO: the office's
+  // "Awaiting supplier" badge, never the driver's business.
+  'supplierId', 'supplierName', 'awaitingSupplier', 'poNumber', 'vendorCode', 'vendorLocation',
+];
 
 function moneyKeysIn(value: unknown, path = '$'): string[] {
   if (Array.isArray(value)) return value.flatMap((item, index) => moneyKeysIn(item, `${path}[${index}]`));
@@ -67,6 +72,9 @@ describe('driver responses carry no prices (PostgreSQL)', { skip: !disposableCon
         unitPrice: '35.91',
         unitCost: '16.50',
         poValue: '942.55',
+        poNumber: '9900-100777',
+        vendorCode: 'EXAMPLEV01',
+        vendorLocation: 'Example Yard',
         orderDate: new Date('2026-09-01'),
       },
     });
