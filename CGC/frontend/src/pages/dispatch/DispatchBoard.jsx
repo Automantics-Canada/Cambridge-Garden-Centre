@@ -11,7 +11,8 @@ import { businessDayOffset, formatDate } from '../../lib/date';
 import { cn } from '../../lib/cn';
 import { isTerminal, statusErrorMessage, statusOptionsFor } from '../../lib/deliveryTransitions';
 import { formatQuantity } from '../../lib/quantity';
-import { assignWarning, deliveryTypeLabel, flagBadges, mergeUnassignedOrders, orderRef, updatedTitle } from '../../lib/dispatchBoard';
+import { assignWarning, awaitingSupplierDetail, awaitingSupplierText, deliveryTypeLabel, flagBadges, mergeUnassignedOrders, orderRef, updatedTitle } from '../../lib/dispatchBoard';
+import { flagInfo } from '../../lib/spruceImport';
 import { canCorrectHistory, formatDeliveryDay, isPastDay, returnsTo, upcomingSummary } from '../../lib/dispatchDays';
 import OrderEditor from '../../components/orders/OrderEditor';
 
@@ -59,15 +60,30 @@ function OrderLoad({ order }) {
   );
 }
 
+/**
+ * The order's badges. Who the order waits on and under which PO goes on a
+ * line of its own under them, cut to the column's width, so a long supplier
+ * name never widens the table and pushes its buttons out of view.
+ */
 function OrderFlags({ order }) {
   const badges = flagBadges(order);
   const updated = updatedTitle(order);
+  const supplierDetail = awaitingSupplierDetail(order);
   if (badges.length === 0 && !order?.edited && !updated) return null;
   return (
-    <div className="flex flex-wrap gap-1.5 mt-1.5">
-      {updated && <span className="inline-flex" title={updated}><Badge tone="warn">Updated</Badge></span>}
-      {order?.edited && <Badge tone="neutral">Edited</Badge>}
-      {badges.map(({ flag, label, tone }) => <Badge key={flag} tone={tone}>{label}</Badge>)}
+    <div className="mt-1.5">
+      <div className="flex flex-wrap gap-1.5">
+        {updated && <span className="inline-flex" title={updated}><Badge tone="warn">Updated</Badge></span>}
+        {order?.edited && <Badge tone="neutral">Edited</Badge>}
+        {badges.map(({ flag, label, tone }) => (
+          <Badge key={flag} tone={tone}>{flag === 'AWAITING_SUPPLIER' ? flagInfo(flag).label : label}</Badge>
+        ))}
+      </div>
+      {supplierDetail && order?.flags?.includes('AWAITING_SUPPLIER') && (
+        <p className="mt-1 text-[12.5px] text-muted truncate w-0 min-w-full" title={awaitingSupplierText(order)}>
+          {supplierDetail}
+        </p>
+      )}
     </div>
   );
 }

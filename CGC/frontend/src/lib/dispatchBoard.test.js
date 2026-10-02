@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   assignWarning,
+  awaitingSupplierDetail,
   awaitingSupplierText,
   flagBadges,
   flagLabel,
@@ -118,6 +119,13 @@ describe('awaiting supplier', () => {
   it('says just "Awaiting supplier" when nothing is named', () => {
     expect(awaitingSupplierText({ flags: ['AWAITING_SUPPLIER'] })).toBe('Awaiting supplier');
     expect(awaitingSupplierText({ awaitingSupplier: [] })).toBe('Awaiting supplier');
+    expect(awaitingSupplierDetail({ awaitingSupplier: [] })).toBe(null);
+  });
+
+  it('gives the board the supplier and PO alone, for the line under the badge', () => {
+    expect(awaitingSupplierDetail({
+      awaitingSupplier: [{ supplierName: 'Example Pavers', poNumber: '9900-100001' }],
+    })).toBe('Example Pavers PO 9900-100001');
   });
 
   it("leaves every other flag's label alone", () => {

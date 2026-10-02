@@ -53,10 +53,16 @@ export function assignWarning(order) {
  */
 export function awaitingSupplierText(order) {
   const label = flagInfo('AWAITING_SUPPLIER').label;
+  const detail = awaitingSupplierDetail(order);
+  return detail ? `${label}: ${detail}` : label;
+}
+
+/** Who and which PO an order waits on, "Unilock PO 2608-355356", or null when it names none. */
+export function awaitingSupplierDetail(order) {
   const named = (order?.awaitingSupplier ?? [])
     .map(({ supplierName, poNumber }) => [supplierName, poNumber && `PO ${poNumber}`].filter(Boolean).join(' '))
     .filter(Boolean);
-  return named.length > 0 ? `${label}: ${named.join(', ')}` : label;
+  return named.length > 0 ? named.join(', ') : null;
 }
 
 /** What a flag's badge says on this order. */
