@@ -31,10 +31,12 @@ describe('board days', () => {
     assert.equal(dayOfDeliveryDate(new Date('2026-08-14T00:00:00.000Z')), '2026-08-14');
   });
 
-  it('carries over earlier orders with no driver and no finished stop, never pickups', () => {
+  it('carries over earlier orders with no driver and no finished stop, never pickups or closed ones', () => {
     const where = carriedOverWhere('2026-08-15');
     assert.deepEqual(where.deliveryDate, { lt: new Date('2026-08-15T00:00:00.000Z') });
     assert.equal(where.isPickup, false);
+    // Spruce has invoiced, closed or voided a NOT_OPEN order: nothing to carry.
+    assert.deepEqual(where.NOT, { flags: { has: 'NOT_OPEN' } });
     assert.deepEqual(where.OR, [
       { delivery: null },
       { delivery: { driverId: null, status: { notIn: ['DELIVERED', 'CANCELLED'] } } },
@@ -48,11 +50,13 @@ describe('board days', () => {
     });
   });
 
-  it('lists pickups and open undated deliveries, searched by number or customer', () => {
-    assert.deepEqual(undatedWhere(), { OR: [{ isPickup: true }, { deliveryDate: null, NOT: { flags: { has: 'NOT_OPEN' } } }] });
-    assert.deepEqual(undatedWhere('   '), { OR: [{ isPickup: true }, { deliveryDate: null, NOT: { flags: { has: 'NOT_OPEN' } } }] });
+  it('lists open pickups and open undated deliveries, searched by number or customer', () => {
+    // NOT_OPEN leaves out a pickup as well as an undated delivery.
+    const open = { NOT: { flags: { has: 'NOT_OPEN' } }, OR: [{ isPickup: true }, { deliveryDate: null }] };
+    assert.deepEqual(undatedWhere(), open);
+    assert.deepEqual(undatedWhere('   '), open);
     assert.deepEqual(undatedWhere(' 712589 ').AND, [
-      { OR: [{ isPickup: true }, { deliveryDate: null, NOT: { flags: { has: 'NOT_OPEN' } } }] },
+      open,
       {
         OR: [
           { documentNumber: { contains: '712589', mode: 'insensitive' } },

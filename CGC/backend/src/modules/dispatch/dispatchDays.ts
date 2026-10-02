@@ -24,17 +24,27 @@ export const dayOfDeliveryDate = (date: Date) => date.toISOString().slice(0, 10)
 export const isPastDay = (day: string, today: string) => day < today;
 
 /**
+ * Orders Spruce no longer lists as open: invoiced, closed or voided since.
+ * They are waiting for nothing, so Carried over and Pickups leave them out.
+ */
+const CLOSED_IN_SPRUCE: Prisma.OrderDocumentWhereInput = { flags: { has: 'NOT_OPEN' } };
+
+/**
  * Orders from before today that never went out: no stop, or a stop taken back
  * off its driver and not finished.
  *
  * Orders still on a driver's run are left out on purpose. The board already
  * shows every driver's open work under that driver, so listing them here as
  * well would put one order on screen twice.
+ *
+ * Orders Spruce no longer lists as open are left out too: nobody will deliver
+ * them, and nothing else would ever take them off this list.
  */
 export function carriedOverWhere(today: string): Prisma.OrderDocumentWhereInput {
   return {
     deliveryDate: { lt: deliveryDayDate(today) },
     isPickup: false,
+    NOT: CLOSED_IN_SPRUCE,
     OR: [
       { delivery: null },
       { delivery: { driverId: null, status: { notIn: FINISHED_STATUSES } } },
@@ -53,11 +63,12 @@ export function upcomingWhere(today: string): Prisma.OrderDocumentWhereInput {
  * undated order with a delivery charge is not one — so listing pickups alone
  * would leave those deliveries on no screen at all.
  *
- * An undated order Spruce no longer lists as open has been invoiced, closed or
- * voided; it is waiting for nothing, so it is left out.
+ * An order Spruce no longer lists as open, pickup or not, has been invoiced,
+ * closed or voided; it is waiting for nothing, so it is left out.
  */
 const UNDATED: Prisma.OrderDocumentWhereInput = {
-  OR: [{ isPickup: true }, { deliveryDate: null, NOT: { flags: { has: 'NOT_OPEN' } } }],
+  NOT: CLOSED_IN_SPRUCE,
+  OR: [{ isPickup: true }, { deliveryDate: null }],
 };
 
 export function undatedWhere(search?: string): Prisma.OrderDocumentWhereInput {

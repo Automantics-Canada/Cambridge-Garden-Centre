@@ -33,7 +33,7 @@ const day = (iso: string) => new Date(`${iso}T00:00:00.000Z`);
 async function seedOrder(
   documentNumber: string,
   deliveryDate: string | null,
-  options: { isPickup?: boolean; customerName?: string } = {},
+  options: { isPickup?: boolean; customerName?: string; flags?: string[] } = {},
 ) {
   const document = await prisma.orderDocument.create({
     data: {
@@ -41,6 +41,7 @@ async function seedOrder(
       customerName: options.customerName ?? `Customer ${documentNumber}`,
       deliveryDate: deliveryDate ? day(deliveryDate) : null,
       isPickup: options.isPickup ?? false,
+      flags: options.flags ?? [],
       shippingAddress: '1 Example St, Cambridge',
     },
   });
@@ -91,12 +92,17 @@ describe('the board across days (PostgreSQL)', { skip: !disposableConfirmed }, (
     await seedOrder('9900-000008', '2026-08-17');
     await seedOrder('9900-000009', null, { isPickup: true });
     await seedOrder('9900-000010', '2026-08-14', { isPickup: true });
+    // Invoiced, closed or voided in Spruce since: never carried over.
+    await seedOrder('9900-000011', '2026-08-14', { flags: ['NOT_OPEN'] });
+    const closedTakenBack = await seedOrder('9900-000012', '2026-08-13', { flags: ['NO_ADDRESS', 'NOT_OPEN'] });
 
     await DispatchService.assignOrder(onRun.id, driver.id);
     await finish(delivered.id, driver.id, 'DELIVERED', new Date('2026-08-14T16:00:00Z'));
     await finish(cancelled.id, driver.id, 'CANCELLED', new Date('2026-08-14T16:00:00Z'));
     await DispatchService.assignOrder(takenBack.id, driver.id);
     await DispatchService.unassignOrder(takenBack.id);
+    await DispatchService.assignOrder(closedTakenBack.id, driver.id);
+    await DispatchService.unassignOrder(closedTakenBack.id);
 
     const today = await DispatchService.getDispatchBoard(TODAY, TODAY);
     assert.equal(today.readOnly, false);
@@ -158,9 +164,12 @@ describe('the board across days (PostgreSQL)', { skip: !disposableConfirmed }, (
     ]);
   });
 
-  it('lists pickups and open undated deliveries, never dated or closed orders, and searches them', async () => {
+  it('lists open pickups and open undated deliveries, never dated or closed orders, and searches them', async () => {
     await seedOrder('9900-000001', null, { isPickup: true, customerName: 'Pat Example' });
     await seedOrder('9900-000002', null, { isPickup: true, customerName: 'Sam Sample' });
+    // Pickups Spruce no longer lists as open, undated or dated.
+    await seedOrder('9900-000007', null, { isPickup: true, flags: ['NOT_OPEN'] });
+    await seedOrder('9900-000008', '2026-08-12', { isPickup: true, customerName: 'Pat Closed', flags: ['NOT_OPEN'] });
     await seedOrder('9900-000003', null); // a delivery with no date yet
     const closed = await seedOrder('9900-000006', null); // invoiced or voided in Spruce since
     await prisma.orderDocument.update({ where: { id: closed.id }, data: { flags: ['NOT_OPEN'] } });
@@ -178,6 +187,9 @@ describe('the board across days (PostgreSQL)', { skip: !disposableConfirmed }, (
     assert.deepEqual(numbers(await DispatchService.getUndatedOrders('000002')), ['9900-000002']);
     assert.deepEqual(numbers(await DispatchService.getUndatedOrders('pat ex')), ['9900-000001']);
     assert.deepEqual(await DispatchService.getUndatedOrders('9900-000004'), []);
+    // A search does not bring a closed pickup back.
+    assert.deepEqual(await DispatchService.getUndatedOrders('Pat Closed'), []);
+    assert.deepEqual(await DispatchService.getUndatedOrders('9900-000007'), []);
   });
 
   it('refuses to change a finished past order, and keeps an unfinished one assignable', async () => {
