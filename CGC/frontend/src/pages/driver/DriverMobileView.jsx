@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useSelector, useDispatch } from 'react-redux';
 import api from '../../api/axios';
@@ -13,6 +13,11 @@ import { Badge } from '../../components/ui';
 import { cn } from '../../lib/cn';
 import { formatQuantity } from '../../lib/quantity';
 import { stopView, telHref } from '../../lib/driverStop';
+
+/** How often the phone checks for its stop while on screen. The office board stays at 10 s. */
+const DRIVER_POLL_MS = 2_000;
+/** The longest the profile's day counts go unread while the stop count holds still. */
+const PROFILE_REFRESH_MS = 60_000;
 
 export default function DriverMobileView() {
   const [searchParams] = useSearchParams();
@@ -32,6 +37,12 @@ export default function DriverMobileView() {
   const [updatingStatus, setUpdatingStatus] = useState(false);
   const [showLogoutModal, setShowLogoutModal] = useState(false);
 
+  // The background check: whether one is still waiting on the network, how
+  // many stops the last answer reported, and when the profile was last read.
+  const pollInFlight = useRef(false);
+  const lastRemaining = useRef(null);
+  const profileReadAt = useRef(0);
+
   const fetchMobileData = useCallback(async (silent = false) => {
     try {
       if (!silent) {
@@ -47,17 +58,35 @@ export default function DriverMobileView() {
       // remain. The session path used to go through a Supabase function that
       // deploys by hand, so the phone could lag the dispatch board by a release.
       const access = token ? { token } : {};
-      const [driverRes, delRes] = await Promise.all([
-        api.get('/api/drivers/me', { params: access }),
+      const readProfile = () => api.get('/api/drivers/me', { params: access });
+      const [delRes, firstProfile] = await Promise.all([
         api.get('/api/deliveries', { params: { ...access, page: 1, limit: 1 } }),
+        silent ? null : readProfile(),
       ]);
+      const remaining = delRes.data?.pagination?.totalCount ?? 0;
 
-      setDriverInfo(driverRes.data);
+      // A background check reads the stop alone. The profile's counts move
+      // only when a stop is added or finished, which changes how many remain,
+      // so it is read again then, and now and again for the day's rollover.
+      const profileStale =
+        remaining !== lastRemaining.current || Date.now() - profileReadAt.current >= PROFILE_REFRESH_MS;
+      const profileRes = firstProfile ?? (profileStale ? await readProfile() : null);
+      if (profileRes) {
+        setDriverInfo(profileRes.data);
+        profileReadAt.current = Date.now();
+      }
+
+      lastRemaining.current = remaining;
       setDeliveries(delRes.data?.data || []);
-      setStopsRemaining(delRes.data?.pagination?.totalCount ?? 0);
+      setStopsRemaining(remaining);
     } catch (e) {
       console.error(e);
-      setError("Invalid or expired access session.");
+      // A background check that fails on a weak signal leaves the stop on
+      // screen and tries again; only a refusal means the session is over.
+      const refused = [401, 403, 404].includes(e?.response?.status);
+      if (!silent || refused) {
+        setError("Invalid or expired access session.");
+      }
     } finally {
       setLoading(false);
     }
@@ -67,11 +96,22 @@ export default function DriverMobileView() {
     fetchMobileData();
   }, [fetchMobileData]);
 
+  // A newly assigned stop reaches the phone within DRIVER_POLL_MS plus one
+  // round trip (spec §13 asks for about 2 seconds).
+  // useIntervalRefresh stops polling while the page is hidden and checks once
+  // on return, so a phone in a pocket costs nothing.
   useIntervalRefresh(
-    () => {
-      fetchMobileData(true);
+    async () => {
+      // On a slow network, checks must not stack up behind one another.
+      if (pollInFlight.current) return;
+      pollInFlight.current = true;
+      try {
+        await fetchMobileData(true);
+      } finally {
+        pollInFlight.current = false;
+      }
     },
-    8_000,
+    DRIVER_POLL_MS,
     { enabled: Boolean(driverInfo?.id) && !uploadingType && !updatingStatus }
   );
 

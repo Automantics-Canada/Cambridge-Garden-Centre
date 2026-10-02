@@ -3,7 +3,12 @@ import type { AuthRequest } from '../../middleware/authMiddleware.js';
 import { DeliveriesService, DeliveryNotCurrentError } from './deliveries.service.js';
 import { prisma } from '../../db/prisma.js';
 import { canAccessDelivery, findDriverIdForUser } from '../../services/authorization.js';
-import { evaluateTransition, DENIAL_HTTP_STATUS } from './deliveryTransitions.js';
+import {
+  evaluateTransition,
+  DENIAL_HTTP_STATUS,
+  FINISHED_STOP_REFUSAL,
+  isLockedFinishedStop,
+} from './deliveryTransitions.js';
 import { DeliveryQueryError, parseDeliveryQuery } from './deliveryQuery.js';
 
 export const getDeliveries = async (req: AuthRequest, res: Response) => {
@@ -122,8 +127,22 @@ export const uploadPhoto = async (req: AuthRequest, res: Response) => {
       return res.status(403).json({ error: 'Forbidden' });
     }
     if (!(await driverMayActOn(req, res, id))) return;
+
+    // A finished stop's photos are its proof of delivery; replacing one is a
+    // correction to history, which only an admin or owner may make. A driver
+    // has already been held to their current stop, which is never finished.
+    if (req.user!.role !== 'DRIVER') {
+      const stop = await prisma.delivery.findUnique({ where: { id }, select: { status: true } });
+      if (!stop) {
+        return res.status(404).json({ error: 'Delivery not found' });
+      }
+      if (isLockedFinishedStop(stop.status, req.user!.role)) {
+        return res.status(403).json({ error: FINISHED_STOP_REFUSAL, code: 'FINISHED_STOP_ADMIN_ONLY' });
+      }
+    }
+
     const { type } = req.body; // 'pickup' | 'delivery' | 'ticket'
-    
+
     if (!req.file) {
       return res.status(400).json({ error: 'File is required' });
     }

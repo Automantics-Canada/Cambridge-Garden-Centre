@@ -22,6 +22,8 @@ import {
   TERMINAL_STATUSES,
   DRIVER_ALLOWED_TARGETS,
   DENIAL_HTTP_STATUS,
+  HISTORY_CORRECTION_ROLES,
+  isLockedFinishedStop,
 } from '../src/modules/deliveries/deliveryTransitions.js';
 
 const NO_PHOTOS = { pickupPhotoUrl: null, deliveryPhotoUrl: null };
@@ -107,6 +109,48 @@ describe('terminal states', () => {
 
   it('will not resurrect a cancelled delivery', () => {
     assert.equal(attempt('CANCELLED', 'PLACED', 'ADMIN').allowed, false);
+  });
+});
+
+describe('finished stops are history (spec §8)', () => {
+  it('refuses an AP user any change to a finished stop with 403', () => {
+    for (const terminal of TERMINAL_STATUSES) {
+      for (const target of Object.keys(DELIVERY_TRANSITIONS) as DeliveryStatus[]) {
+        const result = attempt(terminal, target, 'AP_USER');
+        assert.equal(result.allowed === false && result.code, 'FINISHED_STOP_ADMIN_ONLY', `${terminal} -> ${target}`);
+      }
+    }
+    assert.equal(DENIAL_HTTP_STATUS.FINISHED_STOP_ADMIN_ONLY, 403);
+  });
+
+  it('leaves admins and owners to the state machine, which has no way out of a finished state', () => {
+    for (const role of HISTORY_CORRECTION_ROLES) {
+      const result = attempt('DELIVERED', 'IN_TRANSIT', role);
+      assert.equal(result.allowed === false && result.code, 'TERMINAL_STATE', role);
+    }
+  });
+
+  it('never locks an unfinished stop, whatever day it was due', () => {
+    // Past-dated unfinished stops are Carried over work; the rule reads the
+    // status only, never the date.
+    assert.equal(attempt('PLACED', 'ON_HOLD', 'AP_USER').allowed, true);
+    assert.equal(attempt('IN_TRANSIT', 'DELIVERED', 'AP_USER').allowed, true);
+    assert.equal(attempt('ON_HOLD', 'CANCELLED', 'AP_USER').allowed, true);
+    for (const from of Object.keys(DELIVERY_TRANSITIONS) as DeliveryStatus[]) {
+      if (TERMINAL_STATUSES.includes(from)) continue;
+      assert.equal(isLockedFinishedStop(from, 'AP_USER'), false, from);
+    }
+  });
+
+  it('leaves drivers to the current-stop rule', () => {
+    assert.equal(isLockedFinishedStop('DELIVERED', 'DRIVER'), false);
+    const result = attempt('DELIVERED', 'IN_TRANSIT', 'DRIVER');
+    assert.equal(result.allowed === false && result.code, 'TERMINAL_STATE');
+  });
+
+  it('still reports an invalid value first', () => {
+    const result = attempt('DELIVERED', 'NONSENSE', 'AP_USER');
+    assert.equal(result.allowed === false && result.code, 'INVALID_STATUS');
   });
 });
 
