@@ -19,6 +19,7 @@ import type {
 } from '../src/modules/orders/spruce/spruceReportTypes.js';
 import { aug14SpruceReports } from './fixtures/aug14SpruceShapes.js';
 import {
+  deliveryReport,
   itemTrackingReport,
   orderSummaryReport,
 } from './fixtures/spruceLayouts.js';
@@ -35,7 +36,7 @@ interface FakeOrder {
   poNumber: string | null;
   customerName: string;
   supplierId: string | null;
-  orderDate: Date;
+  orderDate: Date | null;
   deliveryDate: Date | null;
   hasInvoice: boolean;
   deliveryStatus: 'NOT_STARTED' | 'IN_PROGRESS' | 'COMPLETED';
@@ -47,7 +48,7 @@ interface FakeDocument {
   id: string;
   documentNumber: string;
   customerName: string;
-  orderDate: Date;
+  orderDate?: Date | null;
   deliveryDate?: Date;
   poNumber?: string;
   shippingAddress?: string;
@@ -172,7 +173,7 @@ function persistedSignature(client: FakeClient): string[] {
   const documents = [...client.__documents.values()].map(document => [
     document.documentNumber,
     document.customerName,
-    document.orderDate.toISOString(),
+    document.orderDate?.toISOString() ?? null,
     document.deliveryDate?.toISOString() ?? null,
     document.poNumber ?? null,
     document.shippingAddress ?? null,
@@ -278,7 +279,61 @@ describe('OrderPdfImportService.applyReport', () => {
     const soil = [...client.__orders.values()].find(o => o.spruceItemNumber === 'SOILGRDNA')!;
     // The fixture prints 9/2/2026 — September the second. Under the previous
     // day-first convention this was stored as February.
-    assert.match(soil.orderDate.toISOString(), /^2026-09-02/);
+    assert.match(soil.orderDate!.toISOString(), /^2026-09-02/);
+  });
+
+  it('dates a delivery report order by when it goes out, not when it was keyed', async () => {
+    // The report is filtered by delivery date, so its one date is when the
+    // order leaves. It was read as the order date, which dated orders keyed
+    // weeks earlier to the day they shipped and gave none a delivery date.
+    const client = makeClient();
+
+    const summary = await OrderPdfImportService.applyReport(
+      client,
+      parseSprucePages(deliveryReport()),
+      'job-1'
+    );
+
+    assert.equal(summary.skipped, 0);
+    for (const document of client.__documents.values()) {
+      assert.equal(document.orderDate ?? null, null, `${document.documentNumber} has no order date to give`);
+      assert.match(document.deliveryDate!.toISOString(), /^2026-09-02/);
+    }
+    for (const line of client.__orders.values()) {
+      assert.equal(line.orderDate, null);
+      assert.match(line.deliveryDate!.toISOString(), /^2026-09-02/);
+    }
+  });
+
+  it('keeps the order date an earlier report gave when the delivery report follows', async () => {
+    const client = makeClient();
+    await OrderPdfImportService.applyReport(client, parseSprucePages(orderSummaryReport()), 'job-1');
+    await OrderPdfImportService.applyReport(client, parseSprucePages(deliveryReport()), 'job-2');
+
+    const document = client.__documents.get('2608-700001')!;
+    assert.match(document.orderDate!.toISOString(), /^2026-09-02/);
+    assert.match(document.deliveryDate!.toISOString(), /^2026-09-02/);
+  });
+
+  it('refuses a document with no date at all rather than inventing one', async () => {
+    const client = makeClient();
+    const report: ParsedSpruceReport = {
+      type: 'DELIVERY',
+      unreadable: [],
+      rows: [{
+        documentNumber: '9900-999998',
+        customerName: 'Synthetic Customer',
+        product: 'Synthetic Product',
+        quantity: 1,
+        source: { page: 1, row: 4 },
+      }],
+    };
+
+    const summary = await OrderPdfImportService.applyReport(client, report, 'undated');
+
+    assert.equal(client.__documents.size, 0, 'nothing was written');
+    assert.equal(summary.skipped, 1);
+    assert.match(summary.errors[0]!.error, /no date on the report/);
   });
 
   it('reports lines the report does not mention instead of deleting them', async () => {
@@ -366,6 +421,16 @@ describe('OrderPdfImportService.applyReport', () => {
 
       assert.equal(client.__orders.size, 69);
       assert.equal(client.__documents.size, 25);
+      // Orders only the delivery report knows are dated by when they go out
+      // and carry no order date; the ones it shares keep the order date the
+      // other reports gave, whichever report arrived last.
+      for (const document of ['9900-000014', '9900-000025']) {
+        assert.equal(client.__documents.get(document)?.orderDate ?? null, null);
+        assert.match(client.__documents.get(document)!.deliveryDate!.toISOString(), /^2026-09-02/);
+      }
+      for (const document of ['9900-000006', '9900-000012']) {
+        assert.match(client.__documents.get(document)!.orderDate!.toISOString(), /^2026-08-14/);
+      }
       assert.equal(client.__documents.get('9900-000013')?.customerName, 'Synthetic Customer C09');
       for (const document of ['9900-000006', '9900-000007', '9900-000010', '9900-000012']) {
         assert.notEqual(client.__documents.get(document)?.customerName, 'Cash Sales');

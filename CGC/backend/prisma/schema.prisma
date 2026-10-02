@@ -31,7 +31,7 @@ model OrderDocument {
   /// The reports do not say, and stamping CONTRACTOR on every document hid the
   /// walk-in trade entirely.
   buyerType       BuyerType?
-  orderDate       DateTime  @db.Date
+  orderDate       DateTime? @db.Date
   deliveryDate    DateTime? @db.Date
   shippingAddress String?
   createdAt       DateTime  @default(now())
@@ -70,7 +70,7 @@ model Order {
   quantity       Decimal?           @db.Decimal
   unit           String?
   supplierId     String?            @db.Uuid
-  orderDate      DateTime           @db.Date
+  orderDate      DateTime?          @db.Date
   deliveryDate   DateTime?          @db.Date
   hasInvoice     Boolean            @default(false)
   invoiceNumber  String?

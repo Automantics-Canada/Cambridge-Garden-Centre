@@ -115,6 +115,9 @@ async function loadCandidateOrders(
     const from = new Date(date.getTime() - windowDays * 86_400_000);
     const to = new Date(date.getTime() + windowDays * 86_400_000);
     where.push({ supplierId, orderDate: { gte: from, lte: to } });
+    // An order only the delivery report has seen has no order date; its
+    // delivery date stands in, exactly as it does in the engine.
+    where.push({ supplierId, orderDate: null, deliveryDate: { gte: from, lte: to } });
   }
 
   if (where.length === 0) return [];
@@ -129,6 +132,7 @@ async function loadCandidateOrders(
       unit: true,
       supplierId: true,
       orderDate: true,
+      deliveryDate: true,
     },
     // A subject that somehow matches hundreds of orders is a data problem, not
     // a match; the engine will call it a CONFLICT either way, and this stops
@@ -144,6 +148,7 @@ async function loadCandidateOrders(
     unit: row.unit,
     supplierId: row.supplierId,
     orderDate: row.orderDate,
+    deliveryDate: row.deliveryDate,
   }));
 }
 

@@ -20,6 +20,23 @@ const REPORT_FIELDS = [
   'vendorName',
   'shippingAddress',
   'orderNotes',
+  'accountCode',
+  'accountName',
+  'phone',
+  'route',
+  'cashier',
+  'spruceStatus',
+  'deliveryFlag',
+  'totalWithTax',
+  'remainingDeposit',
+  'remaining',
+  'grossMarginPct',
+  'deliveryInstructions',
+  'deliveryTruck',
+  'unitPrice',
+  'unitCost',
+  'vendorLocation',
+  'poValue',
 ] as const satisfies readonly (keyof ParsedSpruceRow)[];
 
 type ReportField = (typeof REPORT_FIELDS)[number];

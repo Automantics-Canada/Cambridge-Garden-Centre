@@ -69,6 +69,7 @@ const ITEM_COLUMNS: ColumnSpec[] = [
   { key: 'quantityOrdered', phrase: 'QtyOrd' },
   { key: 'unit', phrase: 'U/M', occurrence: 0 },
   { key: 'quantityReceived', phrase: 'QtyRecv' },
+  { key: 'unitPrice', phrase: 'UnitPrice' },
 ];
 
 /** A run that is nothing but a number, possibly with thousands separators. */
@@ -90,6 +91,13 @@ interface ItemZones {
    * next numeric column along.
    */
   figuresTo: number;
+  /**
+   * Left edge of the unit price, or null where the heading is missing.
+   *
+   * Prices are right-aligned under a heading wider than they are, so they
+   * always start to its right; the quantity sold before it ends to its left.
+   */
+  pricesFrom: number | null;
 }
 
 function deriveItemZones(header: ReturnType<typeof findHeaderRow>): ItemZones | null {
@@ -106,6 +114,7 @@ function deriveItemZones(header: ReturnType<typeof findHeaderRow>): ItemZones | 
     descriptionFrom: (item + description) / 2,
     figuresFrom: (description + quantity) / 2,
     figuresTo: received ?? Number.POSITIVE_INFINITY,
+    pricesFrom: header.hits.get('unitPrice')?.x ?? null,
   };
 }
 
@@ -115,6 +124,72 @@ interface OrderContext {
   customerName: string;
   orderDateRaw?: string;
   deliveryDateRaw?: string;
+  /** Everything else the order's own row says, copied onto each of its lines. */
+  facts: OrderFacts;
+}
+
+type OrderFacts = Pick<
+  ParsedSpruceRow,
+  | 'accountCode'
+  | 'cashier'
+  | 'spruceStatus'
+  | 'deliveryFlag'
+  | 'totalWithTax'
+  | 'remainingDeposit'
+  | 'remaining'
+  | 'grossMarginPct'
+>;
+
+/** `1,607.48`. */
+const MONEY = /^-?\d{1,3}(?:,\d{3})*\.\d{2}$/;
+
+/** `45.80%`. */
+const PERCENT = /^-?\d+(?:\.\d+)?%$/;
+
+/**
+ * Reads the four figures at the end of an order's row by their shape.
+ *
+ * Rem Dep, Total w/tax, GM% and Remaining are right-aligned under headings of
+ * different widths, so a value can fall either side of its own heading. And on
+ * the last page of the sample the GM% heading prints a hair lower than its
+ * neighbours and drops out of the heading row entirely, leaving no band for
+ * it — the margin then reads as part of the remaining balance. The margin is
+ * the only one printed with a percent sign, which places the other three
+ * unambiguously: the two money figures before it, the one after it.
+ */
+function readOrderFigures(row: TextRow): Pick<OrderFacts, 'totalWithTax' | 'remainingDeposit' | 'remaining' | 'grossMarginPct'> {
+  const texts = row.runs.map(run => run.text.trim()).filter(Boolean);
+  const marginAt = texts.findIndex(text => PERCENT.test(text));
+  if (marginAt < 0) return {};
+
+  const money = (text: string | undefined) => (text && MONEY.test(text) ? parseSpruceNumber(text) : null);
+  const total = money(texts[marginAt - 1]);
+  const deposit = money(texts[marginAt - 2]);
+  const remaining = money(texts[marginAt + 1]);
+  const margin = parseSpruceNumber(texts[marginAt]!.slice(0, -1));
+
+  return {
+    ...(total !== null ? { totalWithTax: total } : {}),
+    ...(deposit !== null ? { remainingDeposit: deposit } : {}),
+    ...(remaining !== null ? { remaining } : {}),
+    ...(margin !== null ? { grossMarginPct: margin } : {}),
+  };
+}
+
+function readOrderFacts(row: TextRow, cells: Record<string, string>): OrderFacts {
+  const text = (key: string) => cells[key]?.trim() || undefined;
+  const accountCode = text('accountCode');
+  const cashier = text('cashier');
+  const spruceStatus = text('status');
+  const deliveryFlag = text('deliveryFlag');
+
+  return {
+    ...(accountCode ? { accountCode } : {}),
+    ...(cashier ? { cashier } : {}),
+    ...(spruceStatus ? { spruceStatus } : {}),
+    ...(deliveryFlag ? { deliveryFlag } : {}),
+    ...readOrderFigures(row),
+  };
 }
 
 function isItemHeaderRow(row: TextRow): boolean {
@@ -132,6 +207,8 @@ interface ItemLine {
   description?: string;
   quantity: number | null;
   unit?: string;
+  unitPrice?: number;
+  unitCost?: number;
 }
 
 /**
@@ -148,6 +225,7 @@ function readItemLine(row: TextRow, zones: ItemZones): ItemLine {
   const codes: string[] = [];
   const description: string[] = [];
   const figures = [];
+  const prices: string[] = [];
 
   for (const run of row.runs) {
     const text = run.text.trim();
@@ -156,7 +234,17 @@ function readItemLine(row: TextRow, zones: ItemZones): ItemLine {
     if (run.x < zones.descriptionFrom) codes.push(text);
     else if (run.x < zones.figuresFrom) description.push(text);
     else if (run.x < zones.figuresTo) figures.push(text);
+    else if (zones.pricesFrom !== null && run.x >= zones.pricesFrom) prices.push(text);
   }
+
+  // Unit price, its unit, unit cost, line margin — in that order. The units
+  // between them are words or a dash, so the first two numbers are the price
+  // and the cost whichever of the others is blank.
+  const [unitPrice, unitCost] = prices
+    .filter(text => BARE_NUMBER.test(text))
+    .map(text => parseSpruceNumber(text));
+  if (unitPrice !== undefined && unitPrice !== null) line.unitPrice = unitPrice;
+  if (unitCost !== undefined && unitCost !== null) line.unitCost = unitCost;
 
   if (codes.length > 0) line.itemNumber = codes.join(' ');
   if (description.length > 0) line.description = description.join(' ').replace(/\s+/g, ' ').trim();
@@ -211,13 +299,14 @@ export function parseOrderSummaryReport(pages: PdfTextPage[]): ParsedSpruceRepor
           customerName: cells.customerName?.trim() || '',
           ...(cells.orderDate?.trim() ? { orderDateRaw: cells.orderDate.trim() } : {}),
           ...(cells.deliveryDate?.trim() ? { deliveryDateRaw: cells.deliveryDate.trim() } : {}),
+          facts: readOrderFacts(row, cells),
         };
         continue;
       }
 
       if (!zones) continue;
 
-      const { itemNumber, description, quantity, unit } = readItemLine(row, zones);
+      const { itemNumber, description, quantity, unit, unitPrice, unitCost } = readItemLine(row, zones);
 
       // A line with only description text continues the item above it.
       if (!itemNumber && description && quantity === null) {
@@ -259,6 +348,9 @@ export function parseOrderSummaryReport(pages: PdfTextPage[]): ParsedSpruceRepor
         ...(unit ? { unit } : {}),
         ...(order.orderDateRaw ? { orderDateRaw: order.orderDateRaw } : {}),
         ...(order.deliveryDateRaw ? { deliveryDateRaw: order.deliveryDateRaw } : {}),
+        ...order.facts,
+        ...(unitPrice !== undefined ? { unitPrice } : {}),
+        ...(unitCost !== undefined ? { unitCost } : {}),
         source: { page: pageNumber, row: rowNumber },
       });
     }

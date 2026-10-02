@@ -10,6 +10,11 @@ import type {
  * identities, cross-report equality, optional-field presence, and overlap are
  * preserved; no client names, document numbers, addresses, products, POs,
  * vendors, dates, or quantities are stored in Git.
+ *
+ * The delivery report prints one date per order and is filtered on it, so
+ * every one of its rows carries the same delivery date and no order date —
+ * as the real report does. Its date matches the other two reports for the
+ * orders they share, which were ordered and delivered the same day.
  */
 const REPORT_SHAPES: Record<SpruceReportType, string> = {
   ORDER_SUMMARY: `
@@ -90,47 +95,47 @@ D12 CASH I25 P31 Q02 - T2 - - A12
 D12 CASH I26 P32 Q02 - T2 - - A12
 `,
   DELIVERY: `
-D14 C12 I28 P34 Q10 CY - - - -
-D14 C12 I29 P35 Q02 EA - - - -
-D15 C13 I30 P36 Q13 SQFT - - - -
-D15 C13 I09 P10 Q03 EA - - - -
-D15 C13 I13 P14 Q02 EA - - - -
-D16 C14 I31 P37 Q09 CY - - - -
-D16 C14 I32 P38 Q02 EA - - - -
-D16 C14 I33 P39 Q03 BAG - - - -
-D17 C15 I34 P40 Q14 SQFT - - - -
-D17 C15 I02 P41 Q02 - - - - -
-D17 C15 I35 P42 Q02 EA - - - -
-D17 C15 I36 P43 Q15 SQFT - - - -
-D17 C15 I02 P44 Q02 - - - - -
-D17 C15 I35 P42 Q03 EA - - - -
-D17 C15 I37 P45 Q02 HR - - - -
-D18 C16 I38 P46 Q02 CYBG - - - -
-D19 C17 I39 P47 Q10 CY - - - -
-D19 C17 I40 P48 Q02 HCY - - - -
-D19 C17 I41 P49 Q02 EA - - - -
-D20 C18 I42 P50 Q16 MT - - - -
-D20 C18 I42 P50 Q16 MT - - - -
-D20 C18 I42 P50 Q16 MT - - - -
-D20 C18 I42 P50 Q16 MT - - - -
-D20 C18 I42 P50 Q16 MT - - - -
-D20 C18 I42 P50 Q16 MT - - - -
-D21 C19 I01 P01 Q17 CYDL - - - -
-D22 C20 I43 P51 Q02 EA - - - -
-D22 C20 I28 P34 Q17 CY - - - -
-D23 C21 I39 P47 Q02 CY - - - -
-D23 C21 I44 P52 Q02 EA - - - -
-D24 C22 I45 P53 Q09 MT - - - -
-D25 C23 I14 P16 Q18 MT - - - -
-D06 C06 I14 P16 Q09 MT - - - -
-D06 C06 I15 P17 Q09 MT - - - -
-D08 C08 I18 P20 Q11 MT - - - -
-D10 C10 I20 P22 Q02 EA - - - -
-D10 C10 I21 P23 Q03 EA - - - -
-D12 C11 I26 P32 Q02 EA - - - -
-D12 C11 I23 P29 Q02 CY - - - -
-D12 C11 I24 P30 Q02 HCY - - - -
-D12 C11 I25 P31 Q02 CY - - - -
+D14 C12 I28 P34 Q10 CY T2 - - -
+D14 C12 I29 P35 Q02 EA T2 - - -
+D15 C13 I30 P36 Q13 SQFT T2 - - -
+D15 C13 I09 P10 Q03 EA T2 - - -
+D15 C13 I13 P14 Q02 EA T2 - - -
+D16 C14 I31 P37 Q09 CY T2 - - -
+D16 C14 I32 P38 Q02 EA T2 - - -
+D16 C14 I33 P39 Q03 BAG T2 - - -
+D17 C15 I34 P40 Q14 SQFT T2 - - -
+D17 C15 I02 P41 Q02 - T2 - - -
+D17 C15 I35 P42 Q02 EA T2 - - -
+D17 C15 I36 P43 Q15 SQFT T2 - - -
+D17 C15 I02 P44 Q02 - T2 - - -
+D17 C15 I35 P42 Q03 EA T2 - - -
+D17 C15 I37 P45 Q02 HR T2 - - -
+D18 C16 I38 P46 Q02 CYBG T2 - - -
+D19 C17 I39 P47 Q10 CY T2 - - -
+D19 C17 I40 P48 Q02 HCY T2 - - -
+D19 C17 I41 P49 Q02 EA T2 - - -
+D20 C18 I42 P50 Q16 MT T2 - - -
+D20 C18 I42 P50 Q16 MT T2 - - -
+D20 C18 I42 P50 Q16 MT T2 - - -
+D20 C18 I42 P50 Q16 MT T2 - - -
+D20 C18 I42 P50 Q16 MT T2 - - -
+D20 C18 I42 P50 Q16 MT T2 - - -
+D21 C19 I01 P01 Q17 CYDL T2 - - -
+D22 C20 I43 P51 Q02 EA T2 - - -
+D22 C20 I28 P34 Q17 CY T2 - - -
+D23 C21 I39 P47 Q02 CY T2 - - -
+D23 C21 I44 P52 Q02 EA T2 - - -
+D24 C22 I45 P53 Q09 MT T2 - - -
+D25 C23 I14 P16 Q18 MT T2 - - -
+D06 C06 I14 P16 Q09 MT T2 - - -
+D06 C06 I15 P17 Q09 MT T2 - - -
+D08 C08 I18 P20 Q11 MT T2 - - -
+D10 C10 I20 P22 Q02 EA T2 - - -
+D10 C10 I21 P23 Q03 EA T2 - - -
+D12 C11 I26 P32 Q02 EA T2 - - -
+D12 C11 I23 P29 Q02 CY T2 - - -
+D12 C11 I24 P30 Q02 HCY T2 - - -
+D12 C11 I25 P31 Q02 CY T2 - - -
 `,
 };
 
@@ -180,7 +185,7 @@ function parseShape(type: SpruceReportType, shape: string): ParsedSpruceReport {
       itemNumber: `ITEM-${item}`,
       quantity: Number(quantity.slice(1)),
       ...(unit !== '-' ? { unit } : {}),
-      orderDateRaw: '08/14/2026',
+      ...(type === 'DELIVERY' ? {} : { orderDateRaw: '08/14/2026' }),
       ...(resolvedDeliveryDate ? { deliveryDateRaw: resolvedDeliveryDate } : {}),
       ...(po !== '-' ? { poNumber: `SYN-${po}` } : {}),
       ...(vendor !== '-' ? { vendorName: `SYN-${vendor}` } : {}),

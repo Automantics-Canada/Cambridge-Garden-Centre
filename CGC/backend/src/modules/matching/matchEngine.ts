@@ -74,7 +74,22 @@ export interface CandidateOrder {
   quantity: number | null;
   unit: string | null;
   supplierId: string | null;
-  orderDate: Date;
+  /** Null for an order only the delivery report has seen; it prints no entry date. */
+  orderDate: Date | null;
+  deliveryDate?: Date | null;
+}
+
+/**
+ * The date an order's window is measured from.
+ *
+ * Its order date where Spruce printed one. An order first seen on the delivery
+ * report has none — that report prints only when the order goes out — and its
+ * delivery date is then the nearest real date to the material moving. With
+ * neither there is nothing to measure from, and the caller says so rather than
+ * treating the order as near or far.
+ */
+function windowDateOf(order: CandidateOrder): Date | null {
+  return order.orderDate ?? order.deliveryDate ?? null;
 }
 
 export interface TicketSubject {
@@ -358,7 +373,10 @@ function findCandidates(
   const window = inputs.tolerances.dateWindowDays;
   const candidates = inputs.orders.filter((order) => {
     if (order.supplierId !== subject.supplierId) return false;
-    if (daysBetween(order.orderDate, subject.date as Date) > window) return false;
+    // An undated order cannot be shown to fall inside the window, so this
+    // route does not offer it. Its PO still finds it.
+    const orderDate = windowDateOf(order);
+    if (!orderDate || daysBetween(orderDate, subject.date as Date) > window) return false;
     return normalizeProductName(order.product) === productName;
   });
 
@@ -536,8 +554,15 @@ export function matchTicket(ticket: TicketSubject, inputs: MatchInputs): MatchDe
       )
     );
 
-    if (ticket.ticketDate) {
-      const days = daysBetween(order.orderDate, ticket.ticketDate);
+    const orderDate = windowDateOf(order);
+    if (ticket.ticketDate && !orderDate) {
+      checks.push({
+        name: 'date',
+        passed: false,
+        detail: 'The order has no order or delivery date to compare the ticket date with',
+      });
+    } else if (ticket.ticketDate && orderDate) {
+      const days = daysBetween(orderDate, ticket.ticketDate);
       checks.push({
         name: 'date',
         passed: days <= inputs.tolerances.dateWindowDays,

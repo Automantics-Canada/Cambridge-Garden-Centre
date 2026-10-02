@@ -108,7 +108,8 @@ async function buildVendorIndex(client: VendorLookupClient, rows: ParsedSpruceRo
 
 interface PreparedRow {
   row: ParsedSpruceRow;
-  orderDate: Date;
+  /** Null when the report prints no entry date — the delivery report never does. */
+  orderDate: Date | null;
   deliveryDate: Date | null;
   unit: string;
   supplierId: string | null;
@@ -117,33 +118,37 @@ interface PreparedRow {
 /**
  * Resolves everything the report leaves as text before any write happens.
  *
- * An order date that is missing or unreadable refuses the whole document: the
- * old fallback stamped "today" on the row, and an order dated today instead of
- * August looks healthy on every screen until a bill goes unpaid against it.
+ * A date that is printed but unreadable refuses the whole document, and so
+ * does a row with no date at all: the old fallback stamped "today" on the
+ * row, and an order dated today instead of August looks healthy on every
+ * screen until a bill goes unpaid against it. A missing order date alone is
+ * allowed, because the delivery report prints none — only when the order goes
+ * out. It stays null rather than borrowing the delivery date, until a report
+ * that prints it is imported.
  */
 function prepareRows(rows: ParsedSpruceRow[], vendorIndex: Map<string, string>): PreparedRow[] {
   return rows.map(row => {
+    const where = `Page ${row.source.page}, row ${row.source.row}`;
     const orderDate = parseSpruceDate(row.orderDateRaw);
-    if (!orderDate) {
+    if (row.orderDateRaw && !orderDate) {
       throw new DocumentError(
-        `Page ${row.source.page}, row ${row.source.row}: ` +
-        (row.orderDateRaw
-          ? `unreadable order date "${row.orderDateRaw}"`
-          : 'no order date on the report') +
-        '; nothing for this document was written.'
+        `${where}: unreadable order date "${row.orderDateRaw}"; nothing for this document was written.`
       );
     }
 
-    if (row.deliveryDateRaw && !parseSpruceDate(row.deliveryDateRaw)) {
-      throw new DocumentError(
-        `Page ${row.source.page}, row ${row.source.row}: unreadable delivery date "${row.deliveryDateRaw}".`
-      );
+    const deliveryDate = parseSpruceDate(row.deliveryDateRaw);
+    if (row.deliveryDateRaw && !deliveryDate) {
+      throw new DocumentError(`${where}: unreadable delivery date "${row.deliveryDateRaw}".`);
+    }
+
+    if (!orderDate && !deliveryDate) {
+      throw new DocumentError(`${where}: no date on the report; nothing for this document was written.`);
     }
 
     return {
       row,
       orderDate,
-      deliveryDate: parseSpruceDate(row.deliveryDateRaw),
+      deliveryDate,
       unit: row.unit ?? inferUnitFromDescription(row.product),
       supplierId: row.vendorName
         ? vendorIndex.get(row.vendorName.trim().toUpperCase()) ?? null
@@ -160,13 +165,14 @@ function prepareRows(rows: ParsedSpruceRow[], vendorIndex: Map<string, string>):
  */
 function documentHeader(prepared: PreparedRow[], updatesCustomer: boolean) {
   const first = prepared[0]!;
+  const firstOrderDate = prepared.map(p => p.orderDate).find(d => d !== null);
   const firstDeliveryDate = prepared.map(p => p.deliveryDate).find(d => d !== null);
   const firstPoNumber = prepared.map(p => p.row.poNumber).find(po => po);
   const firstShippingAddress = prepared.map(p => p.row.shippingAddress).find(a => a?.trim());
 
   return {
     ...(updatesCustomer ? { customerName: first.row.customerName } : {}),
-    orderDate: first.orderDate,
+    ...(firstOrderDate ? { orderDate: firstOrderDate } : {}),
     ...(firstDeliveryDate ? { deliveryDate: firstDeliveryDate } : {}),
     ...(firstPoNumber ? { poNumber: firstPoNumber } : {}),
     ...(firstShippingAddress ? { shippingAddress: firstShippingAddress } : {}),
@@ -310,7 +316,9 @@ export async function importDocument(
     const data: Prisma.OrderUncheckedUpdateInput = {
       ...('patch' in paired ? paired.patch : {}),
       ...(REPORT_UPDATES_CUSTOMER[reportType] ? { customerName: source.customerName } : {}),
-      orderDate: p.orderDate,
+      // Never cleared: a report without an order date leaves the one an
+      // earlier report gave.
+      ...(p.orderDate ? { orderDate: p.orderDate } : {}),
       ...(p.deliveryDate ? { deliveryDate: p.deliveryDate } : {}),
       ...(source.poNumber ? { poNumber: source.poNumber } : {}),
       ...(p.supplierId ? { supplierId: p.supplierId } : {}),
