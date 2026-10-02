@@ -14,7 +14,7 @@ import {
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { Skeleton } from '../../components/Skeleton';
-import { formatDate } from '../../lib/date';
+import { formatCalendarDate, formatDate } from '../../lib/date';
 import {
   Badge,
   Button,
@@ -207,7 +207,7 @@ export default function InvoiceDetailPage() {
               <div className="grid grid-cols-2 gap-y-4 gap-x-8 text-sm border-b border-line pb-6">
                 <div>
                   <p className="text-muted text-[12.5px] mb-1">Invoice date</p>
-                  <p className="tabular font-semibold text-ink">{formatDate(invoice.invoiceDate)}</p>
+                  <p className="tabular font-semibold text-ink">{formatCalendarDate(invoice.invoiceDate)}</p>
                 </div>
                 <div>
                   <p className="text-muted text-[12.5px] mb-1">Total amount</p>
@@ -219,7 +219,7 @@ export default function InvoiceDetailPage() {
                 </div>
                 <div>
                   <p className="text-muted text-[12.5px] mb-1">Due date</p>
-                  <p className="tabular font-medium text-ink">{formatDate(invoice.dueDate)}</p>
+                  <p className="tabular font-medium text-ink">{formatCalendarDate(invoice.dueDate)}</p>
                 </div>
               </div>
 
