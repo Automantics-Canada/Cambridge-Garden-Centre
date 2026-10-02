@@ -2,10 +2,9 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useSelector, useDispatch } from 'react-redux';
 import api from '../../api/axios';
-import { supabase } from '../../supabaseClient';
 import { logout } from '../../store/authSlice';
 import LogoutModal from '../../components/LogoutModal';
-import { MapPin, Camera, CheckCircle2, AlertCircle, Package, User, LogOut } from 'lucide-react';
+import { MapPin, Camera, CheckCircle2, AlertCircle, Package, User, LogOut, Phone, MessageSquare } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 
 import { MobileDriverSkeleton } from '../../components/Skeleton';
@@ -13,6 +12,7 @@ import { useIntervalRefresh } from '../../hooks/useIntervalRefresh';
 import { Badge } from '../../components/ui';
 import { cn } from '../../lib/cn';
 import { formatQuantity } from '../../lib/quantity';
+import { stopView, telHref } from '../../lib/driverStop';
 
 export default function DriverMobileView() {
   const [searchParams] = useSearchParams();
@@ -38,52 +38,23 @@ export default function DriverMobileView() {
         setLoading(true);
       }
 
-      let driverInfoData, deliveriesData, remaining;
-      if (token) {
-        // Legacy URL token access
-        const [driverRes, delRes] = await Promise.all([
-          api.get(`/api/drivers/me?token=${token}`),
-          api.get(`/api/deliveries?token=${token}`)
-        ]);
-        driverInfoData = driverRes.data;
-        deliveriesData = delRes.data;
-      } else if (isAuthenticated) {
-        // Standard session authenticated access
-        const userToken = localStorage.getItem('token');
-        const headers = userToken ? { Authorization: `Bearer ${userToken}` } : {};
-
-        const { data: meData, error: meError } = await supabase.functions.invoke('fetch-cgc-data?resource=drivers-me', {
-          method: 'GET',
-          headers
-        });
-        if (meError) throw meError;
-        driverInfoData = meData;
-
-        // The server returns the current stop only, and reports how many remain.
-        // This used to ask for limit=1000 and hide all but the first row, which
-        // put the whole day's route — customers, products, quantities — in the
-        // browser of a driver who is only meant to see the stop they are on.
-        const { data: delData, error: delError } = await supabase.functions.invoke(
-          `fetch-cgc-data?resource=deliveries&driverId=${meData.id}`,
-          { method: 'GET', headers }
-        );
-        if (delError) throw delError;
-        deliveriesData = delData?.data || [];
-        remaining = delData?.pagination?.totalCount;
-      } else {
+      if (!token && !isAuthenticated) {
         throw new Error("Missing session or access link");
       }
 
-      setDriverInfo(driverInfoData);
+      // Both ways in — a signed-in session or a driver's access link — read the
+      // API, which answers a driver with the current stop alone and how many
+      // remain. The session path used to go through a Supabase function that
+      // deploys by hand, so the phone could lag the dispatch board by a release.
+      const access = token ? { token } : {};
+      const [driverRes, delRes] = await Promise.all([
+        api.get('/api/drivers/me', { params: access }),
+        api.get('/api/deliveries', { params: { ...access, page: 1, limit: 1 } }),
+      ]);
 
-      // The token path still returns the full list, so the same rule is applied
-      // here for it. The session path is already narrowed server-side.
-      const active = (deliveriesData || [])
-        .filter(d => d.status !== 'DELIVERED' && d.status !== 'CANCELLED')
-        .sort((a, b) => (a.priority || 0) - (b.priority || 0));
-
-      setDeliveries(active);
-      setStopsRemaining(typeof remaining === 'number' ? remaining : active.length);
+      setDriverInfo(driverRes.data);
+      setDeliveries(delRes.data?.data || []);
+      setStopsRemaining(delRes.data?.pagination?.totalCount ?? 0);
     } catch (e) {
       console.error(e);
       setError("Invalid or expired access session.");
@@ -165,11 +136,11 @@ export default function DriverMobileView() {
     );
   }
 
-  // Enforce single active order view constraint
+  // The server sends the current stop only.
   const currentDelivery = deliveries[0];
-  const deliveryAddress = currentDelivery?.order?.shippingAddress
-    || currentDelivery?.order?.document?.shippingAddress
-    || '';
+  const stop = currentDelivery ? stopView(currentDelivery) : null;
+  const deliveryAddress = stop?.address || '';
+  const phoneLink = telHref(stop?.phone);
 
   return (
     <div className="min-h-screen bg-canvas text-ink pb-28 font-sans">
@@ -234,20 +205,41 @@ export default function DriverMobileView() {
                         <span className="tabular text-lg font-semibold leading-none">1</span>
                       </div>
                       <div className="flex-1 pt-1">
-                        <h3 className="font-semibold text-xl text-ink tracking-tight leading-none">{currentDelivery.order.spruceOrderId}</h3>
-                        <p className="text-muted text-[13px] font-normal mt-2 truncate max-w-[180px]">{currentDelivery.order.customerName}</p>
+                        <h3 className="font-semibold text-xl text-ink tracking-tight leading-none">{stop.orderNumber}</h3>
+                        <p className="text-muted text-[13px] font-normal mt-2 truncate max-w-[180px]">{stop.customerName}</p>
+                        {stop.deliveryType && <Badge tone="good" className="mt-2">{stop.deliveryType}</Badge>}
                       </div>
                     </div>
 
+                    {/* Who to call comes first: customers wait on site and
+                        "call before" is the most common instruction. */}
+                    {phoneLink && (
+                      <a
+                        href={phoneLink}
+                        className="w-full mb-4 flex items-center justify-center gap-3 bg-brand/10 border border-brand/30 text-brand py-3 min-h-11 rounded-control font-semibold text-[15px] tabular"
+                      >
+                        <Phone size={18} strokeWidth={2} /> {stop.phone}
+                      </a>
+                    )}
+
                     <div className="bg-ink/[0.03] rounded-card p-5 mb-6 border border-line space-y-4">
-                      <div className="flex items-center gap-4 text-sm">
-                        <div className="w-8 h-8 rounded-pill bg-surface flex items-center justify-center shadow-card border border-line">
+                      <div className="flex items-start gap-4 text-sm">
+                        <div className="w-8 h-8 rounded-pill bg-surface flex items-center justify-center shadow-card border border-line flex-shrink-0">
                           <Package className="text-brand" size={16} strokeWidth={2} />
                         </div>
-                        <div>
-                          <p className="tabular font-semibold text-ink leading-none">{formatQuantity(currentDelivery.order.quantity, currentDelivery.order.unit)}</p>
-                          <p className="text-[13px] text-muted font-normal mt-1">{currentDelivery.order.product}</p>
-                        </div>
+                        <ul className="space-y-2 pt-1 min-w-0">
+                          {stop.lines.map((line, index) => (
+                            <li key={index}>
+                              <p className="tabular font-semibold text-ink leading-none">{formatQuantity(line.quantity, line.unit)}</p>
+                              <p className="text-[13px] text-muted font-normal mt-1">{line.product}</p>
+                            </li>
+                          ))}
+                          {stop.skids > 0 && (
+                            <li className="text-[13px] text-muted font-semibold">
+                              {stop.skids} skid{stop.skids === 1 ? '' : 's'}
+                            </li>
+                          )}
+                        </ul>
                       </div>
                       <div className="flex items-start gap-4 text-sm pt-4 border-t border-line">
                         <div className="w-8 h-8 rounded-pill bg-surface flex items-center justify-center shadow-card border border-line flex-shrink-0">
@@ -257,6 +249,21 @@ export default function DriverMobileView() {
                           {deliveryAddress || 'No delivery address on file. Ask dispatch before you leave.'}
                         </p>
                       </div>
+                      {(stop.instructions || stop.notes) && (
+                        <div className="flex items-start gap-4 text-sm pt-4 border-t border-line">
+                          <div className="w-8 h-8 rounded-pill bg-surface flex items-center justify-center shadow-card border border-line flex-shrink-0">
+                            <MessageSquare className="text-ochre" size={16} strokeWidth={2} />
+                          </div>
+                          <div className="space-y-2 pt-1 text-[13px] leading-relaxed">
+                            {stop.instructions && <p className="text-ink">{stop.instructions}</p>}
+                            {stop.notes && (
+                              <p className="text-ink">
+                                <span className="font-semibold">From dispatch: </span>{stop.notes}
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      )}
                     </div>
 
                     <div className="space-y-3">

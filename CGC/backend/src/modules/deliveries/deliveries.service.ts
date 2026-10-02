@@ -66,7 +66,84 @@ export const DELIVERY_DRIVER_RESPONSE_SELECT = {
   },
 } as const;
 
+/** A stop in either state is history: never a driver's current stop. */
+const FINISHED: DeliveryStatus[] = [DeliveryStatus.DELIVERED, DeliveryStatus.CANCELLED];
+
+/**
+ * The order a driver works through their run: dispatch's priority, then the
+ * older stop, then a fixed tie-break, so two reads never disagree about which
+ * stop is current.
+ */
+const RUN_ORDER = [{ priority: 'asc' as const }, { createdAt: 'asc' as const }, { id: 'asc' as const }];
+
+/** Under way: the truck is loaded for this stop. */
+const STARTED: DeliveryStatus[] = [DeliveryStatus.OUT_FOR_DELIVERY, DeliveryStatus.IN_TRANSIT];
+
+export class DeliveryNotCurrentError extends Error {
+  readonly code = 'DELIVERY_NOT_CURRENT';
+}
+
+/**
+ * The stop a driver is on: one already under way if there is one, otherwise
+ * the next by dispatch's order.
+ *
+ * Dispatch reorders runs all day as customers call. That decides what comes
+ * next, never what is already on the truck: a driver halfway to one customer
+ * must not find their screen showing another.
+ */
+async function currentStopId(driverId: string): Promise<string | null> {
+  const started = await prisma.delivery.findFirst({
+    where: { driverId, status: { in: STARTED } },
+    orderBy: RUN_ORDER,
+    select: { id: true },
+  });
+  if (started) return started.id;
+
+  const next = await prisma.delivery.findFirst({
+    where: { driverId, status: { notIn: FINISHED } },
+    orderBy: RUN_ORDER,
+    select: { id: true },
+  });
+  return next?.id ?? null;
+}
+
 export const DeliveriesService = {
+  /**
+   * What a driver sees: their current stop and nothing after it, with how many
+   * stops remain.
+   *
+   * Dispatch reorders a run while drivers are out — a customer calls, an order
+   * jumps the queue — so the rest of the run is both changing and none of the
+   * driver's business. Only the stop in hand leaves the server.
+   */
+  async getCurrentStop(driverId: string) {
+    const [id, remaining] = await Promise.all([
+      currentStopId(driverId),
+      prisma.delivery.count({ where: { driverId, status: { notIn: FINISHED } } }),
+    ]);
+    const current = id
+      ? await prisma.delivery.findUnique({ where: { id }, select: DELIVERY_DRIVER_RESPONSE_SELECT })
+      : null;
+
+    return {
+      data: current ? [current] : [],
+      pagination: { page: 1, limit: 1, totalCount: remaining, totalPages: 1 },
+    };
+  },
+
+  /**
+   * Refuses a driver's change to any stop but their current one. The screen
+   * only ever shows the current stop; this makes that the rule rather than a
+   * habit of the screen.
+   */
+  async assertCurrentStop(driverId: string, deliveryId: string) {
+    if ((await currentStopId(driverId)) !== deliveryId) {
+      throw new DeliveryNotCurrentError(
+        'This is not your current stop. Finish the one on your screen first; dispatch sets the order.'
+      );
+    }
+  },
+
   async getDeliveries(
     filters: any,
     page = 1,

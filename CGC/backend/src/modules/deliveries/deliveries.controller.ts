@@ -1,6 +1,6 @@
 import type { Response } from 'express';
 import type { AuthRequest } from '../../middleware/authMiddleware.js';
-import { DeliveriesService } from './deliveries.service.js';
+import { DeliveriesService, DeliveryNotCurrentError } from './deliveries.service.js';
 import { prisma } from '../../db/prisma.js';
 import { canAccessDelivery, findDriverIdForUser } from '../../services/authorization.js';
 import { evaluateTransition, DENIAL_HTTP_STATUS } from './deliveryTransitions.js';
@@ -11,14 +11,15 @@ export const getDeliveries = async (req: AuthRequest, res: Response) => {
     const parsed = parseDeliveryQuery(req.query as Record<string, unknown>);
     const filters = parsed.filters;
 
-    const driverRequest = req.user?.role === 'DRIVER';
     if (req.user?.role === 'DRIVER') {
-      // Securely enforce that drivers can only query their own deliveries
+      // A driver is answered with their current stop alone, whatever they ask
+      // for: a hand-edited filter or page size cannot widen it to the run.
       const ownDriverId = await findDriverIdForUser(prisma, req.user.id);
       if (!ownDriverId) {
         return res.status(404).json({ error: 'Driver profile not linked' });
       }
-      filters.driverId = ownDriverId;
+      const current = await DeliveriesService.getCurrentStop(ownDriverId);
+      return res.json(parsed.wantsEnvelope ? current : current.data);
     }
 
     const result = await DeliveriesService.getDeliveries(
@@ -26,7 +27,7 @@ export const getDeliveries = async (req: AuthRequest, res: Response) => {
       parsed.page,
       parsed.limit,
       parsed.wantsEnvelope ? 'newest' : 'priority',
-      driverRequest ? 'driver' : 'operations',
+      'operations',
     );
 
     // Legacy driver links and older frontends expect an array when they did not
@@ -40,12 +41,36 @@ export const getDeliveries = async (req: AuthRequest, res: Response) => {
   }
 };
 
+/**
+ * A driver may change only the stop on their screen. Answers false, having
+ * replied, when they may not.
+ */
+async function driverMayActOn(req: AuthRequest, res: Response, deliveryId: string): Promise<boolean> {
+  if (req.user?.role !== 'DRIVER') return true;
+  const ownDriverId = await findDriverIdForUser(prisma, req.user.id);
+  if (!ownDriverId) {
+    res.status(404).json({ error: 'Driver profile not linked' });
+    return false;
+  }
+  try {
+    await DeliveriesService.assertCurrentStop(ownDriverId, deliveryId);
+    return true;
+  } catch (error) {
+    if (error instanceof DeliveryNotCurrentError) {
+      res.status(409).json({ error: error.message, code: error.code });
+      return false;
+    }
+    throw error;
+  }
+}
+
 export const updateStatus = async (req: AuthRequest, res: Response) => {
   try {
     const { id } = req.params as { id: string };
     if (!(await canAccessDelivery(prisma, req.user, id))) {
       return res.status(403).json({ error: 'Forbidden' });
     }
+    if (!(await driverMayActOn(req, res, id))) return;
     const { status, notes } = req.body;
 
     // The state machine needs the current record. Reading it here rather than
@@ -96,6 +121,7 @@ export const uploadPhoto = async (req: AuthRequest, res: Response) => {
     if (!(await canAccessDelivery(prisma, req.user, id))) {
       return res.status(403).json({ error: 'Forbidden' });
     }
+    if (!(await driverMayActOn(req, res, id))) return;
     const { type } = req.body; // 'pickup' | 'delivery' | 'ticket'
     
     if (!req.file) {

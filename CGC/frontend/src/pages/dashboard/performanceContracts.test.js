@@ -121,7 +121,7 @@ describe('authenticated route performance contracts', () => {
     expect(codeOnly(deliveriesPageSource)).toContain('limit: 25');
   });
 
-  it('leaves only the driver mobile view on the Edge function', () => {
+  it("reads every screen, the driver's phone included, from Express", () => {
     // Measured against production: the Edge hop costs 3-12x Express for
     // identical data, and each Edge call went out twice where Express goes once.
     // Every operations screen now reads from Express.
@@ -131,17 +131,20 @@ describe('authenticated route performance contracts', () => {
       ['src/pages/drivers/DriversPage.jsx', read('src/pages/drivers/DriversPage.jsx')],
       ['src/pages/dashboard/RatesPage.jsx', read('src/pages/dashboard/RatesPage.jsx')],
       ['src/pages/dispatch/DispatchBoard.jsx', read('src/pages/dispatch/DispatchBoard.jsx')],
+      ['src/pages/driver/DriverMobileView.jsx', read('src/pages/driver/DriverMobileView.jsx')],
     ];
     for (const [name, source] of edgeReaders) {
       expect(codeOnly(source), name).not.toContain('supabase.functions.invoke');
       expect(codeOnly(source), name).not.toContain('limit=1000');
     }
 
-    // DriverMobileView is deliberately still on the Edge function: that path
-    // returns the driver's current stop only, and /api/deliveries returns the
-    // whole route. Migrating it needs the single-stop scope server-side first,
-    // so this is pinned as an intentional exception rather than an oversight.
-    expect(read('src/pages/driver/DriverMobileView.jsx')).toContain('supabase.functions.invoke');
+    // The driver's phone was the last exception: it stayed on the Edge
+    // function because only that path returned the current stop alone. The
+    // API now answers a driver with the current stop and nothing after it
+    // (driverCurrentStop.integration.test.ts), so the phone reads it too.
+    const driverView = codeOnly(read('src/pages/driver/DriverMobileView.jsx'));
+    expect(driverView).toContain("api.get('/api/deliveries'");
+    expect(driverView).toContain('limit: 1');
   });
 
   it('sends the dispatch board through the day-scoped Express route', () => {
