@@ -34,11 +34,51 @@ model OrderDocument {
   orderDate       DateTime? @db.Date
   deliveryDate    DateTime? @db.Date
   shippingAddress String?
+
+  // Merged from the three Spruce reports by `mergeOrderFacts`. Each field has
+  // one report that wins when they disagree; see that function.
+
+  accountCode          String?
+  /// The account's own name where it differs from the person ("Cash Sales").
+  accountName          String?
+  /// As printed, extension included.
+  phone                String?
+  route                String?
+  cashier              String?
+  /// Spruce's status word as the winning report printed it ("Open", "Sched").
+  spruceStatus         String?
+  /// "SCH" where the order summary marks a scheduled delivery.
+  deliveryFlag         String?
+  totalWithTax         Decimal?  @db.Decimal(12, 2)
+  /// The order summary's "Remaining". Equals the pre-tax subtotal on every
+  /// sample, but that is unconfirmed, so it keeps Spruce's name.
+  remaining            Decimal?  @db.Decimal(12, 2)
+  /// The order summary's "Rem Dep". Meaning unconfirmed.
+  remainingDeposit     Decimal?  @db.Decimal(12, 2)
+  grossMarginPct       Decimal?  @db.Decimal(7, 2)
+  deliveryInstructions String?
+  deliveryTruck        String?
+  orderNotes           String?
+  /// `shippingAddress` with Spruce's stray commas tidied. Never invented.
+  addressNormalized    String?
+  /// SLINGER, SPLITBOX, FLATBED, DUMP, BAG or GENERAL, read off the item codes.
+  deliveryType         String?
+  /// Collected from the yard rather than delivered. Never on the dispatch board.
+  isPickup             Boolean   @default(false)
+  /// Things a dispatcher should look at, e.g. NO_ADDRESS, TOTAL_MISMATCH.
+  flags                String[]  @default([])
+  /// Which reports have ever described this order.
+  sourceReports        String[]  @default([])
+  /// The import batch that last described this order.
+  lastBatchId          String?   @db.Uuid
+  lastBatch            ImportBatch? @relation(fields: [lastBatchId], references: [id], onDelete: SetNull)
+
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
   lines           Order[]
 
   @@index([orderDate])
+  @@index([deliveryDate])
   @@index([poNumber])
 }
 
@@ -69,6 +109,18 @@ model Order {
   product        String
   quantity       Decimal?           @db.Decimal
   unit           String?
+  /// Selling price per unit, from the order summary. Never shown to drivers.
+  unitPrice      Decimal?           @db.Decimal(12, 4)
+  /// Cost per unit, from the order summary. Never shown to drivers.
+  unitCost       Decimal?           @db.Decimal(12, 4)
+  /// PRODUCT, DELIVERY_CHARGE, DEPOSIT, COMMENT or SURCHARGE.
+  lineClass      String?
+  /// Spruce vendor code the PO was raised on, e.g. `UNILOCKL01`, as printed.
+  vendorCode     String?
+  /// Where the PO's vendor ships from, from the item tracking report.
+  vendorLocation String?
+  /// Value of the whole PO this line was bought under.
+  poValue        Decimal?           @db.Decimal(12, 2)
   supplierId     String?            @db.Uuid
   orderDate      DateTime?          @db.Date
   deliveryDate   DateTime?          @db.Date
@@ -326,6 +378,7 @@ model User {
   verifiedInvoices Invoice[]
   createdRates     NegotiatedRate[]
   spruceImports    SpruceImportJob[]
+  importBatches    ImportBatch[]
   systemSettings   SystemSetting[]
   resolvedMatches  MatchResult[]
   ticketClaims     TicketClaim[]
@@ -397,6 +450,60 @@ model SpruceImportJob {
   errorSummary String?
   uploadedBy   User                   @relation(fields: [uploadedById], references: [id])
   rowErrors    SpruceImportRowError[]
+}
+
+/// One morning's upload of the three Spruce reports.
+///
+/// The reports are only useful together: the delivery report says what goes
+/// out, the order summary what it costs, the item tracking report where it
+/// goes. A batch records which files were read, what was found in each, and
+/// what the merge concluded, so a day can be explained and re-read later.
+model ImportBatch {
+  id           String            @id @default(uuid()) @db.Uuid
+  /// The day being dispatched, in Cambridge.
+  dispatchDate DateTime          @db.Date
+  status       ImportBatchStatus @default(PROCESSING)
+  createdById  String            @db.Uuid
+  createdAt    DateTime          @default(now())
+  finishedAt   DateTime?
+  /// What the dispatcher was told: counts, issues, warnings.
+  summary      Json?
+  createdBy    User              @relation(fields: [createdById], references: [id])
+  files        ImportBatchFile[]
+  documents    OrderDocument[]
+
+  @@index([dispatchDate])
+}
+
+/// One report within a batch, with everything read from it.
+model ImportBatchFile {
+  id              String      @id @default(uuid()) @db.Uuid
+  batchId         String      @db.Uuid
+  /// ORDER_SUMMARY, DELIVERY or ITEM_TRACKING.
+  reportType      String
+  fileName        String
+  /// SHA-256 of the bytes, so the same file is recognised when uploaded again.
+  fileHash        String
+  pageCount       Int
+  /// The date range the report says it was filtered on.
+  reportDateFrom  DateTime?   @db.Date
+  reportDateTo    DateTime?   @db.Date
+  rowCount        Int
+  documentCount   Int
+  unreadableCount Int
+  /// The parsed rows, so the day can be re-merged without the PDF.
+  extraction      Json
+  createdAt       DateTime    @default(now())
+  batch           ImportBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+
+  @@index([batchId])
+  @@index([fileHash])
+}
+
+enum ImportBatchStatus {
+  PROCESSING
+  DONE
+  FAILED
 }
 
 model SpruceImportRowError {

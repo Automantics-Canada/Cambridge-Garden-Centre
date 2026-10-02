@@ -3,7 +3,15 @@ import { DeliveryStatus } from '@prisma/client';
 import supabaseStorage from '../../services/supabaseStorage.js';
 import { saveTicketImage } from '../../services/fileStorage.js';
 
-/** The delivery list/detail shape rendered by operations screens. */
+/**
+ * The delivery list/detail shape rendered by operations screens, and what
+ * every delivery write answers with.
+ *
+ * Drivers call the status and photo routes, so their answers must never carry
+ * more than this. They once returned the whole order line with its supplier,
+ * which since the Spruce import includes unit price and unit cost — figures a
+ * driver must not see.
+ */
 export const DELIVERY_RESPONSE_SELECT = {
   id: true,
   orderId: true,
@@ -146,18 +154,7 @@ export const DeliveriesService = {
 
       return tx.delivery.findUniqueOrThrow({
         where: { id },
-        include: {
-          driver: true,
-          order: {
-            include: {
-              supplier: true,
-              tickets: true
-            }
-          },
-          history: {
-            orderBy: { createdAt: 'desc' }
-          }
-        }
+        select: DELIVERY_RESPONSE_SELECT
       });
     });
   },
@@ -225,18 +222,7 @@ export const DeliveriesService = {
       // Return the delivery fully loaded with order and tickets
       return prisma.delivery.findUnique({
         where: { id },
-        include: {
-          driver: true,
-          order: {
-            include: {
-              supplier: true,
-              tickets: true
-            }
-          },
-          history: {
-            orderBy: { createdAt: 'desc' }
-          }
-        }
+        select: DELIVERY_RESPONSE_SELECT
       });
     } else {
       const uploadResult = await supabaseStorage.uploadTicketImage(fileBuffer, `${id}-${type}`, filename);
@@ -245,18 +231,7 @@ export const DeliveriesService = {
       return prisma.delivery.update({
         where: { id },
         data: updateData,
-        include: {
-          driver: true,
-          order: {
-            include: {
-              supplier: true,
-              tickets: true
-            }
-          },
-          history: {
-            orderBy: { createdAt: 'desc' }
-          }
-        }
+        select: DELIVERY_RESPONSE_SELECT
       });
     }
   }

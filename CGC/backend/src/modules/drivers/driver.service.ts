@@ -1,4 +1,5 @@
 import { prisma } from '../../db/prisma.js';
+import { DELIVERY_DRIVER_RESPONSE_SELECT } from '../deliveries/deliveries.service.js';
 import { DriverType } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 
@@ -375,18 +376,15 @@ export const DriverService = {
     });
   },
 
+  /**
+   * A driver may read their own run, so this answers with the driver's field
+   * list: address and tickets, never the order line's prices or supplier.
+   */
   async getDriverDeliveries(driverId: string) {
     return prisma.delivery.findMany({
       where: { driverId },
       orderBy: { priority: 'desc' },
-      include: {
-        order: {
-          include: {
-            supplier: true,
-            tickets: true
-          }
-        }
-      }
+      select: DELIVERY_DRIVER_RESPONSE_SELECT,
     });
   },
 
@@ -404,11 +402,9 @@ export const DriverService = {
               { completedAt: { gte: today } }
             ]
           },
-          include: {
-            order: {
-              include: { supplier: true }
-            }
-          }
+          // The driver's own profile: the same field list as their deliveries,
+          // so no order line's prices or supplier reach the phone.
+          select: DELIVERY_DRIVER_RESPONSE_SELECT,
         }
       }
     });

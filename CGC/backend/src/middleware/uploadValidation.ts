@@ -117,16 +117,18 @@ export function sanitizeFilename(originalName: string): string {
 export interface UploaderOptions {
   maxBytes: number;
   kinds: readonly UploadKind[];
+  /** Files per request. One unless a route names its fields. */
+  maxFiles?: number;
 }
 
 /** multer instance bounded by size and filtered by declared type + extension. */
-export function createUploader({ maxBytes, kinds }: UploaderOptions) {
+export function createUploader({ maxBytes, kinds, maxFiles = 1 }: UploaderOptions) {
   const mimes = new Set(kinds.flatMap((kind) => ALLOWED_MIME[kind]));
   const exts = new Set(kinds.flatMap((kind) => ALLOWED_EXT[kind]));
 
   return multer({
     storage: multer.memoryStorage(),
-    limits: { fileSize: maxBytes, files: 1 },
+    limits: { fileSize: maxBytes, files: maxFiles },
     fileFilter: (_req, file, cb) => {
       const declared = (file.mimetype || '').toLowerCase();
       const ext = path.extname(file.originalname || '').toLowerCase();
@@ -172,6 +174,29 @@ export function validateUploadContent(kinds: readonly UploadKind[], required = t
     }
 
     file.originalname = sanitizeFilename(file.originalname);
+    next();
+  };
+}
+
+/**
+ * `validateUploadContent` for a route that takes several named files
+ * (`upload.fields`). Every file present must really be one of `kinds`; which
+ * fields are required is the route's business.
+ */
+export function validateUploadedFiles(kinds: readonly UploadKind[]) {
+  const allowed = new Set(kinds);
+  return (req: Request, res: Response, next: NextFunction) => {
+    const byField = (req as Request & { files?: Record<string, Express.Multer.File[]> }).files ?? {};
+
+    for (const file of Object.values(byField).flat()) {
+      const detected = detectFileKind(file.buffer);
+      if (!detected || !allowed.has(detected.kind)) {
+        return res.status(415).json({
+          error: `${sanitizeFilename(file.originalname)} is not an accepted ${[...allowed].join(' or ')} file`,
+        });
+      }
+      file.originalname = sanitizeFilename(file.originalname);
+    }
     next();
   };
 }
