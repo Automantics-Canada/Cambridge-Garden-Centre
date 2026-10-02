@@ -17,12 +17,12 @@ import { DriverService } from '../src/modules/drivers/driver.service.js';
 const disposableConfirmed = process.env.SPRUCE_TEST_CONFIRM_DISPOSABLE === '1';
 
 /** A synthetic order with two products and a skid deposit, given to `driverId`. */
-async function seedStop(documentNumber: string, driverId: string) {
+async function seedStop(documentNumber: string, driverId: string, deliveryDate = '2026-09-02') {
   const document = await prisma.orderDocument.create({
     data: {
       documentNumber,
       customerName: `Customer ${documentNumber}`,
-      deliveryDate: new Date('2026-09-02'),
+      deliveryDate: new Date(deliveryDate),
       shippingAddress: '1 Example St, Cambridge',
       addressNormalized: '1 Example St, Cambridge',
       phone: '519-555-0100',
@@ -125,6 +125,31 @@ describe('a driver\'s current stop (PostgreSQL)', { skip: !disposableConfirmed }
 
     await prisma.delivery.update({ where: { id: first.id }, data: { status: 'DELIVERED', completedAt: new Date() } });
     assert.equal((await DeliveriesService.getCurrentStop(driverId)).data[0]!.id, second.id, 'then dispatch\'s order applies');
+  });
+
+  it('keeps an order assigned ahead off the phone until its day', async () => {
+    // Dispatch pre-assigns the 9/04 order on 9/02, and puts it first.
+    const later = await seedStop('9900-000001', driverId, '2026-09-04');
+    const today = await seedStop('9900-000002', driverId, '2026-09-02');
+    await DispatchService.reorderDeliveries(driverId, [later.id, today.id]);
+
+    const onTheDay = await DeliveriesService.getCurrentStop(driverId, '2026-09-02');
+    assert.equal(onTheDay.data[0]!.id, today.id, "today's order, not the one assigned ahead");
+    assert.equal(onTheDay.pagination.totalCount, 1, 'a later day does not count as remaining');
+    await assert.rejects(DeliveriesService.assertCurrentStop(driverId, later.id, '2026-09-02'), DeliveryNotCurrentError);
+
+    await prisma.delivery.update({ where: { id: today.id }, data: { status: 'DELIVERED', completedAt: new Date() } });
+    const nothingYet = await DeliveriesService.getCurrentStop(driverId, '2026-09-03');
+    assert.deepEqual(nothingYet.data, [], 'nothing due on 9/03');
+    assert.equal(nothingYet.pagination.totalCount, 0);
+
+    const itsDay = await DeliveriesService.getCurrentStop(driverId, '2026-09-04');
+    assert.equal(itsDay.data[0]!.id, later.id, 'it reaches the phone on its day');
+  });
+
+  it('still offers an order carried over from an earlier day', async () => {
+    const overdue = await seedStop('9900-000001', driverId, '2026-09-01');
+    assert.equal((await DeliveriesService.getCurrentStop(driverId, '2026-09-02')).data[0]!.id, overdue.id);
   });
 
   it('refuses a change to any stop but the current one', async () => {
