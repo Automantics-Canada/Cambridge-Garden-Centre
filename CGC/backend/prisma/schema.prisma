@@ -76,6 +76,8 @@ model OrderDocument {
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
   lines           Order[]
+  /// The stop that delivers this order, once it is dispatched.
+  delivery        Delivery?
 
   @@index([orderDate])
   @@index([deliveryDate])
@@ -405,9 +407,18 @@ model Driver {
   user            User?             @relation(fields: [userId], references: [id])
 }
 
+/// One stop on a driver's run.
+///
+/// A stop is a whole Spruce order (`document`). `order` is one of its lines —
+/// the first product line — kept because tickets, matching and the driver's
+/// phone still read a delivery through a line. Stops made before orders were
+/// dispatched whole have a line and no document.
 model Delivery {
   id               String            @id @default(uuid()) @db.Uuid
   orderId          String            @db.Uuid
+  /// The Spruce order this stop delivers. One stop per order.
+  documentId       String?           @unique @db.Uuid
+  document         OrderDocument?    @relation(fields: [documentId], references: [id], onDelete: SetNull)
   driverId         String?           @db.Uuid
   status           DeliveryStatus    @default(UNASSIGNED)
   priority         Int               @default(1)

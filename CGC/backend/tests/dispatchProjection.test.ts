@@ -105,10 +105,13 @@ describe('dispatch board order projection', () => {
       'a full order include reads buyerType and will 500 on the NULL rows',
     );
 
-    const projections = body.match(/DISPATCH_ORDER_SELECT/g) || [];
+    // The pool and each driver's whole orders go through the document
+    // projection; stops made before orders were dispatched whole, through the
+    // line projection. All three reads must be projected.
+    const projections = body.match(/DISPATCH_(?:ORDER|DOCUMENT)_SELECT/g) || [];
     assert.ok(
       projections.length >= 3,
-      `expected all three Order reads to be projected, found ${projections.length}`,
+      `expected all three order reads to be projected, found ${projections.length}`,
     );
   });
 

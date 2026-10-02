@@ -18,17 +18,26 @@ describe('parseDeliveryQuery', () => {
     assert.equal(parsed.wantsEnvelope, true);
   });
 
-  it('uses Cambridge boundaries for a selected date', () => {
+  it('files a stop under the day its order goes out', () => {
     const parsed = parseDeliveryQuery({ date: '2026-08-16' });
-    const createdAt = parsed.filters.createdAt as { gte: Date; lte: Date };
-    assert.equal(createdAt.gte.toISOString(), '2026-08-16T04:00:00.000Z');
-    assert.equal(createdAt.lte.toISOString(), '2026-08-17T03:59:59.999Z');
+    const [day] = parsed.filters.AND as Array<{ OR: any[] }>;
+    const [byOrder, byCreation] = day!.OR;
+
+    assert.equal(byOrder.document.is.deliveryDate.toISOString(), '2026-08-16T00:00:00.000Z');
+    // A stop made before orders were dispatched whole only knows when it was
+    // made, read on Cambridge's calendar.
+    assert.equal(byCreation.documentId, null);
+    assert.equal(byCreation.createdAt.gte.toISOString(), '2026-08-16T04:00:00.000Z');
+    assert.equal(byCreation.createdAt.lte.toISOString(), '2026-08-17T03:59:59.999Z');
   });
 
-  it('builds server-side order and driver search predicates', () => {
-    const parsed = parseDeliveryQuery({ search: '  Green  ' });
-    assert.equal(parsed.filters.OR?.length, 4);
-    assert.match(JSON.stringify(parsed.filters.OR), /Green/);
+  it('searches orders, their lines and drivers, alongside a date', () => {
+    const parsed = parseDeliveryQuery({ search: '  Green  ', date: '2026-08-16' });
+    const conditions = parsed.filters.AND as Array<{ OR: unknown[] }>;
+    assert.equal(conditions.length, 2, 'the search must not replace the date');
+    assert.equal(conditions[1]!.OR.length, 6);
+    assert.match(JSON.stringify(conditions[1]), /Green/);
+    assert.doesNotMatch(JSON.stringify(conditions[1]), / Green|Green /, 'the term is trimmed');
   });
 
   it('rejects invalid dates, enums, pagination and multi-value input', () => {
