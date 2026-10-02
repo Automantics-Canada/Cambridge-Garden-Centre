@@ -273,3 +273,39 @@ describe('normalizeInvoice', () => {
     assert.equal(result.lineItems[0]?.totalPrice, null);
   });
 });
+
+describe('Spruce PO numbers', () => {
+  test('are stored the way Spruce prints them', () => {
+    assert.equal(normalizePoNumber('2608-355356'), '2608-355356');
+    assert.equal(normalizePoNumber('PO# 2608-355356'), '2608-355356');
+    assert.equal(normalizePoNumber('2608 355356'), '2608-355356');
+  });
+
+  test('keep their prefix, because another prefix is another PO', () => {
+    assert.equal(normalizePoNumber('PO# 2607-355356'), '2607-355356');
+  });
+
+  test('ten digits run together are kept as read, and flagged', () => {
+    // Also the shape of a phone number, so it is not taken as a PO.
+    assert.equal(normalizePoNumber('2608355356'), '2608355356');
+    const result = normalizeTicket(ticket({ poNumber: '2608355356' }));
+    assert.ok(result.uncertainFields.includes('poNumber'));
+  });
+
+  test('a Spruce PO on a ticket is not flagged for a person', () => {
+    const result = normalizeTicket(ticket({ poNumber: 'PO# 2608-355356' }));
+    assert.equal(result.poNumber, '2608-355356');
+    assert.ok(!result.uncertainFields.includes('poNumber'));
+  });
+
+  test('a Spruce PO on an invoice and its lines is not flagged either', () => {
+    const base = invoice().lineItems[0]!;
+    const result = normalizeInvoice(
+      invoice({ poNumber: '2608-355356', lineItems: [{ ...base, poNumber: '2608 355356' }] })
+    );
+    assert.equal(result.poNumber, '2608-355356');
+    assert.equal(result.lineItems[0]?.poNumber, '2608-355356');
+    assert.ok(!result.uncertainFields.includes('poNumber'));
+    assert.ok(!result.uncertainFields.includes('lineItems[0].poNumber'));
+  });
+});

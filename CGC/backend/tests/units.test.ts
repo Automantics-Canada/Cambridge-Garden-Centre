@@ -59,3 +59,30 @@ describe('compareUnits', () => {
     assert.equal(compareUnits('tonne', null).comparable, false);
   });
 });
+
+describe('square feet', () => {
+  it('reads every way Spruce and a supplier write it', () => {
+    for (const raw of ['SQFT', 'sqft', 'SF', 'sf', 'SQ FT', 'sq. ft.', 'FT2', 'ft²', 'square feet', 'Square Foot']) {
+      assert.equal(normaliseUnit(raw), 'SQUARE_FOOT', `expected SQUARE_FOOT for ${JSON.stringify(raw)}`);
+    }
+  });
+
+  it('compares square feet with square feet', () => {
+    assert.deepEqual(compareUnits('SF', 'SQFT'), { comparable: true, unit: 'SQUARE_FOOT' });
+  });
+
+  it('never turns square feet into another unit family', () => {
+    // How many square feet a skid holds depends on the paver; that is not the
+    // system's to assume.
+    for (const other of ['skid', 'ea', 'tonne', 'cy', 'm3', 'load']) {
+      const result = compareUnits('SQFT', other);
+      assert.equal(result.comparable, false, other);
+      assert.equal(result.comparable === false && result.reason, 'DIFFERENT', other);
+    }
+  });
+
+  it('a foot is a length, not an area', () => {
+    assert.equal(normaliseUnit('ft'), null);
+    assert.equal(normaliseUnit('feet'), null);
+  });
+});
