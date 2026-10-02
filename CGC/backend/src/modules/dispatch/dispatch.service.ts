@@ -3,9 +3,18 @@ import { DeliveryStatus } from '@prisma/client';
 import { MailService } from '../../services/mail.service.js';
 import { businessDayOf, businessDayRange } from '../../lib/businessDay.js';
 import { DISPATCH_DOCUMENT_SELECT, representativeLineId, toDispatchOrder } from './dispatchOrderView.js';
+import {
+  FINISHED_STATUSES as FINISHED,
+  carriedOverWhere,
+  deliveryDayDate,
+  isPastDay,
+  undatedWhere,
+  upcomingDays,
+  upcomingWhere,
+} from './dispatchDays.js';
 
-/** A stop in either of these states is history, and is never reassigned. */
-const FINISHED: DeliveryStatus[] = [DeliveryStatus.DELIVERED, DeliveryStatus.CANCELLED];
+/** Enough to find an order by number or name; more is a narrower search. */
+const UNDATED_LIMIT = 100;
 
 function dispatchError(status: number, message: string) {
   return Object.assign(new Error(message), { status });
@@ -36,16 +45,30 @@ export const DispatchService = {
    * it was due next week. Pickups are collected from the yard and never wait
    * for a driver.
    *
+   * Yesterday and older are history: `readOnly`, and each driver's run shows
+   * only what was due or finished that day, not the work open now. Today also
+   * lists `carriedOver`, the earlier orders that never went out.
+   *
    * @param day 'YYYY-MM-DD' in the yard's timezone. Defaults to today there.
+   * @param today Today there; for tests.
    */
-  async getDispatchBoard(day?: string) {
-    const requestedDay = day || businessDayOf();
+  async getDispatchBoard(day?: string, today: string = businessDayOf()) {
+    const requestedDay = day || today;
     const dayRange = businessDayRange(requestedDay);
     if (!dayRange) {
       throw Object.assign(new Error(`Invalid date: ${requestedDay}`), { status: 400 });
     }
     // Delivery dates are calendar dates, stored without a time.
-    const deliveryDay = new Date(`${requestedDay}T00:00:00.000Z`);
+    const deliveryDay = deliveryDayDate(requestedDay);
+    const readOnly = isPastDay(requestedDay, today);
+
+    const carriedOver = requestedDay === today
+      ? await prisma.orderDocument.findMany({
+          where: carriedOverWhere(today),
+          select: DISPATCH_DOCUMENT_SELECT,
+          orderBy: [{ deliveryDate: 'asc' }, { documentNumber: 'asc' }],
+        })
+      : [];
 
     const waiting = await prisma.orderDocument.findMany({
       where: {
@@ -65,9 +88,14 @@ export const DispatchService = {
           orderBy: { priority: 'asc' },
           where: {
             OR: [
-              // Open work always shows: a stop raised on Monday and still not
-              // delivered is live regardless of which day is being viewed.
-              { status: { notIn: ['DELIVERED', 'CANCELLED'] } },
+              // Open work always shows on today and later: a stop raised on
+              // Monday and still not delivered is live whichever of those days
+              // is being viewed. A past day is a record of that day instead,
+              // so it shows the stops that were due out on it; the work open
+              // now belongs to today's board, where it can still be changed.
+              readOnly
+                ? { document: { deliveryDate: deliveryDay } }
+                : { status: { notIn: FINISHED } },
               // Completed work shows for the day being viewed, so the whole
               // board describes one day rather than mixing the pool's date with
               // today's completions.
@@ -88,6 +116,9 @@ export const DispatchService = {
     });
 
     return {
+      day: requestedDay,
+      readOnly,
+      carriedOver: carriedOver.map(toDispatchOrder),
       unassignedOrders: waiting.map(toDispatchOrder),
       // Kept for the screen's merge; whole orders come back to the pool above.
       unassignedDeliveries: [],
@@ -104,6 +135,40 @@ export const DispatchService = {
         };
       })
     };
+  },
+
+  /**
+   * Each day after today with orders due out, how many, and how many still
+   * need a driver — so a dispatcher can open that day and assign ahead.
+   *
+   * @param today 'YYYY-MM-DD' in the yard's timezone; for tests.
+   */
+  async getUpcoming(today: string = businessDayOf()) {
+    const where = upcomingWhere(today);
+    const [all, unassigned] = await Promise.all([
+      prisma.orderDocument.groupBy({ by: ['deliveryDate'], where, _count: { _all: true } }),
+      prisma.orderDocument.groupBy({
+        by: ['deliveryDate'],
+        where: { ...where, OR: [{ delivery: null }, { delivery: { driverId: null } }] },
+        _count: { _all: true },
+      }),
+    ]);
+    return upcomingDays(all, unassigned);
+  },
+
+  /**
+   * Orders with no delivery date — pickups, and deliveries still waiting for
+   * Spruce to give them one. They are never on a day's board, so this is the
+   * only place to find them. Newest order numbers first.
+   */
+  async getUndatedOrders(search?: string) {
+    const documents = await prisma.orderDocument.findMany({
+      where: undatedWhere(search),
+      select: { ...DISPATCH_DOCUMENT_SELECT, isPickup: true },
+      orderBy: { documentNumber: 'desc' },
+      take: UNDATED_LIMIT,
+    });
+    return documents.map(({ isPickup, ...document }) => ({ ...toDispatchOrder(document), isPickup }));
   },
 
   /**

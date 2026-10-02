@@ -15,6 +15,24 @@ export const getDispatchBoard = async (req: Request, res: Response) => {
   }
 };
 
+export const getUpcoming = async (_req: Request, res: Response) => {
+  try {
+    res.json(await DispatchService.getUpcoming());
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+/** Pickups and undated deliveries, optionally narrowed by `search`. */
+export const getUndatedOrders = async (req: Request, res: Response) => {
+  try {
+    const search = typeof req.query.search === 'string' ? req.query.search : undefined;
+    res.json(await DispatchService.getUndatedOrders(search));
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
 /**
  * A refusal the service explained — no such order, already delivered — keeps
  * its status. Two dispatchers giving one order to two drivers at the same
