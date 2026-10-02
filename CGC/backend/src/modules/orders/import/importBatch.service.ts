@@ -94,10 +94,20 @@ export interface BatchOrder {
   flags: OrderFlag[];
 }
 
+/**
+ * What the dispatcher is told after an upload.
+ *
+ * The orders, counts and issues are read from the database as it stands when
+ * the summary is made, so a replay of files already imported tells the truth
+ * about the day now — after the dispatcher's corrections and moves — rather
+ * than repeating what the first upload found.
+ */
 export interface BatchSummary {
   batchId: string;
+  /** These exact files were imported before for this dispatch date; nothing was written. */
   alreadyImported: boolean;
   dispatchDate: string;
+  /** Each report's file, and what this upload wrote from it: all zeros on a replay. */
   reports: BatchReportSummary[];
   /** Orders out for delivery on the dispatch date, from every import so far. */
   deliveries: number;
@@ -106,8 +116,9 @@ export interface BatchSummary {
   /** Orders in this upload collected from the yard. */
   pickups: number;
   /**
-   * Orders imported before whose details Spruce has changed since, as the
-   * board marks them "Updated". Absent from summaries of older uploads.
+   * Orders imported before that this upload changed in a way the board marks
+   * "Updated". Zero on a replay, which changes nothing. Absent from summaries
+   * of older uploads.
    */
   updated: number;
   /** Every order this upload described, with its flags. */
@@ -196,14 +207,124 @@ function toOrder(document: {
 
 const needsAttention = (order: BatchOrder) => order.flags.some(flag => ATTENTION_FLAGS.includes(flag));
 
+const SUMMARY_ORDER_SELECT = {
+  documentNumber: true,
+  customerName: true,
+  deliveryDate: true,
+  isPickup: true,
+  flags: true,
+} as const;
+
+type WriteCounts = Pick<ImportSummary, 'created' | 'updated' | 'unchanged' | 'conflicts' | 'skipped'>;
+
+/** A replay writes nothing, from any report. */
+const NOTHING_WRITTEN: WriteCounts = { created: 0, updated: 0, unchanged: 0, conflicts: 0, skipped: 0 };
+
+function reportSummary(file: BatchFile, written: WriteCounts): BatchReportSummary {
+  const range = reportRange(file.report);
+  return {
+    reportType: file.reportType,
+    label: SLOT_LABELS[file.reportType],
+    fileName: file.fileName,
+    pageCount: file.report.pageCount ?? null,
+    documentCount: new Set(file.report.rows.map(row => row.documentNumber)).size,
+    rowCount: file.report.rows.length,
+    dateFrom: range ? iso(range.from) : null,
+    dateTo: range ? iso(range.to) : null,
+    created: written.created,
+    updated: written.updated,
+    unchanged: written.unchanged,
+    conflicts: written.conflicts,
+    skipped: written.skipped,
+  };
+}
+
 /**
- * The earlier upload these exact files came from, if they were all imported
- * already. Re-uploading identical files is a slip, not a request; it is
- * answered with what that upload found and changes nothing.
+ * Orders the delivery report listed before for its days, but not now.
+ *
+ * Only orders the delivery report put there: a dispatcher who moved an order
+ * to the day knows why it is here.
  */
-async function findIdenticalBatch(client: PrismaClient, hashes: string[]) {
+function findDroppedFromDay(client: PrismaClient, files: BatchFile[], dispatchDate: Date) {
+  const deliveryFile = files.find(file => file.reportType === 'DELIVERY')!;
+  const deliveryRange = reportRange(deliveryFile.report) ?? { from: dispatchDate, to: dispatchDate };
+  const listed = [...new Set(deliveryFile.report.rows.map(row => row.documentNumber))];
+  return client.orderDocument.findMany({
+    where: {
+      deliveryDate: { gte: deliveryRange.from, lte: deliveryRange.to },
+      sourceReports: { has: 'DELIVERY' },
+      documentNumber: { notIn: listed },
+      overrides: { none: { field: 'deliveryDate' } },
+    },
+    select: { id: true, documentNumber: true, flags: true, deliveryDate: true },
+  });
+}
+
+/**
+ * The summary of an upload, read from the database as it stands now.
+ *
+ * Both a real import (after every write) and a replay come through here, so
+ * what a replay says cannot drift from what an import would.
+ */
+async function summarize(
+  client: PrismaClient,
+  input: {
+    batchId: string;
+    alreadyImported: boolean;
+    dispatchDate: Date;
+    files: BatchFile[];
+    reports: BatchReportSummary[];
+    updated: number;
+    /** Orders dropped from the day that no report in the upload mentions. */
+    dropped: string[];
+    warnings: string[];
+    errors: string[];
+  }
+): Promise<BatchSummary> {
+  const described = [...rowsByDocument(input.files).keys()];
+  const stored = await client.orderDocument.findMany({
+    where: { documentNumber: { in: [...described, ...input.dropped] } },
+    select: SUMMARY_ORDER_SELECT,
+  });
+  const byNumber = new Map(stored.map(document => [document.documentNumber, toOrder(document)]));
+  // A document every report refused was never stored; the importer said why.
+  const orders = described.flatMap(documentNumber => byNumber.get(documentNumber) ?? []);
+  const describedSet = new Set(described);
+  const dropped = input.dropped
+    .filter(documentNumber => !describedSet.has(documentNumber))
+    .flatMap(documentNumber => byNumber.get(documentNumber) ?? []);
+
+  const day = iso(input.dispatchDate);
+  const deliveries = await client.orderDocument.count({
+    where: { deliveryDate: input.dispatchDate, isPickup: false },
+  });
+
+  return {
+    batchId: input.batchId,
+    alreadyImported: input.alreadyImported,
+    dispatchDate: day,
+    reports: input.reports,
+    deliveries,
+    upcoming: orders.filter(order => order.deliveryDate !== null && order.deliveryDate > day).length,
+    pickups: orders.filter(order => order.isPickup).length,
+    updated: input.updated,
+    orders,
+    issues: [...orders, ...dropped].filter(needsAttention),
+    warnings: input.warnings,
+    errors: input.errors,
+  };
+}
+
+/**
+ * The earlier upload of these exact files for the same dispatch date, if
+ * there was one. Re-uploading identical files for a day is a slip, not a
+ * request: they hold nothing that upload did not already apply, and applying
+ * them again could only undo a later upload for the day. The same files for
+ * another dispatch date are a different request and are imported.
+ */
+async function findIdenticalBatch(client: PrismaClient, dispatchDate: Date, hashes: string[]) {
   const earlier = await client.importBatch.findMany({
-    where: { status: 'DONE', files: { some: { fileHash: { in: hashes } } } },
+    where: { status: 'DONE', dispatchDate, files: { some: { fileHash: { in: hashes } } } },
     orderBy: { createdAt: 'desc' },
     select: { id: true, summary: true, files: { select: { fileHash: true } } },
     take: 20,
@@ -212,6 +333,33 @@ async function findIdenticalBatch(client: PrismaClient, hashes: string[]) {
   return earlier.find(batch => {
     const seen = new Set(batch.files.map(file => file.fileHash));
     return batch.files.length === hashes.length && hashes.every(hash => seen.has(hash));
+  });
+}
+
+/**
+ * The answer to a replay: nothing is written, and the day is described as it
+ * stands now. Only the importer's errors are taken from the earlier upload —
+ * they are about the files, which are the same bytes, and finding them again
+ * would mean importing again.
+ */
+async function replaySummary(
+  client: PrismaClient,
+  batch: { id: string; summary: Prisma.JsonValue },
+  dispatchDate: Date,
+  files: BatchFile[]
+): Promise<BatchSummary> {
+  const earlier = (batch.summary ?? {}) as Partial<BatchSummary>;
+  const dropped = await findDroppedFromDay(client, files, dispatchDate);
+  return summarize(client, {
+    batchId: batch.id,
+    alreadyImported: true,
+    dispatchDate,
+    files,
+    reports: files.map(file => reportSummary(file, NOTHING_WRITTEN)),
+    updated: 0,
+    dropped: dropped.map(document => document.documentNumber),
+    warnings: fileWarnings(files, dispatchDate),
+    errors: Array.isArray(earlier.errors) ? earlier.errors : [],
   });
 }
 
@@ -235,10 +383,8 @@ export async function runImportBatch(
   }
 
   const hashes = files.map(file => hashFile(file.buffer));
-  const identical = await findIdenticalBatch(client, hashes);
-  if (identical?.summary) {
-    return { ...(identical.summary as unknown as BatchSummary), alreadyImported: true };
-  }
+  const identical = await findIdenticalBatch(client, dispatchDate, hashes);
+  if (identical) return replaySummary(client, identical, dispatchDate, files);
 
   const batch = await client.importBatch.create({
     data: {
@@ -300,19 +446,7 @@ async function mergeBatch(
   // off the day. It is never deleted or moved — in Spruce it was probably
   // rescheduled or cancelled, it may already be on a truck, and the
   // dispatcher decides.
-  const deliveryFile = files.find(file => file.reportType === 'DELIVERY')!;
-  const deliveryRange = reportRange(deliveryFile.report) ?? { from: dispatchDate, to: dispatchDate };
-  const listed = [...new Set(deliveryFile.report.rows.map(row => row.documentNumber))];
-  const droppedFromDay = await client.orderDocument.findMany({
-    where: {
-      deliveryDate: { gte: deliveryRange.from, lte: deliveryRange.to },
-      sourceReports: { has: 'DELIVERY' },
-      documentNumber: { notIn: listed },
-      // A dispatcher who moved an order to this day knows why it is here.
-      overrides: { none: { field: 'deliveryDate' } },
-    },
-    select: { id: true, documentNumber: true, flags: true, deliveryDate: true },
-  });
+  const droppedFromDay = await findDroppedFromDay(client, files, dispatchDate);
   const droppedDay = new Map(droppedFromDay.map(document => [document.documentNumber, document.deliveryDate!]));
 
   // What the orders this upload describes said before it, so what it changes
@@ -339,22 +473,7 @@ async function mergeBatch(
       `batch-${batchId}-${file.reportType}`,
       noteLines
     );
-    const range = reportRange(file.report);
-    reports.push({
-      reportType: file.reportType,
-      label: SLOT_LABELS[file.reportType],
-      fileName: file.fileName,
-      pageCount: file.report.pageCount ?? null,
-      documentCount: new Set(file.report.rows.map(row => row.documentNumber)).size,
-      rowCount: file.report.rows.length,
-      dateFrom: range ? iso(range.from) : null,
-      dateTo: range ? iso(range.to) : null,
-      created: result.created,
-      updated: result.updated,
-      unchanged: result.unchanged,
-      conflicts: result.conflicts,
-      skipped: result.skipped,
-    });
+    reports.push(reportSummary(file, result));
     for (const error of result.errors) errors.push(`${SLOT_LABELS[file.reportType]}: ${error.error}`);
   }
 
@@ -367,7 +486,6 @@ async function mergeBatch(
   // by definition, in the latest one.
   const alsoDecided: OrderFlag[] = presentReports.has('DELIVERY') ? ['NOT_IN_LATEST_REPORT'] : [];
 
-  const orders: BatchOrder[] = [];
   for (const [documentNumber, rows] of described) {
     const stored = await client.orderDocument.findUnique({
       where: { documentNumber },
@@ -413,7 +531,7 @@ async function mergeBatch(
       ]
     );
 
-    let written = await client.orderDocument.update({
+    await client.orderDocument.update({
       where: { id: stored.id },
       data: {
         ...patch,
@@ -424,7 +542,7 @@ async function mergeBatch(
         sourceReports: [...new Set([...stored.sourceReports, ...Object.keys(rows)])].sort(),
         lastBatchId: batchId,
       },
-      select: { documentNumber: true, customerName: true, deliveryDate: true, isPickup: true, flags: true },
+      select: { id: true },
     });
     // The per-report importer dated each line by whichever report it read
     // last; the order's merged date is the one that holds.
@@ -433,13 +551,7 @@ async function mergeBatch(
     }
     // The merge wrote Spruce's word; a dispatcher's corrections go back over
     // it, and what follows from them — the address flag, the day — with them.
-    if (await reassertOverrides(client, stored.id)) {
-      written = await client.orderDocument.findUniqueOrThrow({
-        where: { id: stored.id },
-        select: { documentNumber: true, customerName: true, deliveryDate: true, isPickup: true, flags: true },
-      });
-    }
-    orders.push(toOrder(written));
+    await reassertOverrides(client, stored.id);
   }
 
   // 4. What changed on the orders that were already here, read back after
@@ -448,35 +560,27 @@ async function mergeBatch(
 
   // 5. Dropped orders no report in this upload mentions at all. Nothing new
   // is known about them, so every flag they had stays.
-  const merged = new Set(orders.map(order => order.documentNumber));
-  const dropped: BatchOrder[] = [];
-  for (const document of droppedFromDay.filter(document => !merged.has(document.documentNumber))) {
-    const written = await client.orderDocument.update({
+  const dropped = droppedFromDay.filter(document => !described.has(document.documentNumber));
+  for (const document of dropped) {
+    await client.orderDocument.update({
       where: { id: document.id },
       data: { flags: withFlag(document.flags, 'NOT_IN_LATEST_REPORT') },
-      select: { documentNumber: true, customerName: true, deliveryDate: true, isPickup: true, flags: true },
+      select: { id: true },
     });
-    dropped.push(toOrder(written));
   }
 
-  const deliveries = await client.orderDocument.count({
-    where: { deliveryDate: dispatchDate, isPickup: false },
-  });
-
-  return {
+  // 6. What the dispatcher is told, read back after every write.
+  return summarize(client, {
     batchId,
     alreadyImported: false,
-    dispatchDate: iso(dispatchDate),
+    dispatchDate,
+    files,
     reports,
-    deliveries,
-    upcoming: orders.filter(order => order.deliveryDate !== null && order.deliveryDate > iso(dispatchDate)).length,
-    pickups: orders.filter(order => order.isPickup).length,
     updated,
-    orders,
-    issues: [...orders, ...dropped].filter(needsAttention),
+    dropped: dropped.map(document => document.documentNumber),
     warnings,
     errors,
-  };
+  });
 }
 
 /**

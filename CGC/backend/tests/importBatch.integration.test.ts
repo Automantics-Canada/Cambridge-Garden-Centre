@@ -5,6 +5,8 @@ import assert from 'node:assert/strict';
 import { after, beforeEach, describe, it } from 'node:test';
 
 import { prisma } from '../src/db/prisma.js';
+import { parseEditRequest } from '../src/modules/orders/edits/editableFields.js';
+import { applyOrderEdits } from '../src/modules/orders/edits/orderEdits.service.js';
 import { ImportBatchError, runImportBatch, type BatchFile } from '../src/modules/orders/import/importBatch.service.js';
 import { parseSprucePages } from '../src/modules/orders/spruce/parseSprucePdf.js';
 import type { ParsedSpruceReport, SpruceReportType } from '../src/modules/orders/spruce/spruceReportTypes.js';
@@ -52,6 +54,15 @@ function files(stamp = 'morning', overrides: Partial<Record<SpruceReportType, Pa
 
 const document = (documentNumber: string) =>
   prisma.orderDocument.findUniqueOrThrow({ where: { documentNumber }, include: { lines: true } });
+
+/** Every order, line, correction and batch as stored, to prove a replay wrote nothing. */
+const everything = async () => ({
+  documents: await prisma.orderDocument.findMany({ orderBy: { documentNumber: 'asc' } }),
+  lines: await prisma.order.findMany({ orderBy: { id: 'asc' } }),
+  overrides: await prisma.orderOverride.findMany({ orderBy: { id: 'asc' } }),
+  changes: await prisma.orderChange.count(),
+  batches: await prisma.importBatch.findMany({ orderBy: { id: 'asc' } }),
+});
 
 describe('Spruce morning import (PostgreSQL)', { skip: !disposableConfirmed }, () => {
   let userId: string;
@@ -103,14 +114,129 @@ describe('Spruce morning import (PostgreSQL)', { skip: !disposableConfirmed }, (
     assert.deepEqual(issues, ['2608-700001', '2608-700002']);
   });
 
-  it('answers an identical re-upload with what it found before, changing nothing', async () => {
+  it('answers an identical re-upload for the same day as already imported, changing nothing', async () => {
     const first = await runImportBatch(prisma, { dispatchDate: '2026-09-02', createdById: userId, files: files() });
+    const stored = await everything();
     const again = await runImportBatch(prisma, { dispatchDate: '2026-09-02', createdById: userId, files: files() });
 
     assert.equal(again.alreadyImported, true);
     assert.equal(again.batchId, first.batchId);
     assert.equal(await prisma.importBatch.count(), 1);
     assert.equal(await prisma.order.count(), (await prisma.order.count({ where: { documentId: { not: null } } })));
+    assert.deepEqual(await everything(), stored, 'not a row written');
+
+    // Nothing changed, so the day reads as it did, and nothing is "updated".
+    assert.equal(again.updated, 0);
+    assert.deepEqual(
+      { deliveries: again.deliveries, upcoming: again.upcoming, pickups: again.pickups, orders: again.orders, issues: again.issues },
+      { deliveries: first.deliveries, upcoming: first.upcoming, pickups: first.pickups, orders: first.orders, issues: first.issues }
+    );
+    assert.deepEqual(again.warnings, first.warnings);
+    assert.deepEqual(again.errors, first.errors);
+    // The same files, but this upload wrote nothing from any of them.
+    assert.deepEqual(
+      again.reports.map(report => [report.reportType, report.rowCount, report.created, report.updated, report.unchanged]),
+      first.reports.map(report => [report.reportType, report.rowCount, 0, 0, 0])
+    );
+  });
+
+  it('describes the day as it is now when the same files come again after corrections', async () => {
+    // No order summary: the only issue on 700001 is its address, which has no town.
+    const deliveryAndTracking = files().filter(file => file.reportType !== 'ORDER_SUMMARY');
+    const first = await runImportBatch(prisma, { dispatchDate: '2026-09-02', createdById: userId, files: deliveryAndTracking });
+    assert.deepEqual(first.issues.find(issue => issue.documentNumber === '2608-700001')?.flags, ['CHECK_ADDRESS']);
+    assert.equal(first.deliveries, 2);
+    assert.equal(first.upcoming, 0);
+
+    // The dispatcher fixes the address and moves 700002 to the next day.
+    const fixed = await document('2608-700001');
+    await applyOrderEdits(fixed.id, parseEditRequest({ fields: { shippingAddress: '14 Mill Race Rd, Cambridge' } }), userId);
+    const moved = await document('2608-700002');
+    await applyOrderEdits(moved.id, parseEditRequest({ fields: { deliveryDate: '2026-09-03' } }), userId);
+    const changesBefore = await prisma.orderChange.count();
+    const stored = await everything();
+
+    const again = await runImportBatch(prisma, { dispatchDate: '2026-09-02', createdById: userId, files: deliveryAndTracking });
+
+    assert.equal(again.alreadyImported, true);
+    assert.equal(again.batchId, first.batchId);
+    assert.ok(!again.issues.some(issue => issue.documentNumber === '2608-700001'), 'the fixed order is no longer an issue');
+    assert.ok(!again.orders.find(order => order.documentNumber === '2608-700001')!.flags.includes('CHECK_ADDRESS'));
+    assert.equal(again.deliveries, 1, 'the moved order is no longer out on 9/2');
+    assert.equal(again.upcoming, 1);
+    assert.equal(again.orders.find(order => order.documentNumber === '2608-700002')!.deliveryDate, '2026-09-03');
+    assert.equal(again.updated, 0);
+
+    // Still nothing written: the corrections stand, and no change is logged.
+    assert.deepEqual(await everything(), stored);
+    assert.equal(await prisma.orderChange.count(), changesBefore);
+    assert.equal(await prisma.importBatch.count(), 1);
+  });
+
+  it('imports the same files again for another dispatch date', async () => {
+    const first = await runImportBatch(prisma, { dispatchDate: '2026-09-02', createdById: userId, files: files() });
+    const nextDay = await runImportBatch(prisma, { dispatchDate: '2026-09-03', createdById: userId, files: files() });
+
+    assert.equal(nextDay.alreadyImported, false);
+    assert.notEqual(nextDay.batchId, first.batchId);
+    assert.equal(nextDay.dispatchDate, '2026-09-03');
+    assert.equal(await prisma.importBatch.count(), 2);
+    // The reports are for 9/2, and the screen says so.
+    assert.ok(nextDay.warnings.some(warning => /not 9\/3/.test(warning)));
+    assert.equal(nextDay.deliveries, 0, 'nothing goes out on 9/3');
+
+    // And for that day, they are now already imported in turn.
+    const again = await runImportBatch(prisma, { dispatchDate: '2026-09-03', createdById: userId, files: files() });
+    assert.equal(again.alreadyImported, true);
+    assert.equal(again.batchId, nextDay.batchId);
+    assert.equal(await prisma.importBatch.count(), 2);
+  });
+
+  it('still answers already imported when the same day\'s files come back on a later calendar day', async () => {
+    const first = await runImportBatch(prisma, { dispatchDate: '2026-09-02', createdById: userId, files: files() });
+    await prisma.importBatch.update({
+      where: { id: first.batchId },
+      data: { createdAt: new Date('2026-09-02T11:00:00Z'), finishedAt: new Date('2026-09-02T11:01:00Z') },
+    });
+    const stored = await everything();
+
+    const later = await runImportBatch(prisma, { dispatchDate: '2026-09-02', createdById: userId, files: files() });
+
+    assert.equal(later.alreadyImported, true);
+    assert.equal(later.batchId, first.batchId);
+    assert.deepEqual(await everything(), stored);
+  });
+
+  it('a replay after a newer upload for the day reports what that newer upload left', async () => {
+    await runImportBatch(prisma, { dispatchDate: '2026-09-02', createdById: userId, files: files() });
+    const shorter: ParsedSpruceReport = {
+      ...parsed.DELIVERY,
+      rows: parsed.DELIVERY.rows.filter(row => row.documentNumber === '2608-700001'),
+    };
+    // At noon 700002 is gone from the delivery report, and from the others.
+    const noonFiles = files('noon', {
+      DELIVERY: shorter,
+      ORDER_SUMMARY: { ...parsed.ORDER_SUMMARY, rows: parsed.ORDER_SUMMARY.rows.filter(row => row.documentNumber === '2608-700001') },
+      ITEM_TRACKING: { ...parsed.ITEM_TRACKING, rows: parsed.ITEM_TRACKING.rows.filter(row => row.documentNumber === '2608-700001') },
+    });
+    const noon = await runImportBatch(prisma, { dispatchDate: '2026-09-02', createdById: userId, files: noonFiles });
+    assert.ok(noon.issues.some(issue => issue.documentNumber === '2608-700002' && issue.flags.includes('NOT_IN_LATEST_REPORT')));
+
+    // The noon files again: the dropped order is still an issue, read from the database.
+    const noonAgain = await runImportBatch(prisma, { dispatchDate: '2026-09-02', createdById: userId, files: noonFiles });
+    assert.equal(noonAgain.alreadyImported, true);
+    assert.equal(noonAgain.batchId, noon.batchId);
+    assert.deepEqual(noonAgain.issues, noon.issues);
+
+    // The morning files again are not applied over noon's: they are a slip,
+    // and what they show is the day as noon left it.
+    const stored = await everything();
+    const morningAgain = await runImportBatch(prisma, { dispatchDate: '2026-09-02', createdById: userId, files: files() });
+    assert.equal(morningAgain.alreadyImported, true);
+    assert.deepEqual(await everything(), stored);
+    assert.ok(
+      morningAgain.orders.find(order => order.documentNumber === '2608-700002')!.flags.includes('NOT_IN_LATEST_REPORT')
+    );
   });
 
   it('never disturbs a driver\'s work when the reports are run again', async () => {
