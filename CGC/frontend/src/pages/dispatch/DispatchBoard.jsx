@@ -10,7 +10,50 @@ import { businessDayOffset, formatDate } from '../../lib/date';
 import { cn } from '../../lib/cn';
 import { isTerminal, statusErrorMessage, statusOptionsFor } from '../../lib/deliveryTransitions';
 import { formatQuantity } from '../../lib/quantity';
-import { mergeUnassignedOrders } from '../../lib/dispatchBoard';
+import { assignWarning, deliveryTypeLabel, flagBadges, mergeUnassignedOrders, orderRef } from '../../lib/dispatchBoard';
+
+/**
+ * Who the order is for and where it goes, under the customer's name. A whole
+ * Spruce order carries both; a stop made before orders were dispatched whole
+ * carries neither, and shows only the name as before.
+ */
+function OrderDestination({ order }) {
+  if (!order?.wholeOrder) return null;
+  return (
+    <div className="mt-1 space-y-0.5 text-[12.5px] font-normal whitespace-normal">
+      <p className={order.address ? 'text-muted' : 'text-clay font-semibold'}>
+        {order.address || 'No address'}
+      </p>
+      {order.phone && <p className="text-muted tabular">{order.phone}</p>}
+    </div>
+  );
+}
+
+/** What goes on the truck and how, beside the product summary. */
+function OrderLoad({ order }) {
+  const type = deliveryTypeLabel(order?.deliveryType);
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      <Badge tone="neutral">{order.product}</Badge>
+      {type && <Badge tone="good">{type}</Badge>}
+      {order?.skids > 0 && (
+        <span className="text-[12.5px] text-muted font-semibold">
+          {order.skids} skid{order.skids === 1 ? '' : 's'}
+        </span>
+      )}
+    </div>
+  );
+}
+
+function OrderFlags({ order }) {
+  const badges = flagBadges(order);
+  if (badges.length === 0) return null;
+  return (
+    <div className="flex flex-wrap gap-1.5 mt-1.5">
+      {badges.map(({ flag, label, tone }) => <Badge key={flag} tone={tone}>{label}</Badge>)}
+    </div>
+  );
+}
 
 export default function DispatchBoard() {
   const [board, setBoard] = useState({ unassignedOrders: [], unassignedDeliveries: [], drivers: [] });
@@ -23,8 +66,7 @@ export default function DispatchBoard() {
   const [activeDragTargetDriverId, setActiveDragTargetDriverId] = useState(null);
   const [isOverUnassignedDropZone, setIsOverUnassignedDropZone] = useState(false);
 
-  // The pool defaults to today's imports. Older orders are still reachable, but
-  // they no longer sit in the way of the work being dispatched now.
+  // The pool is the orders due out on the chosen day, today by default.
   const [dateFilter, setDateFilter] = useState('today'); // 'today' | 'yesterday' | 'select'
   const [selectedDate, setSelectedDate] = useState(''); // 'YYYY-MM-DD'
 
@@ -186,6 +228,14 @@ export default function DispatchBoard() {
       return;
     }
 
+    // Asked once, when the order first leaves the pool; moving it between
+    // drivers afterwards is the dispatcher's own rearranging.
+    const warning = !draggingFromDriverId ? assignWarning(orderObj) : null;
+    if (warning && !window.confirm(warning)) {
+      handleDragEnd();
+      return;
+    }
+
     // The optimistic row needs an id before the server has given it one, and
     // the same id afterwards to find the row again and swap the real one in.
     const optimisticDeliveryId = `temp-${Date.now()}`;
@@ -243,7 +293,7 @@ export default function DispatchBoard() {
       });
 
       const { data: created } = await api.post('/api/dispatch/assign', {
-        orderId,
+        ...orderRef(orderObj),
         driverId: targetDriverId,
       });
 
@@ -275,7 +325,8 @@ export default function DispatchBoard() {
       toast.success(`Assigned ${orderObj.spruceOrderId} to ${driverObj.name}`);
     } catch (err) {
       console.error(err);
-      toast.error('Failed to assign driver');
+      // "Already delivered", "someone else just dispatched it": the server says why.
+      toast.error(err.response?.data?.error || 'Failed to assign driver');
       fetchBoard();
     } finally {
       handleDragEnd();
@@ -384,11 +435,11 @@ export default function DispatchBoard() {
         };
       });
 
-      await api.post('/api/dispatch/unassign', { orderId });
+      await api.post('/api/dispatch/unassign', orderRef(orderObj));
       toast.success(`Unassigned order ${orderObj.spruceOrderId}`);
     } catch (err) {
       console.error(err);
-      toast.error('Failed to unassign order');
+      toast.error(err.response?.data?.error || 'Failed to unassign order');
       fetchBoard();
     } finally {
       handleDragEnd();
@@ -746,11 +797,13 @@ export default function DispatchBoard() {
                                               {/* Customer Column */}
                                               <td className="px-6 py-4 whitespace-nowrap text-[12.5px] text-muted font-bold select-none w-64">
                                                 {del.order.customerName}
+                                                <OrderDestination order={del.order} />
                                               </td>
 
                                               {/* Product Column */}
                                               <td className="px-6 py-4 whitespace-nowrap w-40">
-                                                <Badge tone="neutral">{del.order.product}</Badge>
+                                                <OrderLoad order={del.order} />
+                                                <OrderFlags order={del.order} />
                                               </td>
 
                                               {/* Quantity Column */}
@@ -792,9 +845,13 @@ export default function DispatchBoard() {
                                                   <button
                                                     onClick={(e) => {
                                                       e.stopPropagation();
-                                                      api.post('/api/dispatch/unassign', { orderId: del.order.id })
+                                                      api.post('/api/dispatch/unassign', orderRef(del.order))
                                                         .then(() => {
                                                           toast.success('Unassigned order');
+                                                          fetchBoard();
+                                                        })
+                                                        .catch((err) => {
+                                                          toast.error(err.response?.data?.error || 'Failed to unassign order');
                                                           fetchBoard();
                                                         });
                                                     }}
@@ -887,7 +944,7 @@ export default function DispatchBoard() {
                 <th scope="col" className="px-6 py-3 text-left text-[12.5px] font-bold text-muted select-none">Customer</th>
                 <th scope="col" className="px-6 py-3 text-left text-[12.5px] font-bold text-muted select-none">Product</th>
                 <th scope="col" className="px-6 py-3 text-left text-[12.5px] font-bold text-muted select-none">Quantity</th>
-                <th scope="col" className="px-6 py-3 text-left text-[12.5px] font-bold text-muted select-none">Date</th>
+                <th scope="col" className="px-6 py-3 text-left text-[12.5px] font-bold text-muted select-none">Delivery</th>
                 <th scope="col" className="px-6 py-3 text-left text-[12.5px] font-bold text-muted select-none">Status</th>
                 <th scope="col" className="px-6 py-3 text-right text-[12.5px] font-bold text-muted select-none">Assign</th>
               </tr>
@@ -903,8 +960,8 @@ export default function DispatchBoard() {
                       title={awaitingDateChoice ? 'Pick a date' : `Nothing waiting for ${poolDateLabel}`}
                       message={
                         awaitingDateChoice
-                          ? 'Choose a date above to see the orders imported that day.'
-                          : 'Every order from this day is assigned, or none match this search.'
+                          ? 'Choose a date above to see the orders due out that day.'
+                          : 'Every order due out this day is assigned, or none match this search.'
                       }
                     />
                   </td>
@@ -935,11 +992,12 @@ export default function DispatchBoard() {
                     {/* Customer Column */}
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-muted font-medium select-none">
                       {order.customerName}
+                      <OrderDestination order={order} />
                     </td>
 
                     {/* Product Column */}
                     <td className="px-6 py-4 whitespace-nowrap">
-                      <Badge tone="neutral">{order.product}</Badge>
+                      <OrderLoad order={order} />
                     </td>
 
                     {/* Quantity Column */}
@@ -949,12 +1007,13 @@ export default function DispatchBoard() {
 
                     {/* Date Column */}
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-muted select-none">
-                      {formatDate(order.createdAt)}
+                      {formatDate(order.deliveryDate ?? order.createdAt)}
                     </td>
 
                     {/* Status Column */}
                     <td className="px-6 py-4 whitespace-nowrap">
                       <Badge tone="warn">Waiting</Badge>
+                      <OrderFlags order={order} />
                     </td>
 
                     {/* Assign Column */}
@@ -964,10 +1023,15 @@ export default function DispatchBoard() {
                         onChange={(e) => {
                           if (e.target.value) {
                             const driverObj = board.drivers.find(d => d.id === e.target.value);
-                            if (driverObj) {
-                              api.post('/api/dispatch/assign', { orderId: order.id, driverId: driverObj.id })
+                            const warning = assignWarning(order);
+                            if (driverObj && (!warning || window.confirm(warning))) {
+                              api.post('/api/dispatch/assign', { ...orderRef(order), driverId: driverObj.id })
                                 .then(() => {
                                   toast.success(`Assigned ${order.spruceOrderId} to ${driverObj.name}`);
+                                  fetchBoard();
+                                })
+                                .catch((err) => {
+                                  toast.error(err.response?.data?.error || 'Failed to assign driver');
                                   fetchBoard();
                                 });
                             }

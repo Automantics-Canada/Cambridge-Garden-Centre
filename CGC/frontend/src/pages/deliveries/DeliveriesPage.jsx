@@ -12,6 +12,7 @@ import { cn } from '../../lib/cn';
 import { formatDate } from '../../lib/date';
 import { isTerminal, statusErrorMessage, statusOptionsFor } from '../../lib/deliveryTransitions';
 import { formatQuantity } from '../../lib/quantity';
+import { stopSummary } from '../../lib/dispatchBoard';
 import { useDebouncedValue } from '../../hooks/useDebouncedValue';
 
 export default function DeliveriesPage() {
@@ -222,6 +223,7 @@ export default function DeliveriesPage() {
         ) : (
           filteredDeliveries.map((del, idx) => {
             const isDelExpanded = expandedDeliveryId === del.id;
+            const shown = stopSummary(del);
             return (
               <div
                 key={del.id}
@@ -237,11 +239,11 @@ export default function DeliveriesPage() {
                     </div>
                     <div>
                       <div className="flex items-center gap-2">
-                        <h4 className="font-bold text-ink text-lg leading-none">{del.order.spruceOrderId}</h4>
-                        <Badge tone="neutral">{del.order.product}</Badge>
+                        <h4 className="font-bold text-ink text-lg leading-none">{shown.spruceOrderId}</h4>
+                        <Badge tone="neutral">{shown.product}</Badge>
                       </div>
                       <div className="flex items-center gap-2 mt-2">
-                        <p className="text-[13px] text-muted font-medium truncate max-w-[200px]">{del.order.customerName}</p>
+                        <p className="text-[13px] text-muted font-medium truncate max-w-[200px]">{shown.customerName}</p>
                         <span className="text-muted">·</span>
                         <span className="text-[13px] text-brand font-semibold flex items-center gap-1">
                           <User size={12} /> {del.driver?.name || 'Unassigned'}
@@ -309,15 +311,15 @@ export default function DeliveriesPage() {
                             <div className="bg-surface border border-line rounded-control p-4 space-y-3">
                               <div className="flex items-center justify-between">
                                  <span className="text-[13px] text-muted font-medium">Customer</span>
-                                 <span className="text-[13px] text-ink font-semibold">{del.order.customerName}</span>
+                                 <span className="text-[13px] text-ink font-semibold">{shown.customerName}</span>
                               </div>
                               <div className="flex items-center justify-between">
                                  <span className="text-[13px] text-muted font-medium">Material</span>
-                                 <span className="text-[13px] text-ink font-semibold">{del.order.product}</span>
+                                 <span className="text-[13px] text-ink font-semibold">{shown.product}</span>
                               </div>
                               <div className="flex items-center justify-between">
                                  <span className="text-[13px] text-muted font-medium">Quantity</span>
-                                 <span className="tabular text-[13px] text-ink font-semibold">{formatQuantity(del.order.quantity, del.order.unit)}</span>
+                                 <span className="tabular text-[13px] text-ink font-semibold">{formatQuantity(shown.quantity, shown.unit)}</span>
                               </div>
                             </div>
                           </div>

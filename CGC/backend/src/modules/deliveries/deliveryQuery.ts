@@ -43,19 +43,32 @@ export function parseDeliveryQuery(query: Record<string, unknown>) {
     }
     filters.priority = parsedPriority;
   }
+  const conditions: Prisma.DeliveryWhereInput[] = [];
   if (date) {
     const range = businessDayRange(date);
     if (!range) throw new DeliveryQueryError(`Invalid date: ${date}`);
-    filters.createdAt = range;
+    // A stop belongs to the day its order goes out. Stops made before orders
+    // were dispatched whole know no such day, only when they were created.
+    conditions.push({
+      OR: [
+        { document: { is: { deliveryDate: new Date(`${date}T00:00:00.000Z`) } } },
+        { documentId: null, createdAt: range },
+      ],
+    });
   }
   if (search) {
-    filters.OR = [
-      { order: { is: { spruceOrderId: { contains: search, mode: 'insensitive' } } } },
-      { order: { is: { customerName: { contains: search, mode: 'insensitive' } } } },
-      { order: { is: { product: { contains: search, mode: 'insensitive' } } } },
-      { driver: { is: { name: { contains: search, mode: 'insensitive' } } } },
-    ];
+    conditions.push({
+      OR: [
+        { document: { is: { documentNumber: { contains: search, mode: 'insensitive' } } } },
+        { document: { is: { customerName: { contains: search, mode: 'insensitive' } } } },
+        { order: { is: { spruceOrderId: { contains: search, mode: 'insensitive' } } } },
+        { order: { is: { customerName: { contains: search, mode: 'insensitive' } } } },
+        { order: { is: { product: { contains: search, mode: 'insensitive' } } } },
+        { driver: { is: { name: { contains: search, mode: 'insensitive' } } } },
+      ],
+    });
   }
+  if (conditions.length > 0) filters.AND = conditions;
 
   return {
     filters,

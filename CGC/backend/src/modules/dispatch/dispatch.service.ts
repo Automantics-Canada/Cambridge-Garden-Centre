@@ -2,11 +2,18 @@ import { prisma } from '../../db/prisma.js';
 import { DeliveryStatus } from '@prisma/client';
 import { MailService } from '../../services/mail.service.js';
 import { businessDayOf, businessDayRange } from '../../lib/businessDay.js';
+import { DISPATCH_DOCUMENT_SELECT, representativeLineId, toDispatchOrder } from './dispatchOrderView.js';
+
+/** A stop in either of these states is history, and is never reassigned. */
+const FINISHED: DeliveryStatus[] = [DeliveryStatus.DELIVERED, DeliveryStatus.CANCELLED];
+
+function dispatchError(status: number, message: string) {
+  return Object.assign(new Error(message), { status });
+}
 
 /**
- * The order fields the dispatch board renders, and nothing else.
- *
- * Deliberately excludes fields the board does not render.
+ * The line fields the board renders for a stop made before orders were
+ * dispatched whole, and nothing else.
  */
 export const DISPATCH_ORDER_SELECT = {
   id: true,
@@ -20,6 +27,15 @@ export const DISPATCH_ORDER_SELECT = {
 
 export const DispatchService = {
   /**
+   * The board for one day: that day's orders still waiting for a driver, and
+   * every driver's run.
+   *
+   * The pool is the orders due out that day — their delivery date, in the
+   * yard's calendar — not the rows uploaded that day. Filtering on upload time
+   * showed an order the morning it was imported and lost it the next, even when
+   * it was due next week. Pickups are collected from the yard and never wait
+   * for a driver.
+   *
    * @param day 'YYYY-MM-DD' in the yard's timezone. Defaults to today there.
    */
   async getDispatchBoard(day?: string) {
@@ -28,26 +44,18 @@ export const DispatchService = {
     if (!dayRange) {
       throw Object.assign(new Error(`Invalid date: ${requestedDay}`), { status: 400 });
     }
+    // Delivery dates are calendar dates, stored without a time.
+    const deliveryDay = new Date(`${requestedDay}T00:00:00.000Z`);
 
-    // Scoped to one business day. This used to return every order that had
-    // never been assigned, for all time, so the pool only ever grew and today's
-    // work sat below months of stale rows.
-    //
-    // Projected rather than `include: { supplier: true }`, for two reasons.
-    //
-    // The board renders exactly these seven fields and never touches the
-    // supplier relation, so the rest was pure payload.
-    //
-    // Historical imports also left buyerType, quantity and unit null on a small
-    // set of rows. The Prisma model now mirrors that production reality so this
-    // projection can return an honest null instead of failing the whole board.
-    // buyerType remains excluded because the board does not render it.
-    const unassignedOrders = await prisma.order.findMany({
+    const waiting = await prisma.orderDocument.findMany({
       where: {
-        deliveries: { none: {} },
-        createdAt: { gte: dayRange.gte, lte: dayRange.lte },
+        deliveryDate: deliveryDay,
+        isPickup: false,
+        // Never dispatched, or dispatched and taken back.
+        OR: [{ delivery: null }, { delivery: { driverId: null } }],
       },
-      select: DISPATCH_ORDER_SELECT,
+      select: DISPATCH_DOCUMENT_SELECT,
+      orderBy: { documentNumber: 'asc' },
     });
 
     const drivers = await prisma.driver.findMany({
@@ -67,7 +75,9 @@ export const DispatchService = {
             ]
           },
           include: {
-            // Same bounded projection for every order rendered on the board.
+            document: { select: DISPATCH_DOCUMENT_SELECT },
+            // Stops made before orders were dispatched whole have only a line,
+            // read through the same bounded projection as ever.
             order: { select: DISPATCH_ORDER_SELECT },
             history: {
               orderBy: { createdAt: 'desc' }
@@ -77,26 +87,120 @@ export const DispatchService = {
       }
     });
 
-    // We also need unassigned Deliveries if they exist without drivers
-    const unassignedDeliveries = await prisma.delivery.findMany({
-      where: { status: 'UNASSIGNED', driverId: null },
-      include: {
-        order: { select: DISPATCH_ORDER_SELECT },
-      }
-    });
-
     return {
-      unassignedOrders,
-      unassignedDeliveries,
-      drivers: drivers.map(d => ({
-        ...d,
-        deliveries: d.deliveries,
-        todayDeliveries: d.deliveries.length,
-        completedToday: d.deliveries.filter(del => del.status === 'DELIVERED').length
-      }))
+      unassignedOrders: waiting.map(toDispatchOrder),
+      // Kept for the screen's merge; whole orders come back to the pool above.
+      unassignedDeliveries: [],
+      drivers: drivers.map(d => {
+        const deliveries = d.deliveries.map(({ document, order, ...delivery }) => ({
+          ...delivery,
+          order: document ? toDispatchOrder(document) : { ...order, wholeOrder: false as const },
+        }));
+        return {
+          ...d,
+          deliveries,
+          todayDeliveries: deliveries.length,
+          completedToday: deliveries.filter(del => del.status === 'DELIVERED').length
+        };
+      })
     };
   },
 
+  /**
+   * Gives a whole order to a driver, or moves it to another.
+   *
+   * The stop joins the end of the driver's run. Every line of the order is
+   * marked with the driver too: the re-import treats a line with a driver as
+   * one it must not re-pair by guesswork, and that safety net was built on
+   * lines.
+   */
+  async assignOrder(documentId: string, driverId: string) {
+    return prisma.$transaction(async (tx) => {
+      const document = await tx.orderDocument.findUnique({
+        where: { id: documentId },
+        select: {
+          id: true,
+          documentNumber: true,
+          lines: DISPATCH_DOCUMENT_SELECT.lines,
+          delivery: { select: { id: true, status: true } },
+        },
+      });
+      if (!document) throw dispatchError(404, 'That order no longer exists.');
+      if (document.delivery && FINISHED.includes(document.delivery.status)) {
+        throw dispatchError(409, `${document.documentNumber} is already ${document.delivery.status.toLowerCase()}.`);
+      }
+
+      const lineId = representativeLineId(document);
+      if (!lineId) throw dispatchError(409, `${document.documentNumber} has no lines to deliver.`);
+
+      const driver = await tx.driver.findUnique({ where: { id: driverId }, select: { active: true } });
+      if (!driver?.active) throw dispatchError(404, 'That driver is not active.');
+
+      const last = await tx.delivery.findFirst({
+        where: {
+          driverId,
+          status: { notIn: FINISHED },
+          ...(document.delivery ? { id: { not: document.delivery.id } } : {}),
+        },
+        orderBy: { priority: 'desc' },
+        select: { priority: true },
+      });
+      const priority = (last?.priority ?? 0) + 1;
+
+      const delivery = document.delivery
+        ? await tx.delivery.update({
+            where: { id: document.delivery.id },
+            data: { driverId, status: 'PLACED', priority, orderId: lineId },
+          })
+        : await tx.delivery.create({
+            data: { documentId, orderId: lineId, driverId, status: 'PLACED', priority },
+          });
+
+      await tx.deliveryHistory.create({
+        data: { deliveryId: delivery.id, status: 'PLACED', notes: 'Order assigned to driver' },
+      });
+      await tx.order.updateMany({
+        where: { documentId },
+        data: { driverId, deliveryStatus: 'NOT_STARTED' },
+      });
+
+      return delivery;
+    });
+  },
+
+  /** Takes a whole order back off its driver and returns it to the pool. */
+  async unassignOrder(documentId: string) {
+    return prisma.$transaction(async (tx) => {
+      const delivery = await tx.delivery.findUnique({
+        where: { documentId },
+        select: { id: true, status: true, document: { select: { documentNumber: true } } },
+      });
+      if (delivery && FINISHED.includes(delivery.status)) {
+        throw dispatchError(
+          409,
+          `${delivery.document?.documentNumber ?? 'This order'} is already ${delivery.status.toLowerCase()}.`
+        );
+      }
+
+      if (delivery) {
+        await tx.deliveryHistory.create({
+          data: { deliveryId: delivery.id, status: 'UNASSIGNED', notes: 'Driver unassigned from order' },
+        });
+        await tx.delivery.update({
+          where: { id: delivery.id },
+          data: { driverId: null, status: 'UNASSIGNED' },
+        });
+      }
+      await tx.order.updateMany({
+        where: { documentId },
+        data: { driverId: null, deliveryStatus: 'NOT_STARTED' },
+      });
+
+      return { success: true };
+    });
+  },
+
+  /** For stops made before orders were dispatched whole, which name one line. */
   async assignDriver(orderId: string, driverId: string, priority: number = 1) {
     console.time(`Assignment-${orderId}`);
     // Check if delivery already exists for this order, or create new
@@ -172,6 +276,7 @@ export const DispatchService = {
     return delivery;
   },
 
+  /** For stops made before orders were dispatched whole, which name one line. */
   async unassignDriver(orderId: string) {
     console.time(`Unassignment-${orderId}`);
 

@@ -1,6 +1,7 @@
 import { prisma } from '../../db/prisma.js';
 import { DeliveryStatus } from '@prisma/client';
 import supabaseStorage from '../../services/supabaseStorage.js';
+import { DISPATCH_DOCUMENT_SELECT } from '../dispatch/dispatchOrderView.js';
 import { saveTicketImage } from '../../services/fileStorage.js';
 
 /**
@@ -24,6 +25,8 @@ export const DELIVERY_RESPONSE_SELECT = {
   completedAt: true,
   createdAt: true,
   driver: { select: { id: true, name: true } },
+  /** The whole Spruce order this stop delivers; null on stops made before. */
+  document: { select: DISPATCH_DOCUMENT_SELECT },
   order: {
     select: {
       id: true,
