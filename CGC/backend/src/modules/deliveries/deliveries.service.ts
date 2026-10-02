@@ -1,7 +1,9 @@
 import { prisma } from '../../db/prisma.js';
-import { DeliveryStatus } from '@prisma/client';
+import { DeliveryStatus, type Prisma } from '@prisma/client';
 import supabaseStorage from '../../services/supabaseStorage.js';
 import { DISPATCH_DOCUMENT_SELECT } from '../dispatch/dispatchOrderView.js';
+import { deliveryDayDate } from '../dispatch/dispatchDays.js';
+import { businessDayOf } from '../../lib/businessDay.js';
 import { saveTicketImage } from '../../services/fileStorage.js';
 
 /**
@@ -79,19 +81,39 @@ const RUN_ORDER = [{ priority: 'asc' as const }, { createdAt: 'asc' as const }, 
 /** Under way: the truck is loaded for this stop. */
 const STARTED: DeliveryStatus[] = [DeliveryStatus.OUT_FOR_DELIVERY, DeliveryStatus.IN_TRANSIT];
 
+/**
+ * Stops due today or earlier (spec §11: drivers see the orders assigned to
+ * them for today). Dispatch may assign a later day's order ahead; it waits off
+ * the phone until its day. Earlier days are carried-over work, still due. A
+ * stop with no order date, or made before orders were dispatched whole, is
+ * due now as it always was.
+ *
+ * @param today 'YYYY-MM-DD' in the yard's timezone
+ */
+function dueBy(today: string): Prisma.DeliveryWhereInput {
+  return {
+    OR: [
+      { documentId: null },
+      { document: { deliveryDate: null } },
+      { document: { deliveryDate: { lte: deliveryDayDate(today) } } },
+    ],
+  };
+}
+
 export class DeliveryNotCurrentError extends Error {
   readonly code = 'DELIVERY_NOT_CURRENT';
 }
 
 /**
  * The stop a driver is on: one already under way if there is one, otherwise
- * the next by dispatch's order.
+ * the next by dispatch's order among the stops due by today.
  *
  * Dispatch reorders runs all day as customers call. That decides what comes
  * next, never what is already on the truck: a driver halfway to one customer
- * must not find their screen showing another.
+ * must not find their screen showing another — so a started stop stays
+ * current whatever day it is due.
  */
-async function currentStopId(driverId: string): Promise<string | null> {
+async function currentStopId(driverId: string, today: string = businessDayOf()): Promise<string | null> {
   const started = await prisma.delivery.findFirst({
     where: { driverId, status: { in: STARTED } },
     orderBy: RUN_ORDER,
@@ -100,7 +122,7 @@ async function currentStopId(driverId: string): Promise<string | null> {
   if (started) return started.id;
 
   const next = await prisma.delivery.findFirst({
-    where: { driverId, status: { notIn: FINISHED } },
+    where: { driverId, status: { notIn: FINISHED }, ...dueBy(today) },
     orderBy: RUN_ORDER,
     select: { id: true },
   });
@@ -114,12 +136,21 @@ export const DeliveriesService = {
    *
    * Dispatch reorders a run while drivers are out — a customer calls, an order
    * jumps the queue — so the rest of the run is both changing and none of the
-   * driver's business. Only the stop in hand leaves the server.
+   * driver's business. Only the stop in hand leaves the server. Stops due on a
+   * later day neither show nor count until their day.
+   *
+   * @param today 'YYYY-MM-DD' in the yard's timezone; for tests.
    */
-  async getCurrentStop(driverId: string) {
+  async getCurrentStop(driverId: string, today: string = businessDayOf()) {
     const [id, remaining] = await Promise.all([
-      currentStopId(driverId),
-      prisma.delivery.count({ where: { driverId, status: { notIn: FINISHED } } }),
+      currentStopId(driverId, today),
+      prisma.delivery.count({
+        where: {
+          driverId,
+          status: { notIn: FINISHED },
+          OR: [{ status: { in: STARTED } }, dueBy(today)],
+        },
+      }),
     ]);
     const current = id
       ? await prisma.delivery.findUnique({ where: { id }, select: DELIVERY_DRIVER_RESPONSE_SELECT })
@@ -136,8 +167,8 @@ export const DeliveriesService = {
    * only ever shows the current stop; this makes that the rule rather than a
    * habit of the screen.
    */
-  async assertCurrentStop(driverId: string, deliveryId: string) {
-    if ((await currentStopId(driverId)) !== deliveryId) {
+  async assertCurrentStop(driverId: string, deliveryId: string, today: string = businessDayOf()) {
+    if ((await currentStopId(driverId, today)) !== deliveryId) {
       throw new DeliveryNotCurrentError(
         'This is not your current stop. Finish the one on your screen first; dispatch sets the order.'
       );
