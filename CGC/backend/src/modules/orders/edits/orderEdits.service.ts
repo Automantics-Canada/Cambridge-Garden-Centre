@@ -9,6 +9,7 @@ import {
   type OrderFlag,
 } from '../import/mergeOrderFacts.js';
 import { NO_UPDATES, updatesForDay } from '../import/orderChanges.js';
+import { awaitingSupplierByOrder } from '../../dispatch/dispatchOrderView.js';
 import {
   EditValidationError,
   columnToStored,
@@ -266,6 +267,9 @@ export async function resetOrderEdit(documentId: string, field: string, lineId: 
  * Toronto), each with what it was, so the screen can say "Updated by today's
  * upload (was …)". A field the dispatcher has corrected is not among them.
  *
+ * `awaitingSupplier` names who the order waits on and under which PO, for
+ * the "Awaiting supplier" flag. The screen is office-only.
+ *
  * @param today 'YYYY-MM-DD' in the yard's timezone; for tests.
  */
 export async function getOrderForEditing(idOrNumber: string, today?: string) {
@@ -306,12 +310,19 @@ export async function getOrderForEditing(idOrNumber: string, today?: string) {
   });
   if (!document) throw new OrderEditError(404, 'That order is not in the system.');
 
-  const [suggestion, changed] = await Promise.all([
+  const [suggestion, changed, awaiting] = await Promise.all([
     addressSuggestion(document),
     updatesForDay(prisma, [document.id], today),
+    awaitingSupplierByOrder(prisma, [document]),
   ]);
   const { updatedFields, updates } = changed.get(document.id) ?? NO_UPDATES;
-  return { ...document, addressSuggestion: suggestion, updatedFields, updates };
+  return {
+    ...document,
+    addressSuggestion: suggestion,
+    updatedFields,
+    updates,
+    awaitingSupplier: awaiting.get(document.id) ?? [],
+  };
 }
 
 /**

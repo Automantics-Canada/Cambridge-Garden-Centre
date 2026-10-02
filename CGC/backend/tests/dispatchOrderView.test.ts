@@ -4,8 +4,11 @@ import { Prisma } from '@prisma/client';
 
 import {
   DISPATCH_DOCUMENT_SELECT,
+  awaitingSupplierByOrder,
+  awaitingSupplierOf,
   representativeLineId,
   toDispatchOrder,
+  withAwaitingSupplier,
   withUpdatedFields,
   type DispatchDocument,
 } from '../src/modules/dispatch/dispatchOrderView.js';
@@ -141,5 +144,97 @@ describe('orders Spruce changed today', () => {
     const rows = [toDispatchOrder(document([{}]))];
     await withUpdatedFields(fakeDb({}), rows, '2026-09-02');
     assert.deepEqual(rows[0]!.updatedFields, ['shippingAddress']);
+  });
+});
+
+describe('who an order is awaiting', () => {
+  it('names the supplier and PO, falling back to the vendor code', () => {
+    assert.deepEqual(awaitingSupplierOf([
+      { poNumber: '9900-100001', vendorCode: 'EXAMPLEV01', supplierName: 'Example Pavers' },
+      { poNumber: '9900-100001', vendorCode: 'EXAMPLEV01', supplierName: 'Example Pavers' },
+      { poNumber: null, vendorCode: 'EXAMPLEV01', supplierName: 'Example Pavers' },
+      { poNumber: ' 9900-100002 ', vendorCode: 'SAMPLEV02', supplierName: null },
+      { poNumber: '9900-100003', vendorCode: null, supplierName: null },
+    ]), [
+      { supplierName: 'Example Pavers', poNumber: '9900-100001' },
+      { supplierName: 'SAMPLEV02', poNumber: '9900-100002' },
+      { supplierName: null, poNumber: '9900-100003' },
+    ]);
+  });
+
+  it('is empty for an order with no PO lines', () => {
+    assert.deepEqual(awaitingSupplierOf([{ poNumber: null, vendorCode: null, supplierName: null }]), []);
+  });
+
+  /** Answers like the database would; records what was asked. */
+  function fakeDb(seen: { lineIds?: string[]; codes?: string[] }) {
+    const lines = [
+      { documentId: 'doc-1', poNumber: '9900-100001', vendorCode: 'EXAMPLEV01', supplier: null },
+      { documentId: 'doc-1', poNumber: '9900-100001', vendorCode: 'EXAMPLEV01', supplier: null },
+      { documentId: 'doc-2', poNumber: '9900-100002', vendorCode: 'SAMPLEV02', supplier: { name: 'Sample Stone' } },
+      { documentId: 'doc-2', poNumber: '9900-100004', vendorCode: 'NEWVEND01', supplier: null },
+    ];
+    return {
+      order: {
+        findMany: async ({ where }: { where: { documentId: { in: string[] } } }) => {
+          seen.lineIds = where.documentId.in;
+          return lines.filter(line => where.documentId.in.includes(line.documentId));
+        },
+      },
+      supplierSpruceVendor: {
+        findMany: async ({ where }: { where: { code: { in: string[] } } }) => {
+          seen.codes = where.code.in;
+          return where.code.in.includes('EXAMPLEV01') ? [{ code: 'EXAMPLEV01', supplier: { name: 'Example Pavers' } }] : [];
+        },
+      },
+    } as unknown as Parameters<typeof awaitingSupplierByOrder>[0];
+  }
+
+  it('reads only orders flagged as awaiting, and names suppliers through the vendor mapping', async () => {
+    const seen: { lineIds?: string[]; codes?: string[] } = {};
+    const awaiting = await awaitingSupplierByOrder(fakeDb(seen), [
+      { id: 'doc-1', flags: ['AWAITING_SUPPLIER'] },
+      { id: 'doc-2', flags: ['AWAITING_SUPPLIER', 'SMALL_TRUCK'] },
+      { id: 'doc-3', flags: ['NO_ADDRESS'] },
+    ]);
+
+    assert.deepEqual(seen.lineIds, ['doc-1', 'doc-2']);
+    assert.deepEqual(seen.codes, ['EXAMPLEV01', 'NEWVEND01'], 'only codes the line has no supplier for');
+    assert.deepEqual(awaiting.get('doc-1'), [{ supplierName: 'Example Pavers', poNumber: '9900-100001' }]);
+    assert.deepEqual(awaiting.get('doc-2'), [
+      { supplierName: 'Sample Stone', poNumber: '9900-100002' },
+      { supplierName: 'NEWVEND01', poNumber: '9900-100004' },
+    ]);
+    assert.deepEqual(awaiting.get('doc-3'), []);
+  });
+
+  it('asks nothing when no order is awaiting a supplier', async () => {
+    const seen: { lineIds?: string[] } = {};
+    const awaiting = await awaitingSupplierByOrder(fakeDb(seen), [{ id: 'doc-1', flags: [] }]);
+    assert.equal(seen.lineIds, undefined);
+    assert.deepEqual(awaiting.get('doc-1'), []);
+  });
+
+  it('fills every whole order a board holds, and leaves older stops alone', async () => {
+    const pooled = { ...toDispatchOrder(document([{}])), flags: ['AWAITING_SUPPLIER'] };
+    const onRun = { ...toDispatchOrder(document([{}])), id: 'doc-3' };
+    const olderStop = { id: 'line-9', wholeOrder: false as const };
+
+    await withAwaitingSupplier(fakeDb({}), {
+      unassignedOrders: [pooled],
+      drivers: [{ deliveries: [{ order: onRun }, { order: olderStop }] }],
+    });
+
+    assert.deepEqual(pooled.awaitingSupplier, [{ supplierName: 'Example Pavers', poNumber: '9900-100001' }]);
+    assert.deepEqual(onRun.awaitingSupplier, []);
+    assert.equal('awaitingSupplier' in olderStop, false);
+  });
+
+  it("is not part of the row itself, so a driver's stop never carries it", () => {
+    assert.equal('awaitingSupplier' in toDispatchOrder(document([{}])), false);
+    assert.equal('supplier' in DISPATCH_DOCUMENT_SELECT.lines.select, false);
+    assert.equal('poNumber' in DISPATCH_DOCUMENT_SELECT.lines.select, false);
+    assert.equal('vendorCode' in DISPATCH_DOCUMENT_SELECT.lines.select, false);
+    assert.equal('poNumber' in DISPATCH_DOCUMENT_SELECT, false);
   });
 });

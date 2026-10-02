@@ -6,7 +6,7 @@ import {
   DISPATCH_DOCUMENT_SELECT,
   representativeLineId,
   toDispatchOrder,
-  withUpdatedFields,
+  withOfficeFields,
 } from './dispatchOrderView.js';
 import {
   FINISHED_STATUSES as FINISHED,
@@ -120,9 +120,10 @@ export const DispatchService = {
       }
     });
 
-    // What today's upload changed is read apart from the rows: the same select
-    // reaches drivers' screens, which must not gain it.
-    return withUpdatedFields(prisma, {
+    // What today's upload changed, and which supplier and PO an order waits
+    // on, are read apart from the rows: the same select reaches drivers'
+    // screens, which must not gain them.
+    return withOfficeFields(prisma, {
       day: requestedDay,
       readOnly,
       carriedOver: carriedOver.map(toDispatchOrder),
@@ -175,7 +176,7 @@ export const DispatchService = {
       orderBy: { documentNumber: 'desc' },
       take: UNDATED_LIMIT,
     });
-    return withUpdatedFields(
+    return withOfficeFields(
       prisma,
       documents.map(({ isPickup, ...document }) => ({ ...toDispatchOrder(document), isPickup }))
     );

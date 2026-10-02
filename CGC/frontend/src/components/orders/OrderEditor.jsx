@@ -5,6 +5,7 @@ import toast from 'react-hot-toast';
 import api from '../../api/axios';
 import { Badge, Button, Field, Input, ModalOverlay, Select, Textarea } from '../ui';
 import { flagInfo } from '../../lib/spruceImport';
+import { flagLabel } from '../../lib/dispatchBoard';
 import {
   DELIVERY_TYPE_OPTIONS,
   ORDER_FIELDS,
@@ -105,7 +106,7 @@ export default function OrderEditor({ orderRef, onClose, onSaved, readOnly = fal
             </p>
             {order?.flags?.length > 0 && (
               <div className="flex flex-wrap gap-1.5 mt-2">
-                {order.flags.map((flag) => <Badge key={flag} tone={flagInfo(flag).tone}>{flagInfo(flag).label}</Badge>)}
+                {order.flags.map((flag) => <Badge key={flag} tone={flagInfo(flag).tone}>{flagLabel(order, flag)}</Badge>)}
               </div>
             )}
           </div>

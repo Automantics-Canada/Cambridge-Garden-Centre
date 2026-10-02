@@ -1,5 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { assignWarning, flagBadges, mergeUnassignedOrders, orderRef, stopSummary, updatedTitle } from './dispatchBoard';
+import {
+  assignWarning,
+  awaitingSupplierDetail,
+  awaitingSupplierText,
+  flagBadges,
+  flagLabel,
+  mergeUnassignedOrders,
+  orderRef,
+  stopSummary,
+  updatedTitle,
+} from './dispatchBoard';
 
 describe('mergeUnassignedOrders', () => {
   it('returns unassigned deliveries to the dispatch pool', () => {
@@ -81,5 +91,46 @@ describe('orders the reports changed today', () => {
 
   it('names a field it has no word for by its code rather than not at all', () => {
     expect(updatedTitle({ updatedFields: ['somethingNew'] })).toBe("Changed by today's upload: somethingNew");
+  });
+});
+
+describe('awaiting supplier', () => {
+  it('names the supplier and PO, as the spec words it', () => {
+    const order = {
+      flags: ['AWAITING_SUPPLIER'],
+      awaitingSupplier: [{ supplierName: 'Example Pavers', poNumber: '9900-100001' }],
+    };
+    expect(awaitingSupplierText(order)).toBe('Awaiting supplier: Example Pavers PO 9900-100001');
+    expect(flagBadges(order)).toEqual([
+      { flag: 'AWAITING_SUPPLIER', label: 'Awaiting supplier: Example Pavers PO 9900-100001', tone: 'neutral' },
+    ]);
+  });
+
+  it('joins several POs, and shows a vendor code or a bare PO as it is', () => {
+    expect(awaitingSupplierText({
+      awaitingSupplier: [
+        { supplierName: 'Example Pavers', poNumber: '9900-100001' },
+        { supplierName: 'SAMPLEV02', poNumber: '9900-100002' },
+        { supplierName: null, poNumber: '9900-100003' },
+      ],
+    })).toBe('Awaiting supplier: Example Pavers PO 9900-100001, SAMPLEV02 PO 9900-100002, PO 9900-100003');
+  });
+
+  it('says just "Awaiting supplier" when nothing is named', () => {
+    expect(awaitingSupplierText({ flags: ['AWAITING_SUPPLIER'] })).toBe('Awaiting supplier');
+    expect(awaitingSupplierText({ awaitingSupplier: [] })).toBe('Awaiting supplier');
+    expect(awaitingSupplierDetail({ awaitingSupplier: [] })).toBe(null);
+  });
+
+  it('gives the board the supplier and PO alone, for the line under the badge', () => {
+    expect(awaitingSupplierDetail({
+      awaitingSupplier: [{ supplierName: 'Example Pavers', poNumber: '9900-100001' }],
+    })).toBe('Example Pavers PO 9900-100001');
+  });
+
+  it("leaves every other flag's label alone", () => {
+    const order = { awaitingSupplier: [{ supplierName: 'Example Pavers', poNumber: '9900-100001' }] };
+    expect(flagLabel(order, 'SMALL_TRUCK')).toBe('Small truck');
+    expect(flagLabel(order, 'AWAITING_SUPPLIER')).toBe('Awaiting supplier: Example Pavers PO 9900-100001');
   });
 });
