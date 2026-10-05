@@ -40,6 +40,7 @@ export default function OrdersPage() {
   const [driverId] = useState(searchParams.get('driverId') || '');
   const [hasInvoice, setHasInvoice] = useState('');
   const [hasLinkedTickets, setHasLinkedTickets] = useState('');
+  const [fulfilment, setFulfilment] = useState(''); // '' | 'delivery' | 'pickup'
   const [uploadFilter, setUploadFilter] = useState('today'); // 'today' | 'yesterday' | 'select'
   const [selectedUploadDate, setSelectedUploadDate] = useState(''); // 'YYYY-MM-DD'
 
@@ -65,6 +66,7 @@ export default function OrdersPage() {
         driverId,
         hasInvoice: hasInvoice === 'yes' ? 'true' : hasInvoice === 'no' ? 'false' : undefined,
         hasLinkedTickets: hasLinkedTickets === 'yes' ? 'true' : hasLinkedTickets === 'no' ? 'false' : undefined,
+        fulfilment: fulfilment || undefined,
         limit: 30,
         page
       };
@@ -90,7 +92,7 @@ export default function OrdersPage() {
     } finally {
       setLoading(false);
     }
-  }, [awaitingDateChoice, search, buyerType, supplierId, driverId, hasInvoice, hasLinkedTickets, uploadFilter, selectedUploadDate, page]);
+  }, [awaitingDateChoice, search, buyerType, supplierId, driverId, hasInvoice, hasLinkedTickets, fulfilment, uploadFilter, selectedUploadDate, page]);
 
   const handleFileUpload = async (event) => {
     const file = event.target.files?.[0];
@@ -125,7 +127,7 @@ export default function OrdersPage() {
 
   useEffect(() => {
     setPage(1);
-  }, [search, buyerType, supplierId, driverId, hasInvoice, hasLinkedTickets, uploadFilter, selectedUploadDate]);
+  }, [search, buyerType, supplierId, driverId, hasInvoice, hasLinkedTickets, fulfilment, uploadFilter, selectedUploadDate]);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -262,6 +264,18 @@ export default function OrdersPage() {
             )}
 
             <div>
+              <label className="block text-[12.5px] font-medium text-muted mb-1.5">Delivery or pickup</label>
+              <Select
+                value={fulfilment}
+                onChange={(e) => setFulfilment(e.target.value)}
+              >
+                <option value="">Both</option>
+                <option value="delivery">Delivery</option>
+                <option value="pickup">Pickup</option>
+              </Select>
+            </div>
+
+            <div>
               <label className="block text-[12.5px] font-medium text-muted mb-1.5">Buyer type</label>
               <Select
                 value={buyerType}
@@ -322,6 +336,9 @@ export default function OrdersPage() {
                   Customer
                 </th>
                 <th scope="col" className="px-3 py-3.5 text-left text-[12.5px] font-semibold text-muted">
+                  Type
+                </th>
+                <th scope="col" className="px-3 py-3.5 text-left text-[12.5px] font-semibold text-muted">
                   Buyer type
                 </th>
                 <th scope="col" className="px-3 py-3.5 text-left text-[12.5px] font-semibold text-muted text-nowrap">
@@ -342,6 +359,9 @@ export default function OrdersPage() {
                 <th scope="col" className="px-3 py-3.5 text-left text-[12.5px] font-semibold text-muted text-nowrap">
                   Invoice
                 </th>
+                <th scope="col" className="relative py-3.5 pl-3 pr-4 sm:pr-6">
+                  <span className="sr-only">Edit</span>
+                </th>
               </tr>
             </thead>
 
@@ -350,7 +370,7 @@ export default function OrdersPage() {
                 <OrdersTableSkeleton />
               ) : filteredOrders.length === 0 ? (
                 <tr>
-                  <td colSpan={9}>
+                  <td colSpan={11}>
                     <EmptyState
                       icon={Inbox}
                       title={emptyTitle}
@@ -382,6 +402,12 @@ export default function OrdersPage() {
 
                       <td className="whitespace-nowrap px-3 py-4 text-sm text-ink font-medium">
                         {order.customerName}
+                      </td>
+
+                      <td className="whitespace-nowrap px-3 py-4 text-sm">
+                        {order.document?.isPickup
+                          ? <Badge tone="neutral">Pickup</Badge>
+                          : <Badge tone="good">Delivery</Badge>}
                       </td>
 
                       <td className="whitespace-nowrap px-3 py-4 text-sm">
@@ -442,6 +468,16 @@ export default function OrdersPage() {
                           </div>
                         ) : (
                           <Badge tone="warn">Waiting</Badge>
+                        )}
+                      </td>
+
+                      {/* The editor works on the whole Spruce order. A line
+                          imported before orders were grouped has none. */}
+                      <td className="whitespace-nowrap py-4 pl-3 pr-4 text-right text-sm sm:pr-6">
+                        {order.documentId && (
+                          <Button size="sm" onClick={() => setEditingOrder(order.documentId)}>
+                            Edit
+                          </Button>
                         )}
                       </td>
                     </StaggerItem>
@@ -511,6 +547,9 @@ function OrdersTableSkeleton() {
             <Skeleton variant="text" width="140px" height="16px" />
           </td>
           <td className="whitespace-nowrap px-3 py-4">
+            <Skeleton variant="rectangle" width="64px" height="20px" className="rounded-pill" />
+          </td>
+          <td className="whitespace-nowrap px-3 py-4">
             <Skeleton variant="rectangle" width="80px" height="20px" className="rounded-pill" />
           </td>
           <td className="whitespace-nowrap px-3 py-4">
@@ -530,6 +569,9 @@ function OrdersTableSkeleton() {
           </td>
           <td className="whitespace-nowrap px-3 py-4">
             <Skeleton variant="rectangle" width="70px" height="20px" className="rounded-pill" />
+          </td>
+          <td className="whitespace-nowrap py-4 pl-3 pr-4 sm:pr-6">
+            <Skeleton variant="rectangle" width="48px" height="28px" className="rounded-control ml-auto" />
           </td>
         </tr>
       ))}

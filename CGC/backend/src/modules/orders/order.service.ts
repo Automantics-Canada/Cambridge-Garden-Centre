@@ -19,9 +19,11 @@ export interface ImportSummary {
 
 export const OrderService = {
   async getOrders(filters: any) {
-    const { startDate, endDate, uploadStartDate, uploadEndDate, buyerType, supplierId, driverId, hasInvoice, hasLinkedTickets, search, page = 1, limit = 1000 } = filters;
-    
+    const { startDate, endDate, uploadStartDate, uploadEndDate, buyerType, supplierId, driverId, hasInvoice, hasLinkedTickets, fulfilment, search, page = 1, limit = 1000 } = filters;
+
     let where: any = {};
+    // Filters that are each an OR of their own, so they cannot share `where.OR`.
+    const and: any[] = [];
 
     if (driverId) {
       where.driverId = driverId;
@@ -37,23 +39,44 @@ export const OrderService = {
       }
     }
 
-    // `createdAt` is a timestamp, so "uploaded on the 16th" has to mean the
-    // 16th in Cambridge. Reading the bare date as UTC midnight put everything
-    // uploaded after 20:00 local into the following day.
+    // The upload times are timestamps, so "uploaded on the 16th" has to mean
+    // the 16th in Cambridge. Reading the bare date as UTC midnight put
+    // everything uploaded after 20:00 local into the following day.
     if (uploadStartDate || uploadEndDate) {
-      where.createdAt = {};
+      const range: { gte?: Date; lte?: Date } = {};
 
       if (uploadStartDate) {
         const gte = startOfBusinessDay(String(uploadStartDate));
         if (!gte) throw badRequest(`Invalid uploadStartDate: ${uploadStartDate}`);
-        where.createdAt.gte = gte;
+        range.gte = gte;
       }
 
       if (uploadEndDate) {
         const lte = endOfBusinessDay(String(uploadEndDate));
         if (!lte) throw badRequest(`Invalid uploadEndDate: ${uploadEndDate}`);
-        where.createdAt.lte = lte;
+        range.lte = lte;
       }
+
+      // Uploaded that day means first imported that day, or refreshed by that
+      // day's Spruce reports. A re-upload updates an order in place and keeps
+      // its first `createdAt`, so filtering on that alone left every order the
+      // morning's reports had just updated missing from "Today".
+      and.push({
+        OR: [
+          { createdAt: range },
+          { document: { is: { lastBatch: { is: { createdAt: range } } } } },
+        ],
+      });
+    }
+
+    // Collected from the yard, or delivered. A line from before orders were
+    // grouped has no order to say, and was imported as a delivery.
+    if (fulfilment === 'pickup') {
+      where.document = { is: { isPickup: true } };
+    } else if (fulfilment === 'delivery') {
+      and.push({ NOT: { document: { is: { isPickup: true } } } });
+    } else if (fulfilment) {
+      throw badRequest(`Invalid fulfilment: ${fulfilment}`);
     }
 
     if (buyerType) {
@@ -86,6 +109,8 @@ export const OrderService = {
       ];
     }
 
+    if (and.length > 0) where.AND = and;
+
     const take = parseInt(limit, 10) || 1000;
     const skip = (parseInt(page, 10) - 1 || 0) * take;
 
@@ -100,6 +125,10 @@ export const OrderService = {
           tickets: true,
           ticketMatches: {
             include: { ticket: true }
+          },
+          // Whether the order is collected from the yard, for the Type column.
+          document: {
+            select: { isPickup: true }
           }
         }
       }),
