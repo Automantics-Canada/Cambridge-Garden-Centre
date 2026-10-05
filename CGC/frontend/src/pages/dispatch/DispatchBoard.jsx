@@ -138,17 +138,26 @@ export default function DispatchBoard() {
   const [activeDragTargetDriverId, setActiveDragTargetDriverId] = useState(null);
   const [isOverUnassignedDropZone, setIsOverUnassignedDropZone] = useState(false);
 
-  // The pool is the orders due out on the chosen day, today by default.
-  const [dateFilter, setDateFilter] = useState('today'); // 'today' | 'yesterday' | 'select'
+  // The board's tab. Today shows only the orders due today; what is left over
+  // from earlier days, what is due later and what has no day each has its own
+  // tab. Yesterday and a chosen date show that day's board.
+  //
+  // Carried over is today's board with the earlier orders in place of the
+  // pool, so they can still be dragged onto today's drivers. Upcoming and
+  // Pickups also keep today's board loaded, for the counts on the tabs.
+  const [view, setView] = useState('today'); // 'today' | 'carried' | 'upcoming' | 'undated' | 'yesterday' | 'select'
   const [selectedDate, setSelectedDate] = useState(''); // 'YYYY-MM-DD'
 
   const today = businessDayOffset(0);
+  const showingCarried = view === 'carried';
+  // Upcoming and Pickups are lists, not a day's board.
+  const showingList = view === 'upcoming' || view === 'undated';
   const poolDate =
-    dateFilter === 'today' ? today
-    : dateFilter === 'yesterday' ? businessDayOffset(-1)
+    view === 'today' || showingCarried || showingList ? today
+    : view === 'yesterday' ? businessDayOffset(-1)
     : selectedDate;
 
-  const awaitingDateChoice = dateFilter === 'select' && !selectedDate;
+  const awaitingDateChoice = view === 'select' && !selectedDate;
   // Yesterday and older are history: nothing on them is handed out or taken
   // back. The server refuses the finished ones whatever this screen shows.
   const readOnly = !awaitingDateChoice && isPastDay(poolDate, today);
@@ -185,7 +194,7 @@ export default function DispatchBoard() {
 
   const showDay = (day) => {
     setSelectedDate(day);
-    setDateFilter(day === today ? 'today' : 'select');
+    setView(day === today ? 'today' : 'select');
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -720,9 +729,26 @@ export default function DispatchBoard() {
     </thead>
   );
 
+  // A count on a tab only when there is something under it. The server lists
+  // carried over orders on today's board only, and the undated list is capped.
+  const upcomingCount = upcoming.reduce((sum, day) => sum + (day.count || 0), 0);
+  const boardTabs = [
+    { id: 'today', label: 'Today' },
+    { id: 'carried', label: 'Carried over', count: isTodayBoard && board.carriedOver.length > 0 && board.carriedOver.length },
+    { id: 'upcoming', label: 'Upcoming', count: upcomingCount > 0 && upcomingCount },
+    {
+      id: 'undated',
+      label: 'Pickups & no date',
+      count: !undatedSearch.trim() && undated.orders.length > 0
+        && (undated.orders.length >= UNDATED_LIMIT ? `${UNDATED_LIMIT}+` : undated.orders.length),
+    },
+    { id: 'yesterday', label: 'Yesterday' },
+    { id: 'select', label: 'Select date' },
+  ];
+
   const poolDateLabel =
-    dateFilter === 'today' ? 'today'
-    : dateFilter === 'yesterday' ? 'yesterday'
+    poolDate === today ? 'today'
+    : view === 'yesterday' ? 'yesterday'
     : formatDate(`${selectedDate}T00:00:00`, { dateStyle: 'long' });
 
   // Table Skeletons matching visual guidelines
@@ -805,29 +831,7 @@ export default function DispatchBoard() {
           subtitle="Assign today's orders to drivers. Drag a row onto a driver, or drop it back in the pool."
           actions={
             <div className="flex flex-wrap items-center gap-3">
-              <div className="flex items-center gap-1 bg-ink/[0.05] p-1 rounded-control">
-                {[
-                  ['today', 'Today'],
-                  ['yesterday', 'Yesterday'],
-                  ['select', 'Select date'],
-                ].map(([id, label]) => (
-                  <button
-                    key={id}
-                    type="button"
-                    onClick={() => setDateFilter(id)}
-                    className={cn(
-                      'px-3 py-1.5 rounded-control text-[13px] font-semibold transition-colors',
-                      dateFilter === id
-                        ? 'bg-surface text-brand shadow-card border border-line'
-                        : 'text-muted hover:text-ink'
-                    )}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-
-              {dateFilter === 'select' && (
+              {view === 'select' && (
                 <Input
                   type="date"
                   className="tabular w-44"
@@ -837,16 +841,18 @@ export default function DispatchBoard() {
                 />
               )}
 
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted" />
-                <Input
-                  type="text"
-                  placeholder="Search orders, customers..."
-                  className="pl-10 w-64"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                />
-              </div>
+              {!showingList && (
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted" />
+                  <Input
+                    type="text"
+                    placeholder="Search orders, customers..."
+                    className="pl-10 w-64"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                  />
+                </div>
+              )}
               <Button
                 size="icon"
                 onClick={fetchBoard}
@@ -859,503 +865,535 @@ export default function DispatchBoard() {
         />
       </FadeInUp>
 
+      <div role="tablist" aria-label="Dispatch board" className="flex flex-wrap items-center gap-1 bg-ink/[0.05] p-1 rounded-control self-start">
+        {boardTabs.map(({ id, label, count }) => (
+          <button
+            key={id}
+            type="button"
+            role="tab"
+            aria-selected={view === id}
+            onClick={() => setView(id)}
+            className={cn(
+              'px-3 py-1.5 rounded-control text-[13px] font-semibold transition-colors inline-flex items-center gap-1.5',
+              view === id
+                ? 'bg-surface text-brand shadow-card border border-line'
+                : 'text-muted hover:text-ink'
+            )}
+          >
+            {label}
+            {count && (
+              <span className={cn(
+                'tabular rounded-full px-1.5 text-[11.5px] font-bold',
+                id === 'carried' ? 'bg-clay/15 text-clay' : 'bg-ink/[0.07] text-muted'
+              )}>
+                {count}
+              </span>
+            )}
+          </button>
+        ))}
+      </div>
+
       {readOnly && (
         <div className="bg-surface rounded-card border border-line shadow-card px-6 py-3 flex items-start gap-2 text-[13px] text-muted">
           <Info size={16} className="text-ochre flex-shrink-0 mt-0.5" />
           <p>
             <span className="font-semibold text-ink">{poolDateLabel.charAt(0).toUpperCase() + poolDateLabel.slice(1)} is history, so this board is read-only.</span>{' '}
-            Orders from this day that never went out are under Carried over on today&apos;s board.
+            Orders from this day that never went out are in the Carried over tab.
             {canCorrectHistory(role) && ' As an admin you can still correct a stop’s status.'}
           </p>
         </div>
       )}
 
-      {/* TOP SECTION: DRIVERS EXCEL SPREADSHEET TABLE */}
-      <div className="bg-surface rounded-card border border-line shadow-card overflow-hidden flex flex-col">
-        <div className="bg-ink/[0.03] px-6 py-4 border-b border-line flex justify-between items-center select-none">
-          <div>
-            <h3 className="text-sm font-bold text-ink flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full bg-brand animate-pulse"></span>
-              Active Drivers
-            </h3>
-          </div>
-        </div>
+      {!showingList && (
+        <>
+          {/* TOP SECTION: DRIVERS EXCEL SPREADSHEET TABLE */}
+          <div className="bg-surface rounded-card border border-line shadow-card overflow-hidden flex flex-col">
+            <div className="bg-ink/[0.03] px-6 py-4 border-b border-line flex justify-between items-center select-none">
+              <div>
+                <h3 className="text-sm font-bold text-ink flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-brand animate-pulse"></span>
+                  Active Drivers
+                </h3>
+              </div>
+            </div>
 
-        <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-line">
-            <thead className="bg-ink/[0.03]">
-              <tr>
-                <th scope="col" className="px-6 py-3 text-left text-[12.5px] font-bold text-muted w-64 select-none">Driver</th>
-                <th scope="col" className="px-6 py-3 text-left text-[12.5px] font-bold text-muted w-40 select-none">Type</th>
-                <th scope="col" className="px-6 py-3 text-left text-[12.5px] font-bold text-muted select-none">Active Assignments</th>
-                <th scope="col" className="px-6 py-3 text-left text-[12.5px] font-bold text-muted w-32 text-center select-none">Completed</th>
-                <th scope="col" className="px-6 py-3 text-left text-[12.5px] font-bold text-muted w-32 select-none">Status</th>
-                <th scope="col" className="px-6 py-3 text-right text-[12.5px] font-bold text-muted w-24 select-none">Action</th>
-              </tr>
-            </thead>
-            <tbody className="bg-surface divide-y divide-line">
-              {loading && board.drivers.length === 0 ? (
-                <DriversTableSkeleton />
-              ) : board.drivers.length === 0 ? (
-                <tr><td colSpan="6"><EmptyState title="No active drivers" message="Add a driver on the Drivers page, then come back to assign orders." /></td></tr>
-              ) : (
-                board.drivers.map(driver => {
-                  const isExpanded = expandedDriverId === driver.id;
-                  const isDragOverTarget = activeDragTargetDriverId === driver.id;
-                  const filteredDeliveries = filterDeliveries(driver.deliveries);
-                  const completedJobs = driver.deliveries.filter(d => d.status === 'DELIVERED').length;
-                  const totalJobs = driver.deliveries.length;
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-line">
+                <thead className="bg-ink/[0.03]">
+                  <tr>
+                    <th scope="col" className="px-6 py-3 text-left text-[12.5px] font-bold text-muted w-64 select-none">Driver</th>
+                    <th scope="col" className="px-6 py-3 text-left text-[12.5px] font-bold text-muted w-40 select-none">Type</th>
+                    <th scope="col" className="px-6 py-3 text-left text-[12.5px] font-bold text-muted select-none">Active Assignments</th>
+                    <th scope="col" className="px-6 py-3 text-left text-[12.5px] font-bold text-muted w-32 text-center select-none">Completed</th>
+                    <th scope="col" className="px-6 py-3 text-left text-[12.5px] font-bold text-muted w-32 select-none">Status</th>
+                    <th scope="col" className="px-6 py-3 text-right text-[12.5px] font-bold text-muted w-24 select-none">Action</th>
+                  </tr>
+                </thead>
+                <tbody className="bg-surface divide-y divide-line">
+                  {loading && board.drivers.length === 0 ? (
+                    <DriversTableSkeleton />
+                  ) : board.drivers.length === 0 ? (
+                    <tr><td colSpan="6"><EmptyState title="No active drivers" message="Add a driver on the Drivers page, then come back to assign orders." /></td></tr>
+                  ) : (
+                    board.drivers.map(driver => {
+                      const isExpanded = expandedDriverId === driver.id;
+                      const isDragOverTarget = activeDragTargetDriverId === driver.id;
+                      const filteredDeliveries = filterDeliveries(driver.deliveries);
+                      const completedJobs = driver.deliveries.filter(d => d.status === 'DELIVERED').length;
+                      const totalJobs = driver.deliveries.length;
 
-                  return (
-                    <React.Fragment key={driver.id}>
-                      <tr
-                        onDragOver={(e) => handleDragOverDriver(e, driver.id)}
-                        onDragLeave={() => handleDragLeaveDriver(driver.id)}
-                        onDrop={(e) => handleDropOnDriver(e, driver.id)}
-                        className={`hover:bg-brand/[0.04] transition-colors group relative ${isDragOverTarget ? 'bg-brand/[0.06]' : ''
-                          } ${isExpanded ? 'bg-ink/[0.03]' : ''}`}
-                      >
-                        {/* Driver Column */}
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <div className="flex items-center gap-3">
-                            <div className="p-2 bg-ink/[0.06] rounded-control group-hover:bg-brand/10 transition-colors flex-shrink-0">
-                              <Truck className="w-5 h-5 text-muted group-hover:text-brand" />
-                            </div>
-                            <div>
-                              <div className="text-sm font-bold text-ink select-none truncate max-w-[180px]">{driver.name}</div>
-                              {driver.type === 'INDEPENDENT' && driver.companyName && (
-                                <div className="text-[12.5px] text-muted font-medium select-none truncate max-w-[180px]">{driver.companyName}</div>
-                              )}
-                            </div>
-                          </div>
-                        </td>
-
-                        {/* Type Column */}
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-muted font-medium select-none">
-                          {driver.type === 'CGC_FLEET' ? 'CGC Fleet' : 'External Contractor'}
-                        </td>
-
-                        {/* Active Assignments Badge Column (Static) */}
-                        <td className="px-6 py-4">
-                          <div className="flex flex-wrap gap-2 items-center">
-                            {filteredDeliveries.length === 0 ? (
-                              <span className="text-[12.5px] text-muted font-semibold italic select-none">
-                                {readOnly ? 'No assignments this day' : 'No assignments — drag orders onto this row to assign'}
-                              </span>
-                            ) : (
-                              <div className="flex items-center gap-2 bg-ink/[0.03] border border-line rounded-control px-3 py-1.5 text-[12.5px] font-bold text-muted select-none shadow-card">
-                                <Package2 size={14} className="text-muted" />
-                                <span>{filteredDeliveries.length} {filteredDeliveries.length === 1 ? 'Order' : 'Orders'} Assigned</span>
-                              </div>
-                            )}
-                          </div>
-                        </td>
-
-                        {/* Completed Column */}
-                        <td className="px-6 py-4 whitespace-nowrap text-center text-sm font-bold text-ink select-none">
-                          {completedJobs}/{totalJobs}
-                        </td>
-
-                        {/* Status Column */}
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <Badge tone={driver.deliveries.length > 0 ? 'good' : 'neutral'}>
-                            {driver.deliveries.length > 0 ? 'Active' : 'Idle'}
-                          </Badge>
-                        </td>
-
-                        {/* Action Column (Row Expander Trigger) */}
-                        <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              // Closing always works. Guarding the whole toggle
-                              // on there being something to show left the row
-                              // stuck open once the driver's last order was
-                              // unassigned, answering the click to close it
-                              // with an error toast.
-                              if (isExpanded) {
-                                setExpandedDriverId(null);
-                              } else if (filteredDeliveries.length > 0) {
-                                setExpandedDriverId(driver.id);
-                              } else {
-                                toast.error('No assignments assigned to this driver');
-                              }
-                            }}
-                            className={`transition-all p-2 rounded-control ${isExpanded
-                                ? 'bg-brand/10 text-brand'
-                                : 'text-muted hover:text-brand hover:bg-brand/10'
-                              }`}
+                      return (
+                        <React.Fragment key={driver.id}>
+                          <tr
+                            onDragOver={(e) => handleDragOverDriver(e, driver.id)}
+                            onDragLeave={() => handleDragLeaveDriver(driver.id)}
+                            onDrop={(e) => handleDropOnDriver(e, driver.id)}
+                            className={`hover:bg-brand/[0.04] transition-colors group relative ${isDragOverTarget ? 'bg-brand/[0.06]' : ''
+                              } ${isExpanded ? 'bg-ink/[0.03]' : ''}`}
                           >
-                            <ChevronRight className={`w-5 h-5 transition-transform duration-200 ${isExpanded ? 'rotate-90 text-brand font-bold' : 'text-brand'
-                              }`} />
-                          </button>
-                        </td>
-                      </tr>
-
-                      {/* Expanded Sub-Row displaying Assigned Orders at 100% Screen Width and full height */}
-                      <AnimatePresence initial={false}>
-                        {isExpanded && (
-                          <tr>
-                            <td colSpan="6" className="px-6 py-4 bg-ink/[0.03] border-t border-b border-line">
-                              <motion.div
-                                initial={{ height: 0, opacity: 0 }}
-                                animate={{ height: 'auto', opacity: 1 }}
-                                exit={{ height: 0, opacity: 0 }}
-                                transition={{ duration: 0.2 }}
-                                className="overflow-hidden"
-                              >
-                                <div className="border border-line rounded-control bg-surface shadow-card overflow-hidden flex flex-col">
-                                  {/* Sub-row Header */}
-                                  <div className="bg-ink/[0.03] px-4 py-2 border-b border-line flex justify-between items-center select-none">
-                                    <span className="text-[12.5px] font-bold text-muted">
-                                      Assigned Deliveries for {driver.name} ({filteredDeliveries.length})
-                                    </span>
-                                    <span className="text-[12.5px] text-muted font-semibold">
-                                      {readOnly ? 'History — read-only' : 'Drag any order row down to the pool to unassign'}
-                                    </span>
-                                  </div>
-
-                                  {/* List of Orders in 100% full-screen width table format */}
-                                  <table className="min-w-full divide-y divide-line">
-                                    <tbody className="divide-y divide-line bg-surface">
-                                      {filteredDeliveries.map((del) => {
-                                        return (
-                                          <React.Fragment key={del.id}>
-                                            <tr
-                                              draggable={!readOnly}
-                                              onDragStart={(e) => {
-                                                handleDragStart(e, del.order.id, driver.id);
-                                              }}
-                                              onDragOver={(e) => { if (!readOnly) e.preventDefault(); }}
-                                              onDrop={(e) => handleDropOnDelivery(e, driver.id, del.order.id)}
-                                              onDragEnd={handleDragEnd}
-                                              className={`hover:bg-brand/[0.04] transition-colors ${readOnly ? '' : 'cursor-grab active:cursor-grabbing'} group/item relative ${draggingOrderId === del.order.id ? 'opacity-40 bg-ink/[0.03]' : ''
-                                                }`}
-                                            >
-                                              {/* Order ID Column */}
-                                              <td className="px-6 py-4 whitespace-nowrap w-48">
-                                                <div className="flex items-center gap-2">
-                                                  <div className="p-1.5 bg-ink/[0.06] rounded-control text-muted group-hover/item:text-brand group-hover/item:bg-brand/10 transition-colors flex-shrink-0">
-                                                    <Package2 className="w-4 h-4" />
-                                                  </div>
-                                                  <div className="text-[12.5px] font-bold text-ink flex items-center gap-1.5 select-none">
-                                                    {!readOnly && <GripVertical size={12} className="text-muted group-hover/item:text-muted transition-colors flex-shrink-0" />}
-                                                    {del.order.spruceOrderId}
-                                                  </div>
-                                                </div>
-                                              </td>
-
-                                              {/* Customer Column */}
-                                              <td className="px-6 py-4 whitespace-nowrap text-[12.5px] text-muted font-bold select-none w-64">
-                                                {del.order.customerName}
-                                                <OrderDestination order={del.order} />
-                                              </td>
-
-                                              {/* Product Column */}
-                                              <td className="px-6 py-4 whitespace-nowrap w-40">
-                                                <OrderLoad order={del.order} />
-                                                <OrderFlags order={del.order} />
-                                              </td>
-
-                                              {/* Quantity Column */}
-                                              <td className="px-6 py-4 whitespace-nowrap text-[12.5px] text-muted font-bold select-none w-32">
-                                                {formatQuantity(del.order.quantity, del.order.unit)}
-                                              </td>
-
-                                              {/* Status Badge Column */}
-                                              <td className="px-6 py-4 whitespace-nowrap w-48">
-                                                <StatusBadge status={del.status} />
-                                              </td>
-
-                                              {/* Actions Inline Column */}
-                                              <td className="px-6 py-4 whitespace-nowrap text-right text-[12.5px] font-bold w-64">
-                                                <div className="flex items-center justify-end gap-2">
-                                                  {/* Only the moves the server will
-                                                      accept from this stop's current
-                                                      state, that state listed first.
-                                                      On a past day, admins only. */}
-                                                  {canChangeStatus && (
-                                                  <select
-                                                    className="text-[12.5px] font-bold border border-line rounded-control px-2 py-1 outline-none focus:ring-1 focus:ring-brand bg-surface cursor-pointer text-ink disabled:opacity-50 disabled:cursor-not-allowed"
-                                                    value={del.status}
-                                                    disabled={isTerminal(del.status)}
-                                                    title={isTerminal(del.status)
-                                                      ? `${del.status} is final and cannot be changed here`
-                                                      : 'Change delivery status'}
-                                                    onChange={(e) => {
-                                                      handleStatusUpdate(del.id, e.target.value);
-                                                    }}
-                                                    onClick={(e) => e.stopPropagation()} // prevent row drag trigger on click
-                                                  >
-                                                    {statusOptionsFor(del).map(option => (
-                                                      <option key={option.value} value={option.value} disabled={option.disabled}>
-                                                        {option.label}
-                                                      </option>
-                                                    ))}
-                                                  </select>
-                                                  )}
-
-
-                                                  <EditButton order={del.order} onEdit={openEditor} readOnly={readOnly} />
-                                                  {!readOnly && (
-                                                  <button
-                                                    onClick={(e) => {
-                                                      e.stopPropagation();
-                                                      api.post('/api/dispatch/unassign', orderRef(del.order))
-                                                        .then(() => {
-                                                          toast.success('Unassigned order');
-                                                          fetchBoard();
-                                                        })
-                                                        .catch((err) => {
-                                                          toast.error(err.response?.data?.error || 'Failed to unassign order');
-                                                          fetchBoard();
-                                                        });
-                                                    }}
-                                                    className="px-2.5 py-1.5 rounded-control border border-clay/30 text-clay hover:bg-clay/10 text-[12.5px] font-bold transition-colors bg-surface"
-                                                    title="Remove Assignment"
-                                                  >
-                                                    Unassign
-                                                  </button>
-                                                  )}
-                                                </div>
-                                              </td>
-                                            </tr>
-
-                                            {/* Evidence Photos Sub-Row inside Expanded Table */}
-                                            {(del.pickupPhotoUrl || del.deliveryPhotoUrl) && (
-                                              <tr className="bg-ink/[0.02] select-none">
-                                                <td colSpan="6" className="px-6 py-2 border-b border-line">
-                                                  <div className="flex gap-6 items-center pl-8 py-1">
-                                                    {del.pickupPhotoUrl && (
-                                                      <div className="flex gap-2 items-center">
-                                                        <span className="text-[12.5px] font-bold text-muted">Pickup photo:</span>
-                                                        <img src={del.pickupPhotoUrl} className="w-20 h-10 object-cover rounded-control border hover:scale-105 transition-all cursor-zoom-in" alt="Pickup Evidence" />
-                                                      </div>
-                                                    )}
-                                                    {del.deliveryPhotoUrl && (
-                                                      <div className="flex gap-2 items-center">
-                                                        <span className="text-[12.5px] font-bold text-muted">Delivery photo:</span>
-                                                        <img src={del.deliveryPhotoUrl} className="w-20 h-10 object-cover rounded-control border hover:scale-105 transition-all cursor-zoom-in" alt="Delivery Evidence" />
-                                                      </div>
-                                                    )}
-                                                  </div>
-                                                </td>
-                                              </tr>
-                                            )}
-                                          </React.Fragment>
-                                        );
-                                      })}
-                                    </tbody>
-                                  </table>
+                            {/* Driver Column */}
+                            <td className="px-6 py-4 whitespace-nowrap">
+                              <div className="flex items-center gap-3">
+                                <div className="p-2 bg-ink/[0.06] rounded-control group-hover:bg-brand/10 transition-colors flex-shrink-0">
+                                  <Truck className="w-5 h-5 text-muted group-hover:text-brand" />
                                 </div>
-                              </motion.div>
+                                <div>
+                                  <div className="text-sm font-bold text-ink select-none truncate max-w-[180px]">{driver.name}</div>
+                                  {driver.type === 'INDEPENDENT' && driver.companyName && (
+                                    <div className="text-[12.5px] text-muted font-medium select-none truncate max-w-[180px]">{driver.companyName}</div>
+                                  )}
+                                </div>
+                              </div>
+                            </td>
+
+                            {/* Type Column */}
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-muted font-medium select-none">
+                              {driver.type === 'CGC_FLEET' ? 'CGC Fleet' : 'External Contractor'}
+                            </td>
+
+                            {/* Active Assignments Badge Column (Static) */}
+                            <td className="px-6 py-4">
+                              <div className="flex flex-wrap gap-2 items-center">
+                                {filteredDeliveries.length === 0 ? (
+                                  <span className="text-[12.5px] text-muted font-semibold italic select-none">
+                                    {readOnly ? 'No assignments this day' : 'No assignments — drag orders onto this row to assign'}
+                                  </span>
+                                ) : (
+                                  <div className="flex items-center gap-2 bg-ink/[0.03] border border-line rounded-control px-3 py-1.5 text-[12.5px] font-bold text-muted select-none shadow-card">
+                                    <Package2 size={14} className="text-muted" />
+                                    <span>{filteredDeliveries.length} {filteredDeliveries.length === 1 ? 'Order' : 'Orders'} Assigned</span>
+                                  </div>
+                                )}
+                              </div>
+                            </td>
+
+                            {/* Completed Column */}
+                            <td className="px-6 py-4 whitespace-nowrap text-center text-sm font-bold text-ink select-none">
+                              {completedJobs}/{totalJobs}
+                            </td>
+
+                            {/* Status Column */}
+                            <td className="px-6 py-4 whitespace-nowrap">
+                              <Badge tone={driver.deliveries.length > 0 ? 'good' : 'neutral'}>
+                                {driver.deliveries.length > 0 ? 'Active' : 'Idle'}
+                              </Badge>
+                            </td>
+
+                            {/* Action Column (Row Expander Trigger) */}
+                            <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  // Closing always works. Guarding the whole toggle
+                                  // on there being something to show left the row
+                                  // stuck open once the driver's last order was
+                                  // unassigned, answering the click to close it
+                                  // with an error toast.
+                                  if (isExpanded) {
+                                    setExpandedDriverId(null);
+                                  } else if (filteredDeliveries.length > 0) {
+                                    setExpandedDriverId(driver.id);
+                                  } else {
+                                    toast.error('No assignments assigned to this driver');
+                                  }
+                                }}
+                                className={`transition-all p-2 rounded-control ${isExpanded
+                                    ? 'bg-brand/10 text-brand'
+                                    : 'text-muted hover:text-brand hover:bg-brand/10'
+                                  }`}
+                              >
+                                <ChevronRight className={`w-5 h-5 transition-transform duration-200 ${isExpanded ? 'rotate-90 text-brand font-bold' : 'text-brand'
+                                  }`} />
+                              </button>
                             </td>
                           </tr>
-                        )}
-                      </AnimatePresence>
-                    </React.Fragment>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
 
-      {/* Earlier orders that never went out, on today's board only. Orders
-          still on a driver's run are under that driver instead. */}
-      {isTodayBoard && board.carriedOver.length > 0 && (
+                          {/* Expanded Sub-Row displaying Assigned Orders at 100% Screen Width and full height */}
+                          <AnimatePresence initial={false}>
+                            {isExpanded && (
+                              <tr>
+                                <td colSpan="6" className="px-6 py-4 bg-ink/[0.03] border-t border-b border-line">
+                                  <motion.div
+                                    initial={{ height: 0, opacity: 0 }}
+                                    animate={{ height: 'auto', opacity: 1 }}
+                                    exit={{ height: 0, opacity: 0 }}
+                                    transition={{ duration: 0.2 }}
+                                    className="overflow-hidden"
+                                  >
+                                    <div className="border border-line rounded-control bg-surface shadow-card overflow-hidden flex flex-col">
+                                      {/* Sub-row Header */}
+                                      <div className="bg-ink/[0.03] px-4 py-2 border-b border-line flex justify-between items-center select-none">
+                                        <span className="text-[12.5px] font-bold text-muted">
+                                          Assigned Deliveries for {driver.name} ({filteredDeliveries.length})
+                                        </span>
+                                        <span className="text-[12.5px] text-muted font-semibold">
+                                          {readOnly ? 'History — read-only' : 'Drag any order row down to the pool to unassign'}
+                                        </span>
+                                      </div>
+
+                                      {/* List of Orders in 100% full-screen width table format */}
+                                      <table className="min-w-full divide-y divide-line">
+                                        <tbody className="divide-y divide-line bg-surface">
+                                          {filteredDeliveries.map((del) => {
+                                            return (
+                                              <React.Fragment key={del.id}>
+                                                <tr
+                                                  draggable={!readOnly}
+                                                  onDragStart={(e) => {
+                                                    handleDragStart(e, del.order.id, driver.id);
+                                                  }}
+                                                  onDragOver={(e) => { if (!readOnly) e.preventDefault(); }}
+                                                  onDrop={(e) => handleDropOnDelivery(e, driver.id, del.order.id)}
+                                                  onDragEnd={handleDragEnd}
+                                                  className={`hover:bg-brand/[0.04] transition-colors ${readOnly ? '' : 'cursor-grab active:cursor-grabbing'} group/item relative ${draggingOrderId === del.order.id ? 'opacity-40 bg-ink/[0.03]' : ''
+                                                    }`}
+                                                >
+                                                  {/* Order ID Column */}
+                                                  <td className="px-6 py-4 whitespace-nowrap w-48">
+                                                    <div className="flex items-center gap-2">
+                                                      <div className="p-1.5 bg-ink/[0.06] rounded-control text-muted group-hover/item:text-brand group-hover/item:bg-brand/10 transition-colors flex-shrink-0">
+                                                        <Package2 className="w-4 h-4" />
+                                                      </div>
+                                                      <div className="text-[12.5px] font-bold text-ink flex items-center gap-1.5 select-none">
+                                                        {!readOnly && <GripVertical size={12} className="text-muted group-hover/item:text-muted transition-colors flex-shrink-0" />}
+                                                        {del.order.spruceOrderId}
+                                                      </div>
+                                                    </div>
+                                                  </td>
+
+                                                  {/* Customer Column */}
+                                                  <td className="px-6 py-4 whitespace-nowrap text-[12.5px] text-muted font-bold select-none w-64">
+                                                    {del.order.customerName}
+                                                    <OrderDestination order={del.order} />
+                                                  </td>
+
+                                                  {/* Product Column */}
+                                                  <td className="px-6 py-4 whitespace-nowrap w-40">
+                                                    <OrderLoad order={del.order} />
+                                                    <OrderFlags order={del.order} />
+                                                  </td>
+
+                                                  {/* Quantity Column */}
+                                                  <td className="px-6 py-4 whitespace-nowrap text-[12.5px] text-muted font-bold select-none w-32">
+                                                    {formatQuantity(del.order.quantity, del.order.unit)}
+                                                  </td>
+
+                                                  {/* Status Badge Column */}
+                                                  <td className="px-6 py-4 whitespace-nowrap w-48">
+                                                    <StatusBadge status={del.status} />
+                                                  </td>
+
+                                                  {/* Actions Inline Column */}
+                                                  <td className="px-6 py-4 whitespace-nowrap text-right text-[12.5px] font-bold w-64">
+                                                    <div className="flex items-center justify-end gap-2">
+                                                      {/* Only the moves the server will
+                                                          accept from this stop's current
+                                                          state, that state listed first.
+                                                          On a past day, admins only. */}
+                                                      {canChangeStatus && (
+                                                      <select
+                                                        className="text-[12.5px] font-bold border border-line rounded-control px-2 py-1 outline-none focus:ring-1 focus:ring-brand bg-surface cursor-pointer text-ink disabled:opacity-50 disabled:cursor-not-allowed"
+                                                        value={del.status}
+                                                        disabled={isTerminal(del.status)}
+                                                        title={isTerminal(del.status)
+                                                          ? `${del.status} is final and cannot be changed here`
+                                                          : 'Change delivery status'}
+                                                        onChange={(e) => {
+                                                          handleStatusUpdate(del.id, e.target.value);
+                                                        }}
+                                                        onClick={(e) => e.stopPropagation()} // prevent row drag trigger on click
+                                                      >
+                                                        {statusOptionsFor(del).map(option => (
+                                                          <option key={option.value} value={option.value} disabled={option.disabled}>
+                                                            {option.label}
+                                                          </option>
+                                                        ))}
+                                                      </select>
+                                                      )}
+
+
+                                                      <EditButton order={del.order} onEdit={openEditor} readOnly={readOnly} />
+                                                      {!readOnly && (
+                                                      <button
+                                                        onClick={(e) => {
+                                                          e.stopPropagation();
+                                                          api.post('/api/dispatch/unassign', orderRef(del.order))
+                                                            .then(() => {
+                                                              toast.success('Unassigned order');
+                                                              fetchBoard();
+                                                            })
+                                                            .catch((err) => {
+                                                              toast.error(err.response?.data?.error || 'Failed to unassign order');
+                                                              fetchBoard();
+                                                            });
+                                                        }}
+                                                        className="px-2.5 py-1.5 rounded-control border border-clay/30 text-clay hover:bg-clay/10 text-[12.5px] font-bold transition-colors bg-surface"
+                                                        title="Remove Assignment"
+                                                      >
+                                                        Unassign
+                                                      </button>
+                                                      )}
+                                                    </div>
+                                                  </td>
+                                                </tr>
+
+                                                {/* Evidence Photos Sub-Row inside Expanded Table */}
+                                                {(del.pickupPhotoUrl || del.deliveryPhotoUrl) && (
+                                                  <tr className="bg-ink/[0.02] select-none">
+                                                    <td colSpan="6" className="px-6 py-2 border-b border-line">
+                                                      <div className="flex gap-6 items-center pl-8 py-1">
+                                                        {del.pickupPhotoUrl && (
+                                                          <div className="flex gap-2 items-center">
+                                                            <span className="text-[12.5px] font-bold text-muted">Pickup photo:</span>
+                                                            <img src={del.pickupPhotoUrl} className="w-20 h-10 object-cover rounded-control border hover:scale-105 transition-all cursor-zoom-in" alt="Pickup Evidence" />
+                                                          </div>
+                                                        )}
+                                                        {del.deliveryPhotoUrl && (
+                                                          <div className="flex gap-2 items-center">
+                                                            <span className="text-[12.5px] font-bold text-muted">Delivery photo:</span>
+                                                            <img src={del.deliveryPhotoUrl} className="w-20 h-10 object-cover rounded-control border hover:scale-105 transition-all cursor-zoom-in" alt="Delivery Evidence" />
+                                                          </div>
+                                                        )}
+                                                      </div>
+                                                    </td>
+                                                  </tr>
+                                                )}
+                                              </React.Fragment>
+                                            );
+                                          })}
+                                        </tbody>
+                                      </table>
+                                    </div>
+                                  </motion.div>
+                                </td>
+                              </tr>
+                            )}
+                          </AnimatePresence>
+                        </React.Fragment>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* BOTTOM SECTION: UNASSIGNED ORDERS POOL, or on the Carried over tab the
+              earlier orders that never went out. Orders still on a driver's run
+              are under that driver instead. Either takes an order dropped back
+              off a driver. */}
+          <div
+            onDragOver={handleDragOverUnassigned}
+            onDragLeave={handleDragLeaveUnassigned}
+            onDrop={handleDropOnUnassigned}
+            className={`bg-surface rounded-card border shadow-card overflow-hidden flex flex-col transition-all duration-300 ${isOverUnassignedDropZone
+                ? 'border-brand ring-4 ring-brand/10 bg-brand/[0.04]'
+                : 'border-line'
+              }`}
+          >
+            <div className="bg-ink/[0.03] px-6 py-4 border-b border-line flex justify-between items-center select-none">
+              <div>
+                <h3 className="text-sm font-bold text-ink flex items-center gap-2">
+                  <span className={cn('w-2 h-2 rounded-full animate-pulse', showingCarried ? 'bg-clay' : 'bg-ochre')}></span>
+                  {showingCarried ? 'Carried over' : 'Unassigned Orders Pool'}
+                  {showingCarried ? (
+                    <span className="font-semibold text-muted">— due on an earlier day and not delivered</span>
+                  ) : !awaitingDateChoice && (
+                    <span className="font-semibold text-muted">— {poolDateLabel}</span>
+                  )}
+                </h3>
+              </div>
+              {showingCarried && !isOverUnassignedDropZone && (
+                <span className="text-[12.5px] text-muted font-semibold">
+                  Assign them like the pool, or use Edit to move the date
+                </span>
+              )}
+              {isOverUnassignedDropZone && (
+                <motion.div
+                  initial={{ scale: 0.9 }}
+                  animate={{ scale: 1 }}
+                  className="text-[12.5px] font-bold text-brand bg-brand/10 px-3 py-1 rounded-control animate-bounce"
+                >
+                  Drop here to Unassign!
+                </motion.div>
+              )}
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-line">
+                {waitingTableHead}
+                <tbody className="bg-surface divide-y divide-line">
+                  {loading && (showingCarried ? board.carriedOver : board.unassignedOrders).length === 0 ? (
+                    <UnassignedTableSkeleton />
+                  ) : showingCarried ? (
+                    filteredCarriedOver.length === 0 ? (
+                      <tr>
+                        <td colSpan="7" className="px-6 py-12 text-center text-muted select-none">
+                          <EmptyState
+                            icon={Package2}
+                            title="Nothing carried over"
+                            message="Every order due on an earlier day went out, or none match this search."
+                          />
+                        </td>
+                      </tr>
+                    ) : (
+                      filteredCarriedOver.map(order => waitingRow(order, { carried: true }))
+                    )
+                  ) : filteredUnassignedOrders.length === 0 ? (
+                    <tr>
+                      <td colSpan="7" className="px-6 py-12 text-center text-muted select-none">
+                        <EmptyState
+                          icon={Package2}
+                          title={awaitingDateChoice ? 'Pick a date' : `Nothing waiting for ${poolDateLabel}`}
+                          message={
+                            awaitingDateChoice
+                              ? 'Choose a date above to see the orders due out that day.'
+                              : 'Every order due out this day is assigned, or none match this search.'
+                          }
+                        />
+                      </td>
+                    </tr>
+                  ) : (
+                    filteredUnassignedOrders.map(order => waitingRow(order))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* Days ahead with orders due. Opening one shows its board, where its
+          orders can be assigned ahead like any other day's. */}
+      {view === 'upcoming' && (
         <div className="bg-surface rounded-card border border-line shadow-card overflow-hidden flex flex-col">
-          <SectionHeader dot="bg-clay" title="Carried over" detail="due on an earlier day and not delivered">
-            <span className="text-[12.5px] text-muted font-semibold">
-              Assign them like the pool, or use Edit to move the date
-            </span>
-          </SectionHeader>
-          <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-line">
-              {waitingTableHead}
-              <tbody className="bg-surface divide-y divide-line">
-                {filteredCarriedOver.length === 0 ? (
-                  <tr>
-                    <td colSpan="7" className="px-6 py-6 text-center text-[13px] text-muted select-none">
-                      None match this search.
-                    </td>
-                  </tr>
-                ) : (
-                  filteredCarriedOver.map(order => waitingRow(order, { carried: true }))
-                )}
-              </tbody>
-            </table>
+          <SectionHeader dot="bg-brand" title="Upcoming" detail="orders due after today" />
+          <div className="px-6 py-4">
+            {upcoming.length === 0 ? (
+              <p className="text-[13px] text-muted">Nothing is booked after today.</p>
+            ) : (
+              <div className="flex flex-wrap gap-2">
+                {upcoming.map(day => (
+                  <Button
+                    key={day.date}
+                    size="sm"
+                    onClick={() => showDay(day.date)}
+                    aria-pressed={poolDate === day.date}
+                    className={cn(poolDate === day.date && 'border-brand/40 bg-brand/[0.06]')}
+                    title={`Open the board for ${formatDeliveryDay(day.date, { dateStyle: 'full' })}`}
+                  >
+                    <Calendar size={14} className="text-muted" />
+                    <span className="tabular">{formatDeliveryDay(day.date, { weekday: 'short', month: 'short', day: 'numeric' })}</span>
+                    <span className="font-medium text-muted">{upcomingSummary(day)}</span>
+                  </Button>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       )}
 
-      {/* BOTTOM SECTION: UNASSIGNED ORDERS POOL */}
-      <div
-        onDragOver={handleDragOverUnassigned}
-        onDragLeave={handleDragLeaveUnassigned}
-        onDrop={handleDropOnUnassigned}
-        className={`bg-surface rounded-card border shadow-card overflow-hidden flex flex-col transition-all duration-300 ${isOverUnassignedDropZone
-            ? 'border-brand ring-4 ring-brand/10 bg-brand/[0.04]'
-            : 'border-line'
-          }`}
-      >
-        <div className="bg-ink/[0.03] px-6 py-4 border-b border-line flex justify-between items-center select-none">
-          <div>
-            <h3 className="text-sm font-bold text-ink flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full bg-ochre animate-pulse"></span>
-              Unassigned Orders Pool
-              {!awaitingDateChoice && (
-                <span className="font-semibold text-muted">— {poolDateLabel}</span>
-              )}
-            </h3>
-          </div>
-          {isOverUnassignedDropZone && (
-            <motion.div
-              initial={{ scale: 0.9 }}
-              animate={{ scale: 1 }}
-              className="text-[12.5px] font-bold text-brand bg-brand/10 px-3 py-1 rounded-control animate-bounce"
-            >
-              Drop here to Unassign!
-            </motion.div>
-          )}
-        </div>
-
-        <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-line">
-            {waitingTableHead}
-            <tbody className="bg-surface divide-y divide-line">
-              {loading && board.unassignedOrders.length === 0 ? (
-                <UnassignedTableSkeleton />
-              ) : filteredUnassignedOrders.length === 0 ? (
-                <tr>
-                  <td colSpan="7" className="px-6 py-12 text-center text-muted select-none">
-                    <EmptyState
-                      icon={Package2}
-                      title={awaitingDateChoice ? 'Pick a date' : `Nothing waiting for ${poolDateLabel}`}
-                      message={
-                        awaitingDateChoice
-                          ? 'Choose a date above to see the orders due out that day.'
-                          : 'Every order due out this day is assigned, or none match this search.'
-                      }
-                    />
-                  </td>
-                </tr>
-              ) : (
-                filteredUnassignedOrders.map(order => waitingRow(order))
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {/* Days ahead with orders due. Opening one shows its board, where its
-          orders can be assigned ahead like any other day's. */}
-      <div className="bg-surface rounded-card border border-line shadow-card overflow-hidden flex flex-col">
-        <SectionHeader dot="bg-brand" title="Upcoming" detail="orders due after today" />
-        <div className="px-6 py-4">
-          {upcoming.length === 0 ? (
-            <p className="text-[13px] text-muted">Nothing is booked after today.</p>
-          ) : (
-            <div className="flex flex-wrap gap-2">
-              {upcoming.map(day => (
-                <Button
-                  key={day.date}
-                  size="sm"
-                  onClick={() => showDay(day.date)}
-                  aria-pressed={poolDate === day.date}
-                  className={cn(poolDate === day.date && 'border-brand/40 bg-brand/[0.06]')}
-                  title={`Open the board for ${formatDeliveryDay(day.date, { dateStyle: 'full' })}`}
-                >
-                  <Calendar size={14} className="text-muted" />
-                  <span className="tabular">{formatDeliveryDay(day.date, { weekday: 'short', month: 'short', day: 'numeric' })}</span>
-                  <span className="font-medium text-muted">{upcomingSummary(day)}</span>
-                </Button>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-
       {/* Orders with no delivery date never reach a day's board. */}
-      <div className="bg-surface rounded-card border border-line shadow-card overflow-hidden flex flex-col">
-        <SectionHeader dot="bg-muted" title="Pickups and orders with no date" detail="never on the board">
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted" />
-            <Input
-              type="text"
-              placeholder="Search order # or customer..."
-              aria-label="Search pickups and orders with no date"
-              className="pl-10 w-64"
-              value={undatedSearch}
-              onChange={(e) => setUndatedSearch(e.target.value)}
-            />
-          </div>
-        </SectionHeader>
-        <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-line">
-            <thead className="bg-ink/[0.03]">
-              <tr>
-                <th scope="col" className="px-6 py-3 text-left text-[12.5px] font-bold text-muted select-none">Order</th>
-                <th scope="col" className="px-6 py-3 text-left text-[12.5px] font-bold text-muted select-none">Customer</th>
-                <th scope="col" className="px-6 py-3 text-left text-[12.5px] font-bold text-muted select-none">Product</th>
-                <th scope="col" className="px-6 py-3 text-left text-[12.5px] font-bold text-muted select-none">Quantity</th>
-                <th scope="col" className="px-6 py-3 text-left text-[12.5px] font-bold text-muted select-none">Type</th>
-                <th scope="col" className="px-6 py-3 text-right text-[12.5px] font-bold text-muted select-none">Details</th>
-              </tr>
-            </thead>
-            <tbody className="bg-surface divide-y divide-line">
-              {undated.orders.length === 0 ? (
+      {view === 'undated' && (
+        <div className="bg-surface rounded-card border border-line shadow-card overflow-hidden flex flex-col">
+          <SectionHeader dot="bg-muted" title="Pickups and orders with no date" detail="never on the board">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted" />
+              <Input
+                type="text"
+                placeholder="Search order # or customer..."
+                aria-label="Search pickups and orders with no date"
+                className="pl-10 w-64"
+                value={undatedSearch}
+                onChange={(e) => setUndatedSearch(e.target.value)}
+              />
+            </div>
+          </SectionHeader>
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-line">
+              <thead className="bg-ink/[0.03]">
                 <tr>
-                  <td colSpan="6" className="px-6 py-6 text-center text-[13px] text-muted select-none">
-                    {undated.loading
-                      ? 'Loading…'
-                      : undatedSearch.trim()
-                        ? 'No pickup or undated order matches this search.'
-                        : 'No pickups, and every order has a date.'}
-                  </td>
+                  <th scope="col" className="px-6 py-3 text-left text-[12.5px] font-bold text-muted select-none">Order</th>
+                  <th scope="col" className="px-6 py-3 text-left text-[12.5px] font-bold text-muted select-none">Customer</th>
+                  <th scope="col" className="px-6 py-3 text-left text-[12.5px] font-bold text-muted select-none">Product</th>
+                  <th scope="col" className="px-6 py-3 text-left text-[12.5px] font-bold text-muted select-none">Quantity</th>
+                  <th scope="col" className="px-6 py-3 text-left text-[12.5px] font-bold text-muted select-none">Type</th>
+                  <th scope="col" className="px-6 py-3 text-right text-[12.5px] font-bold text-muted select-none">Details</th>
                 </tr>
-              ) : (
-                undated.orders.map(order => (
-                  <tr key={order.id} className="hover:bg-brand/[0.04] transition-colors group">
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="flex items-center gap-3">
-                        <div className="p-2 bg-ink/[0.06] rounded-control group-hover:bg-brand/10 transition-colors flex-shrink-0">
-                          <Package2 className="w-5 h-5 text-muted group-hover:text-brand" />
-                        </div>
-                        <div className="text-sm font-bold text-ink select-none">{order.spruceOrderId}</div>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-muted font-medium select-none">
-                      {order.customerName}
-                      {/* A pickup goes nowhere; an undated delivery shows where it is bound. */}
-                      {!order.isPickup && <OrderDestination order={order} />}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <OrderLoad order={order} />
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-muted font-bold select-none">
-                      {formatQuantity(order.quantity, order.unit)}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <Badge tone={order.isPickup ? 'neutral' : 'warn'}>{order.isPickup ? 'Pickup' : 'Delivery, no date yet'}</Badge>
-                      <OrderFlags order={order} />
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-right">
-                      <EditButton order={order} onEdit={(id) => openEditor(id, false)} />
+              </thead>
+              <tbody className="bg-surface divide-y divide-line">
+                {undated.orders.length === 0 ? (
+                  <tr>
+                    <td colSpan="6" className="px-6 py-6 text-center text-[13px] text-muted select-none">
+                      {undated.loading
+                        ? 'Loading…'
+                        : undatedSearch.trim()
+                          ? 'No pickup or undated order matches this search.'
+                          : 'No pickups, and every order has a date.'}
                     </td>
                   </tr>
-                ))
-              )}
-            </tbody>
-          </table>
+                ) : (
+                  undated.orders.map(order => (
+                    <tr key={order.id} className="hover:bg-brand/[0.04] transition-colors group">
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <div className="flex items-center gap-3">
+                          <div className="p-2 bg-ink/[0.06] rounded-control group-hover:bg-brand/10 transition-colors flex-shrink-0">
+                            <Package2 className="w-5 h-5 text-muted group-hover:text-brand" />
+                          </div>
+                          <div className="text-sm font-bold text-ink select-none">{order.spruceOrderId}</div>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-muted font-medium select-none">
+                        {order.customerName}
+                        {/* A pickup goes nowhere; an undated delivery shows where it is bound. */}
+                        {!order.isPickup && <OrderDestination order={order} />}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <OrderLoad order={order} />
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-muted font-bold select-none">
+                        {formatQuantity(order.quantity, order.unit)}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <Badge tone={order.isPickup ? 'neutral' : 'warn'}>{order.isPickup ? 'Pickup' : 'Delivery, no date yet'}</Badge>
+                        <OrderFlags order={order} />
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-right">
+                        <EditButton order={order} onEdit={(id) => openEditor(id, false)} />
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+          {undated.orders.length >= UNDATED_LIMIT && (
+            <p className="px-6 py-3 border-t border-line text-[12.5px] text-muted">
+              Showing the newest {UNDATED_LIMIT}. Search to find an older one.
+            </p>
+          )}
         </div>
-        {undated.orders.length >= UNDATED_LIMIT && (
-          <p className="px-6 py-3 border-t border-line text-[12.5px] text-muted">
-            Showing the newest {UNDATED_LIMIT}. Search to find an older one.
-          </p>
-        )}
-      </div>
+      )}
 
       {editingOrderId && (
         <OrderEditor
