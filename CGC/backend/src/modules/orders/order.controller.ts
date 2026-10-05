@@ -7,6 +7,7 @@ import { prisma } from '../../db/prisma.js';
 import { orderEventEmitter, OrderEvents } from './order.events.js';
 import { applyPoReportMerge, parsePoReport, previewPoReportMerge } from './poReportMerge.service.js';
 import { SprucePdfError } from '../../lib/pdf/pdfWords.js';
+import { listOrders } from './orderList.service.js';
 import type { ImportStatus } from '@prisma/client';
 
 export const importOrdersFromCsv = async (req: AuthRequest, res: Response) => {
@@ -344,6 +345,17 @@ export const getPdfImportJob = async (req: AuthRequest, res: Response) => {
   } catch (err: any) {
     console.error('Error fetching import job', err);
     return res.status(500).json({ error: err?.message || 'Unexpected error fetching import job' });
+  }
+};
+
+/** The Orders page: whole Spruce orders, merged from the three reports. */
+export const listOrderDocuments = async (req: AuthRequest, res: Response) => {
+  try {
+    return res.status(200).json(await listOrders(req.query));
+  } catch (err: any) {
+    const status = Number(err?.status) || 500;
+    if (status >= 500) console.error('Error listing orders', err);
+    return res.status(status).json({ error: err?.message || 'Unexpected error listing orders' });
   }
 };
 

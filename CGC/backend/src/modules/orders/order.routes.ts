@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import multer from 'multer';
-import { importOrdersFromCsv, importOrdersFromPdf, getOrders, streamPdfImport, getPdfImportJob, mergePoReport } from './order.controller.js';
+import { importOrdersFromCsv, importOrdersFromPdf, getOrders, listOrderDocuments, streamPdfImport, getPdfImportJob, mergePoReport } from './order.controller.js';
 import { authMiddleware, requireRole } from '../../middleware/authMiddleware.js';
 import {
   createUploader,
@@ -83,6 +83,8 @@ router.post(
 
 // A dispatcher's corrections to one order: what Spruce left out or got wrong
 // about where it goes and what it is. Never prices, which Spruce owns.
+// The Orders page's list: one row per order.
+router.get('/documents', listOrderDocuments);
 router.get('/documents/:id', getOrderEditor);
 router.patch('/documents/:id', editOrder);
 router.post('/documents/:id/reset', resetOrderField);
