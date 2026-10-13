@@ -70,6 +70,23 @@ describe('deriveRowTolerance', () => {
     assert.ok(tolerance < 0.9, `must not reach the next row, got ${tolerance}`);
   });
 
+  it('still finds the rows when most gaps are jitter', () => {
+    // The 13 October item-tracking export stacks two dates a hundredth apart
+    // and drops the customer name a hundredth further, so two gaps in three are
+    // jitter. Taking the median as spacing split every row — the header too.
+    const ys: number[] = [1.05, 2.54, 4.2, 5.68, 5.7];
+    for (let i = 0; i < 20; i++) {
+      const base = 6.58 + i * 0.9;
+      ys.push(base, base + 0.01, base + 0.02);
+    }
+    ys.push(35.89);
+
+    const tolerance = deriveRowTolerance(ys);
+
+    assert.ok(tolerance > 0.02, `must clear the jitter, got ${tolerance}`);
+    assert.ok(tolerance < 0.88, `must not reach the next row, got ${tolerance}`);
+  });
+
   it('is not dragged up by one outsized gap such as a footer', () => {
     const ys = [6.58, 7.48, 8.38, 9.28, 10.18, 11.08, 34.4];
 

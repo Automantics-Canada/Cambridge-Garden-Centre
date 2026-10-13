@@ -84,6 +84,14 @@ const ROW_TOLERANCE_FRACTION = 0.45;
 const CHASM_MULTIPLE = 3;
 
 /**
+ * A gap under this share of the upper quartile is jitter, not spacing.
+ *
+ * Within-row offsets on the sample reports reach about a third of a row and
+ * jitter stays under a tenth, so a tenth separates them with room either side.
+ */
+const JITTER_FRACTION = 0.1;
+
+/**
  * The report's usual line spacing.
  *
  * Read off as the upper quartile of the gaps: three gaps in four are no wider
@@ -105,14 +113,25 @@ const CHASM_MULTIPLE = 3;
  * *those* is larger than the step between a row's offsets and its spacing. It
  * measured a row of the item-tracking report at three hundredths of its true
  * height. A quartile has no such sensitivity to the smallest values present.
+ *
+ * Jitter is set aside before any of this, though. A report that prints two
+ * dates stacked in one cell and a customer name a hair below them gives every
+ * row two gaps of a hundredth: on the 13 October item-tracking export over half
+ * of all gaps were jitter. The median then *was* jitter, the chasm cut threw out
+ * every real row gap with the footer, and each row — the header row included —
+ * was split in three. The quartile that sets the jitter cut-off still lands on
+ * row spacing until jitter passes three gaps in four.
  */
 function dominantRowPitch(gaps: number[]): number {
   const ascending = [...gaps].sort((a, b) => a - b);
-  const median = ascending[Math.floor((ascending.length - 1) / 2)]!;
+  const upperQuartile = ascending[Math.round((ascending.length - 1) * 0.75)]!;
+
+  const spacing = ascending.filter(gap => gap >= upperQuartile * JITTER_FRACTION);
+  const median = spacing[Math.floor((spacing.length - 1) / 2)]!;
 
   const withoutChasms =
-    median > 0 ? ascending.filter(gap => gap <= median * CHASM_MULTIPLE) : ascending;
-  const considered = withoutChasms.length > 0 ? withoutChasms : ascending;
+    median > 0 ? spacing.filter(gap => gap <= median * CHASM_MULTIPLE) : spacing;
+  const considered = withoutChasms.length > 0 ? withoutChasms : spacing;
 
   return considered[Math.round((considered.length - 1) * 0.75)]!;
 }
