@@ -94,6 +94,33 @@ describe('parseItemTrackingReport', () => {
     assert.equal(later?.quantity, 12);
   });
 
+  it('reads a report whose cells sit a hair off their row', () => {
+    // As the 13 October export prints it: the two date headings a little above
+    // the others, a second date stacked a hundredth under the entry date, and
+    // the customer name a hundredth below that. Read as separate lines, the
+    // date columns lost their boundaries and every row was refused.
+    const [left, middle, right] = itemTrackingReport();
+    const jittered = page(
+      0,
+      left!.runs.flatMap(r => {
+        if (r.text === 'Delivery Date' || r.text === 'Entry Date') return [{ ...r, y: r.y - 0.02 }];
+        if (r.x === 8.9 && r.y > 6) return [r, { ...r, y: r.y + 0.01, text: '9/14/2026' }];
+        if (r.x === 11.6 && r.y > 6) return [{ ...r, y: r.y + 0.02 }];
+        return [r];
+      })
+    );
+
+    const { rows, unreadable } = parseItemTrackingReport([jittered, middle!, right!]);
+
+    assert.deepEqual(unreadable, []);
+    assert.equal(rows.length, 4);
+    const withPo = rows.find(row => row.itemNumber === 'RETURNCOMM');
+    assert.equal(withPo?.documentNumber, '2608-700002');
+    assert.equal(withPo?.customerName, 'Harrowgate Masonry');
+    assert.equal(withPo?.deliveryDateRaw, '9/5/2026');
+    assert.equal(withPo?.shippingAddress, 'Pickup @ Yard,');
+  });
+
   it('ignores the revision stamp in the footer instead of reporting it', () => {
     const { rows, unreadable } = parseItemTrackingReport(itemTrackingReport());
 
