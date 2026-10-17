@@ -1,4 +1,4 @@
-import { formatDate } from './date';
+import { businessDayOf, formatDate } from './date';
 
 /**
  * The dispatch board's days. Every day is a 'YYYY-MM-DD' calendar date in the
@@ -31,15 +31,22 @@ export function formatDeliveryDay(value, options) {
 /** Admins and owners may still correct a stop's status on a past day. */
 export const canCorrectHistory = (role) => role === 'ADMIN' || role === 'OWNER';
 
+/** Whether today's upload described the order, in the yard's calendar. */
+export function uploadedOn(order, day) {
+  return Boolean(order?.uploadedAt && day) && businessDayOf(new Date(order.uploadedAt)) === day;
+}
+
 /**
  * Where an order goes back to when it is taken off a driver, on the board for
- * `poolDate`: 'carriedOver' when it was due before today and today is shown,
- * 'pool' when it is due on the day shown, and null when it belongs to neither.
+ * `poolDate`: 'pool' when it is due on the day shown, or today is shown and it
+ * came in with today's upload; 'carriedOver' when it was due before today and
+ * today is shown; and null when it belongs to neither.
  */
 export function returnsTo(order, poolDate, today) {
   const due = deliveryDay(order?.deliveryDate);
   if (!order?.wholeOrder || !due) return 'pool';
   if (due === poolDate) return 'pool';
+  if (poolDate === today && uploadedOn(order, today)) return 'pool';
   if (poolDate === today && isPastDay(due, today)) return 'carriedOver';
   return null;
 }

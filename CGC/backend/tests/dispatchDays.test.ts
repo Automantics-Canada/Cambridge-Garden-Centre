@@ -6,9 +6,11 @@ import {
   dayOfDeliveryDate,
   deliveryDayDate,
   isPastDay,
+  todayPoolWhere,
   undatedWhere,
   upcomingDays,
   upcomingWhere,
+  uploadedOnWhere,
 } from '../src/modules/dispatch/dispatchDays.js';
 
 const count = (iso: string | null, n: number) => ({
@@ -31,12 +33,40 @@ describe('board days', () => {
     assert.equal(dayOfDeliveryDate(new Date('2026-08-14T00:00:00.000Z')), '2026-08-14');
   });
 
-  it('carries over earlier orders with no driver and no finished stop, never pickups or closed ones', () => {
+  it("counts an upload in Cambridge's day, first import or re-upload", () => {
+    // 2026-08-15 runs 04:00Z to 03:59:59.999Z the next day in EDT.
+    const range = {
+      gte: new Date('2026-08-15T04:00:00.000Z'),
+      lte: new Date('2026-08-16T03:59:59.999Z'),
+    };
+    assert.deepEqual(uploadedOnWhere('2026-08-15'), {
+      OR: [{ createdAt: range }, { lastBatch: { is: { createdAt: range } } }],
+    });
+    assert.throws(() => uploadedOnWhere('2026-02-31'), /Invalid date/);
+  });
+
+  it("pools today's deliveries and today's upload that have no driver, never pickups", () => {
+    const where = todayPoolWhere('2026-08-15');
+    assert.equal(where.isPickup, false);
+    assert.deepEqual(where.AND, [
+      { OR: [{ delivery: null }, { delivery: { driverId: null } }] },
+      {
+        OR: [
+          { deliveryDate: new Date('2026-08-15T00:00:00.000Z') },
+          // An upload Spruce no longer lists as open is waiting for nothing.
+          { AND: [uploadedOnWhere('2026-08-15'), { NOT: { flags: { has: 'NOT_OPEN' } } }] },
+        ],
+      },
+    ]);
+  });
+
+  it("carries over earlier orders with no driver and no finished stop, never pickups, closed ones or today's upload", () => {
     const where = carriedOverWhere('2026-08-15');
     assert.deepEqual(where.deliveryDate, { lt: new Date('2026-08-15T00:00:00.000Z') });
     assert.equal(where.isPickup, false);
     // Spruce has invoiced, closed or voided a NOT_OPEN order: nothing to carry.
-    assert.deepEqual(where.NOT, { flags: { has: 'NOT_OPEN' } });
+    // One in today's upload is in today's pool instead.
+    assert.deepEqual(where.NOT, [{ flags: { has: 'NOT_OPEN' } }, uploadedOnWhere('2026-08-15')]);
     assert.deepEqual(where.OR, [
       { delivery: null },
       { delivery: { driverId: null, status: { notIn: ['DELIVERED', 'CANCELLED'] } } },
