@@ -1,5 +1,5 @@
 import { prisma } from '../../db/prisma.js';
-import { DeliveryStatus } from '@prisma/client';
+import { DeliveryStatus, type Prisma } from '@prisma/client';
 import { MailService } from '../../services/mail.service.js';
 import { businessDayOf, businessDayRange } from '../../lib/businessDay.js';
 import {
@@ -13,6 +13,7 @@ import {
   carriedOverWhere,
   deliveryDayDate,
   isPastDay,
+  todayPoolWhere,
   undatedWhere,
   upcomingDays,
   upcomingWhere,
@@ -39,16 +40,35 @@ export const DISPATCH_ORDER_SELECT = {
   createdAt: true,
 } as const;
 
+/**
+ * A board row also says when an upload last described the order, so the
+ * screen can put an order taken off a driver back in today's pool when it
+ * came in with today's upload. Only the office board reads it; drivers' stops
+ * stay on DISPATCH_DOCUMENT_SELECT.
+ */
+const BOARD_DOCUMENT_SELECT = {
+  ...DISPATCH_DOCUMENT_SELECT,
+  lastBatch: { select: { createdAt: true } },
+} satisfies Prisma.OrderDocumentSelect;
+
+type BoardDocument = Prisma.OrderDocumentGetPayload<{ select: typeof BOARD_DOCUMENT_SELECT }>;
+
+function toBoardOrder({ lastBatch, ...document }: BoardDocument) {
+  return { ...toDispatchOrder(document), uploadedAt: lastBatch?.createdAt ?? document.createdAt };
+}
+
 export const DispatchService = {
   /**
    * The board for one day: that day's orders still waiting for a driver, and
    * every driver's run.
    *
    * The pool is the orders due out that day — their delivery date, in the
-   * yard's calendar — not the rows uploaded that day. Filtering on upload time
-   * showed an order the morning it was imported and lost it the next, even when
-   * it was due next week. Pickups are collected from the yard and never wait
-   * for a driver.
+   * yard's calendar. Today's pool also holds every delivery in today's upload,
+   * whatever its date (see `todayPoolWhere`): the morning's upload is the day's
+   * work. Upload time alone was tried before and lost an order the morning
+   * after it was imported, even when it was due next week; the delivery date
+   * still keeps it, on its own day. Pickups are collected from the yard and
+   * never wait for a driver.
    *
    * Yesterday and older are history: `readOnly`, and each driver's run shows
    * only what was due or finished that day, not the work open now. Today also
@@ -70,19 +90,21 @@ export const DispatchService = {
     const carriedOver = requestedDay === today
       ? await prisma.orderDocument.findMany({
           where: carriedOverWhere(today),
-          select: DISPATCH_DOCUMENT_SELECT,
+          select: BOARD_DOCUMENT_SELECT,
           orderBy: [{ deliveryDate: 'asc' }, { documentNumber: 'asc' }],
         })
       : [];
 
     const waiting = await prisma.orderDocument.findMany({
-      where: {
-        deliveryDate: deliveryDay,
-        isPickup: false,
-        // Never dispatched, or dispatched and taken back.
-        OR: [{ delivery: null }, { delivery: { driverId: null } }],
-      },
-      select: DISPATCH_DOCUMENT_SELECT,
+      where: requestedDay === today
+        ? todayPoolWhere(today)
+        : {
+            deliveryDate: deliveryDay,
+            isPickup: false,
+            // Never dispatched, or dispatched and taken back.
+            OR: [{ delivery: null }, { delivery: { driverId: null } }],
+          },
+      select: BOARD_DOCUMENT_SELECT,
       orderBy: { documentNumber: 'asc' },
     });
 
@@ -108,7 +130,7 @@ export const DispatchService = {
             ]
           },
           include: {
-            document: { select: DISPATCH_DOCUMENT_SELECT },
+            document: { select: BOARD_DOCUMENT_SELECT },
             // Stops made before orders were dispatched whole have only a line,
             // read through the same bounded projection as ever.
             order: { select: DISPATCH_ORDER_SELECT },
@@ -126,14 +148,14 @@ export const DispatchService = {
     return withOfficeFields(prisma, {
       day: requestedDay,
       readOnly,
-      carriedOver: carriedOver.map(toDispatchOrder),
-      unassignedOrders: waiting.map(toDispatchOrder),
+      carriedOver: carriedOver.map(toBoardOrder),
+      unassignedOrders: waiting.map(toBoardOrder),
       // Kept for the screen's merge; whole orders come back to the pool above.
       unassignedDeliveries: [],
       drivers: drivers.map(d => {
         const deliveries = d.deliveries.map(({ document, order, ...delivery }) => ({
           ...delivery,
-          order: document ? toDispatchOrder(document) : { ...order, wholeOrder: false as const },
+          order: document ? toBoardOrder(document) : { ...order, wholeOrder: false as const },
         }));
         return {
           ...d,

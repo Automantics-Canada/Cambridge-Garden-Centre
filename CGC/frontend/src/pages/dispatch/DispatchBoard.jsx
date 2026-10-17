@@ -13,7 +13,7 @@ import { isTerminal, statusErrorMessage, statusOptionsFor } from '../../lib/deli
 import { formatQuantity } from '../../lib/quantity';
 import { assignWarning, awaitingSupplierDetail, awaitingSupplierText, deliveryTypeLabel, flagBadges, mergeUnassignedOrders, orderRef, updatedTitle } from '../../lib/dispatchBoard';
 import { flagInfo } from '../../lib/spruceImport';
-import { canCorrectHistory, formatDeliveryDay, isPastDay, returnsTo, upcomingSummary } from '../../lib/dispatchDays';
+import { canCorrectHistory, deliveryDay, formatDeliveryDay, isPastDay, returnsTo, upcomingSummary, uploadedOn } from '../../lib/dispatchDays';
 import OrderEditor from '../../components/orders/OrderEditor';
 
 /** The undated list shows this many at most; a search finds the rest. */
@@ -634,9 +634,14 @@ export default function DispatchBoard() {
 
   /**
    * One waiting order. The pool and Carried over draw the same row; a carried
-   * over one shows the day it was due in place of today's.
+   * over one shows the day it was due in place of today's. Today's pool also
+   * holds today's upload whatever its date, so a row due another day says so.
    */
-  const waitingRow = (order, { carried = false } = {}) => (
+  const waitingRow = (order, { carried = false } = {}) => {
+    const due = deliveryDay(order.deliveryDate);
+    const overdue = carried || (isTodayBoard && Boolean(due) && isPastDay(due, today));
+    const fromTodaysUpload = !carried && isTodayBoard && due !== today && uploadedOn(order, today);
+    return (
     <tr
       key={order.id}
       draggable={!readOnly}
@@ -678,8 +683,13 @@ export default function DispatchBoard() {
       </td>
 
       {/* Date Column */}
-      <td className={cn('px-6 py-4 whitespace-nowrap text-sm select-none', carried ? 'text-clay font-semibold' : 'text-muted')}>
-        {order.deliveryDate ? formatDeliveryDay(order.deliveryDate) : formatDate(order.createdAt)}
+      <td className={cn('px-6 py-4 whitespace-nowrap text-sm select-none', overdue ? 'text-clay font-semibold' : 'text-muted')}>
+        {order.deliveryDate
+          ? formatDeliveryDay(order.deliveryDate)
+          : order.wholeOrder
+            ? <span className="text-ochre font-semibold">No date yet</span>
+            : formatDate(order.createdAt)}
+        {fromTodaysUpload && <p className="text-[12px] text-muted font-normal">In today’s upload</p>}
       </td>
 
       {/* Status Column */}
@@ -713,12 +723,13 @@ export default function DispatchBoard() {
         </div>
       </td>
     </tr>
-  );
+    );
+  };
 
   const waitingTableHead = (
     <thead className="bg-ink/[0.03]">
       <tr>
-        <th scope="col" className="px-6 py-3 text-left text-[12.5px] font-bold text-muted select-none">Order</th>
+        <th scope="col" className="px-6 py-3 text-left text-[12.5px] font-bold text-muted select-none">PO #</th>
         <th scope="col" className="px-6 py-3 text-left text-[12.5px] font-bold text-muted select-none">Customer</th>
         <th scope="col" className="px-6 py-3 text-left text-[12.5px] font-bold text-muted select-none">Product</th>
         <th scope="col" className="px-6 py-3 text-left text-[12.5px] font-bold text-muted select-none">Quantity</th>
@@ -846,7 +857,7 @@ export default function DispatchBoard() {
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted" />
                   <Input
                     type="text"
-                    placeholder="Search orders, customers..."
+                    placeholder="Search PO #, customers..."
                     className="pl-10 w-64"
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
@@ -1268,7 +1279,9 @@ export default function DispatchBoard() {
                           message={
                             awaitingDateChoice
                               ? 'Choose a date above to see the orders due out that day.'
-                              : 'Every order due out this day is assigned, or none match this search.'
+                              : isTodayBoard
+                                ? 'Every order due out today or in today’s upload has a driver, or none match this search.'
+                                : 'Every order due out this day is assigned, or none match this search.'
                           }
                         />
                       </td>
@@ -1321,7 +1334,7 @@ export default function DispatchBoard() {
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted" />
               <Input
                 type="text"
-                placeholder="Search order # or customer..."
+                placeholder="Search PO # or customer..."
                 aria-label="Search pickups and orders with no date"
                 className="pl-10 w-64"
                 value={undatedSearch}
@@ -1333,7 +1346,7 @@ export default function DispatchBoard() {
             <table className="min-w-full divide-y divide-line">
               <thead className="bg-ink/[0.03]">
                 <tr>
-                  <th scope="col" className="px-6 py-3 text-left text-[12.5px] font-bold text-muted select-none">Order</th>
+                  <th scope="col" className="px-6 py-3 text-left text-[12.5px] font-bold text-muted select-none">PO #</th>
                   <th scope="col" className="px-6 py-3 text-left text-[12.5px] font-bold text-muted select-none">Customer</th>
                   <th scope="col" className="px-6 py-3 text-left text-[12.5px] font-bold text-muted select-none">Product</th>
                   <th scope="col" className="px-6 py-3 text-left text-[12.5px] font-bold text-muted select-none">Quantity</th>

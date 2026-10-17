@@ -56,6 +56,17 @@ describe('where an unassigned order goes back to', () => {
     expect(returnsTo(order('2026-08-13'), '2026-08-17', '2026-08-15')).toBe(null);
   });
 
+  it("goes back to today's pool when it came in with today's upload, whatever its date", () => {
+    // 10:00 in Cambridge on 2026-08-15.
+    const uploaded = (date, at = '2026-08-15T14:00:00.000Z') => ({ ...order(date), uploadedAt: at });
+    expect(returnsTo(uploaded('2026-08-17'), '2026-08-15', '2026-08-15')).toBe('pool');
+    expect(returnsTo(uploaded('2026-08-14'), '2026-08-15', '2026-08-15')).toBe('pool');
+    // 21:00 in Cambridge on 2026-08-14 is 01:00 UTC on the 15th: yesterday's upload.
+    expect(returnsTo(uploaded('2026-08-14', '2026-08-15T01:00:00.000Z'), '2026-08-15', '2026-08-15')).toBe('carriedOver');
+    // Only today's pool takes in today's upload.
+    expect(returnsTo(uploaded('2026-08-13'), '2026-08-17', '2026-08-15')).toBe(null);
+  });
+
   it('keeps a stop made before whole orders in the pool, as before', () => {
     expect(returnsTo({ id: 'line-1', wholeOrder: false }, '2026-08-15', '2026-08-15')).toBe('pool');
   });

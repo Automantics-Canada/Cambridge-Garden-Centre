@@ -223,7 +223,7 @@ export default function OrdersPage() {
                 <Input
                   type="text"
                   className="pl-10"
-                  placeholder="Order #, customer, PO, address, product..."
+                  placeholder="PO #, customer, supplier PO, address, product..."
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                 />
@@ -335,7 +335,7 @@ export default function OrdersPage() {
           <table className="min-w-full divide-y divide-line">
             <thead className="bg-ink/[0.03] sticky top-0">
               <tr>
-                <th scope="col" className="py-3.5 pl-4 pr-3 text-left text-[12.5px] font-semibold text-muted sm:pl-6 text-nowrap">Order</th>
+                <th scope="col" className="py-3.5 pl-4 pr-3 text-left text-[12.5px] font-semibold text-muted sm:pl-6 text-nowrap">PO #</th>
                 <th scope="col" className="px-3 py-3.5 text-left text-[12.5px] font-semibold text-muted">Customer</th>
                 <th scope="col" className="px-3 py-3.5 text-left text-[12.5px] font-semibold text-muted">Type</th>
                 <th scope="col" className="px-3 py-3.5 text-left text-[12.5px] font-semibold text-muted">Products</th>
@@ -409,10 +409,12 @@ function OrderRow({ order, onEdit }) {
       className={needsLook ? 'bg-ochre/10 hover:bg-ochre/15' : 'hover:bg-brand/[0.04]'}
     >
       <td className="whitespace-nowrap py-4 pl-4 pr-3 text-sm sm:pl-6 align-top">
+        {/* The Spruce document number is the order's PO: what everything links on. */}
         <div className="font-semibold text-ink tabular">{order.spruceOrderId}</div>
-        <div className="text-muted text-[12.5px]">
-          PO: {order.poNumbers?.length > 0 ? order.poNumbers.join(', ') : <span className="text-clay font-medium">None</span>}
-        </div>
+        {/* A supplier PO exists only where the yard bought the material in. */}
+        {order.poNumbers?.length > 0 && (
+          <div className="text-muted text-[12.5px] tabular">Supplier PO: {order.poNumbers.join(', ')}</div>
+        )}
         {/* Cambridge's day, the one the Upload date filter counts in. */}
         <div className="text-muted text-[12px] tabular">Uploaded {formatCalendarDate(businessDayOf(new Date(order.uploadedAt)))}</div>
       </td>

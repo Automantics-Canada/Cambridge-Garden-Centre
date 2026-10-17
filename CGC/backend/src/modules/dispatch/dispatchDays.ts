@@ -1,5 +1,7 @@
 import type { DeliveryStatus, Prisma } from '@prisma/client';
 
+import { businessDayRange } from '../../lib/businessDay.js';
+
 /**
  * Which orders belong to which part of the board, by date.
  *
@@ -30,12 +32,61 @@ export const isPastDay = (day: string, today: string) => day < today;
 const CLOSED_IN_SPRUCE: Prisma.OrderDocumentWhereInput = { flags: { has: 'NOT_OPEN' } };
 
 /**
+ * Orders an upload described on `day`: first imported that day, or described
+ * again by that day's reports, since a re-upload updates an order and keeps
+ * its `createdAt`. The Orders page's Upload date filter counts the same way,
+ * so both screens agree on what "uploaded today" holds.
+ *
+ * @param day 'YYYY-MM-DD' in the yard's timezone
+ */
+export function uploadedOnWhere(day: string): Prisma.OrderDocumentWhereInput {
+  const range = businessDayRange(day);
+  if (!range) throw Object.assign(new Error(`Invalid date: ${day}`), { status: 400 });
+  return { OR: [{ createdAt: range }, { lastBatch: { is: { createdAt: range } } }] };
+}
+
+/** Never dispatched, or dispatched and taken back. */
+const WITHOUT_DRIVER: Prisma.OrderDocumentWhereInput = {
+  OR: [{ delivery: null }, { delivery: { driverId: null } }],
+};
+
+/**
+ * Today's pool: every delivery due out today, and every delivery in today's
+ * uploads, that no driver has yet.
+ *
+ * The morning's upload is the day's work. An order in it goes on the board
+ * whatever date Spruce gave it — none yet, a later day, or a day already
+ * gone — so a dispatcher who has just uploaded sees what came in without
+ * hunting through the other tabs. A later order still counts on its own day
+ * under Upcoming; tomorrow it is no longer today's upload, and goes back to
+ * being found by its date.
+ *
+ * Orders Spruce no longer lists as open are left out of the uploads: nobody
+ * will deliver them. Pickups never wait for a driver.
+ */
+export function todayPoolWhere(today: string): Prisma.OrderDocumentWhereInput {
+  return {
+    isPickup: false,
+    AND: [
+      WITHOUT_DRIVER,
+      {
+        OR: [
+          { deliveryDate: deliveryDayDate(today) },
+          { AND: [uploadedOnWhere(today), { NOT: CLOSED_IN_SPRUCE }] },
+        ],
+      },
+    ],
+  };
+}
+
+/**
  * Orders from before today that never went out: no stop, or a stop taken back
  * off its driver and not finished.
  *
  * Orders still on a driver's run are left out on purpose. The board already
  * shows every driver's open work under that driver, so listing them here as
- * well would put one order on screen twice.
+ * well would put one order on screen twice. Orders in today's uploads are
+ * left out for the same reason: they are in today's pool.
  *
  * Orders Spruce no longer lists as open are left out too: nobody will deliver
  * them, and nothing else would ever take them off this list.
@@ -44,7 +95,7 @@ export function carriedOverWhere(today: string): Prisma.OrderDocumentWhereInput 
   return {
     deliveryDate: { lt: deliveryDayDate(today) },
     isPickup: false,
-    NOT: CLOSED_IN_SPRUCE,
+    NOT: [CLOSED_IN_SPRUCE, uploadedOnWhere(today)],
     OR: [
       { delivery: null },
       { delivery: { driverId: null, status: { notIn: FINISHED_STATUSES } } },

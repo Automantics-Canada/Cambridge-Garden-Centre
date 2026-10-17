@@ -33,7 +33,15 @@ const day = (iso: string) => new Date(`${iso}T00:00:00.000Z`);
 async function seedOrder(
   documentNumber: string,
   deliveryDate: string | null,
-  options: { isPickup?: boolean; customerName?: string; flags?: string[] } = {},
+  options: {
+    isPickup?: boolean;
+    customerName?: string;
+    flags?: string[];
+    /** When it was first imported. Defaults to now, which is never TODAY. */
+    createdAt?: Date;
+    /** The upload that last described it. */
+    lastBatchId?: string;
+  } = {},
 ) {
   const document = await prisma.orderDocument.create({
     data: {
@@ -43,6 +51,8 @@ async function seedOrder(
       isPickup: options.isPickup ?? false,
       flags: options.flags ?? [],
       shippingAddress: '1 Example St, Cambridge',
+      ...(options.createdAt ? { createdAt: options.createdAt } : {}),
+      ...(options.lastBatchId ? { lastBatchId: options.lastBatchId } : {}),
     },
   });
   await prisma.order.create({
@@ -117,6 +127,54 @@ describe('the board across days (PostgreSQL)', { skip: !disposableConfirmed }, (
     // Any other day has nothing carried over.
     assert.deepEqual((await DispatchService.getDispatchBoard('2026-08-14', TODAY)).carriedOver, []);
     assert.deepEqual((await DispatchService.getDispatchBoard('2026-08-17', TODAY)).carriedOver, []);
+  });
+
+  it("puts today's upload in today's pool whatever its date, and only today's", async () => {
+    await prisma.$executeRawUnsafe('TRUNCATE TABLE "ImportBatch", "User" RESTART IDENTITY CASCADE');
+    const user = await prisma.user.create({
+      data: { name: 'Test Admin', email: 'board-admin@example.test', passwordHash: 'x', role: 'ADMIN' },
+    });
+    // 09:00 in Cambridge on TODAY, and 21:00 the evening before (01:00Z on TODAY).
+    const thisMorning = new Date('2026-08-15T13:00:00Z');
+    const lastNight = new Date('2026-08-15T01:00:00Z');
+    const todaysBatch = await prisma.importBatch.create({
+      data: { dispatchDate: day(TODAY), status: 'DONE', createdById: user.id, createdAt: thisMorning },
+    });
+    const driver = await seedDriver('Driver');
+
+    await seedOrder('9900-000001', null, { createdAt: thisMorning }); // no date yet
+    await seedOrder('9900-000002', '2026-08-19', { createdAt: thisMorning }); // due later
+    await seedOrder('9900-000003', '2026-08-12', { createdAt: thisMorning }); // due already
+    // First imported in August; this morning's reports described it again.
+    await seedOrder('9900-000004', '2026-08-13', { createdAt: new Date('2026-08-10T15:00:00Z'), lastBatchId: todaysBatch.id });
+    await seedOrder('9900-000005', '2026-08-13', { createdAt: lastNight }); // yesterday's upload
+    await seedOrder('9900-000006', '2026-08-19', { createdAt: lastNight });
+    await seedOrder('9900-000007', null, { createdAt: thisMorning, isPickup: true });
+    await seedOrder('9900-000008', '2026-08-19', { createdAt: thisMorning, flags: ['NOT_OPEN'] });
+    const given = await seedOrder('9900-000009', '2026-08-19', { createdAt: thisMorning });
+    await seedOrder('9900-000010', TODAY); // due today, uploaded another day
+    await DispatchService.assignOrder(given.id, driver.id);
+
+    const today = await DispatchService.getDispatchBoard(TODAY, TODAY);
+    assert.deepEqual(numbers(today.unassignedOrders), [
+      '9900-000001', '9900-000002', '9900-000003', '9900-000004', '9900-000010',
+    ]);
+    // Each says when it was uploaded, so the screen can put it back here.
+    assert.equal(today.unassignedOrders[0]!.uploadedAt.toISOString(), thisMorning.toISOString());
+    assert.equal(today.unassignedOrders[3]!.uploadedAt.toISOString(), thisMorning.toISOString());
+    // Not listed twice: today's upload is in the pool, not Carried over.
+    assert.deepEqual(numbers(today.carriedOver), ['9900-000005']);
+    // A later order still counts on its own day.
+    assert.deepEqual(await DispatchService.getUpcoming(TODAY), [{ date: '2026-08-19', count: 4, unassigned: 3 }]);
+    // Another day's board holds only what is due that day.
+    assert.deepEqual(numbers((await DispatchService.getDispatchBoard('2026-08-19', TODAY)).unassignedOrders), [
+      '9900-000002', '9900-000006', '9900-000008',
+    ]);
+    // Tomorrow, today's upload is found by its date again.
+    const tomorrow = await DispatchService.getDispatchBoard('2026-08-16', '2026-08-16');
+    assert.deepEqual(numbers(tomorrow.unassignedOrders), []);
+    // Oldest first.
+    assert.deepEqual(numbers(tomorrow.carriedOver), ['9900-000003', '9900-000004', '9900-000005', '9900-000010']);
   });
 
   it('makes a past day a record of that day, and leaves today and later open', async () => {
