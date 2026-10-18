@@ -21,10 +21,14 @@ const disposableConfirmed = process.env.SPRUCE_TEST_CONFIRM_DISPOSABLE === '1';
 /** Every key that would put money in front of a driver. */
 const MONEY_KEYS = [
   'unitPrice', 'unitCost', 'poValue', 'totalWithTax', 'remaining', 'remainingDeposit', 'grossMarginPct', 'supplier',
-  // Who an order was bought from, and under which PO: the office's
-  // "Awaiting supplier" badge, never the driver's business.
+  // The office's own records of who an order was bought from. A driver who
+  // loads at a supplier is told where and which PO to quote, and only that,
+  // through `pickupFrom` below; these never reach the phone.
   'supplierId', 'supplierName', 'awaitingSupplier', 'poNumber', 'vendorCode', 'vendorLocation',
 ];
+
+/** The one supplier detail a driver is given: where to load, and the PO to quote. */
+const PICKUP_KEYS = ['address', 'name', 'po'];
 
 function moneyKeysIn(value: unknown, path = '$'): string[] {
   if (Array.isArray(value)) return value.flatMap((item, index) => moneyKeysIn(item, `${path}[${index}]`));
@@ -42,8 +46,18 @@ describe('driver responses carry no prices (PostgreSQL)', { skip: !disposableCon
 
   before(async () => {
     await prisma.$executeRawUnsafe(
-      'TRUNCATE TABLE "OrderDocument", "Order", "Driver", "User", "Delivery" RESTART IDENTITY CASCADE'
+      'TRUNCATE TABLE "OrderDocument", "Order", "Driver", "User", "Delivery", "Supplier", "SupplierSpruceVendor" RESTART IDENTITY CASCADE'
     );
+    await prisma.supplier.create({
+      data: {
+        name: 'Example Quarry',
+        type: 'SUPPLIER',
+        address: '1 Example Quarry Rd, Brantford',
+        emailDomains: [],
+        keywords: [],
+        spruceVendors: { create: { code: 'EXAMPLEV01' } },
+      },
+    });
     const user = await prisma.user.create({
       data: { name: 'Driver', email: 'driver-privacy@example.test', passwordHash: 'x', role: 'DRIVER' },
     });
@@ -79,7 +93,7 @@ describe('driver responses carry no prices (PostgreSQL)', { skip: !disposableCon
       },
     });
     const delivery = await prisma.delivery.create({
-      data: { orderId: line.id, driverId, status: 'PLACED', priority: 1 },
+      data: { orderId: line.id, documentId: document.id, driverId, status: 'PLACED', priority: 1 },
     });
     deliveryId = delivery.id;
   });
@@ -105,6 +119,21 @@ describe('driver responses carry no prices (PostgreSQL)', { skip: !disposableCon
     const current = await DeliveriesService.getCurrentStop(driverId);
     assert.equal(current.data.length, 1);
     assert.deepEqual(moneyKeysIn(current), []);
+  });
+
+  it('tells the driver where to load a bought-in order and the PO to quote, and nothing more', async () => {
+    const current = await DeliveriesService.getCurrentStop(driverId);
+    const pickupFrom = current.data[0]!.pickupFrom;
+    // The vendor code resolves to its supplier, as on the office's badge.
+    assert.deepEqual(pickupFrom, [
+      { name: 'Example Quarry', address: '1 Example Quarry Rd, Brantford', po: '9900-100777' },
+    ]);
+    for (const pickup of pickupFrom) assert.deepEqual(Object.keys(pickup).sort(), PICKUP_KEYS);
+    // Nothing that names a price, nor the line's own vendor records.
+    assert.deepEqual(moneyKeysIn(current), []);
+    for (const text of ['EXAMPLEV01', 'Example Yard']) {
+      assert.equal(JSON.stringify(current).includes(text), false, text);
+    }
   });
 
   it('keeps prices out of the answer to a driver\'s status update', async () => {
