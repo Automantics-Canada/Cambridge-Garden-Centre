@@ -16,7 +16,7 @@ import {
 } from '../../components/ui';
 import { cn } from '../../lib/cn';
 import { businessDayOf, businessDayOffset, formatCalendarDate } from '../../lib/date';
-import { formatQuantity } from '../../lib/quantity';
+import { formatOrderQuantity } from '../../lib/quantity';
 import { deliveryTypeLabel, flagBadges } from '../../lib/dispatchBoard';
 import { formatDeliveryDay } from '../../lib/dispatchDays';
 import {
@@ -439,7 +439,7 @@ function OrderRow({ order, onEdit }) {
       <td className="px-3 py-4 text-sm align-top min-w-[180px]">
         <div className="text-ink">{order.product}</div>
         {order.quantity !== null && order.quantity !== undefined && (
-          <div className="text-muted text-[12.5px] tabular">{formatQuantity(order.quantity, order.unit)}</div>
+          <div className="text-muted text-[12.5px] tabular">{formatOrderQuantity(order)}</div>
         )}
       </td>
 

@@ -43,13 +43,29 @@ describe('stopView', () => {
       order: { spruceOrderId: '2608-712595-L1' },
       document: { documentNumber: '2608-712595', customerName: 'OHS Landscape Group', lines: [] },
       pickupFrom: [
-        { name: 'Unilock', address: '1 Example Quarry Rd, Brantford', po: '2608-355356' },
+        { name: 'Unilock', location: 'Georgetown', address: null, po: '2608-355356' },
         { name: 'UNMAPPED01', address: null, po: '2608-355357' },
       ],
     });
     expect(view.pickups).toEqual([
-      { name: 'Unilock', address: '1 Example Quarry Rd, Brantford', po: '2608-355356' },
-      { name: 'UNMAPPED01', address: null, po: '2608-355357' },
+      { name: 'Unilock', location: 'Georgetown', address: null, po: '2608-355356' },
+      { name: 'UNMAPPED01', location: null, address: null, po: '2608-355357' },
+    ]);
+  });
+
+  it('puts repeated loads of one item on one line, with how many loads', () => {
+    const load = { spruceItemNumber: 'AGG01', product: 'Agg "B" Type 1 PitBlk (MT)', quantity: '40', unit: 'MT', lineClass: 'PRODUCT' };
+    const view = stopView({
+      order: {},
+      document: {
+        documentNumber: '2608-712556',
+        customerName: 'Twin City Interloc Inc.',
+        lines: [load, load, load, load, load, load, { spruceItemNumber: 'SAND', product: 'Sand', quantity: '2', unit: 'MT', lineClass: 'PRODUCT' }],
+      },
+    });
+    expect(view.lines).toEqual([
+      { product: 'Agg "B" Type 1 PitBlk (MT)', quantity: 240, unit: 'MT', loads: 6 },
+      { product: 'Sand', quantity: '2', unit: 'MT' },
     ]);
   });
 

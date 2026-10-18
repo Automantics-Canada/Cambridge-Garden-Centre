@@ -20,7 +20,31 @@ const DELIVERY_TYPE_LABELS = {
 
 /** Where to load first: each supplier, its address where known, and the PO to quote. */
 const pickupsOf = (delivery) =>
-  (delivery?.pickupFrom ?? []).map(({ name, address, po }) => ({ name: name || null, address: address || null, po }));
+  (delivery?.pickupFrom ?? []).map(({ name, location, address, po }) => ({
+    name: name || null,
+    location: location || null,
+    address: address || null,
+    po,
+  }));
+
+/**
+ * What goes on the truck, with repeated loads of one item in one line:
+ * six 40 MT lines of the same aggregate read "240 MT, 6 loads".
+ */
+function truckLines(lines) {
+  const grouped = new Map();
+  for (const line of lines.filter(onTheTruck)) {
+    const key = `${(line.spruceItemNumber || line.product || '').toUpperCase()}|${line.unit ?? ''}`;
+    const seen = grouped.get(key);
+    if (seen) {
+      seen.quantity = Number((Number(seen.quantity ?? 0) + Number(line.quantity ?? 0)).toFixed(4));
+      seen.loads += 1;
+    } else {
+      grouped.set(key, { product: line.product, quantity: line.quantity, unit: line.unit, loads: 1 });
+    }
+  }
+  return [...grouped.values()].map(({ loads, ...line }) => (loads > 1 ? { ...line, loads } : line));
+}
 
 /** Lines that go on the truck: not delivery charges, deposits or comments. */
 const onTheTruck = (line) => !line.lineClass || line.lineClass === 'PRODUCT';
@@ -53,7 +77,7 @@ export function stopView(delivery) {
     instructions: document.deliveryInstructions || null,
     notes: document.dispatcherNotes || null,
     deliveryType: document.deliveryType ? DELIVERY_TYPE_LABELS[document.deliveryType] ?? document.deliveryType : null,
-    lines: lines.filter(onTheTruck).map((line) => ({ product: line.product, quantity: line.quantity, unit: line.unit })),
+    lines: truckLines(lines),
     skids: lines
       .filter((line) => line.lineClass === 'DEPOSIT')
       .reduce((sum, line) => sum + Number(line.quantity ?? 0), 0),

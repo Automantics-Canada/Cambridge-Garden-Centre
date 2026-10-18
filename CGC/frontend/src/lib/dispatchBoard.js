@@ -28,6 +28,7 @@ export function orderRef(order) {
 /** Flags that mean an order may not be ready to go out as it is. */
 export const ASSIGN_WARNING_FLAGS = [
   'NO_ADDRESS',
+  'NOT_IN_ITEM_TRACKING',
   'CHECK_ADDRESS',
   'DATE_MISMATCH',
   'TOTAL_MISMATCH',
@@ -57,10 +58,21 @@ export function awaitingSupplierText(order) {
   return detail ? `${label}: ${detail}` : label;
 }
 
+/**
+ * A supplier and the yard the report names: "Bestway - Woodbridge". The yard
+ * is left off when the supplier's name already says it.
+ */
+export function supplierWithYard(name, location) {
+  if (!location) return name || null;
+  if (!name) return location;
+  return name.toLowerCase().includes(location.toLowerCase()) ? name : `${name} - ${location}`;
+}
+
 /** Who and which PO an order waits on, "Unilock PO 2608-355356", or null when it names none. */
 export function awaitingSupplierDetail(order) {
   const named = (order?.awaitingSupplier ?? [])
-    .map(({ supplierName, poNumber }) => [supplierName, poNumber && `PO ${poNumber}`].filter(Boolean).join(' '))
+    .map(({ supplierName, location, poNumber }) =>
+      [supplierWithYard(supplierName, location), poNumber && `PO ${poNumber}`].filter(Boolean).join(' '))
     .filter(Boolean);
   return named.length > 0 ? named.join(', ') : null;
 }

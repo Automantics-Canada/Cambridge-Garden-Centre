@@ -13,6 +13,7 @@ import { Badge } from '../../components/ui';
 import { cn } from '../../lib/cn';
 import { formatQuantity } from '../../lib/quantity';
 import { stopView, telHref } from '../../lib/driverStop';
+import { supplierWithYard } from '../../lib/dispatchBoard';
 
 /** How often the phone checks for its stop while on screen. The office board stays at 10 s. */
 const DRIVER_POLL_MS = 2_000;
@@ -270,7 +271,10 @@ export default function DriverMobileView() {
                         <ul className="space-y-2 pt-1 min-w-0">
                           {stop.lines.map((line, index) => (
                             <li key={index}>
-                              <p className="tabular font-semibold text-ink leading-none">{formatQuantity(line.quantity, line.unit)}</p>
+                              <p className="tabular font-semibold text-ink leading-none">
+                                {formatQuantity(line.quantity, line.unit)}
+                                {line.loads && <span className="font-normal text-muted">, {line.loads} loads</span>}
+                              </p>
                               <p className="text-[13px] text-muted font-normal mt-1">{line.product}</p>
                             </li>
                           ))}
@@ -292,8 +296,8 @@ export default function DriverMobileView() {
                           <div className="pt-1 min-w-0 space-y-3">
                             <p className="text-[12.5px] font-semibold text-muted">Pick up first</p>
                             {stop.pickups.map((pickup) => (
-                              <div key={`${pickup.name}-${pickup.po}`} className="space-y-0.5">
-                                <p className="font-semibold text-ink">{pickup.name || 'Supplier not named'}</p>
+                              <div key={`${pickup.name}-${pickup.location}-${pickup.po}`} className="space-y-0.5">
+                                <p className="font-semibold text-ink">{supplierWithYard(pickup.name, pickup.location) || 'Supplier not named'}</p>
                                 {pickup.address && <p className="text-[13px] text-muted leading-relaxed">{pickup.address}</p>}
                                 <p className="text-[13px] text-ink tabular">Quote PO <span className="font-semibold">{pickup.po}</span></p>
                               </div>

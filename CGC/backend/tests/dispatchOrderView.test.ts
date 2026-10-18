@@ -66,7 +66,9 @@ describe('a whole order on the dispatch board', () => {
     ));
 
     assert.equal(view.quantity, 240);
-    assert.equal(view.product, 'Type 1 (MT) +5 more');
+    // Six loads of one item are one product.
+    assert.equal(view.product, 'Type 1 (MT)');
+    assert.deepEqual(view.quantities, [{ quantity: 240, unit: 'MT' }]);
     assert.equal(view.lines.length, 6, 'every load stays listed');
   });
 
@@ -156,9 +158,9 @@ describe('who an order is awaiting', () => {
       { poNumber: ' 9900-100002 ', vendorCode: 'SAMPLEV02', supplierName: null },
       { poNumber: '9900-100003', vendorCode: null, supplierName: null },
     ]), [
-      { supplierName: 'Example Pavers', poNumber: '9900-100001' },
-      { supplierName: 'SAMPLEV02', poNumber: '9900-100002' },
-      { supplierName: null, poNumber: '9900-100003' },
+      { supplierName: 'Example Pavers', location: null, poNumber: '9900-100001' },
+      { supplierName: 'SAMPLEV02', location: null, poNumber: '9900-100002' },
+      { supplierName: null, location: null, poNumber: '9900-100003' },
     ]);
   });
 
@@ -200,10 +202,10 @@ describe('who an order is awaiting', () => {
 
     assert.deepEqual(seen.lineIds, ['doc-1', 'doc-2']);
     assert.deepEqual(seen.codes, ['EXAMPLEV01', 'NEWVEND01'], 'only codes the line has no supplier for');
-    assert.deepEqual(awaiting.get('doc-1'), [{ supplierName: 'Example Pavers', poNumber: '9900-100001' }]);
+    assert.deepEqual(awaiting.get('doc-1'), [{ supplierName: 'Example Pavers', location: null, poNumber: '9900-100001' }]);
     assert.deepEqual(awaiting.get('doc-2'), [
-      { supplierName: 'Sample Stone', poNumber: '9900-100002' },
-      { supplierName: 'NEWVEND01', poNumber: '9900-100004' },
+      { supplierName: 'Sample Stone', location: null, poNumber: '9900-100002' },
+      { supplierName: 'NEWVEND01', location: null, poNumber: '9900-100004' },
     ]);
     assert.deepEqual(awaiting.get('doc-3'), []);
   });
@@ -225,7 +227,7 @@ describe('who an order is awaiting', () => {
       drivers: [{ deliveries: [{ order: onRun }, { order: olderStop }] }],
     });
 
-    assert.deepEqual(pooled.awaitingSupplier, [{ supplierName: 'Example Pavers', poNumber: '9900-100001' }]);
+    assert.deepEqual(pooled.awaitingSupplier, [{ supplierName: 'Example Pavers', location: null, poNumber: '9900-100001' }]);
     assert.deepEqual(onRun.awaitingSupplier, []);
     assert.equal('awaitingSupplier' in olderStop, false);
   });

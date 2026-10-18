@@ -10,7 +10,7 @@ import { useIntervalRefresh } from '../../hooks/useIntervalRefresh';
 import { businessDayOffset, formatDate } from '../../lib/date';
 import { cn } from '../../lib/cn';
 import { isTerminal, statusErrorMessage, statusOptionsFor } from '../../lib/deliveryTransitions';
-import { formatQuantity } from '../../lib/quantity';
+import { formatOrderQuantity } from '../../lib/quantity';
 import { assignWarning, awaitingSupplierDetail, awaitingSupplierText, deliveryTypeLabel, flagBadges, mergeUnassignedOrders, orderRef, updatedTitle } from '../../lib/dispatchBoard';
 import { flagInfo } from '../../lib/spruceImport';
 import { canCorrectHistory, deliveryDay, formatDeliveryDay, isPastDay, returnsTo, upcomingSummary, uploadedOn } from '../../lib/dispatchDays';
@@ -679,7 +679,7 @@ export default function DispatchBoard() {
 
       {/* Quantity Column */}
       <td className="px-6 py-4 whitespace-nowrap text-sm text-muted font-bold select-none">
-        {formatQuantity(order.quantity, order.unit)}
+        {formatOrderQuantity(order)}
       </td>
 
       {/* Date Column */}
@@ -1106,7 +1106,7 @@ export default function DispatchBoard() {
 
                                                   {/* Quantity Column */}
                                                   <td className="px-6 py-4 whitespace-nowrap text-[12.5px] text-muted font-bold select-none w-32">
-                                                    {formatQuantity(del.order.quantity, del.order.unit)}
+                                                    {formatOrderQuantity(del.order)}
                                                   </td>
 
                                                   {/* Status Badge Column */}
@@ -1385,7 +1385,7 @@ export default function DispatchBoard() {
                         <OrderLoad order={order} />
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-muted font-bold select-none">
-                        {formatQuantity(order.quantity, order.unit)}
+                        {formatOrderQuantity(order)}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         <Badge tone={order.isPickup ? 'neutral' : 'warn'}>{order.isPickup ? 'Pickup' : 'Delivery, no date yet'}</Badge>

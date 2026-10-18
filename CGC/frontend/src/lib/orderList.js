@@ -22,7 +22,7 @@ const STARTED = ['OUT_FOR_DELIVERY', 'IN_TRANSIT'];
  * stop, so it says so rather than "No driver".
  */
 export function deliveryStatusView(order) {
-  if (order?.isPickup) return { label: 'Pickup at yard', tone: 'neutral', detail: null };
+  if (order?.isPickup) return { label: `Pickup at ${order.collectAt || 'yard'}`, tone: 'neutral', detail: null };
   const delivery = order?.delivery;
   const driver = delivery?.driverName ?? null;
   if (!delivery || (!driver && delivery.status !== 'DELIVERED' && delivery.status !== 'CANCELLED')) {
