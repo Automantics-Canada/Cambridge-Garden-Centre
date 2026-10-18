@@ -2,7 +2,9 @@
  * What a driver needs from the stop in hand, and nothing about money.
  *
  * A stop delivers a whole Spruce order: the customer, where to go, who to
- * call, what is on the truck, and what dispatch wants them to know. A stop
+ * call, what is on the truck, and what dispatch wants them to know. An order
+ * bought in from a supplier also says where to load it first and the PO to
+ * quote there; one from CGC's own yard has no such pickup. A stop
  * made before orders were dispatched whole only names one line, and is shown
  * as that line, as it always was.
  */
@@ -15,6 +17,10 @@ const DELIVERY_TYPE_LABELS = {
   BAG: 'Bag delivery',
   GENERAL: 'Delivery',
 };
+
+/** Where to load first: each supplier, its address where known, and the PO to quote. */
+const pickupsOf = (delivery) =>
+  (delivery?.pickupFrom ?? []).map(({ name, address, po }) => ({ name: name || null, address: address || null, po }));
 
 /** Lines that go on the truck: not delivery charges, deposits or comments. */
 const onTheTruck = (line) => !line.lineClass || line.lineClass === 'PRODUCT';
@@ -34,6 +40,7 @@ export function stopView(delivery) {
       deliveryType: null,
       lines: order.product ? [{ product: order.product, quantity: order.quantity, unit: order.unit }] : [],
       skids: 0,
+      pickups: pickupsOf(delivery),
     };
   }
 
@@ -50,6 +57,7 @@ export function stopView(delivery) {
     skids: lines
       .filter((line) => line.lineClass === 'DEPOSIT')
       .reduce((sum, line) => sum + Number(line.quantity ?? 0), 0),
+    pickups: pickupsOf(delivery),
   };
 }
 

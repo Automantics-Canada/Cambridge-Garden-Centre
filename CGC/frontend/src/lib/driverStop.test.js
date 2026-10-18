@@ -33,7 +33,24 @@ describe('stopView', () => {
       deliveryType: 'Slinger',
       lines: [{ product: 'Clear Stone', quantity: '12', unit: 'MT' }],
       skids: 2,
+      // Stock from CGC's own yard: nowhere else to load.
+      pickups: [],
     });
+  });
+
+  it('says where to load a bought-in order first, and the PO to quote there', () => {
+    const view = stopView({
+      order: { spruceOrderId: '2608-712595-L1' },
+      document: { documentNumber: '2608-712595', customerName: 'OHS Landscape Group', lines: [] },
+      pickupFrom: [
+        { name: 'Unilock', address: '1 Example Quarry Rd, Brantford', po: '2608-355356' },
+        { name: 'UNMAPPED01', address: null, po: '2608-355357' },
+      ],
+    });
+    expect(view.pickups).toEqual([
+      { name: 'Unilock', address: '1 Example Quarry Rd, Brantford', po: '2608-355356' },
+      { name: 'UNMAPPED01', address: null, po: '2608-355357' },
+    ]);
   });
 
   it('shows a stop made before orders were dispatched whole as its one line', () => {

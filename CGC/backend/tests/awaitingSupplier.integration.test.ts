@@ -57,7 +57,7 @@ function officeValuesIn(body: unknown): string[] {
 
 const day = (iso: string) => new Date(`${iso}T00:00:00.000Z`);
 
-describe('awaiting supplier, for the office only (PostgreSQL)', { skip: !disposableConfirmed }, () => {
+describe("awaiting supplier: the office badge, and the driver's pickup (PostgreSQL)", { skip: !disposableConfirmed }, () => {
   let server: Server;
   let baseUrl: string;
   let adminToken: string;
@@ -216,12 +216,24 @@ describe('awaiting supplier, for the office only (PostgreSQL)', { skip: !disposa
     assert.equal(editor.awaitingSupplier?.length, 2);
   });
 
-  it('never reaches the driver: current stop, delivery list or profile', async () => {
-    const stop = await get('/api/deliveries', driverToken) as Array<{ document?: { id: string; deliveryInstructions: string } }>;
+  it('reaches the driver only as where to load and the PO to quote, on the current stop', async () => {
+    const stop = await get('/api/deliveries', driverToken) as Array<{
+      document?: { id: string; deliveryInstructions: string };
+      pickupFrom?: unknown;
+    }>;
     assert.equal(stop.length, 1, 'the driver is given their stop');
     assert.equal(stop[0]?.document?.id, onRunId, 'the stop is the order awaiting a supplier');
     assert.equal(stop[0]?.document?.deliveryInstructions, 'CUSTOMER ON SITE TO DIRECT DELIVERY');
+    // Each PO once, with who to collect from: the supplier where the vendor is
+    // mapped, Spruce's vendor code where it is not, as on the office's badge.
+    assert.deepEqual(stop[0]?.pickupFrom, [
+      { name: SUPPLIER, address: null, po: PO },
+      { name: UNMAPPED_VENDOR, address: null, po: SECOND_PO },
+    ]);
 
+    // Outside `pickupFrom`, nothing names them, and no office key is sent.
+    const withoutPickup = (body: unknown) =>
+      JSON.parse(JSON.stringify(body, (key, value) => (key === 'pickupFrom' ? undefined : value)));
     const responses = {
       currentStop: stop,
       envelope: await get('/api/deliveries?page=1&limit=10', driverToken),
@@ -229,8 +241,10 @@ describe('awaiting supplier, for the office only (PostgreSQL)', { skip: !disposa
     };
     for (const [name, body] of Object.entries(responses)) {
       assert.deepEqual(officeKeysIn(body), [], `${name} carries an office-only key`);
-      assert.deepEqual(officeValuesIn(body), [], `${name} names the supplier, vendor or PO`);
+      assert.deepEqual(officeValuesIn(withoutPickup(body)), [], `${name} names the supplier, vendor or PO`);
     }
+    // The vendor code of a mapped supplier is the office's, never the driver's.
+    assert.equal(JSON.stringify(responses).includes(VENDOR), false);
   });
 
   it('never reaches the driver in the answer to a status update', async () => {

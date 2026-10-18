@@ -291,6 +291,71 @@ export async function awaitingSupplierByOrder(
 }
 
 /**
+ * Where a driver loads an order bought in from a supplier: who, where, and the
+ * PO to quote at the counter so the yard hands over the right load and its
+ * ticket. Nothing about price.
+ */
+export interface PickupFrom {
+  /** The supplier's name, or Spruce's vendor code where none is mapped. */
+  name: string | null;
+  /** The supplier's address where one is on file. */
+  address: string | null;
+  po: string;
+}
+
+/**
+ * The supplier pickups one stop needs, in line order and once each; empty for
+ * an order loaded at CGC's own yard, which raises no PO.
+ *
+ * Deliberately narrow, unlike `awaitingSupplierByOrder`: it is sent to the
+ * driver, so it carries the three things a driver needs at the supplier's
+ * counter under keys of its own, and the line's supplier record, vendor code
+ * and prices never leave the server.
+ *
+ * @param stop The stop's order, or its single line for a stop made before
+ *   orders were dispatched whole.
+ */
+export async function pickupFromOf(
+  db: Pick<Prisma.TransactionClient, 'order' | 'supplierSpruceVendor'>,
+  stop: { documentId: string | null; orderId: string }
+): Promise<PickupFrom[]> {
+  const lines = await db.order.findMany({
+    where: {
+      ...(stop.documentId ? { documentId: stop.documentId } : { id: stop.orderId }),
+      poNumber: { not: null },
+    },
+    select: { poNumber: true, vendorCode: true, supplier: { select: { name: true, address: true } } },
+    orderBy: [{ lineNumber: 'asc' }, { id: 'asc' }],
+  });
+
+  const unnamed = [...new Set(
+    lines.filter(line => !line.supplier && line.vendorCode).map(line => vendorKey(line.vendorCode!))
+  )];
+  const mapped = new Map<string, { name: string; address: string | null }>();
+  if (unnamed.length > 0) {
+    const mappings = await db.supplierSpruceVendor.findMany({
+      where: { code: { in: unnamed }, active: true, supplier: { active: true } },
+      select: { code: true, supplier: { select: { name: true, address: true } } },
+    });
+    for (const mapping of mappings) mapped.set(vendorKey(mapping.code), mapping.supplier);
+  }
+
+  const seen = new Set<string>();
+  const result: PickupFrom[] = [];
+  for (const line of lines) {
+    const po = line.poNumber?.trim();
+    if (!po) continue;
+    const known = line.supplier ?? (line.vendorCode ? mapped.get(vendorKey(line.vendorCode)) : undefined);
+    const name = known?.name?.trim() || line.vendorCode?.trim() || null;
+    const key = JSON.stringify([name, po]);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push({ name, address: known?.address?.trim() || null, po });
+  }
+  return result;
+}
+
+/**
  * Names the supplier and PO on every whole order a board response holds, or a
  * list of rows. One read for the whole board, like `withUpdatedFields`.
  */

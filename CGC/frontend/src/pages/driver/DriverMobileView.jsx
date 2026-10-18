@@ -4,7 +4,7 @@ import { useSelector, useDispatch } from 'react-redux';
 import api from '../../api/axios';
 import { logout } from '../../store/authSlice';
 import LogoutModal from '../../components/LogoutModal';
-import { MapPin, Camera, CheckCircle2, AlertCircle, Package, User, LogOut, Phone, MessageSquare } from 'lucide-react';
+import { MapPin, Camera, CheckCircle2, AlertCircle, Package, User, LogOut, Phone, MessageSquare, Warehouse } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 
 import { MobileDriverSkeleton } from '../../components/Skeleton';
@@ -281,6 +281,26 @@ export default function DriverMobileView() {
                           )}
                         </ul>
                       </div>
+                      {/* A bought-in order is loaded at the supplier first; the
+                          PO is what the driver quotes at their counter, and
+                          their ticket is what the driver photographs below. */}
+                      {stop.pickups.length > 0 && (
+                        <div className="flex items-start gap-4 text-sm pt-4 border-t border-line">
+                          <div className="w-8 h-8 rounded-pill bg-surface flex items-center justify-center shadow-card border border-line flex-shrink-0">
+                            <Warehouse className="text-brand" size={16} strokeWidth={2} />
+                          </div>
+                          <div className="pt-1 min-w-0 space-y-3">
+                            <p className="text-[12.5px] font-semibold text-muted">Pick up first</p>
+                            {stop.pickups.map((pickup) => (
+                              <div key={`${pickup.name}-${pickup.po}`} className="space-y-0.5">
+                                <p className="font-semibold text-ink">{pickup.name || 'Supplier not named'}</p>
+                                {pickup.address && <p className="text-[13px] text-muted leading-relaxed">{pickup.address}</p>}
+                                <p className="text-[13px] text-ink tabular">Quote PO <span className="font-semibold">{pickup.po}</span></p>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                       <div className="flex items-start gap-4 text-sm pt-4 border-t border-line">
                         <div className="w-8 h-8 rounded-pill bg-surface flex items-center justify-center shadow-card border border-line flex-shrink-0">
                           <MapPin className="text-clay" size={16} strokeWidth={2} />
