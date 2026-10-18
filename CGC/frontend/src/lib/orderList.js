@@ -2,6 +2,7 @@
  * The Orders page's rules, kept apart from the screen so they can be tested.
  * Every day is a 'YYYY-MM-DD' calendar date in the yard's timezone.
  */
+import { deliveryDay } from './dispatchDays';
 
 /** The delivery-status filter, in the order the menu lists it. */
 export const DELIVERY_STATUS_OPTIONS = [
@@ -38,6 +39,21 @@ export function deliveryStatusView(order) {
         ? { label: 'On the way', tone: 'warn', detail: driver }
         : { label: 'With driver', tone: 'neutral', detail: driver };
   }
+}
+
+/**
+ * A delivery whose day has gone by and that still has no driver: it either
+ * went out without the system hearing of it, or needs a new day. Pickups
+ * never get a driver, and an order Spruce has closed is waiting for nothing.
+ *
+ * @param today 'YYYY-MM-DD' in the yard's timezone
+ */
+export function pastDueWithoutDriver(order, today) {
+  if (!order || order.isPickup || !today) return false;
+  if ((order.flags ?? []).includes('NOT_OPEN')) return false;
+  const due = deliveryDay(order.deliveryDate);
+  if (!due || due >= today) return false;
+  return deliveryStatusView(order).label === 'No driver yet';
 }
 
 /**
