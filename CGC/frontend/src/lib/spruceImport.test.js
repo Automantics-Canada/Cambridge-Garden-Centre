@@ -55,6 +55,13 @@ describe('wording', () => {
       .toBe('1 delivery for 8/14, 0 upcoming, 1 pickup.');
   });
 
+  it('counts the deliveries the upload put on the dispatch board, whatever their dates', () => {
+    expect(summaryLine({ deliveries: 0, upcoming: 0, onBoard: 13, pickups: 6, dispatchDate: '2026-10-18' }))
+      .toBe('13 deliveries on the dispatch board, 6 pickups.');
+    expect(summaryLine({ deliveries: 0, upcoming: 0, onBoard: 1, pickups: 1, updated: 2, dispatchDate: '2026-10-18' }))
+      .toBe('1 delivery on the dispatch board, 1 pickup, 2 updated.');
+  });
+
   it('counts the orders a later upload changed, when there are any', () => {
     expect(summaryLine({ deliveries: 16, upcoming: 3, pickups: 5, updated: 2, dispatchDate: '2026-08-14' }))
       .toBe('16 deliveries for 8/14, 3 upcoming, 5 pickups, 2 updated.');

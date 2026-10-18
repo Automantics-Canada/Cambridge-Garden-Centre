@@ -113,6 +113,12 @@ export interface BatchSummary {
   deliveries: number;
   /** Orders in this upload due after the dispatch date. */
   upcoming: number;
+  /**
+   * Deliveries in this upload, open in Spruce: what today's dispatch board
+   * lists from it, whatever date Spruce gave each one. Absent from summaries
+   * of older uploads.
+   */
+  onBoard?: number;
   /** Orders in this upload collected from the yard. */
   pickups: number;
   /**
@@ -306,6 +312,7 @@ async function summarize(
     reports: input.reports,
     deliveries,
     upcoming: orders.filter(order => order.deliveryDate !== null && order.deliveryDate > day).length,
+    onBoard: orders.filter(order => !order.isPickup && !order.flags.includes('NOT_OPEN')).length,
     pickups: orders.filter(order => order.isPickup).length,
     updated: input.updated,
     orders,

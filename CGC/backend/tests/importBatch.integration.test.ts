@@ -81,6 +81,9 @@ describe('Spruce morning import (PostgreSQL)', { skip: !disposableConfirmed }, (
 
     assert.equal(summary.alreadyImported, false);
     assert.equal(summary.deliveries, 2);
+    // Every delivery in the upload is on today's board, whatever its date.
+    assert.equal(summary.onBoard, summary.orders.filter(order => !order.isPickup).length);
+    assert.ok(summary.onBoard! > 0);
     assert.equal(summary.reports.length, 3);
 
     const first = await document('2608-700001');

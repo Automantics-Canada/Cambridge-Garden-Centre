@@ -102,13 +102,22 @@ const MISSING_EFFECT = {
 };
 
 /**
- * "16 deliveries for 8/14, 3 upcoming, 5 pickups, 2 updated." The updated
- * count — orders already imported that Spruce has changed since — is only said
- * when there are some, so the morning's first upload reads as before.
+ * "16 deliveries on the dispatch board, 5 pickups, 2 updated." Every delivery
+ * in the upload goes on today's board, whatever date Spruce gave it, so that
+ * is the count the yard needs; counting only those due on the dispatch date
+ * read "0 deliveries" over a morning whose orders were all dated earlier.
+ *
+ * The updated count — orders already imported that Spruce has changed since —
+ * is only said when there are some. A summary from before `onBoard` existed
+ * keeps its old wording.
  */
 export function summaryLine(summary) {
-  const deliveries = `${summary.deliveries} ${summary.deliveries === 1 ? 'delivery' : 'deliveries'}`;
   const pickups = `${summary.pickups} ${summary.pickups === 1 ? 'pickup' : 'pickups'}`;
   const updated = summary.updated > 0 ? `, ${summary.updated} updated` : '';
+  if (typeof summary.onBoard === 'number') {
+    const onBoard = `${summary.onBoard} ${summary.onBoard === 1 ? 'delivery' : 'deliveries'}`;
+    return `${onBoard} on the dispatch board, ${pickups}${updated}.`;
+  }
+  const deliveries = `${summary.deliveries} ${summary.deliveries === 1 ? 'delivery' : 'deliveries'}`;
   return `${deliveries} for ${shortDay(summary.dispatchDate)}, ${summary.upcoming} upcoming, ${pickups}${updated}.`;
 }
