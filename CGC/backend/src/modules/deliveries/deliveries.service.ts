@@ -5,6 +5,28 @@ import { DISPATCH_DOCUMENT_SELECT } from '../dispatch/dispatchOrderView.js';
 import { deliveryDayDate } from '../dispatch/dispatchDays.js';
 import { businessDayOf } from '../../lib/businessDay.js';
 import { saveTicketImage } from '../../services/fileStorage.js';
+import { canonicalPoNumber } from '../matching/poKey.js';
+
+/**
+ * The supplier PO a driver's ticket for this order is on, when the order is on
+ * exactly one; null when it is on none, or on several and the ticket could be
+ * for any of them.
+ *
+ * A driver photographs the ticket against the stop, so the order it belongs to
+ * is known before OCR runs. Supplier invoices are matched to tickets by PO, and
+ * a ticket whose PO OCR cannot read, or a supplier who does not print it, left
+ * the load invisible to the invoice it backs. OCR still wins: a PO read off the
+ * paper replaces this one.
+ */
+export function supplierPoForTicket(lines: Array<{ poNumber: string | null }>): string | null {
+  const pos = new Set<string>();
+  for (const line of lines) {
+    const po = line.poNumber?.trim();
+    // Spelled the way Spruce prints it, so two spellings are one PO.
+    if (po) pos.add(canonicalPoNumber(po) ?? po);
+  }
+  return pos.size === 1 ? [...pos][0]! : null;
+}
 
 /**
  * The delivery list/detail shape rendered by operations screens, and what
@@ -274,9 +296,14 @@ export const DeliveriesService = {
     if (type === 'ticket') {
       const delivery = await prisma.delivery.findUnique({
         where: { id },
-        include: { order: true }
+        include: {
+          order: true,
+          document: { select: { lines: { select: { poNumber: true } } } },
+        }
       });
       if (!delivery) throw new Error('Delivery not found');
+      // A stop made before orders were dispatched whole has only its line.
+      const poNumber = supplierPoForTicket(delivery.document?.lines ?? [delivery.order]);
 
       // Driver-uploaded POD tickets must use the same path as email, WhatsApp,
       // and dashboard uploads so they also receive a best-effort thumbnail.
@@ -295,6 +322,7 @@ export const DeliveriesService = {
           receivedAt: new Date(),
           driverId: delivery.driverId,
           linkedOrderId: delivery.orderId,
+          poNumber,
         }
       });
 
