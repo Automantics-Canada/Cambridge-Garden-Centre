@@ -171,7 +171,7 @@ describe("awaiting supplier: the office badge, and the driver's pickup (PostgreS
     const pooled = board.unassignedOrders.find(order => order.id === pooledId);
     const plain = board.unassignedOrders.find(order => order.id === plainId);
 
-    assert.deepEqual(pooled?.awaitingSupplier, [{ supplierName: SUPPLIER, poNumber: PO }], 'one entry for a PO on two lines');
+    assert.deepEqual(pooled?.awaitingSupplier, [{ supplierName: SUPPLIER, location: 'Example Yard', poNumber: PO }], 'one entry for a PO on two lines');
     assert.deepEqual(plain?.awaitingSupplier, []);
 
     // The supplier is named, never the supplier record nor any money.
@@ -186,8 +186,8 @@ describe("awaiting supplier: the office badge, and the driver's pickup (PostgreS
 
     assert.equal(order?.id, onRunId);
     assert.deepEqual(order?.awaitingSupplier, [
-      { supplierName: SUPPLIER, poNumber: PO },
-      { supplierName: UNMAPPED_VENDOR, poNumber: SECOND_PO },
+      { supplierName: SUPPLIER, location: 'Example Yard', poNumber: PO },
+      { supplierName: UNMAPPED_VENDOR, location: 'Example Yard', poNumber: SECOND_PO },
     ]);
   });
 
@@ -195,13 +195,13 @@ describe("awaiting supplier: the office badge, and the driver's pickup (PostgreS
     const undated = await DispatchService.getUndatedOrders();
     assert.deepEqual(
       undated.find(order => order.id === undatedId)?.awaitingSupplier,
-      [{ supplierName: SUPPLIER, poNumber: PO }]
+      [{ supplierName: SUPPLIER, location: 'Example Yard', poNumber: PO }]
     );
 
     const editing = await getOrderForEditing('9900-000102', TODAY);
     assert.deepEqual(editing.awaitingSupplier, [
-      { supplierName: SUPPLIER, poNumber: PO },
-      { supplierName: UNMAPPED_VENDOR, poNumber: SECOND_PO },
+      { supplierName: SUPPLIER, location: 'Example Yard', poNumber: PO },
+      { supplierName: UNMAPPED_VENDOR, location: 'Example Yard', poNumber: SECOND_PO },
     ]);
     assert.deepEqual((await getOrderForEditing(plainId, TODAY)).awaitingSupplier, []);
   });
@@ -210,7 +210,7 @@ describe("awaiting supplier: the office badge, and the driver's pickup (PostgreS
     const board = await get(`/api/dispatch?date=${LATER}`, adminToken) as { unassignedOrders: Array<{ id: string; awaitingSupplier?: unknown }> };
     assert.deepEqual(
       board.unassignedOrders.find(order => order.id === pooledId)?.awaitingSupplier,
-      [{ supplierName: SUPPLIER, poNumber: PO }]
+      [{ supplierName: SUPPLIER, location: 'Example Yard', poNumber: PO }]
     );
     const editor = await get(`/api/orders/documents/${onRunId}`, adminToken) as { awaitingSupplier?: unknown[] };
     assert.equal(editor.awaitingSupplier?.length, 2);
@@ -227,8 +227,8 @@ describe("awaiting supplier: the office badge, and the driver's pickup (PostgreS
     // Each PO once, with who to collect from: the supplier where the vendor is
     // mapped, Spruce's vendor code where it is not, as on the office's badge.
     assert.deepEqual(stop[0]?.pickupFrom, [
-      { name: SUPPLIER, address: null, po: PO },
-      { name: UNMAPPED_VENDOR, address: null, po: SECOND_PO },
+      { name: SUPPLIER, location: 'Example Yard', address: null, po: PO },
+      { name: UNMAPPED_VENDOR, location: 'Example Yard', address: null, po: SECOND_PO },
     ]);
 
     // Outside `pickupFrom`, nothing names them, and no office key is sent.

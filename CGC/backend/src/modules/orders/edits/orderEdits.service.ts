@@ -57,6 +57,9 @@ async function recomputeDerived(db: Db, documentId: string): Promise<void> {
     select: {
       customerName: true,
       deliveryDate: true,
+      orderDate: true,
+      phone: true,
+      sourceReports: true,
       shippingAddress: true,
       deliveryInstructions: true,
       flags: true,
@@ -70,6 +73,9 @@ async function recomputeDerived(db: Db, documentId: string): Promise<void> {
     shippingAddress: document.shippingAddress,
     deliveryInstructions: document.deliveryInstructions,
     lines: document.lines.map(line => ({ itemCode: line.spruceItemNumber, description: line.product, poNumber: line.poNumber })),
+    phone: document.phone,
+    orderDate: document.orderDate,
+    inItemTracking: document.sourceReports.includes('ITEM_TRACKING'),
   };
   const isPickup = document.flags.includes('NOT_OPEN') ? false : isPickupOrder(state);
   const fresh = stateFlags(state, isPickup);

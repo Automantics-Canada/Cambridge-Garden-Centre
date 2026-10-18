@@ -17,7 +17,10 @@ export const slotFor = (type) => REPORT_SLOTS.find((slot) => slot.type === type)
 /** Every flag the import can raise, in words a dispatcher uses. */
 export const ORDER_FLAG_INFO = {
   NO_ADDRESS: { label: 'No address', tone: 'bad' },
+  NOT_IN_ITEM_TRACKING: { label: 'No address: not in Item Tracking export', tone: 'bad' },
   CHECK_ADDRESS: { label: 'Check address', tone: 'warn' },
+  NO_PHONE: { label: 'No phone', tone: 'warn' },
+  DELIVERY_BEFORE_ENTRY: { label: 'Delivery date before order date', tone: 'warn' },
   DATE_MISMATCH: { label: 'Date mismatch', tone: 'warn' },
   TOTAL_MISMATCH: { label: 'Total mismatch', tone: 'warn' },
   EXTRACTION_CHECK_FAILED: { label: 'Prices need checking', tone: 'warn' },

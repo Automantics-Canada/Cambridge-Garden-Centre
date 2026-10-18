@@ -111,7 +111,13 @@ export function mergeOrderFacts(rows: ReportRows): OrderPatch {
  */
 export const ORDER_FLAGS = [
   'NO_ADDRESS',
+  // No address because the order is missing from the Item Tracking report,
+  // the only one that prints addresses: the export's range is the fix.
+  'NOT_IN_ITEM_TRACKING',
   'CHECK_ADDRESS',
+  'NO_PHONE',
+  // Spruce dates the delivery before the order was entered: a typing slip.
+  'DELIVERY_BEFORE_ENTRY',
   'DATE_MISMATCH',
   'TOTAL_MISMATCH',
   'AWAITING_SUPPLIER',
@@ -165,6 +171,11 @@ export interface OrderState {
   shippingAddress: string | null;
   deliveryInstructions: string | null;
   lines: LineState[];
+  /** Left out where the caller does not know it, and then never flagged. */
+  phone?: string | null;
+  orderDate?: Date | null;
+  /** Whether any upload has carried the order in the Item Tracking report. */
+  inItemTracking?: boolean;
 }
 
 /**
@@ -197,8 +208,11 @@ export function stateFlags(state: OrderState, isPickup: boolean): OrderFlag[] {
   if (!state.deliveryDate || isPickup) return flags;
 
   const address = normalizeAddress(state.shippingAddress);
-  if (!address) flags.push('NO_ADDRESS');
+  if (!address) flags.push(state.inItemTracking === false ? 'NOT_IN_ITEM_TRACKING' : 'NO_ADDRESS');
   else if (looksIncomplete(address)) flags.push('CHECK_ADDRESS');
+
+  if (state.phone !== undefined && !state.phone?.trim()) flags.push('NO_PHONE');
+  if (state.orderDate && state.deliveryDate < state.orderDate) flags.push('DELIVERY_BEFORE_ENTRY');
 
   if (TRUCK_LIMITS.test(state.deliveryInstructions ?? '')) flags.push('SMALL_TRUCK');
   if (MEET_DRIVER.test(state.deliveryInstructions ?? '')) flags.push('CUSTOMER_ON_SITE');
@@ -210,7 +224,10 @@ export function stateFlags(state: OrderState, isPickup: boolean): OrderFlag[] {
 export const STATE_FLAGS: readonly OrderFlag[] = [
   'AWAITING_SUPPLIER',
   'NO_ADDRESS',
+  'NOT_IN_ITEM_TRACKING',
   'CHECK_ADDRESS',
+  'NO_PHONE',
+  'DELIVERY_BEFORE_ENTRY',
   'SMALL_TRUCK',
   'CUSTOMER_ON_SITE',
 ];

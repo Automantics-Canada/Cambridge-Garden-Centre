@@ -49,7 +49,10 @@ export const SLOT_LABELS: Record<SpruceReportType, string> = {
 /** Flags that mean the order needs a person before it can go out as it is. */
 export const ATTENTION_FLAGS: readonly OrderFlag[] = [
   'NO_ADDRESS',
+  'NOT_IN_ITEM_TRACKING',
   'CHECK_ADDRESS',
+  'NO_PHONE',
+  'DELIVERY_BEFORE_ENTRY',
   'DATE_MISMATCH',
   'TOTAL_MISMATCH',
   'EXTRACTION_CHECK_FAILED',
@@ -501,6 +504,8 @@ async function mergeBatch(
         flags: true,
         sourceReports: true,
         deliveryDate: true,
+        orderDate: true,
+        phone: true,
         shippingAddress: true,
         deliveryInstructions: true,
         lines: { select: { spruceItemNumber: true, product: true, poNumber: true } },
@@ -523,6 +528,9 @@ async function mergeBatch(
       shippingAddress: patch.shippingAddress ?? stored.shippingAddress,
       deliveryInstructions: patch.deliveryInstructions ?? stored.deliveryInstructions,
       lines,
+      phone: patch.phone ?? stored.phone,
+      orderDate: patch.orderDate ?? stored.orderDate,
+      inItemTracking: stored.sourceReports.includes('ITEM_TRACKING') || (rows.ITEM_TRACKING?.length ?? 0) > 0,
     };
 
     const decided = batchFlags(rows, context);

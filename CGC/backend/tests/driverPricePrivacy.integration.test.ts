@@ -28,7 +28,7 @@ const MONEY_KEYS = [
 ];
 
 /** The one supplier detail a driver is given: where to load, and the PO to quote. */
-const PICKUP_KEYS = ['address', 'name', 'po'];
+const PICKUP_KEYS = ['address', 'location', 'name', 'po'];
 
 function moneyKeysIn(value: unknown, path = '$'): string[] {
   if (Array.isArray(value)) return value.flatMap((item, index) => moneyKeysIn(item, `${path}[${index}]`));
@@ -126,14 +126,23 @@ describe('driver responses carry no prices (PostgreSQL)', { skip: !disposableCon
     const pickupFrom = current.data[0]!.pickupFrom;
     // The vendor code resolves to its supplier, as on the office's badge.
     assert.deepEqual(pickupFrom, [
-      { name: 'Example Quarry', address: '1 Example Quarry Rd, Brantford', po: '9900-100777' },
+      { name: 'Example Quarry', location: 'Example Yard', address: null, po: '9900-100777' },
     ]);
     for (const pickup of pickupFrom) assert.deepEqual(Object.keys(pickup).sort(), PICKUP_KEYS);
     // Nothing that names a price, nor the line's own vendor records.
     assert.deepEqual(moneyKeysIn(current), []);
-    for (const text of ['EXAMPLEV01', 'Example Yard']) {
-      assert.equal(JSON.stringify(current).includes(text), false, text);
-    }
+    assert.equal(JSON.stringify(current).includes('EXAMPLEV01'), false, 'the vendor code');
+
+    // The address on file is sent only when it is that yard's: one supplier
+    // with several yards has one address, and the wrong yard is worse than none.
+    await prisma.supplier.updateMany({
+      where: { name: 'Example Quarry' },
+      data: { address: '9 Quarry Line, Example Yard' },
+    });
+    const atYard = await DeliveriesService.getCurrentStop(driverId);
+    assert.deepEqual(atYard.data[0]!.pickupFrom, [
+      { name: 'Example Quarry', location: 'Example Yard', address: '9 Quarry Line, Example Yard', po: '9900-100777' },
+    ]);
   });
 
   it('keeps prices out of the answer to a driver\'s status update', async () => {

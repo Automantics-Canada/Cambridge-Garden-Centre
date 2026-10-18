@@ -65,20 +65,21 @@ describe('correcting an order (PostgreSQL)', { skip: !disposableConfirmed }, () 
     // No item tracking report: nothing says where the orders go.
     await importDay('morning', ['ORDER_SUMMARY', 'DELIVERY']);
     const before = await order('2608-700001');
-    assert.ok(before.flags.includes('NO_ADDRESS'));
+    // Missing from the Item Tracking report, which is the one that has addresses.
+    assert.ok(before.flags.includes('NOT_IN_ITEM_TRACKING'));
 
     await applyOrderEdits(before.id, parseEditRequest({ fields: { shippingAddress: '14 Mill Race Rd, Cambridge' } }), userId);
 
     let after = await order('2608-700001');
     assert.equal(after.shippingAddress, '14 Mill Race Rd, Cambridge');
     assert.equal(after.addressNormalized, '14 Mill Race Rd, Cambridge');
-    assert.ok(!after.flags.includes('NO_ADDRESS'), 'a filled address clears the flag');
+    assert.ok(!after.flags.includes('NOT_IN_ITEM_TRACKING'), 'a filled address clears the flag');
     assert.equal(await prisma.auditLog.count({ where: { actionType: 'ORDER_EDITED' } }), 1);
 
     await importDay('noon', ['ORDER_SUMMARY', 'DELIVERY']);
     after = await order('2608-700001');
     assert.equal(after.shippingAddress, '14 Mill Race Rd, Cambridge', 'the re-upload did not undo it');
-    assert.ok(!after.flags.includes('NO_ADDRESS'));
+    assert.ok(!after.flags.includes('NOT_IN_ITEM_TRACKING'));
     assert.ok(!after.flags.includes('SPRUCE_VALUE_CHANGED'), 'Spruce still says nothing, so nothing changed');
   });
 

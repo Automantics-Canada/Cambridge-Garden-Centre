@@ -61,7 +61,15 @@ export interface AwaitingSupplier {
    * record, which the board's own checks keep out.
    */
   supplierName: string | null;
+  /** The supplier's yard the report names, "Georgetown"; null when it names none. */
+  location: string | null;
   poNumber: string;
+}
+
+/** One unit's total across an order's products: "2.5 CY". */
+export interface QuantityTotal {
+  quantity: number;
+  unit: string | null;
 }
 
 export interface DispatchOrderView {
@@ -72,11 +80,24 @@ export interface DispatchOrderView {
   /** The document number, under the name the board already reads. */
   spruceOrderId: string;
   customerName: string;
-  /** First product, and how many more: "Garden Soil Bulk +2 more". */
+  /**
+   * First product, and how many other products: "Garden Soil Bulk +2 more".
+   * Repeated loads of one item are one product.
+   */
   product: string;
-  /** Total of the products where they share a unit, else the first one's. */
+  /** The first unit's total; `quantities` has every unit's. */
   quantity: number | null;
   unit: string | null;
+  /**
+   * Every unit's total, half yards counted as half a yard: one entry where
+   * the products share a unit, several where they do not ("2 CY + 4 EA").
+   */
+  quantities: QuantityTotal[];
+  /**
+   * Where a pickup is collected when it is not CGC's yard: "Quikrete", read
+   * from Spruce's "Pickup direct ... @ Quikrete" comment. Null for the yard.
+   */
+  collectAt: string | null;
   createdAt: Date;
   deliveryDate: Date | null;
   address: string | null;
@@ -111,18 +132,51 @@ const toNumber = (value: Prisma.Decimal | number | null): number | null =>
 const lineClassOf = (line: DispatchDocument['lines'][number]) =>
   line.lineClass ?? classifyLine(line.spruceItemNumber, line.product);
 
+/** Spruce's half cubic yard. */
+const HALF_YARD = /^hcy$/i;
+
+/**
+ * Each unit's total across `lines`, in the order the units first appear.
+ * A half-yard line adds half its count to the yards: the yard's "1 HCY" is
+ * half a cubic yard of the same material, so 1 CY and 1 HCY are 1.5 CY.
+ */
+export function quantityTotals(lines: Array<{ quantity: number | null; unit: string | null }>): QuantityTotal[] {
+  const totals = new Map<string, QuantityTotal>();
+  for (const line of lines) {
+    if (line.quantity === null) continue;
+    const halfYard = line.unit !== null && HALF_YARD.test(line.unit.trim());
+    const unit = halfYard ? 'CY' : line.unit;
+    const key = (unit ?? '').toUpperCase();
+    const total = totals.get(key) ?? { quantity: 0, unit };
+    total.quantity = Number((total.quantity + (halfYard ? line.quantity / 2 : line.quantity)).toFixed(4));
+    totals.set(key, total);
+  }
+  return [...totals.values()];
+}
+
+/** Spruce's "**Pickup direct pricing @ Quikrete.**": collected there, not at the yard. */
+const PICKUP_DIRECT = /pick\s*-?\s*up\s+direct\b[^@]*@\s*([^*\n]+?)[\s.*]*$/i;
+
+/** Where the order's comments say it is collected, when that is not the yard. */
+export function collectAtOf(lines: Array<{ product: string; lineClass: string }>): string | null {
+  for (const line of lines) {
+    if (line.lineClass !== 'COMMENT') continue;
+    const place = PICKUP_DIRECT.exec(line.product)?.[1]?.trim();
+    if (place) return place;
+  }
+  return null;
+}
+
 export function toDispatchOrder(document: DispatchDocument): DispatchOrderView {
   const products = document.lines.filter(line => lineClassOf(line) === 'PRODUCT');
   const skids = document.lines
     .filter(line => lineClassOf(line) === 'DEPOSIT')
     .reduce((sum, line) => sum + (toNumber(line.quantity) ?? 0), 0);
 
-  const units = new Set(products.map(line => line.unit ?? ''));
+  const quantities = quantityTotals(products.map(line => ({ quantity: toNumber(line.quantity), unit: line.unit })));
   const first = products[0];
-  const sharedUnit = units.size === 1 && first?.unit ? first.unit : null;
-  const quantity = sharedUnit
-    ? products.reduce((sum, line) => sum + (toNumber(line.quantity) ?? 0), 0)
-    : first ? toNumber(first.quantity) : null;
+  // Six loads of one item on six lines are one product, not six.
+  const distinct = new Set(products.map(line => (line.spruceItemNumber ?? line.product).trim().toUpperCase())).size;
 
   return {
     id: document.id,
@@ -130,10 +184,12 @@ export function toDispatchOrder(document: DispatchDocument): DispatchOrderView {
     spruceOrderId: document.documentNumber,
     customerName: document.customerName,
     product: first
-      ? products.length > 1 ? `${first.product} +${products.length - 1} more` : first.product
+      ? distinct > 1 ? `${first.product} +${distinct - 1} more` : first.product
       : 'No products listed',
-    quantity,
-    unit: sharedUnit ?? first?.unit ?? null,
+    quantity: quantities[0]?.quantity ?? null,
+    unit: quantities[0]?.unit ?? first?.unit ?? null,
+    quantities,
+    collectAt: collectAtOf(document.lines.map(line => ({ product: line.product, lineClass: lineClassOf(line) }))),
     createdAt: document.createdAt,
     deliveryDate: document.deliveryDate,
     address: document.addressNormalized ?? document.shippingAddress,
@@ -214,6 +270,8 @@ export async function withUpdatedFields<T extends BoardLike | unknown[]>(
 export interface PoLine {
   poNumber: string | null;
   vendorCode: string | null;
+  /** The supplier's yard, as the Item Tracking report names it. */
+  vendorLocation?: string | null;
   /** The name of the supplier the line is linked to, or that its vendor code maps to. */
   supplierName: string | null;
 }
@@ -231,10 +289,11 @@ export function awaitingSupplierOf(lines: PoLine[]): AwaitingSupplier[] {
     const poNumber = line.poNumber?.trim();
     if (!poNumber) continue;
     const supplierName = line.supplierName?.trim() || line.vendorCode?.trim() || null;
-    const key = JSON.stringify([supplierName, poNumber]);
+    const location = line.vendorLocation?.trim() || null;
+    const key = JSON.stringify([supplierName, location, poNumber]);
     if (seen.has(key)) continue;
     seen.add(key);
-    result.push({ supplierName, poNumber });
+    result.push({ supplierName, location, poNumber });
   }
   return result;
 }
@@ -260,7 +319,7 @@ export async function awaitingSupplierByOrder(
 
   const lines = await db.order.findMany({
     where: { documentId: { in: ids }, poNumber: { not: null } },
-    select: { documentId: true, poNumber: true, vendorCode: true, supplier: { select: { name: true } } },
+    select: { documentId: true, poNumber: true, vendorCode: true, vendorLocation: true, supplier: { select: { name: true } } },
     orderBy: [{ lineNumber: 'asc' }, { id: 'asc' }],
   });
 
@@ -283,6 +342,7 @@ export async function awaitingSupplierByOrder(
         .map(line => ({
           poNumber: line.poNumber,
           vendorCode: line.vendorCode,
+          vendorLocation: line.vendorLocation,
           supplierName: line.supplier?.name ?? (line.vendorCode ? mapped.get(vendorKey(line.vendorCode)) ?? null : null),
         }))
     ));
@@ -298,7 +358,14 @@ export async function awaitingSupplierByOrder(
 export interface PickupFrom {
   /** The supplier's name, or Spruce's vendor code where none is mapped. */
   name: string | null;
-  /** The supplier's address where one is on file. */
+  /** Which of the supplier's yards, as the Item Tracking report names it: "Georgetown". */
+  location: string | null;
+  /**
+   * The supplier's address on file, where it is that yard's. Left out when
+   * the report names a yard the address does not mention: a supplier with
+   * several yards has one address on file, and sending a driver to the wrong
+   * yard is worse than naming the right one without a street.
+   */
   address: string | null;
   po: string;
 }
@@ -324,7 +391,7 @@ export async function pickupFromOf(
       ...(stop.documentId ? { documentId: stop.documentId } : { id: stop.orderId }),
       poNumber: { not: null },
     },
-    select: { poNumber: true, vendorCode: true, supplier: { select: { name: true, address: true } } },
+    select: { poNumber: true, vendorCode: true, vendorLocation: true, supplier: { select: { name: true, address: true } } },
     orderBy: [{ lineNumber: 'asc' }, { id: 'asc' }],
   });
 
@@ -347,10 +414,13 @@ export async function pickupFromOf(
     if (!po) continue;
     const known = line.supplier ?? (line.vendorCode ? mapped.get(vendorKey(line.vendorCode)) : undefined);
     const name = known?.name?.trim() || line.vendorCode?.trim() || null;
-    const key = JSON.stringify([name, po]);
+    const location = line.vendorLocation?.trim() || null;
+    const onFile = known?.address?.trim() || null;
+    const address = onFile && (!location || onFile.toLowerCase().includes(location.toLowerCase())) ? onFile : null;
+    const key = JSON.stringify([name, location, po]);
     if (seen.has(key)) continue;
     seen.add(key);
-    result.push({ name, address: known?.address?.trim() || null, po });
+    result.push({ name, location, address, po });
   }
   return result;
 }

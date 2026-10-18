@@ -299,6 +299,6 @@ describe('Spruce morning import (PostgreSQL)', { skip: !disposableConfirmed }, (
 
     assert.ok(summary.warnings.some(warning => /No Item Tracking Report/.test(warning)));
     // Nothing reported where it goes: both deliveries need an address.
-    assert.ok((await document('2608-700001')).flags.includes('NO_ADDRESS'));
+    assert.ok((await document('2608-700001')).flags.includes('NOT_IN_ITEM_TRACKING'), 'no address, because the Item Tracking report was not uploaded');
   });
 });

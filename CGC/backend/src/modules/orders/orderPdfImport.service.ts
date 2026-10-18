@@ -66,8 +66,15 @@ const REPORT_UPDATES_CUSTOMER: Record<SpruceReportType, boolean> = {
  * what the unit is and are believed over this.
  */
 export function inferUnitFromDescription(description: string): string {
-  const tokens = description.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+  // A measure written onto its size, "YrdBlk 1CY" or "PitBlk 1MT", reads as
+  // the measure alone; inside a word, as in "Fancy", it still does not.
+  const tokens = description
+    .toLowerCase()
+    .split(/[^a-z0-9.]+/)
+    .filter(Boolean)
+    .map(t => t.replace(/^\d+(?:\.\d+)?(?=(?:hcy|cy|mt|yds?)$)/, ''));
 
+  if (tokens.some(t => t === 'hcy')) return 'HCY';
   if (tokens.some(t => t === 'mt' || t === 'tonne' || t === 'tonnes')) return 'MT';
   if (tokens.some(t => t === 'cy' || t === 'yd' || t === 'yds')) return 'CY';
   if (tokens.some(t => t === 'skid' || t === 'skids' || t === 'pallet' || t === 'pallets')) return 'Skid';
