@@ -24,6 +24,7 @@ import {
   deliveryStatusView,
   emptyTitle,
   invoiceSummary,
+  pastDueWithoutDriver,
   uploadRange,
 } from '../../lib/orderList';
 import SpruceImportPanel from '../../components/orders/SpruceImportPanel';
@@ -401,7 +402,8 @@ function OrderRow({ order, onEdit }) {
   const status = deliveryStatusView(order);
   const invoice = invoiceSummary(order);
   const type = deliveryTypeLabel(order.deliveryType);
-  const needsLook = badges.some(({ tone }) => tone === 'bad' || tone === 'warn');
+  const pastDue = pastDueWithoutDriver(order, businessDayOf());
+  const needsLook = pastDue || badges.some(({ tone }) => tone === 'bad' || tone === 'warn');
 
   return (
     <StaggerItem
@@ -448,10 +450,11 @@ function OrderRow({ order, onEdit }) {
       </td>
 
       <td className="px-3 py-4 text-sm align-top min-w-[160px]">
-        {badges.length === 0 && !order.edited ? (
+        {badges.length === 0 && !order.edited && !pastDue ? (
           <span className="text-[12.5px] text-muted">Nothing missing</span>
         ) : (
           <div className="flex flex-wrap gap-1.5">
+            {pastDue && <Badge tone="bad">Past due, no driver</Badge>}
             {order.edited && <Badge tone="neutral">Edited</Badge>}
             {badges.map(({ flag, label, tone }) => (
               <Badge key={flag} tone={tone}>{label}</Badge>

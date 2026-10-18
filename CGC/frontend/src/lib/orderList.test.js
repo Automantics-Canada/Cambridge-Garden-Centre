@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { deliveryStatusView, emptyTitle, invoiceSummary, uploadRange } from './orderList';
+import { deliveryStatusView, emptyTitle, invoiceSummary, pastDueWithoutDriver, uploadRange } from './orderList';
 
 const days = { today: '2026-10-05', yesterday: '2026-10-04' };
 
@@ -57,5 +57,36 @@ describe('invoiceSummary', () => {
     expect(invoiceSummary({ invoicedLines: 3, lineCount: 3 }).label).toBe('Invoiced');
     expect(invoiceSummary({ invoicedLines: 1, lineCount: 3 }).label).toBe('1 of 3 invoiced');
     expect(invoiceSummary({ invoicedLines: 0, lineCount: 3 }).label).toBe('Not invoiced');
+  });
+});
+
+describe('past due with no driver', () => {
+  const TODAY = '2026-10-18';
+  const delivery = (overrides = {}) => ({
+    isPickup: false,
+    deliveryDate: '2026-10-13T00:00:00.000Z',
+    delivery: null,
+    flags: [],
+    ...overrides,
+  });
+
+  it('flags a delivery dated before today that nobody has been given', () => {
+    // 2608-711248: due 13/10, uploaded 18/10, still "No driver yet".
+    expect(pastDueWithoutDriver(delivery(), TODAY)).toBe(true);
+    // Given a driver and taken back off: still waiting.
+    expect(pastDueWithoutDriver(delivery({ delivery: { status: 'PLACED', driverName: null } }), TODAY)).toBe(true);
+  });
+
+  it('leaves alone what is due today or later, has a driver, or is finished', () => {
+    expect(pastDueWithoutDriver(delivery({ deliveryDate: '2026-10-18T00:00:00.000Z' }), TODAY)).toBe(false);
+    expect(pastDueWithoutDriver(delivery({ deliveryDate: '2026-10-20T00:00:00.000Z' }), TODAY)).toBe(false);
+    expect(pastDueWithoutDriver(delivery({ delivery: { status: 'PLACED', driverName: 'Jane Doe' } }), TODAY)).toBe(false);
+    expect(pastDueWithoutDriver(delivery({ delivery: { status: 'DELIVERED', driverName: null } }), TODAY)).toBe(false);
+  });
+
+  it('never flags pickups, undated orders, or orders Spruce has closed', () => {
+    expect(pastDueWithoutDriver(delivery({ isPickup: true }), TODAY)).toBe(false);
+    expect(pastDueWithoutDriver(delivery({ deliveryDate: null }), TODAY)).toBe(false);
+    expect(pastDueWithoutDriver(delivery({ flags: ['NOT_OPEN'] }), TODAY)).toBe(false);
   });
 });
