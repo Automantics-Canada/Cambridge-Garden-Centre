@@ -1,7 +1,7 @@
 import { prisma } from '../../db/prisma.js';
 import { DeliveryStatus, type Prisma } from '@prisma/client';
 import supabaseStorage from '../../services/supabaseStorage.js';
-import { DISPATCH_DOCUMENT_SELECT } from '../dispatch/dispatchOrderView.js';
+import { DISPATCH_DOCUMENT_SELECT, pickupFromOf } from '../dispatch/dispatchOrderView.js';
 import { deliveryDayDate } from '../dispatch/dispatchDays.js';
 import { businessDayOf } from '../../lib/businessDay.js';
 import { saveTicketImage } from '../../services/fileStorage.js';
@@ -161,6 +161,10 @@ export const DeliveriesService = {
    * driver's business. Only the stop in hand leaves the server. Stops due on a
    * later day neither show nor count until their day.
    *
+   * An order bought in from a supplier also says where to load it and the PO
+   * to quote there (`pickupFrom`); the driver collects the supplier's ticket
+   * at that counter. Empty for stock from CGC's own yard.
+   *
    * @param today 'YYYY-MM-DD' in the yard's timezone; for tests.
    */
   async getCurrentStop(driverId: string, today: string = businessDayOf()) {
@@ -178,8 +182,12 @@ export const DeliveriesService = {
       ? await prisma.delivery.findUnique({ where: { id }, select: DELIVERY_DRIVER_RESPONSE_SELECT })
       : null;
 
+    const pickupFrom = current
+      ? await pickupFromOf(prisma, { documentId: current.document?.id ?? null, orderId: current.orderId })
+      : [];
+
     return {
-      data: current ? [current] : [],
+      data: current ? [{ ...current, pickupFrom }] : [],
       pagination: { page: 1, limit: 1, totalCount: remaining, totalPages: 1 },
     };
   },
