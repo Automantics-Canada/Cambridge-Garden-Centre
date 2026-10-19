@@ -27,14 +27,19 @@ const pickupsOf = (delivery) =>
     po,
   }));
 
+/** Spaces and case tidied, for comparing descriptions. */
+const tidy = (text) => String(text ?? '').replace(/\s+/g, ' ').trim().toUpperCase();
+
 /**
  * What goes on the truck, with repeated loads of one item in one line:
- * six 40 MT lines of the same aggregate read "240 MT, 6 loads".
+ * six 40 MT lines of the same aggregate read "240 MT, 6 loads". Lines are the
+ * same item only when the code AND the description match: a catch-all code
+ * such as MISC carries unrelated products, which must stay on lines of their own.
  */
 function truckLines(lines) {
   const grouped = new Map();
   for (const line of lines.filter(onTheTruck)) {
-    const key = `${(line.spruceItemNumber || line.product || '').toUpperCase()}|${line.unit ?? ''}`;
+    const key = `${tidy(line.spruceItemNumber)}|${tidy(line.product)}|${line.unit ?? ''}`;
     const seen = grouped.get(key);
     if (seen) {
       seen.quantity = Number((Number(seen.quantity ?? 0) + Number(line.quantity ?? 0)).toFixed(4));

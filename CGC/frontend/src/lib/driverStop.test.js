@@ -53,6 +53,26 @@ describe('stopView', () => {
     ]);
   });
 
+  it('keeps two products under one catch-all code apart (2608-712621)', () => {
+    const view = stopView({
+      order: {},
+      document: {
+        documentNumber: '2608-712621',
+        customerName: 'TMC MASONRY',
+        lines: [
+          { spruceItemNumber: 'MISC', product: 'Quikrete Type S Bulk Bag 1362 KG', quantity: '4', unit: 'EA', lineClass: 'PRODUCT' },
+          { spruceItemNumber: 'MSKID', product: 'Miscellaneous Skid Deposit', quantity: '4', unit: 'EA', lineClass: 'DEPOSIT' },
+          { spruceItemNumber: 'MISC', product: 'Quikrete Spec Mix Corefill Grout Fine 1362 KG Bags', quantity: '6', unit: 'EA', lineClass: 'PRODUCT' },
+          { spruceItemNumber: 'MISC', product: 'Energy Surcharge', quantity: '10', unit: 'EA', lineClass: 'FEE' },
+        ],
+      },
+    });
+    expect(view.lines).toEqual([
+      { product: 'Quikrete Type S Bulk Bag 1362 KG', quantity: '4', unit: 'EA' },
+      { product: 'Quikrete Spec Mix Corefill Grout Fine 1362 KG Bags', quantity: '6', unit: 'EA' },
+    ]);
+  });
+
   it('puts repeated loads of one item on one line, with how many loads', () => {
     const load = { spruceItemNumber: 'AGG01', product: 'Agg "B" Type 1 PitBlk (MT)', quantity: '40', unit: 'MT', lineClass: 'PRODUCT' };
     const view = stopView({

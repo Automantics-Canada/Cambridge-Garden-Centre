@@ -10,6 +10,7 @@ import {
   awaitingSupplierOf,
   collectAtOf,
   quantityTotals,
+  sameProductKey,
   toDispatchOrder,
   type DispatchDocument,
 } from '../src/modules/dispatch/dispatchOrderView.js';
@@ -114,6 +115,33 @@ describe("QA bug 5: the supplier's yard", () => {
       ]),
       [{ supplierName: 'Unilock Ltd - Ayr', location: 'Georgetown', poNumber: '2608-355356' }]
     );
+  });
+});
+
+describe('QA follow-up: a catch-all code is not one product', () => {
+  it('2608-712621: two MISC products stay two, and the MISC fee, skids and comment stay out', () => {
+    // The order's six lines, as the Customer Order Summary prints them.
+    const view = toDispatchOrder(order([
+      { spruceItemNumber: 'COMMENT', product: '**Pickup direct pricing @ Quikrete.**', quantity: new Prisma.Decimal(1), unit: null },
+      { spruceItemNumber: 'MISC', product: 'Quikrete Type S Bulk Bag 1362 KG', quantity: new Prisma.Decimal(4), unit: 'EA' },
+      { spruceItemNumber: 'MSKID', product: 'Miscellaneous Skid Deposit ($35 refundable upon return in good condition)', quantity: new Prisma.Decimal(4), unit: 'EA' },
+      { spruceItemNumber: 'MISC', product: 'Quikrete Spec Mix Corefill Grout Fine 1362 KG Bags', quantity: new Prisma.Decimal(6), unit: 'EA' },
+      { spruceItemNumber: 'MSKID', product: 'Miscellaneous Skid Deposit ($35 refundable upon return in good condition)', quantity: new Prisma.Decimal(6), unit: 'EA' },
+      { spruceItemNumber: 'MISC', product: 'Energy Surcharge', quantity: new Prisma.Decimal(10), unit: 'EA' },
+    ]));
+    assert.equal(view.product, 'Quikrete Type S Bulk Bag 1362 KG +1 more');
+    assert.deepEqual(view.quantities, [{ quantity: 10, unit: 'EA' }], '4 Type S + 6 Grout; the surcharge is a fee');
+    assert.deepEqual(view.lines.map(line => `${line.quantity} ${line.product}`), [
+      '4 Quikrete Type S Bulk Bag 1362 KG',
+      '6 Quikrete Spec Mix Corefill Grout Fine 1362 KG Bags',
+    ]);
+  });
+
+  it('is the same product only when code and description both match, ignoring case and spacing', () => {
+    assert.equal(sameProductKey({ spruceItemNumber: 'AGG01', product: 'Agg "B" Type 1 PitBlk (MT)' }),
+      sameProductKey({ spruceItemNumber: 'agg01', product: '  Agg  "B" Type 1\nPitBlk (MT) ' }));
+    assert.notEqual(sameProductKey({ spruceItemNumber: 'MISC', product: 'Quikrete Type S Bulk Bag 1362 KG' }),
+      sameProductKey({ spruceItemNumber: 'MISC', product: 'Quikrete Spec Mix Corefill Grout Fine 1362 KG Bags' }));
   });
 });
 

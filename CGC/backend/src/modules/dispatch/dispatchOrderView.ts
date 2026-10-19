@@ -167,6 +167,18 @@ export function collectAtOf(lines: Array<{ product: string; lineClass: string }>
   return null;
 }
 
+/**
+ * What makes two lines the same product: the item code AND the description,
+ * ignoring case and spacing. Never the code alone: catch-all codes such as
+ * MISC carry unrelated items (712621 has Quikrete Type S and Corefill Grout,
+ * both MISC), so only the description tells them apart. Six AGG01 lines of
+ * the same aggregate are still one product (712556).
+ */
+export function sameProductKey(line: { spruceItemNumber: string | null; product: string }): string {
+  const tidy = (text: string | null) => (text ?? '').replace(/\s+/g, ' ').trim().toUpperCase();
+  return `${tidy(line.spruceItemNumber)}|${tidy(line.product)}`;
+}
+
 export function toDispatchOrder(document: DispatchDocument): DispatchOrderView {
   const products = document.lines.filter(line => lineClassOf(line) === 'PRODUCT');
   const skids = document.lines
@@ -175,8 +187,9 @@ export function toDispatchOrder(document: DispatchDocument): DispatchOrderView {
 
   const quantities = quantityTotals(products.map(line => ({ quantity: toNumber(line.quantity), unit: line.unit })));
   const first = products[0];
-  // Six loads of one item on six lines are one product, not six.
-  const distinct = new Set(products.map(line => (line.spruceItemNumber ?? line.product).trim().toUpperCase())).size;
+  // Six loads of one item on six lines are one product, not six; two items
+  // under one catch-all code are two.
+  const distinct = new Set(products.map(sameProductKey)).size;
 
   return {
     id: document.id,
