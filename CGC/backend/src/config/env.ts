@@ -49,18 +49,34 @@ export const env = {
      */
     openaiModelId: process.env.OPENAI_MODEL_ID || 'gpt-5.6-luna',
     /**
-     * Who reads the morning's Spruce reports.
+     * Who reads the morning's Spruce reports (see readSprucePages).
      *
-     * auto    the layout reader, and the AI model where it cannot read a
-     *         report (a column moved, a heading appeared): the default
-     * ai      the AI model reads every report
-     * parser  the layout reader only, never the model
+     * ai      the model reads every report: the default. The layout reader
+     *         reads one only where the model cannot answer (no credit, down).
+     * both    the layout reader and the model, compared line by line. Each
+     *         catches the other's mistakes, and either carries the import
+     *         when the other cannot.
+     * auto    the layout reader; the model only where it fails
+     * parser  the layout reader alone, never the model
      */
-    spruceReader: (['auto', 'ai', 'parser'].includes(process.env.SPRUCE_READER ?? '')
+    spruceReader: (['both', 'auto', 'ai', 'parser'].includes(process.env.SPRUCE_READER ?? '')
         ? process.env.SPRUCE_READER
-        : 'auto') as 'auto' | 'ai' | 'parser',
-    /** The model that reads Spruce reports; the invoice model unless set. */
-    spruceAiModelId: process.env.SPRUCE_AI_MODEL_ID || process.env.OPENAI_MODEL_ID || 'gpt-5.6-luna',
+        : 'ai') as 'both' | 'auto' | 'ai' | 'parser',
+    /**
+     * The model that reads Spruce reports, and how hard it reasons.
+     *
+     * Benchmarked on every report on file (Aug 14, Oct 13, Oct 21), each read
+     * over and over: gpt-6.1-sol read 40 reports without a single wrong value
+     * at its default reasoning; the invoice model, gpt-5.6-luna, misread
+     * something in a third of its runs. Low reasoning is the owner's choice,
+     * for speed and cost. SPRUCE_AI_REASONING_EFFORT takes minimal, low,
+     * medium or high; 'default' sends none, so the model reasons as it did in
+     * the benchmark.
+     */
+    spruceAiModelId: process.env.SPRUCE_AI_MODEL_ID || 'gpt-6.1-sol',
+    spruceAiReasoningEffort: (['minimal', 'low', 'medium', 'high'].includes(process.env.SPRUCE_AI_REASONING_EFFORT ?? 'low')
+        ? process.env.SPRUCE_AI_REASONING_EFFORT ?? 'low'
+        : undefined) as 'minimal' | 'low' | 'medium' | 'high' | undefined,
     gmailClientId: process.env.GMAIL_CLIENT_ID || '',
     gmailClientSecret: process.env.GMAIL_CLIENT_SECRET || '',
     gmailRefreshToken: process.env.GMAIL_REFRESH_TOKEN || '',

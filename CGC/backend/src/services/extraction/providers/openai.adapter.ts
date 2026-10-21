@@ -116,6 +116,7 @@ export const openaiExtractionProvider: ExtractionProvider = {
       response = await getClient().responses.parse({
         model: options.modelId ?? env.openaiModelId,
         max_output_tokens: options.maxOutputTokens ?? MAX_OUTPUT_TOKENS,
+        ...(options.reasoningEffort ? { reasoning: { effort: options.reasoningEffort } } : {}),
         input: [
           {
             role: 'user',
@@ -145,6 +146,15 @@ export const openaiExtractionProvider: ExtractionProvider = {
       throw new ExtractionError(
         `Model response was cut short (${response.incomplete_details?.reason ?? 'unknown reason'})`,
         { retryable: false }
+      );
+    }
+
+    const usage = response.usage;
+    if (usage) {
+      console.log(
+        `[Extraction] ${schemaName} on ${options.modelId ?? env.openaiModelId}: ` +
+          `${usage.input_tokens} input tokens (${usage.input_tokens_details?.cached_tokens ?? 0} cached), ` +
+          `${usage.output_tokens} output (${usage.output_tokens_details?.reasoning_tokens ?? 0} reasoning)`
       );
     }
 

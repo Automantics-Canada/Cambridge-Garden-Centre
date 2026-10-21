@@ -8,6 +8,8 @@ import { cn } from '../../lib/cn';
 import { businessDayOffset } from '../../lib/date';
 import {
   REPORT_SLOTS,
+  aiCheckBadge,
+  aiOnlyNote,
   dateWarning,
   flagInfo,
   processState,
@@ -168,7 +170,9 @@ export default function SpruceImportPanel({ onClose, onImported, onShowOrder }) 
                 </Button>
               )}
 
-              {status.kind === 'reading' && <p className="text-[13px] text-muted">Reading…</p>}
+              {status.kind === 'reading' && (
+                <p className="text-[13px] text-muted">Reading… the AI takes up to two minutes a report.</p>
+              )}
 
               {status.kind !== 'empty' && status.kind !== 'reading' && (
                 <div className="space-y-2">
@@ -186,10 +190,8 @@ export default function SpruceImportPanel({ onClose, onImported, onShowOrder }) 
                           {preview.documentCount} order{preview.documentCount === 1 ? '' : 's'}
                         </span>
                       </div>
-                      {preview.readByAi && (
-                        <p className="text-[12.5px] text-ochre">
-                          Layout not recognised, so AI read this report. Check its orders before dispatch.
-                        </p>
+                      {aiOnlyNote(preview) && (
+                        <p className="text-[12.5px] text-ochre">{aiOnlyNote(preview)}</p>
                       )}
                       {preview.unreadableCount > 0 && (
                         <p className="text-[12.5px] text-ochre">
@@ -223,7 +225,7 @@ export default function SpruceImportPanel({ onClose, onImported, onShowOrder }) 
 
       <div className="flex flex-wrap items-center gap-3">
         <Button variant="primary" onClick={process} disabled={!state.canProcess || busy}>
-          {busy ? 'Importing… this can take up to a minute' : state.label}
+          {busy ? 'Importing… this can take a minute or two' : state.label}
         </Button>
         {state.reason && <p className="text-[13px] text-muted">{state.reason}</p>}
       </div>
@@ -244,6 +246,7 @@ function ImportResult({ result, onShowOrder }) {
         {result.issues?.length > 0
           ? <Badge tone="warn">{result.issues.length} need attention</Badge>
           : <Badge tone="good">Nothing needs attention</Badge>}
+        {aiCheckBadge(result) && <Badge tone={aiCheckBadge(result).tone}>{aiCheckBadge(result).label}</Badge>}
       </div>
 
       {result.issues?.length > 0 && (

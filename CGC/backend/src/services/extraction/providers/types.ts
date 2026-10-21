@@ -26,6 +26,8 @@ export interface ExtractOptions {
   modelId?: string;
   /** A larger reply budget, for a document that yields many rows. */
   maxOutputTokens?: number;
+  /** How hard a reasoning model thinks before answering; the model's own default where unset. */
+  reasoningEffort?: 'minimal' | 'low' | 'medium' | 'high';
 }
 
 export interface ExtractionProvider {

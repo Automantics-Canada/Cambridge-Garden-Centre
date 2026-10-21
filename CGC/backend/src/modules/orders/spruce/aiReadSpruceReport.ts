@@ -78,16 +78,16 @@ const FIELDS = {
   unit: ['text', 'The unit of measure as printed (CY, MT, EA, SQFT...); null where it is a dash or not printed.'],
   orderDate: ['text', 'The order / entry date, exactly as printed.'],
   deliveryDate: ['text', 'The delivery date, exactly as printed. On the Deliveries report, the date at the start of the order row.'],
-  shippingAddress: ['text', 'Item Tracking only: the Shipping Address, exactly as printed.'],
-  deliveryInstructions: ['text', 'Item Tracking only: Delivery Instructions.'],
+  shippingAddress: ['text', 'Item Tracking only: the Shipping Address column, exactly as printed. "Pickup @ CGC Yard," and "Pickup Direct at Permacon," are shipping addresses too.'],
+  deliveryInstructions: ['text', 'Item Tracking only: the Delivery Instructions column. Null where that column is blank.'],
   deliveryTruck: ['text', 'Item Tracking only: Delivery Truck.'],
-  orderNotes: ['text', 'Item Tracking only: Order Notes.'],
+  orderNotes: ['text', 'Item Tracking only: the Order Notes column. Null where that column is blank.'],
   vendorName: ['text', 'Item Tracking only: the Vendor code, e.g. UNILOCKL01.'],
   vendorLocation: ['text', 'Item Tracking only: Vendor Location.'],
   poNumber: ['text', 'Item Tracking only: the PO Document number raised on the vendor.'],
   poValue: ['number', 'Item Tracking only: PO Value.'],
   phone: ['text', 'Deliveries report only: the phone number, with any EXT. extension.'],
-  route: ['text', 'Deliveries report only: the route code, often blank.'],
+  route: ['text', 'Deliveries report only: the Route column, often blank (then null). Never the account code or the job number under it.'],
   spruceStatus: ['text', 'The order status word as printed (Open, Sched...).'],
   cashier: ['text', 'Order Summary only: Cashier.'],
   deliveryFlag: ['text', 'Order Summary only: the Delivery column (e.g. SCH).'],
@@ -129,7 +129,7 @@ function fieldsFor(type: SpruceReportType | null): FieldName[] {
   return type ? REPORT_FIELDS[type] : (Object.keys(FIELDS) as FieldName[]);
 }
 
-function answerSchema(type: SpruceReportType | null) {
+export function answerSchema(type: SpruceReportType | null) {
   const line: Record<string, z.ZodType> = { page: z.number().int() };
   for (const name of fieldsFor(type)) {
     line[name] = FIELDS[name][0] === 'number' ? z.number().nullable() : z.string().nullable();
@@ -159,7 +159,12 @@ Return one entry in "lines" for every item line in the report, in the order prin
 Rules:
 - Copy text exactly as printed. Never correct, expand, guess or reformat a value. A value the report does not
   print for that line is null.
-- A description that wraps onto the lines below belongs to the item above it. Orders continue across page
+- Each field comes from its own column only. A blank cell is null: never fill it from a neighbouring column,
+  from the line above, or from another order.
+- The "Order Attachments" and "PO Attachments" columns hold file paths ("S:\\01 Scans\\..."). They are not
+  any field: leave them out.
+- A description that wraps onto the lines below belongs to the item above it: join every continuation line,
+  however long. Never shorten a description. Orders continue across page
   breaks: lines at the top of a page may belong to the last order on the page before.
 - Column headings ("Item Description Qty U/M", "Date Document Type ..."), page letterheads, page numbers,
   parameter lines and report titles are not data. Never put them in a field.
@@ -288,7 +293,8 @@ function notPrinted(kind: FieldKind, value: string | number, printed: PrintedTex
  * is not enough: on 21/10/2026 the model once returned the document number as
  * the delivery date — printed, and in the wrong field.
  */
-const SPRUCE_DATE = /^\d{1,2}\/\d{1,2}\/\d{2,4}$/;
+// One date, or two printed over each other in one cell as the text layer gives them.
+const SPRUCE_DATE = /^\d{1,2}\/\d{1,2}\/\d{2,4}(?:\s+\d{1,2}\/\d{1,2}\/\d{2,4})*$/;
 const SHAPES: Partial<Record<FieldName, RegExp>> = {
   documentNumber: DOCUMENT_NUMBER_PATTERN,
   poNumber: DOCUMENT_NUMBER_PATTERN,
@@ -361,7 +367,11 @@ export function vetAnswer(
     }
 
     if (problems.length) {
-      unreadable.push({ ...at, reason: `AI-read line ${documentNumber || '(no document)'}: ${problems.join('; ')}` });
+      unreadable.push({
+        ...at,
+        reason: `AI-read line ${documentNumber || '(no document)'}: ${problems.join('; ')}`,
+        ...(documentNumber ? { documentNumber } : {}),
+      });
     } else {
       rows.push(row as unknown as ParsedSpruceRow);
     }
@@ -371,7 +381,12 @@ export function vetAnswer(
   const read = new Set(lines.map(line => String(line.documentNumber ?? '').trim()));
   for (const documentNumber of printed.documentNumbers) {
     if (read.has(documentNumber) || poNumbers.has(documentNumber)) continue;
-    unreadable.push({ page: 1, row: 0, reason: `Document ${documentNumber} is in the report but the AI read no lines for it` });
+    unreadable.push({
+      page: 1,
+      row: 0,
+      reason: `Document ${documentNumber} is in the report but the AI read no lines for it`,
+      documentNumber,
+    });
   }
 
   return { rows, unreadable };
@@ -395,7 +410,7 @@ export async function aiReadSpruceReport(
   pages: PdfTextPage[],
   type: SpruceReportType | null
 ): Promise<ParsedSpruceReport> {
-  const key = `${env.spruceAiModelId}:${type ?? '?'}:${createHash('sha256').update(buffer).digest('hex')}`;
+  const key = `${env.spruceAiModelId}:${env.spruceAiReasoningEffort}:${type ?? '?'}:${createHash('sha256').update(buffer).digest('hex')}`;
   const cached = answers.get(key);
   if (cached && Date.now() - cached.at < ANSWER_TTL_MS) return cached.report;
 
@@ -405,7 +420,11 @@ export async function aiReadSpruceReport(
       spruceReportPrompt(type, layoutText(pages)),
       answerSchema(type),
       'spruce_report',
-      { modelId: env.spruceAiModelId, maxOutputTokens: MAX_OUTPUT_TOKENS }
+      {
+        modelId: env.spruceAiModelId,
+        maxOutputTokens: MAX_OUTPUT_TOKENS,
+        ...(env.spruceAiReasoningEffort ? { reasoningEffort: env.spruceAiReasoningEffort } : {}),
+      }
     );
 
     if (answer.reportType === 'NOT_SPRUCE' || (type && answer.reportType !== type)) {
