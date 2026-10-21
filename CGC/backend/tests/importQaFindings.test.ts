@@ -87,6 +87,17 @@ describe('QA bug 3: a direct pickup is collected at the supplier', () => {
     assert.equal(view.collectAt, 'Quikrete');
   });
 
+  it('2610-721461: a shipping address of "Pickup Direct at Permacon," is collected at Permacon', () => {
+    assert.equal(collectAtOf([], 'Pickup Direct at Permacon,'), 'Permacon');
+    assert.equal(collectAtOf([], 'Pickup @ Yard,'), null);
+    assert.equal(collectAtOf([], '14 Mill Race Rd., Guelph'), null);
+    const view = toDispatchOrder({
+      ...order([{ spruceItemNumber: 'GW750STDUN', product: 'Grande Wall 750 Std Unit Natural', quantity: new Prisma.Decimal(4) }]),
+      shippingAddress: 'Pickup Direct at Permacon,',
+    });
+    assert.equal(view.collectAt, 'Permacon');
+  });
+
   it('is the yard when no comment says otherwise, and only comments count', () => {
     assert.equal(collectAtOf([{ product: 'Pickup @ CGC Yard', lineClass: 'PRODUCT' }]), null);
     assert.equal(collectAtOf([{ product: '2 skids', lineClass: 'COMMENT' }]), null);

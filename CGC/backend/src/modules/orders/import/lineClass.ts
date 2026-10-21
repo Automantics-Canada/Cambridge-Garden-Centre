@@ -19,7 +19,9 @@ const BULK_TIER = /YEL(?!LOW)/;
 export function classifyLine(itemCode: string | null | undefined, description: string | null | undefined): LineClass {
   const code = (itemCode ?? '').trim().toUpperCase();
 
-  if (code === 'COMMENT' || code === 'RETURNCOMM') return 'COMMENT';
+  // `RETURNCOMM`, and `SALTCOMM`: the salt orders' payment terms, a page of
+  // text priced at nothing.
+  if (code === 'COMMENT' || code.endsWith('COMM')) return 'COMMENT';
   // `RSKID`, `BSKID`, `USKID`: the refundable deposit on the skid it ships on.
   if (code.endsWith('SKID')) return 'DEPOSIT';
   if (code.startsWith('MISCDEL') || BULK_TIER.test(code)) return 'DELIVERY_CHARGE';
