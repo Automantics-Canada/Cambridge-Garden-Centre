@@ -113,6 +113,7 @@ describe('line classification', () => {
     assert.equal(classifyLine('SOILYELSU3.5-6', 'Soil Deliv 3.5-6CY'), 'DELIVERY_CHARGE');
     assert.equal(classifyLine('USKID', 'Unilock Skid Deposit'), 'DEPOSIT');
     assert.equal(classifyLine('RETURNCOMM', 'CGC Stocked Interlock'), 'COMMENT');
+    assert.equal(classifyLine('SALTCOMM', 'Payment The above price per tonne is based on payment by:'), 'COMMENT');
     assert.equal(classifyLine('MISC', 'Energy Surcharge'), 'SURCHARGE');
   });
 
@@ -231,6 +232,22 @@ describe('flags', () => {
     const pavers = { ORDER_SUMMARY: [row({ quantity: 734.37, unitPrice: 5.97, remaining: 4379.59 })] };
 
     assert.ok(!batchFlags(pavers, context).flags.includes('EXTRACTION_CHECK_FAILED'));
+  });
+
+  it("checks a paid order's lines against its total with tax, since nothing remains", () => {
+    // 2610-721467 on 21/10/2026: paid in full, $1,425.98 with tax.
+    const paid = (unitPrice: number) => ({
+      ORDER_SUMMARY: [
+        row({ quantity: 242.34, unitPrice: 3.81, remaining: 0, totalWithTax: 1425.98 }),
+        row({ quantity: 2, unitPrice: 40, remaining: 0, totalWithTax: 1425.98 }),
+        row({ quantity: 34.77, unitPrice: 3.82, remaining: 0, totalWithTax: 1425.98 }),
+        row({ quantity: 1, unitPrice: 40, remaining: 0, totalWithTax: 1425.98 }),
+        row({ quantity: 4, unitPrice, remaining: 0, totalWithTax: 1425.98 }),
+      ],
+    });
+
+    assert.ok(!batchFlags(paid(21.32), context).flags.includes('EXTRACTION_CHECK_FAILED'));
+    assert.ok(batchFlags(paid(213.2), context).flags.includes('EXTRACTION_CHECK_FAILED'), 'a misread price still shows');
   });
 
   it('marks an order entered inside the order summary\'s range but left off it as no longer open', () => {

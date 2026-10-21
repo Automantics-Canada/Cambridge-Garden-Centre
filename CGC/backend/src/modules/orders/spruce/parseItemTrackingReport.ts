@@ -30,6 +30,10 @@ import {
  * why OCR could never produce a PO from this report however well it read the
  * pixels. Rows are rejoined here by vertical position: the two halves of a row
  * are printed at the same height on their respective pages.
+ *
+ * Exported on a page wide enough, Spruce prints every column side by side
+ * instead (the 21/10/2026 report is 1836pt across). Such a page is a whole
+ * stripe on its own and is read under every column at once.
  */
 
 /** Leftmost columns: who the order is for and where it goes. */
@@ -65,9 +69,16 @@ const BAND_THREE: ColumnSpec[] = [
 
 const BANDS = [BAND_ONE, BAND_TWO, BAND_THREE];
 
+/** Every column, for a page wide enough to print them all side by side. */
+const ALL_COLUMNS: ColumnSpec[] = [...BAND_ONE, ...BAND_TWO, ...BAND_THREE]
+  .filter((column, index, all) => all.findIndex(other => other.key === column.key) === index);
+
+/** `bandIndex` of a page that carries every band at once. */
+const WIDE = -1;
+
 interface BandedPage {
   page: PdfTextPage;
-  /** 0, 1 or 2. */
+  /** 0, 1 or 2, or WIDE for a page carrying every band. */
   bandIndex: number;
   header: TextRow;
   /** Row y to its cells, for rows below the header. */
@@ -83,6 +94,14 @@ interface BandedPage {
 function readPage(page: PdfTextPage): BandedPage | null {
   const rows = clusterRows(page.runs);
   if (rows.length === 0) return null;
+
+  // A heading row naming both the order and its items is the wide layout:
+  // read it under every column rather than under whichever band it matches
+  // most of, which would drop the other band's columns.
+  const wide = findHeaderRow(rows, ALL_COLUMNS);
+  if (wide && wide.hits.has('documentNumber') && wide.hits.has('customerName') && wide.hits.has('itemNumber')) {
+    return bandedRows(page, WIDE, wide, rows);
+  }
 
   let bandIndex = -1;
   let bestHits = 0;
@@ -100,15 +119,25 @@ function readPage(page: PdfTextPage): BandedPage | null {
   // One stray heading word is a title, not a column strip.
   if (!bestHeader || bestHits < 2) return null;
 
-  const bands = deriveBands(bestHeader, page.width);
-  const headerY = bestHeader.row.y;
+  return bandedRows(page, bandIndex, bestHeader, rows);
+}
+
+/** The page's rows below `header`, each filed under the header's columns. */
+function bandedRows(
+  page: PdfTextPage,
+  bandIndex: number,
+  header: NonNullable<ReturnType<typeof findHeaderRow>>,
+  rows: TextRow[]
+): BandedPage {
+  const bands = deriveBands(header, page.width);
+  const headerY = header.row.y;
 
   const dataRows = rows
     .filter(row => row.y > headerY)
     .map(row => ({ y: row.y, cells: rowText(row, bands) }))
     .filter(row => Object.keys(row.cells).length > 0);
 
-  return { page, bandIndex, header: bestHeader.row, rows: dataRows };
+  return { page, bandIndex, header: header.row, rows: dataRows };
 }
 
 /**
@@ -123,6 +152,13 @@ function groupIntoStripes(pages: BandedPage[]): BandedPage[][] {
   let current: BandedPage[] = [];
 
   for (const page of pages) {
+    // A wide page holds every column of its rows: a stripe by itself.
+    if (page.bandIndex === WIDE) {
+      if (current.length > 0) stripes.push(current);
+      stripes.push([page]);
+      current = [];
+      continue;
+    }
     if (page.bandIndex === 0 && current.length > 0) {
       stripes.push(current);
       current = [];
@@ -210,7 +246,7 @@ function assertStripeRowCounts(stripe: BandedPage[]): void {
 export function parseItemTrackingReport(pages: PdfTextPage[]): ParsedSpruceReport {
   const banded = pages.map(readPage).filter((page): page is BandedPage => page !== null);
 
-  if (!banded.some(page => page.bandIndex === 0)) {
+  if (!banded.some(page => page.bandIndex === 0 || page.bandIndex === WIDE)) {
     throw new SprucePdfError(
       'MISSING_HEADERS',
       'Could not find the Document and Customer Name columns in this Sales Order Item Tracking ' +

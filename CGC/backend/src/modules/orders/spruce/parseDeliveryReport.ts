@@ -201,6 +201,19 @@ function readItemLine(row: TextRow): ItemLine | null {
   return line;
 }
 
+/**
+ * Column headings, which exports since 21/10/2026 print: "Date Document Type
+ * ... Phone Total" under the strip, and "Item Description Qty U/M" above each
+ * order's lines. They are skipped like the letterhead — read as text, the
+ * first continued the description at the foot of the page before it, and the
+ * second named every walk-in customer "U/M".
+ */
+function isHeadingRow(texts: string[]): boolean {
+  const words = new Set(texts.map(text => text.toLowerCase()));
+  return (words.has('document') && words.has('account/job')) ||
+    (words.has('item') && words.has('description') && words.has('qty'));
+}
+
 /** The strip above the first order, repeated at the top of every page. */
 const COLUMN_STRIP = '(inv / tkt / ord)';
 
@@ -244,7 +257,7 @@ export function parseDeliveryReport(pages: PdfTextPage[]): ParsedSpruceReport {
 
       const rowNumber = index + 1;
       const texts = row.runs.map(run => run.text.trim()).filter(Boolean);
-      if (texts.length === 0) continue;
+      if (texts.length === 0 || isHeadingRow(texts)) continue;
 
       const documentNumber = texts.find(text => DOCUMENT_NUMBER_PATTERN.test(text));
       if (documentNumber) {

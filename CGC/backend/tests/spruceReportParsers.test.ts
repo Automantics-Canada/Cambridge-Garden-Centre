@@ -9,8 +9,10 @@ import { parseOrderSummaryReport } from '../src/modules/orders/spruce/parseOrder
 import { parseSprucePages } from '../src/modules/orders/spruce/parseSprucePdf.js';
 import {
   deliveryReport,
+  deliveryReportWithHeadings,
   itemTrackingReport,
   itemTrackingSecondStripe,
+  itemTrackingWideReport,
   orderSummaryReport,
   page,
   run,
@@ -173,6 +175,39 @@ describe('parseItemTrackingReport', () => {
       () => parseItemTrackingReport(headersOnly),
       (err: unknown) => err instanceof SprucePdfError && err.code === 'NO_READABLE_ROWS'
     );
+  });
+});
+
+describe('parseItemTrackingReport, one page wide', () => {
+  // The 21/10/2026 export printed every column on one page; reading it as one
+  // of the three bands failed the whole upload for want of a Document column.
+  it('reads every column off the one page', () => {
+    const { rows, unreadable } = parseItemTrackingReport(itemTrackingWideReport());
+
+    assert.deepEqual(unreadable, []);
+    assert.equal(rows.length, 3);
+    const supplied = rows.find(row => row.documentNumber === '2610-700101');
+    assert.equal(supplied?.customerName, 'Riverbend Landscaping');
+    assert.equal(supplied?.shippingAddress, '14 Mill Race Rd., Guelph');
+    assert.equal(supplied?.itemNumber, 'AGG3/4C');
+    assert.equal(supplied?.product, '3/4" Clear PitBlk (MT)');
+    assert.equal(supplied?.quantity, 44);
+    assert.equal(supplied?.vendorName, 'STONECO01');
+    assert.equal(supplied?.vendorLocation, 'Brantford');
+    assert.equal(supplied?.poNumber, '2610-300101');
+  });
+
+  it('reads each page on its own, the headings repeated at the top of the next', () => {
+    const { rows } = parseItemTrackingReport(itemTrackingWideReport());
+    const next = rows.find(row => row.documentNumber === '2610-700103');
+
+    assert.equal(next?.customerName, 'Cedarline Homes');
+    assert.equal(next?.product, 'Mulch Blck 1HFCY Bulk');
+    assert.equal(rows.find(row => row.documentNumber === '2610-700102')?.poNumber, undefined);
+  });
+
+  it('is detected as the item-tracking report', () => {
+    assert.equal(detectSpruceReport(itemTrackingWideReport()), 'ITEM_TRACKING');
   });
 });
 
@@ -430,6 +465,33 @@ describe('parseDeliveryReport', () => {
       ])]),
       (err: unknown) => err instanceof SprucePdfError && err.code === 'NO_READABLE_ROWS'
     );
+  });
+});
+
+describe('parseDeliveryReport, with column headings', () => {
+  it('reads the same rows as the report without them', () => {
+    const { rows, unreadable } = parseDeliveryReport(deliveryReportWithHeadings());
+    const read = (report: typeof rows) =>
+      report.map(row => [row.documentNumber, row.itemNumber, row.product, row.quantity, row.unit]);
+
+    assert.deepEqual(unreadable, []);
+    assert.deepEqual(read(rows), read(parseDeliveryReport(deliveryReport()).rows));
+  });
+
+  it("does not continue the last description with the next page's headings", () => {
+    const { rows } = parseDeliveryReport(deliveryReportWithHeadings());
+
+    assert.equal(
+      rows.find(row => row.itemNumber === 'RSKID')?.product,
+      'Rinox Skid Deposit ($35 refundable upon return in good condition)'
+    );
+  });
+
+  it('does not name the customer after the item headings', () => {
+    const { rows } = parseDeliveryReport(deliveryReportWithHeadings());
+
+    assert.equal(rows[0]?.customerName, 'Priya Raman');
+    assert.equal(rows.find(row => row.itemNumber === 'AGG01')?.customerName, 'Harrowgate Masonry');
   });
 });
 

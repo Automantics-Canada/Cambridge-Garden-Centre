@@ -157,14 +157,23 @@ export function quantityTotals(lines: Array<{ quantity: number | null; unit: str
 /** Spruce's "**Pickup direct pricing @ Quikrete.**": collected there, not at the yard. */
 const PICKUP_DIRECT = /pick\s*-?\s*up\s+direct\b[^@]*@\s*([^*\n]+?)[\s.*]*$/i;
 
-/** Where the order's comments say it is collected, when that is not the yard. */
-export function collectAtOf(lines: Array<{ product: string; lineClass: string }>): string | null {
+/** The same written as the shipping address: "Pickup Direct at Permacon,". */
+const PICKUP_DIRECT_ADDRESS = /^\s*pick\s*-?\s*up\s+direct\s+(?:at|@)\s+([^,\n]+)/i;
+
+/**
+ * Where the order's comments, or failing those its shipping address, say it
+ * is collected, when that is not the yard.
+ */
+export function collectAtOf(
+  lines: Array<{ product: string; lineClass: string }>,
+  shippingAddress?: string | null
+): string | null {
   for (const line of lines) {
     if (line.lineClass !== 'COMMENT') continue;
     const place = PICKUP_DIRECT.exec(line.product)?.[1]?.trim();
     if (place) return place;
   }
-  return null;
+  return PICKUP_DIRECT_ADDRESS.exec(shippingAddress ?? '')?.[1]?.trim() || null;
 }
 
 /**
@@ -202,7 +211,10 @@ export function toDispatchOrder(document: DispatchDocument): DispatchOrderView {
     quantity: quantities[0]?.quantity ?? null,
     unit: quantities[0]?.unit ?? first?.unit ?? null,
     quantities,
-    collectAt: collectAtOf(document.lines.map(line => ({ product: line.product, lineClass: lineClassOf(line) }))),
+    collectAt: collectAtOf(
+      document.lines.map(line => ({ product: line.product, lineClass: lineClassOf(line) })),
+      document.shippingAddress
+    ),
     createdAt: document.createdAt,
     deliveryDate: document.deliveryDate,
     address: document.addressNormalized ?? document.shippingAddress,

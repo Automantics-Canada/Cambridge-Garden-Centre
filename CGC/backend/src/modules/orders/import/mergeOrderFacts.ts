@@ -243,6 +243,9 @@ export const STATE_FLAGS: readonly OrderFlag[] = [
 const LINE_TOTAL_TOLERANCE = 2;
 const PRICE_ROUNDING_PER_UNIT = 0.005;
 
+/** Ontario HST, which the order summary's total includes and its lines do not. */
+const HST = 0.13;
+
 export interface BatchContext {
   /** Which reports this upload contained. */
   reports: ReadonlySet<SpruceReportType>;
@@ -293,7 +296,13 @@ export function batchFlags(rows: ReportRows, context: BatchContext): { flags: Or
     const lineTotal = summary.reduce((sum, row) => sum + row.quantity * (row.unitPrice ?? 0), 0);
     const tolerance = LINE_TOTAL_TOLERANCE +
       summary.reduce((sum, row) => sum + Math.abs(row.quantity) * PRICE_ROUNDING_PER_UNIT, 0);
-    if (remaining === undefined || !priced || Math.abs(lineTotal - remaining) > tolerance) {
+    // A paid order has nothing remaining, so its lines are checked against
+    // the total it was paid instead: 2610-721467 was $1,425.98 with tax.
+    const paidTotal = remaining === 0 ? summary.find(row => row.totalWithTax !== undefined)?.totalWithTax : undefined;
+    const matches = paidTotal !== undefined && lineTotal > 0
+      ? Math.abs(lineTotal * (1 + HST) - paidTotal) <= tolerance * (1 + HST)
+      : remaining !== undefined && Math.abs(lineTotal - remaining) <= tolerance;
+    if (!priced || !matches) {
       flags.push('EXTRACTION_CHECK_FAILED');
     }
   }

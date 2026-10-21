@@ -331,3 +331,104 @@ export function deliveryReport(): PdfTextPage[] {
     ]),
   ];
 }
+
+/**
+ * The item-tracking report as exported since 21/10/2026: one page wide enough
+ * (114.75) to print every column side by side, instead of three bands.
+ */
+export function itemTrackingWideReport(): PdfTextPage[] {
+  const headings = (y: number) => [
+    ...ITEM_TRACKING_BAND_ONE(y),
+    run(49.8, y, 'Order Notes'),
+    run(60.0, y, 'Item Number'),
+    run(65.6, y, 'Item Desc'),
+    run(78.5, y, 'Qty'),
+    run(79.6, y, 'Vendor'),
+    run(85.8, y, 'Vendor Location'),
+    run(90.3, y, 'PO Document'),
+    run(94.6, y, 'PO Value'),
+    run(97.1, y, 'PO Notes'),
+    run(105.5, y, 'PO Attachments'),
+  ];
+  const wide = (pageIndex: number, runs: PdfTextRun[]): PdfTextPage => ({ ...page(pageIndex, runs), width: 114.75 });
+
+  return [
+    wide(0, [
+      run(1.1, 1.05, '10/21/2026 2:35 PM'),
+      run(1.1, 2.52, 'Sales Order Item Tracking'),
+      run(1.1, 4.2, 'Parameters'),
+      ...headings(5.71),
+
+      run(1.2, 6.61, '2610-700101'),
+      run(5.7, 6.61, '10/21/2026'),
+      run(8.8, 6.61, '10/21/2026'),
+      run(11.6, 6.61, 'Riverbend Landscaping'),
+      run(18.3, 6.61, '14 Mill Race Rd., Guelph'),
+      run(60.0, 6.61, 'AGG3/4C'),
+      run(65.6, 6.61, '3/4" Clear PitBlk (MT)'),
+      run(77.5, 6.61, '44.0000'),
+      run(79.6, 6.61, 'STONECO01'),
+      run(85.8, 6.61, 'Brantford'),
+      run(90.3, 6.61, '2610-300101'),
+      run(94.6, 6.61, '1,204.55'),
+
+      run(1.2, 7.51, '2610-700102'),
+      run(5.7, 7.51, '10/22/2026'),
+      run(8.8, 7.51, '10/21/2026'),
+      run(11.6, 7.51, 'Harrowgate Masonry'),
+      run(18.3, 7.51, 'Pickup @ Yard,'),
+      run(60.0, 7.51, 'SOILGRDNA'),
+      run(65.6, 7.51, 'Garden Soil Bulk'),
+      run(77.5, 7.51, '3.0000'),
+    ]),
+    wide(1, [
+      run(1.1, 1.05, '10/21/2026 2:35 PM'),
+      run(1.1, 2.52, 'Sales Order Item Tracking'),
+      ...headings(4.33),
+
+      run(1.2, 5.23, '2610-700103'),
+      run(5.7, 5.23, '10/21/2026'),
+      run(8.8, 5.23, '10/21/2026'),
+      run(11.6, 5.23, 'Cedarline Homes'),
+      run(18.3, 5.23, '9 Orchard Way, Cambridge'),
+      run(60.0, 5.23, 'MULCHBLACKB'),
+      run(65.6, 5.23, 'Mulch Blck 1HFCY Bulk'),
+      run(77.5, 5.23, '1.0000'),
+    ]),
+  ];
+}
+
+/**
+ * The delivery report as exported since 21/10/2026, which prints column
+ * headings: the order columns under the strip on every page, and the item
+ * columns above each order's lines.
+ */
+export function deliveryReportWithHeadings(): PdfTextPage[] {
+  const columns = [
+    run(1.4, 7.97, 'Date'),
+    run(4.3, 7.97, 'Document'),
+    run(8.2, 7.97, 'Type'),
+    run(10.4, 7.97, 'Status'),
+    run(12.7, 7.97, 'Route'),
+    run(16.4, 7.97, 'Account/Job'),
+    run(21.4, 7.97, 'Name'),
+    run(37.2, 7.97, 'Phone'),
+    run(42.7, 7.97, 'Total'),
+  ];
+  const items = (y: number) => [run(4.8, y, 'Item'), run(12.7, y, 'Description'), run(28.7, y, 'Qty'), run(31.2, y, 'U/M')];
+  const [first, second] = deliveryReport();
+
+  return [
+    { ...first!, runs: [...first!.runs, ...columns, ...items(10.57)] },
+    // The second page opens on the headings, straight after the first page's
+    // last description; its order's lines start a row lower to make room.
+    {
+      ...second!,
+      runs: [
+        ...second!.runs.map(r => (r.y >= 10.5 ? { ...r, y: r.y + 0.9 } : r)),
+        ...columns,
+        ...items(10.53),
+      ],
+    },
+  ];
+}
