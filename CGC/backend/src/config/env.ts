@@ -69,9 +69,11 @@ export const env = {
      * over and over: gpt-6.1-sol read 40 reports without a single wrong value
      * at its default reasoning; the invoice model, gpt-5.6-luna, misread
      * something in a third of its runs. Low reasoning is the owner's choice,
-     * for speed and cost. SPRUCE_AI_REASONING_EFFORT takes minimal, low,
-     * medium or high; 'default' sends none, so the model reasons as it did in
-     * the benchmark.
+     * for speed and cost; on Oct 22 it read the Oct 21 Order, Deliveries and
+     * Custom reports and the Aug 14 Custom report (259 lines) with no field
+     * different, at 6k-18k input and 4k-10k output tokens a report (about
+     * $0.06-0.14). SPRUCE_AI_REASONING_EFFORT takes minimal, low, medium or
+     * high; 'default' sends none, so the model reasons at its own default.
      */
     spruceAiModelId: process.env.SPRUCE_AI_MODEL_ID || 'gpt-6.1-sol',
     spruceAiReasoningEffort: (['minimal', 'low', 'medium', 'high'].includes(process.env.SPRUCE_AI_REASONING_EFFORT ?? 'low')
