@@ -42,6 +42,22 @@ export class OrderEditError extends Error {
 
 const CHANGED: OrderFlag = 'SPRUCE_VALUE_CHANGED';
 
+/**
+ * Cleared by the dispatcher's own edit: a person has looked at the order the
+ * two readings disagreed on, and the flag has done its job. Never by the
+ * recompute an import runs, which would clear what that import just found.
+ */
+const READ_DIFFERENTLY: OrderFlag = 'READ_DIFFERENTLY';
+
+async function acknowledgeReadings(db: Db, documentId: string): Promise<void> {
+  const { flags } = await db.orderDocument.findUniqueOrThrow({ where: { id: documentId }, select: { flags: true } });
+  if (!flags.includes(READ_DIFFERENTLY)) return;
+  await db.orderDocument.update({
+    where: { id: documentId },
+    data: { flags: flags.filter(flag => flag !== READ_DIFFERENTLY) },
+  });
+}
+
 /** Fields of the order that its lines repeat, and must keep in step. */
 const REPEATED_ON_LINES: OrderField[] = ['customerName', 'deliveryDate'];
 
@@ -216,6 +232,7 @@ export async function applyOrderEdits(documentId: string, edits: ParsedEdits, us
 
     if (changes.length > 0) {
       await recomputeDerived(tx, documentId);
+      await acknowledgeReadings(tx, documentId);
       await tx.auditLog.create({
         data: {
           entityType: 'ORDER',

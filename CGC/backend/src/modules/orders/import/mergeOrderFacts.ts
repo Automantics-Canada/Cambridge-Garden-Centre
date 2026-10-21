@@ -124,6 +124,9 @@ export const ORDER_FLAGS = [
   'SMALL_TRUCK',
   'CUSTOMER_ON_SITE',
   'EXTRACTION_CHECK_FAILED',
+  // The layout reader and the AI read this order differently: one of them is
+  // wrong, and the import's notes say what differs.
+  'READ_DIFFERENTLY',
   'NOT_IN_LATEST_REPORT',
   'NOT_OPEN',
   // A dispatcher corrected a field and Spruce has since said something else.

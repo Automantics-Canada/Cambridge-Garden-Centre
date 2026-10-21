@@ -24,6 +24,7 @@ export const ORDER_FLAG_INFO = {
   DATE_MISMATCH: { label: 'Date mismatch', tone: 'warn' },
   TOTAL_MISMATCH: { label: 'Total mismatch', tone: 'warn' },
   EXTRACTION_CHECK_FAILED: { label: 'Prices need checking', tone: 'warn' },
+  READ_DIFFERENTLY: { label: 'AI read it differently: check', tone: 'warn' },
   NOT_IN_LATEST_REPORT: { label: 'Not in latest report', tone: 'warn' },
   AWAITING_SUPPLIER: { label: 'Awaiting supplier', tone: 'neutral' },
   SMALL_TRUCK: { label: 'Small truck', tone: 'neutral' },
@@ -33,6 +34,39 @@ export const ORDER_FLAG_INFO = {
 };
 
 export const flagInfo = (flag) => ORDER_FLAG_INFO[flag] ?? { label: flag, tone: 'neutral' };
+
+/**
+ * What a report's slot should say about who read it, or null where nothing
+ * unusual happened: the AI reading it is the normal path, and so is the
+ * layout reader where the AI is not in use.
+ */
+export function aiOnlyNote(preview) {
+  if (preview?.aiFailed) {
+    return `The AI could not read this report (${preview.aiFailed}), so the report reader read it. Check its orders before dispatch.`;
+  }
+  if (preview?.readByAiBecause) {
+    return `Read by AI alone, because ${preview.readByAiBecause}. Check its orders before dispatch.`;
+  }
+  return null;
+}
+
+/**
+ * One badge for the AI double-check of the whole upload: agreed, differed,
+ * or did not run. Null where no check ran (older uploads, SPRUCE_READER set
+ * to read without one).
+ */
+export function aiCheckBadge(result) {
+  const checks = result?.aiChecks ?? [];
+  if (checks.length === 0) return null;
+  const differing = checks.reduce((sum, check) => sum + (check.status === 'differences' ? check.ordersDiffering : 0), 0);
+  if (differing > 0) {
+    return { tone: 'warn', label: `AI double-check: ${differing} order${differing === 1 ? '' : 's'} read differently` };
+  }
+  if (checks.some((check) => check.status === 'unavailable')) {
+    return { tone: 'neutral', label: 'AI double-check did not finish' };
+  }
+  return { tone: 'good', label: 'AI double-check agreed' };
+}
 
 /** `2026-08-14` → `8/14`, as the yard writes a day. */
 export function shortDay(isoDate) {

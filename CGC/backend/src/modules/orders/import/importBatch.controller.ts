@@ -22,6 +22,9 @@ function describe(report: ParsedSpruceReport) {
     documentCount: new Set(report.rows.map(row => row.documentNumber)).size,
     rowCount: report.rows.length,
     unreadableCount: report.unreadable.length,
+    readByAi: report.readBy === 'AI',
+    readByAiBecause: report.readByAiBecause ?? null,
+    aiFailed: report.aiFailed ?? null,
     dateFrom: isoOrNull(report.dateRange?.fromRaw),
     dateTo: isoOrNull(report.dateRange?.toRaw),
   };
@@ -38,7 +41,8 @@ export const previewSpruceReport = async (req: AuthRequest, res: Response) => {
   if (!file) return res.status(400).json({ error: 'A PDF is required (field name: file).' });
 
   try {
-    return res.json(describe(await parseSprucePdf(file.buffer)));
+    // The AI's double-check starts now, so its answer is ready when Process is pressed.
+    return res.json(describe(await parseSprucePdf(file.buffer, { aiCheck: 'start' })));
   } catch (err) {
     if (err instanceof SprucePdfError) return res.status(422).json({ error: err.message, code: err.code });
     console.error('[SpruceImport] Preview failed', err);
@@ -56,13 +60,24 @@ export const importSpruceReports = async (req: AuthRequest, res: Response) => {
   const byField = (req.files ?? {}) as Record<string, Express.Multer.File[]>;
   const files: BatchFile[] = [];
 
-  for (const slot of REPORT_SLOTS) {
+  // All three read at once: each waits for its AI double-check, and those run
+  // side by side rather than one after another.
+  const readings = await Promise.allSettled(
+    REPORT_SLOTS.map(slot => {
+      const file = byField[slot]?.[0];
+      return file ? parseSprucePdf(file.buffer, { aiCheck: 'await' }) : Promise.resolve(null);
+    })
+  );
+
+  for (const [index, slot] of REPORT_SLOTS.entries()) {
     const file = byField[slot]?.[0];
     if (!file) continue;
 
     let report: ParsedSpruceReport;
     try {
-      report = await parseSprucePdf(file.buffer);
+      const reading = readings[index]!;
+      if (reading.status === 'rejected') throw reading.reason;
+      report = reading.value!;
     } catch (err) {
       if (err instanceof SprucePdfError) {
         return res.status(422).json({ error: `${SLOT_LABELS[slot]}: ${err.message}`, slot });

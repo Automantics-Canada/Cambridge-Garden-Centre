@@ -48,6 +48,37 @@ export const env = {
      * `npm run extraction:eval`, not on price.
      */
     openaiModelId: process.env.OPENAI_MODEL_ID || 'gpt-5.6-luna',
+    /**
+     * Who reads the morning's Spruce reports (see readSprucePages).
+     *
+     * ai      the model reads every report: the default. The layout reader
+     *         reads one only where the model cannot answer (no credit, down).
+     * both    the layout reader and the model, compared line by line. Each
+     *         catches the other's mistakes, and either carries the import
+     *         when the other cannot.
+     * auto    the layout reader; the model only where it fails
+     * parser  the layout reader alone, never the model
+     */
+    spruceReader: (['both', 'auto', 'ai', 'parser'].includes(process.env.SPRUCE_READER ?? '')
+        ? process.env.SPRUCE_READER
+        : 'ai') as 'both' | 'auto' | 'ai' | 'parser',
+    /**
+     * The model that reads Spruce reports, and how hard it reasons.
+     *
+     * Benchmarked on every report on file (Aug 14, Oct 13, Oct 21), each read
+     * over and over: gpt-6.1-sol read 40 reports without a single wrong value
+     * at its default reasoning; the invoice model, gpt-5.6-luna, misread
+     * something in a third of its runs. Low reasoning is the owner's choice,
+     * for speed and cost; on Oct 22 it read the Oct 21 Order, Deliveries and
+     * Custom reports and the Aug 14 Custom report (259 lines) with no field
+     * different, at 6k-18k input and 4k-10k output tokens a report (about
+     * $0.06-0.14). SPRUCE_AI_REASONING_EFFORT takes minimal, low, medium or
+     * high; 'default' sends none, so the model reasons at its own default.
+     */
+    spruceAiModelId: process.env.SPRUCE_AI_MODEL_ID || 'gpt-6.1-sol',
+    spruceAiReasoningEffort: (['minimal', 'low', 'medium', 'high'].includes(process.env.SPRUCE_AI_REASONING_EFFORT ?? 'low')
+        ? process.env.SPRUCE_AI_REASONING_EFFORT ?? 'low'
+        : undefined) as 'minimal' | 'low' | 'medium' | 'high' | undefined,
     gmailClientId: process.env.GMAIL_CLIENT_ID || '',
     gmailClientSecret: process.env.GMAIL_CLIENT_SECRET || '',
     gmailRefreshToken: process.env.GMAIL_REFRESH_TOKEN || '',

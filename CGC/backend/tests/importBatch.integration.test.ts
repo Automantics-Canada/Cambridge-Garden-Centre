@@ -281,6 +281,121 @@ describe('Spruce morning import (PostgreSQL)', { skip: !disposableConfirmed }, (
     assert.ok(!(await document('2608-700002')).flags.includes('NOT_IN_LATEST_REPORT'));
   });
 
+  describe('the AI double-check', () => {
+    // Explicit messages throughout: a bare assert.ok that fails under tsx hangs
+    // while Node rebuilds its message from the transformed source.
+    const checked = (aiCheck: ParsedSpruceReport['aiCheck']): ParsedSpruceReport => ({ ...parsed.DELIVERY, aiCheck });
+    const customerDiffers = {
+      status: 'differences' as const,
+      compared: 5,
+      agreed: 3,
+      differences: [{ documentNumber: '2608-700001', detail: 'customer read as "Priya Raman" by the report reader, "U/M" by AI' }],
+    };
+    const flagged = async (documentNumber: string) => (await document(documentNumber)).flags.includes('READ_DIFFERENTLY');
+
+    it('flags the order the two readings differ on, says what differs, and clears it when they next agree', async () => {
+      const morning = await runImportBatch(prisma, {
+        dispatchDate: '2026-09-02',
+        createdById: userId,
+        files: files('morning', { DELIVERY: checked(customerDiffers) }),
+      });
+
+      assert.equal(await flagged('2608-700001'), true, 'the order the readings differ on is flagged');
+      assert.equal(await flagged('2608-700002'), false, 'the order they agree on is not');
+      assert.deepEqual(
+        morning.issues.filter(issue => issue.flags.includes('READ_DIFFERENTLY')).map(issue => issue.documentNumber),
+        ['2608-700001']
+      );
+      assert.deepEqual(morning.warnings.filter(warning => /AI double-check|read as/.test(warning)), [
+        'AI double-check: the Delivery Report reads differently in 1 order. Check it against the report:',
+        '2608-700001: customer read as "Priya Raman" by the report reader, "U/M" by AI',
+      ]);
+      assert.deepEqual(morning.aiChecks, [{
+        reportType: 'DELIVERY', label: 'Delivery Report', status: 'differences', compared: 5, agreed: 3, ordersDiffering: 1, reason: null,
+      }]);
+      // The layout reader's reading is the one stored.
+      assert.equal((await document('2608-700001')).customerName, 'Priya Raman');
+
+      await runImportBatch(prisma, {
+        dispatchDate: '2026-09-02',
+        createdById: userId,
+        files: files('noon', { DELIVERY: checked({ status: 'agreed', compared: 5, agreed: 5, differences: [] }) }),
+      });
+      assert.equal(await flagged('2608-700001'), false, 'cleared when the readings next agree');
+    });
+
+    it('keeps an earlier finding when a later check could not run, and says it did not', async () => {
+      await runImportBatch(prisma, {
+        dispatchDate: '2026-09-02',
+        createdById: userId,
+        files: files('morning', { DELIVERY: checked(customerDiffers) }),
+      });
+
+      const noon = await runImportBatch(prisma, {
+        dispatchDate: '2026-09-02',
+        createdById: userId,
+        files: files('noon', {
+          DELIVERY: checked({ status: 'unavailable', compared: 0, agreed: 0, differences: [], reason: 'the AI account is out of credit' }),
+        }),
+      });
+
+      assert.equal(await flagged('2608-700001'), true, 'an unchecked upload decides nothing');
+      assert.deepEqual(noon.warnings.filter(warning => /AI double-check/.test(warning)), [
+        'The AI double-check of the Delivery Report did not run: the AI account is out of credit. It was imported as the report reader read it.',
+      ]);
+      assert.equal(noon.aiChecks?.[0]?.status, 'unavailable');
+    });
+
+    it('clears the flag once a dispatcher has corrected the order', async () => {
+      await runImportBatch(prisma, {
+        dispatchDate: '2026-09-02',
+        createdById: userId,
+        files: files('morning', { DELIVERY: checked(customerDiffers) }),
+      });
+
+      await applyOrderEdits((await document('2608-700001')).id, parseEditRequest({ fields: { customerName: 'Priya Raman (checked)' } }), userId);
+
+      assert.equal(await flagged('2608-700001'), false, "a dispatcher's edit acknowledges the flag");
+    });
+
+    it('says when the AI could not read a report, and that the report reader did', async () => {
+      const summary = await runImportBatch(prisma, {
+        dispatchDate: '2026-09-02',
+        createdById: userId,
+        files: files('morning', { DELIVERY: { ...parsed.DELIVERY, readBy: 'PARSER', aiFailed: 'the AI account is out of credit' } }),
+      });
+
+      assert.deepEqual(summary.warnings.filter(warning => /AI could not read/.test(warning)), [
+        'The AI could not read the Delivery Report: the AI account is out of credit. The report reader read it instead. ' +
+          'Check its orders before dispatch.',
+      ]);
+      assert.equal((await document('2608-700001')).customerName, 'Priya Raman', 'imported as the report reader read it');
+    });
+
+    it('says nothing about who read a report when the AI read it as configured', async () => {
+      const summary = await runImportBatch(prisma, {
+        dispatchDate: '2026-09-02',
+        createdById: userId,
+        files: files('morning', { DELIVERY: { ...parsed.DELIVERY, readBy: 'AI' } }),
+      });
+
+      assert.deepEqual(summary.warnings.filter(warning => /AI/.test(warning)), []);
+    });
+
+    it('says when a report was read by the AI alone, why, and when the developer is needed', async () => {
+      const summary = await runImportBatch(prisma, {
+        dispatchDate: '2026-09-02',
+        createdById: userId,
+        files: files('morning', { DELIVERY: { ...parsed.DELIVERY, readBy: 'AI', readByAiBecause: 'its layout was not recognised' } }),
+      });
+
+      assert.deepEqual(summary.warnings.filter(warning => /read by AI alone/.test(warning)), [
+        'The Delivery Report was read by AI alone, because its layout was not recognised. Check its orders before dispatch. ' +
+          'Tell your developer, so the report reader can be updated for it.',
+      ]);
+    });
+  });
+
   it('refuses an upload without the delivery report, writing nothing', async () => {
     const withoutDelivery = files().filter(file => file.reportType !== 'DELIVERY');
 

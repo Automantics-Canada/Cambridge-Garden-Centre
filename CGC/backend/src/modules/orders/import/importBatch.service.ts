@@ -56,6 +56,7 @@ export const ATTENTION_FLAGS: readonly OrderFlag[] = [
   'DATE_MISMATCH',
   'TOTAL_MISMATCH',
   'EXTRACTION_CHECK_FAILED',
+  'READ_DIFFERENTLY',
   'NOT_IN_LATEST_REPORT',
 ];
 
@@ -87,6 +88,18 @@ export interface BatchReportSummary {
   unchanged: number;
   conflicts: number;
   skipped: number;
+}
+
+/** How one report's AI double-check went, for the summary's badge. */
+export interface BatchAiCheck {
+  reportType: SpruceReportType;
+  label: string;
+  status: 'agreed' | 'differences' | 'unavailable';
+  compared: number;
+  agreed: number;
+  /** Orders the two readings differ on. */
+  ordersDiffering: number;
+  reason: string | null;
 }
 
 export interface BatchOrder {
@@ -134,6 +147,8 @@ export interface BatchSummary {
   orders: BatchOrder[];
   /** Orders needing a person, including any no longer on the delivery report. */
   issues: BatchOrder[];
+  /** Each report's AI double-check, where one ran. Absent from older summaries. */
+  aiChecks?: BatchAiCheck[];
   warnings: string[];
   errors: string[];
 }
@@ -165,6 +180,22 @@ function fileWarnings(files: BatchFile[], dispatchDate: Date): string[] {
   for (const file of files) {
     const range = reportRange(file.report);
     const label = SLOT_LABELS[file.reportType];
+    if (file.report.aiFailed) {
+      warnings.push(
+        `The AI could not read the ${label}: ${file.report.aiFailed}. The report reader read it instead. ` +
+          'Check its orders before dispatch.'
+      );
+    }
+    // Where the AI is the configured reader, it reading a report is no news.
+    if (file.report.readBy === 'AI' && file.report.readByAiBecause) {
+      const because = file.report.readByAiBecause;
+      warnings.push(
+        `The ${label} was read by AI alone, because ${because}. Check its orders before dispatch.` +
+          // A layout the reader does not know will be back tomorrow.
+          (/layout/.test(because) ? ' Tell your developer, so the report reader can be updated for it.' : '')
+      );
+    }
+    warnings.push(...aiCheckNotes(file.report, label));
     if (!range) {
       warnings.push(`Could not read which dates the ${label} covers; check it is today's.`);
     } else if (dispatchDate < range.from || dispatchDate > range.to) {
@@ -183,6 +214,73 @@ function fileWarnings(files: BatchFile[], dispatchDate: Date): string[] {
     warnings.push('No Item Tracking Report: addresses, delivery instructions and supplier POs were not refreshed.');
   }
   return warnings;
+}
+
+/** The most differences listed per report; the rest are counted. */
+const MAX_DIFFERENCES_LISTED = 25;
+
+/** What a report's AI double-check found, in the dispatcher's words. */
+export function aiCheckNotes(report: ParsedSpruceReport, label: string): string[] {
+  const check = report.aiCheck;
+  if (!check) return [];
+  if (check.status === 'unavailable') {
+    return [
+      `The AI double-check of the ${label} did not run: ${check.reason ?? 'no answer'}. ` +
+        'It was imported as the report reader read it.',
+    ];
+  }
+  if (check.status === 'agreed') return [];
+
+  const orders = new Set(check.differences.map(difference => difference.documentNumber)).size;
+  const notes = [
+    `AI double-check: the ${label} reads differently in ${orders} order${orders === 1 ? '' : 's'}. ` +
+      `Check ${orders === 1 ? 'it' : 'them'} against the report:`,
+    ...check.differences
+      .slice(0, MAX_DIFFERENCES_LISTED)
+      .map(difference => `${difference.documentNumber}: ${difference.detail}`),
+  ];
+  if (check.differences.length > MAX_DIFFERENCES_LISTED) {
+    notes.push(`…and ${check.differences.length - MAX_DIFFERENCES_LISTED} more differences in the ${label}.`);
+  }
+  return notes;
+}
+
+/**
+ * Whether the reports' AI double-checks speak to this order: decided where a
+ * check ran on a report that lists it, and set where that check found the
+ * readings differ. A report the AI could not check decides nothing, so an
+ * earlier upload's finding stands.
+ */
+export function readDifferently(
+  files: BatchFile[],
+  documentNumber: string,
+  rows: ReportRows
+): { decided: boolean; differs: boolean } {
+  const checked = files.filter(file =>
+    file.report.aiCheck && file.report.aiCheck.status !== 'unavailable' && (rows[file.reportType]?.length ?? 0) > 0
+  );
+  return {
+    decided: checked.length > 0,
+    differs: checked.some(file =>
+      file.report.aiCheck!.differences.some(difference => difference.documentNumber === documentNumber)
+    ),
+  };
+}
+
+function aiChecksOf(files: BatchFile[]): BatchAiCheck[] {
+  return files.flatMap(file => {
+    const check = file.report.aiCheck;
+    if (!check) return [];
+    return [{
+      reportType: file.reportType,
+      label: SLOT_LABELS[file.reportType],
+      status: check.status,
+      compared: check.compared,
+      agreed: check.agreed,
+      ordersDiffering: new Set(check.differences.map(difference => difference.documentNumber)).size,
+      reason: check.reason ?? null,
+    }];
+  });
 }
 
 /** Rows of every report, grouped by document number. */
@@ -320,6 +418,7 @@ async function summarize(
     updated: input.updated,
     orders,
     issues: [...orders, ...dropped].filter(needsAttention),
+    aiChecks: aiChecksOf(input.files),
     warnings: input.warnings,
     errors: input.errors,
   };
@@ -413,7 +512,13 @@ export async function runImportBatch(
             rowCount: file.report.rows.length,
             documentCount: new Set(file.report.rows.map(row => row.documentNumber)).size,
             unreadableCount: file.report.unreadable.length,
-            extraction: { rows: file.report.rows, unreadable: file.report.unreadable } as unknown as Prisma.InputJsonValue,
+            extraction: {
+              rows: file.report.rows,
+              unreadable: file.report.unreadable,
+              readBy: file.report.readBy ?? null,
+              aiFailed: file.report.aiFailed ?? null,
+              aiCheck: file.report.aiCheck ?? null,
+            } as unknown as Prisma.InputJsonValue,
           };
         }),
       },
@@ -534,6 +639,9 @@ async function mergeBatch(
     };
 
     const decided = batchFlags(rows, context);
+    const checkedByAi = readDifferently(files, documentNumber, rows);
+    if (checkedByAi.decided) decided.decided.push('READ_DIFFERENTLY');
+    if (checkedByAi.differs) decided.flags.push('READ_DIFFERENTLY');
     // An order closed in Spruce is not waiting to be collected either.
     const isPickup = decided.flags.includes('NOT_OPEN') ? false : isPickupOrder(state);
     const flags = combineFlags(

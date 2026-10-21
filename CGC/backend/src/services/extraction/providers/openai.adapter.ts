@@ -2,7 +2,7 @@ import OpenAI from 'openai';
 import { zodTextFormat } from 'openai/helpers/zod';
 import type { z } from 'zod';
 import { env } from '../../../config/env.js';
-import { ExtractionError, type ExtractionDocument, type ExtractionProvider } from './types.js';
+import { ExtractionError, type ExtractionDocument, type ExtractionProvider, type ExtractOptions } from './types.js';
 
 /**
  * Reads documents with an OpenAI vision model.
@@ -106,15 +106,17 @@ export const openaiExtractionProvider: ExtractionProvider = {
     document: ExtractionDocument,
     prompt: string,
     schema: z.ZodType<T>,
-    schemaName: string
+    schemaName: string,
+    options: ExtractOptions = {}
   ): Promise<T> {
     const documentPart = toContentPart(document);
 
     let response;
     try {
       response = await getClient().responses.parse({
-        model: env.openaiModelId,
-        max_output_tokens: MAX_OUTPUT_TOKENS,
+        model: options.modelId ?? env.openaiModelId,
+        max_output_tokens: options.maxOutputTokens ?? MAX_OUTPUT_TOKENS,
+        ...(options.reasoningEffort ? { reasoning: { effort: options.reasoningEffort } } : {}),
         input: [
           {
             role: 'user',
@@ -144,6 +146,15 @@ export const openaiExtractionProvider: ExtractionProvider = {
       throw new ExtractionError(
         `Model response was cut short (${response.incomplete_details?.reason ?? 'unknown reason'})`,
         { retryable: false }
+      );
+    }
+
+    const usage = response.usage;
+    if (usage) {
+      console.log(
+        `[Extraction] ${schemaName} on ${options.modelId ?? env.openaiModelId}: ` +
+          `${usage.input_tokens} input tokens (${usage.input_tokens_details?.cached_tokens ?? 0} cached), ` +
+          `${usage.output_tokens} output (${usage.output_tokens_details?.reasoning_tokens ?? 0} reasoning)`
       );
     }
 

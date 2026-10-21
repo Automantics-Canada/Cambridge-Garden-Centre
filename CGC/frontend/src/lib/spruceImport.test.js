@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import { dateWarning, flagInfo, processState, slotStatus, summaryLine } from './spruceImport';
+import { aiCheckBadge, aiOnlyNote, dateWarning, flagInfo, processState, slotStatus, summaryLine } from './spruceImport';
+import { assignWarning } from './dispatchBoard';
 
 const ready = (reportType, extra = {}) => ({ reportType, dateFrom: '2026-08-14', dateTo: '2026-08-14', ...extra });
 
@@ -72,5 +73,38 @@ describe('wording', () => {
   it('names every flag, and an unknown one by its code rather than not at all', () => {
     expect(flagInfo('NO_ADDRESS')).toEqual({ label: 'No address', tone: 'bad' });
     expect(flagInfo('SOMETHING_NEW')).toEqual({ label: 'SOMETHING_NEW', tone: 'neutral' });
+  });
+});
+
+describe('the AI double-check', () => {
+  const check = (status, ordersDiffering = 0) => ({ reportType: 'DELIVERY', status, ordersDiffering });
+
+  it('says in one badge how the double-check of the whole upload went', () => {
+    expect(aiCheckBadge({ aiChecks: [check('agreed'), check('agreed')] })).toEqual({ tone: 'good', label: 'AI double-check agreed' });
+    expect(aiCheckBadge({ aiChecks: [check('agreed'), check('differences', 2), check('differences', 1)] }))
+      .toEqual({ tone: 'warn', label: 'AI double-check: 3 orders read differently' });
+    expect(aiCheckBadge({ aiChecks: [check('differences', 1)] })).toEqual({ tone: 'warn', label: 'AI double-check: 1 order read differently' });
+    expect(aiCheckBadge({ aiChecks: [check('agreed'), check('unavailable')] }))
+      .toEqual({ tone: 'neutral', label: 'AI double-check did not finish' });
+  });
+
+  it('shows no badge where no double-check ran', () => {
+    expect(aiCheckBadge({})).toBeNull();
+    expect(aiCheckBadge({ aiChecks: [] })).toBeNull();
+  });
+
+  it('says who read a report only when something unusual happened', () => {
+    expect(aiOnlyNote({ readByAi: true })).toBeNull();
+    expect(aiOnlyNote({ readByAi: false })).toBeNull();
+    expect(aiOnlyNote({ readByAi: false, aiFailed: 'the AI account is out of credit' }))
+      .toBe('The AI could not read this report (the AI account is out of credit), so the report reader read it. Check its orders before dispatch.');
+    expect(aiOnlyNote({ readByAi: true, readByAiBecause: 'its layout was not recognised' }))
+      .toBe('Read by AI alone, because its layout was not recognised. Check its orders before dispatch.');
+  });
+
+  it('names the flag, and asks before giving such an order to a driver', () => {
+    expect(flagInfo('READ_DIFFERENTLY')).toEqual({ label: 'AI read it differently: check', tone: 'warn' });
+    expect(assignWarning({ spruceOrderId: '2610-720652', flags: ['READ_DIFFERENTLY'] }))
+      .toBe('2610-720652: AI read it differently: check. Assign anyway?');
   });
 });

@@ -102,6 +102,24 @@ export interface UnreadableSpruceRow {
   page: number;
   row: number;
   reason: string;
+  /** The order it belongs to, where that much could be read. */
+  documentNumber?: string;
+}
+
+/**
+ * The AI's double-check of the layout reader's reading (SPRUCE_READER=both):
+ * the same report read a second, independent way and compared line by line.
+ */
+export interface AiCheck {
+  /** 'unavailable' when the AI could not read the report in time; `reason` says why. */
+  status: 'agreed' | 'differences' | 'unavailable';
+  /** Lines both readings have. */
+  compared: number;
+  /** Of those, the lines read identically. */
+  agreed: number;
+  /** Where the readings differ, by order. */
+  differences: { documentNumber: string; detail: string }[];
+  reason?: string;
 }
 
 export interface ParsedSpruceReport {
@@ -116,6 +134,21 @@ export interface ParsedSpruceReport {
   unreadable: UnreadableSpruceRow[];
   /** Pages in the PDF. Set when read from a file. */
   pageCount?: number;
+  /**
+   * 'AI' where an AI model read the report because the layout reader could
+   * not (or SPRUCE_READER=ai). Its lines passed the reader's checks against
+   * the report's text, but a person should look before dispatch.
+   */
+  readBy?: 'PARSER' | 'AI';
+  /** Why the AI read the report alone, where it did: said to the dispatcher. */
+  readByAiBecause?: string;
+  /**
+   * Why the AI could not read a report it was meant to (SPRUCE_READER=ai), so
+   * that the layout reader read it instead: "the AI account is out of credit".
+   */
+  aiFailed?: string;
+  /** The AI's double-check, where one ran. */
+  aiCheck?: AiCheck;
   /**
    * The date range the report says it was filtered on, as printed. Each
    * report filters on a different date: the delivery report on delivery
