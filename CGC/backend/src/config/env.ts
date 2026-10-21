@@ -48,6 +48,19 @@ export const env = {
      * `npm run extraction:eval`, not on price.
      */
     openaiModelId: process.env.OPENAI_MODEL_ID || 'gpt-5.6-luna',
+    /**
+     * Who reads the morning's Spruce reports.
+     *
+     * auto    the layout reader, and the AI model where it cannot read a
+     *         report (a column moved, a heading appeared): the default
+     * ai      the AI model reads every report
+     * parser  the layout reader only, never the model
+     */
+    spruceReader: (['auto', 'ai', 'parser'].includes(process.env.SPRUCE_READER ?? '')
+        ? process.env.SPRUCE_READER
+        : 'auto') as 'auto' | 'ai' | 'parser',
+    /** The model that reads Spruce reports; the invoice model unless set. */
+    spruceAiModelId: process.env.SPRUCE_AI_MODEL_ID || process.env.OPENAI_MODEL_ID || 'gpt-5.6-luna',
     gmailClientId: process.env.GMAIL_CLIENT_ID || '',
     gmailClientSecret: process.env.GMAIL_CLIENT_SECRET || '',
     gmailRefreshToken: process.env.GMAIL_REFRESH_TOKEN || '',

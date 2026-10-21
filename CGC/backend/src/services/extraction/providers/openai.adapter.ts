@@ -2,7 +2,7 @@ import OpenAI from 'openai';
 import { zodTextFormat } from 'openai/helpers/zod';
 import type { z } from 'zod';
 import { env } from '../../../config/env.js';
-import { ExtractionError, type ExtractionDocument, type ExtractionProvider } from './types.js';
+import { ExtractionError, type ExtractionDocument, type ExtractionProvider, type ExtractOptions } from './types.js';
 
 /**
  * Reads documents with an OpenAI vision model.
@@ -106,15 +106,16 @@ export const openaiExtractionProvider: ExtractionProvider = {
     document: ExtractionDocument,
     prompt: string,
     schema: z.ZodType<T>,
-    schemaName: string
+    schemaName: string,
+    options: ExtractOptions = {}
   ): Promise<T> {
     const documentPart = toContentPart(document);
 
     let response;
     try {
       response = await getClient().responses.parse({
-        model: env.openaiModelId,
-        max_output_tokens: MAX_OUTPUT_TOKENS,
+        model: options.modelId ?? env.openaiModelId,
+        max_output_tokens: options.maxOutputTokens ?? MAX_OUTPUT_TOKENS,
         input: [
           {
             role: 'user',

@@ -4,7 +4,12 @@ import axios from 'axios';
 import type { z } from 'zod';
 import { isSupabaseUrl, getFilenameFromUrl } from '../urlHandler.js';
 import { openaiExtractionProvider } from './providers/openai.adapter.js';
-import { ExtractionError, type ExtractionDocument, type ExtractionProvider } from './providers/types.js';
+import {
+  ExtractionError,
+  type ExtractionDocument,
+  type ExtractionProvider,
+  type ExtractOptions,
+} from './providers/types.js';
 import { INVOICE_PROMPT, TICKET_PROMPT } from './prompts.js';
 import { InvoiceExtractionSchema, TicketExtractionSchema } from './schemas.js';
 import {
@@ -131,6 +136,24 @@ async function read<Raw, Result>(
   );
   const raw = await provider.extract(document, prompt, schema, schemaName);
   return normalize(raw);
+}
+
+/**
+ * Reads any document into `schema`, for callers with their own prompt and
+ * checks (the Spruce report reader). The provider stays private to this file.
+ */
+export async function extractStructured<T>(
+  document: ExtractionDocument,
+  prompt: string,
+  schema: z.ZodType<T>,
+  schemaName: string,
+  options?: ExtractOptions
+): Promise<T> {
+  assertReadableSize(document);
+  console.log(
+    `[Extraction] Reading ${schemaName} ${document.filename} with ${provider.name}/${options?.modelId ?? provider.modelId}`
+  );
+  return provider.extract(document, prompt, schema, schemaName, options);
 }
 
 /** Reads a delivery ticket already held in memory. */

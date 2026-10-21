@@ -20,6 +20,14 @@ export interface ExtractionDocument {
   filename: string;
 }
 
+/** Per-call overrides, for a caller whose documents differ from invoices. */
+export interface ExtractOptions {
+  /** A different model from the provider's default. */
+  modelId?: string;
+  /** A larger reply budget, for a document that yields many rows. */
+  maxOutputTokens?: number;
+}
+
 export interface ExtractionProvider {
   /** For logs and for the eval script's report header. */
   readonly name: string;
@@ -36,7 +44,8 @@ export interface ExtractionProvider {
     document: ExtractionDocument,
     prompt: string,
     schema: z.ZodType<T>,
-    schemaName: string
+    schemaName: string,
+    options?: ExtractOptions
   ): Promise<T>;
 }
 

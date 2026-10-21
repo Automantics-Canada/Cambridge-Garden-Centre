@@ -117,6 +117,12 @@ export interface ParsedSpruceReport {
   /** Pages in the PDF. Set when read from a file. */
   pageCount?: number;
   /**
+   * 'AI' where an AI model read the report because the layout reader could
+   * not (or SPRUCE_READER=ai). Its lines passed the reader's checks against
+   * the report's text, but a person should look before dispatch.
+   */
+  readBy?: 'PARSER' | 'AI';
+  /**
    * The date range the report says it was filtered on, as printed. Each
    * report filters on a different date: the delivery report on delivery
    * date, the other two on entry date.

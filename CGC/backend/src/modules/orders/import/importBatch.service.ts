@@ -165,6 +165,11 @@ function fileWarnings(files: BatchFile[], dispatchDate: Date): string[] {
   for (const file of files) {
     const range = reportRange(file.report);
     const label = SLOT_LABELS[file.reportType];
+    if (file.report.readBy === 'AI') {
+      warnings.push(
+        `The ${label} was read by AI because its layout was not recognised. Check its orders before dispatch.`
+      );
+    }
     if (!range) {
       warnings.push(`Could not read which dates the ${label} covers; check it is today's.`);
     } else if (dispatchDate < range.from || dispatchDate > range.to) {

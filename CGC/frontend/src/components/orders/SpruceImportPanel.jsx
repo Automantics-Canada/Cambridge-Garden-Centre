@@ -186,6 +186,11 @@ export default function SpruceImportPanel({ onClose, onImported, onShowOrder }) 
                           {preview.documentCount} order{preview.documentCount === 1 ? '' : 's'}
                         </span>
                       </div>
+                      {preview.readByAi && (
+                        <p className="text-[12.5px] text-ochre">
+                          Layout not recognised, so AI read this report. Check its orders before dispatch.
+                        </p>
+                      )}
                       {preview.unreadableCount > 0 && (
                         <p className="text-[12.5px] text-ochre">
                           {preview.unreadableCount} line(s) could not be read and will be listed after import.

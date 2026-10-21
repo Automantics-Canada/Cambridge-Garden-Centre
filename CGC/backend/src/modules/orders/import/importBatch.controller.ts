@@ -22,6 +22,7 @@ function describe(report: ParsedSpruceReport) {
     documentCount: new Set(report.rows.map(row => row.documentNumber)).size,
     rowCount: report.rows.length,
     unreadableCount: report.unreadable.length,
+    readByAi: report.readBy === 'AI',
     dateFrom: isoOrNull(report.dateRange?.fromRaw),
     dateTo: isoOrNull(report.dateRange?.toRaw),
   };
