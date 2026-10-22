@@ -12,6 +12,7 @@ import { env } from '../src/config/env.js';
 import { prisma } from '../src/db/prisma.js';
 import { DispatchService } from '../src/modules/dispatch/dispatch.service.js';
 import { getOrderForEditing } from '../src/modules/orders/edits/orderEdits.service.js';
+import { listOrders } from '../src/modules/orders/orderList.service.js';
 
 /**
  * "Awaiting supplier: <supplier> PO <number>" against PostgreSQL.
@@ -204,6 +205,33 @@ describe("awaiting supplier: the office badge, and the driver's pickup (PostgreS
       { supplierName: UNMAPPED_VENDOR, location: 'Example Yard', poNumber: SECOND_PO },
     ]);
     assert.deepEqual((await getOrderForEditing(plainId, TODAY)).awaitingSupplier, []);
+  });
+
+  it('says where each delivery is picked up on the board, the list and the editor, after the material arrives too', async () => {
+    const where = [{ name: SUPPLIER, location: 'Example Yard', address: null, po: PO }];
+
+    const board = await DispatchService.getDispatchBoard(LATER, TODAY);
+    assert.deepEqual(board.unassignedOrders.find(order => order.id === pooledId)?.pickupFrom, where);
+    // No supplier involved: an empty list, which the screens read as CGC's own yard.
+    assert.deepEqual(board.unassignedOrders.find(order => order.id === plainId)?.pickupFrom, []);
+
+    const { data } = await listOrders({ limit: 50 }) as { data: Array<{ id: string; pickupFrom?: unknown }> };
+    assert.deepEqual(data.find(order => order.id === pooledId)?.pickupFrom, where);
+    assert.deepEqual((await getOrderForEditing('9900-000101', TODAY)).pickupFrom, where);
+    // A CGC delivery collected first at the supplier: delivery via supplier.
+    const listed = data.find(order => order.id === pooledId) as { fulfilment?: { type: string; places: unknown[] } } | undefined;
+    assert.equal(listed?.fulfilment?.type, 'supplier_haul_delivery');
+    assert.deepEqual(listed?.fulfilment?.places, [{ name: SUPPLIER, location: 'Example Yard', address: null, po: PO }]);
+    assert.equal((await getOrderForEditing('9900-000101', TODAY)).fulfilment?.type, 'supplier_haul_delivery');
+
+    // The supplier's ticket is in and the flag is gone; the driver still went there.
+    await prisma.orderDocument.update({ where: { id: pooledId }, data: { flags: ['CUSTOMER_ON_SITE'] } });
+    try {
+      assert.deepEqual((await getOrderForEditing('9900-000101', TODAY)).awaitingSupplier, []);
+      assert.deepEqual((await getOrderForEditing('9900-000101', TODAY)).pickupFrom, where);
+    } finally {
+      await prisma.orderDocument.update({ where: { id: pooledId }, data: { flags: ['AWAITING_SUPPLIER', 'CUSTOMER_ON_SITE'] } });
+    }
   });
 
   it('is on the office board over HTTP', async () => {

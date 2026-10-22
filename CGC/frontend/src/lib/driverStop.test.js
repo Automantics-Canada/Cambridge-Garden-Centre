@@ -35,7 +35,31 @@ describe('stopView', () => {
       skids: 2,
       // Stock from CGC's own yard: nowhere else to load.
       pickups: [],
+      // This stop came without a pickup list, so the yard is not claimed.
+      pickupAtYard: false,
+      pickupAtPit: false,
     });
+  });
+
+  it("sends the driver to the pit, not CGC's yard, where the order names no supplier (2610-721420)", () => {
+    const view = stopView({
+      order: { spruceOrderId: '2610-721420-L1' },
+      document: { documentNumber: '2610-721420', customerName: 'Restivo Landscaping', lines: [] },
+      pickupFrom: [],
+      pickupAtPit: true,
+    });
+    expect(view.pickupAtPit).toBe(true);
+    expect(view.pickupAtYard).toBe(false);
+  });
+
+  it("tells the driver to load at CGC's yard when no supplier is involved", () => {
+    const view = stopView({
+      order: { spruceOrderId: '2610-721420-L1' },
+      document: { documentNumber: '2610-721420', customerName: 'Restivo Landscaping', lines: [] },
+      pickupFrom: [],
+    });
+    expect(view.pickupAtYard).toBe(true);
+    expect(view.pickups).toEqual([]);
   });
 
   it('says where to load a bought-in order first, and the PO to quote there', () => {
@@ -51,6 +75,7 @@ describe('stopView', () => {
       { name: 'Unilock', location: 'Georgetown', address: null, po: '2608-355356' },
       { name: 'UNMAPPED01', location: null, address: null, po: '2608-355357' },
     ]);
+    expect(view.pickupAtYard).toBe(false);
   });
 
   it('keeps two products under one catch-all code apart (2608-712621)', () => {

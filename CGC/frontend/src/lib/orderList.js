@@ -3,6 +3,7 @@
  * Every day is a 'YYYY-MM-DD' calendar date in the yard's timezone.
  */
 import { deliveryTypeLabel } from './dispatchBoard';
+import { externalStatus, fulfilmentType, isCollected, isExternal } from './fulfilment';
 import { deliveryDay } from './dispatchDays';
 
 /**
@@ -11,7 +12,7 @@ import { deliveryDay } from './dispatchDays';
  * "Delivery" and would only repeat the badge above it.
  */
 export function deliveryTypeDetail(order) {
-  if (!order || order.isPickup || order.deliveryType === 'GENERAL') return null;
+  if (!order || isCollected(order) || isExternal(order) || order.deliveryType === 'GENERAL') return null;
   return deliveryTypeLabel(order.deliveryType);
 }
 
@@ -34,7 +35,9 @@ const STARTED = ['OUT_FOR_DELIVERY', 'IN_TRANSIT'];
  * stop, so it says so rather than "No driver".
  */
 export function deliveryStatusView(order) {
-  if (order?.isPickup) return { label: `Pickup at ${order.collectAt || 'yard'}`, tone: 'neutral', detail: null };
+  const external = externalStatus(order);
+  if (external) return { label: external, tone: 'neutral', detail: null };
+  if (fulfilmentType(order) === 'yard_pickup') return { label: `Pickup at ${order?.collectAt || 'yard'}`, tone: 'neutral', detail: null };
   const delivery = order?.delivery;
   const driver = delivery?.driverName ?? null;
   if (!delivery || (!driver && delivery.status !== 'DELIVERED' && delivery.status !== 'CANCELLED')) {
@@ -60,7 +63,7 @@ export function deliveryStatusView(order) {
  * @param today 'YYYY-MM-DD' in the yard's timezone
  */
 export function pastDueWithoutDriver(order, today) {
-  if (!order || order.isPickup || !today) return false;
+  if (!order || isCollected(order) || isExternal(order) || !today) return false;
   if ((order.flags ?? []).includes('NOT_OPEN')) return false;
   const due = deliveryDay(order.deliveryDate);
   if (!due || due >= today) return false;

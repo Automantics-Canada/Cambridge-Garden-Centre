@@ -19,6 +19,13 @@ const DELIVERY_TYPE_LABELS = {
 };
 
 /** Where to load first: each supplier, its address where known, and the PO to quote. */
+/**
+ * True where the server said there is no supplier to visit, so the load comes
+ * from CGC's own yard. Never guessed from a stop that carries no pickup list.
+ */
+const atYard = (delivery) =>
+  Array.isArray(delivery?.pickupFrom) && delivery.pickupFrom.length === 0 && !delivery?.pickupAtPit;
+
 const pickupsOf = (delivery) =>
   (delivery?.pickupFrom ?? []).map(({ name, location, address, po }) => ({
     name: name || null,
@@ -70,6 +77,8 @@ export function stopView(delivery) {
       lines: order.product ? [{ product: order.product, quantity: order.quantity, unit: order.unit }] : [],
       skids: 0,
       pickups: pickupsOf(delivery),
+      pickupAtYard: atYard(delivery),
+      pickupAtPit: Boolean(delivery?.pickupAtPit),
     };
   }
 
@@ -87,6 +96,8 @@ export function stopView(delivery) {
       .filter((line) => line.lineClass === 'DEPOSIT')
       .reduce((sum, line) => sum + Number(line.quantity ?? 0), 0),
     pickups: pickupsOf(delivery),
+    pickupAtYard: atYard(delivery),
+    pickupAtPit: Boolean(delivery?.pickupAtPit),
   };
 }
 

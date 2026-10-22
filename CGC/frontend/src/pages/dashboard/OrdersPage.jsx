@@ -18,6 +18,7 @@ import { cn } from '../../lib/cn';
 import { businessDayOf, businessDayOffset, formatCalendarDate } from '../../lib/date';
 import { formatOrderQuantity } from '../../lib/quantity';
 import { flagBadges } from '../../lib/dispatchBoard';
+import { FULFILMENT_LABELS, fulfilmentType, isCollected, routeLine, undatedText } from '../../lib/fulfilment';
 import { formatDeliveryDay } from '../../lib/dispatchDays';
 import {
   DELIVERY_STATUS_OPTIONS,
@@ -424,7 +425,8 @@ function OrderRow({ order, onEdit }) {
 
       <td className="px-3 py-4 text-sm align-top min-w-[200px]">
         <div className="font-medium text-ink">{order.customerName}</div>
-        {!order.isPickup && (
+        {/* A pickup's ship-to is a note, not a site. */}
+        {!isCollected(order) && (
           <div className={cn('text-[12.5px]', order.address ? 'text-muted' : 'text-clay font-semibold')}>
             {order.address || 'No address'}
           </div>
@@ -434,7 +436,7 @@ function OrderRow({ order, onEdit }) {
 
       <td className="whitespace-nowrap px-3 py-4 text-sm align-top">
         <div className="flex flex-col items-start gap-1">
-          {order.isPickup ? <Badge tone="neutral">Pickup</Badge> : <Badge tone="good">Delivery</Badge>}
+          <Badge tone={isCollected(order) ? 'neutral' : 'good'}>{FULFILMENT_LABELS[fulfilmentType(order)]}</Badge>
           {type && <span className="text-[12.5px] text-muted">{type}</span>}
         </div>
       </td>
@@ -447,7 +449,9 @@ function OrderRow({ order, onEdit }) {
       </td>
 
       <td className="whitespace-nowrap px-3 py-4 text-sm text-muted tabular align-top">
-        {order.deliveryDate ? formatDeliveryDay(order.deliveryDate) : (order.isPickup ? '—' : <span className="text-clay font-medium">No date</span>)}
+        {order.deliveryDate
+          ? formatDeliveryDay(order.deliveryDate)
+          : undatedText(order) ?? <span className="text-clay font-medium">No date</span>}
       </td>
 
       <td className="px-3 py-4 text-sm align-top min-w-[160px]">
@@ -467,6 +471,7 @@ function OrderRow({ order, onEdit }) {
       <td className="whitespace-nowrap px-3 py-4 text-sm align-top">
         <Badge tone={status.tone}>{status.label}</Badge>
         {status.detail && <div className="mt-1 text-[12.5px] text-muted">{status.detail}</div>}
+        {routeLine(order) && <div className="mt-1 text-[12.5px] text-ink whitespace-normal max-w-[240px]">{routeLine(order)}</div>}
       </td>
 
       <td className="whitespace-nowrap px-3 py-4 text-sm align-top">

@@ -6,6 +6,7 @@ import api from '../../api/axios';
 import { Badge, Button, Field, Input, ModalOverlay, Select, Textarea } from '../ui';
 import { flagInfo } from '../../lib/spruceImport';
 import { flagLabel } from '../../lib/dispatchBoard';
+import { FULFILMENT_LABELS, fulfilmentCheckBadges, fulfilmentType } from '../../lib/fulfilment';
 import {
   DELIVERY_TYPE_OPTIONS,
   ORDER_FIELDS,
@@ -121,6 +122,7 @@ export default function OrderEditor({ orderRef, onClose, onSaved, readOnly = fal
 
           {order && form && (
             <>
+              <Fulfilment order={order} />
               {ORDER_FIELDS.map(({ key, label, multiline, type }) => {
                 const override = overrideFor(order, key);
                 const id = `order-edit-${key}`;
@@ -270,6 +272,44 @@ function UpdateNote({ update, field }) {
   return (
     <div className="flex flex-wrap items-center gap-2 text-[12.5px]">
       <span className="text-ochre font-semibold">{note}</span>
+    </div>
+  );
+}
+
+/**
+ * How the goods reach the customer, and where they are collected: the
+ * suppliers with the PO to quote, a pit nobody named, or CGC's own yard. Read
+ * from the reports, so it is shown, not edited.
+ */
+function Fulfilment({ order }) {
+  const type = fulfilmentType(order);
+  const places = order?.fulfilment?.places ?? [];
+  const where = {
+    yard_pickup: 'The customer collects at the Cambridge Garden Centre yard.',
+    yard_delivery: 'Pick up at the Cambridge Garden Centre yard, then deliver to the address below.',
+    supplier_haul_delivery: 'Collect at the supplier below, then deliver to the address below.',
+    external_pickup: 'The customer collects at the supplier below. No CGC truck.',
+    supplier_direct_ship: 'The supplier\'s own truck delivers to the address below. No CGC driver.',
+  }[type];
+  return (
+    <div className="rounded-control border border-line bg-surface px-4 py-3 space-y-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <p className="text-[13px] font-medium text-ink">{FULFILMENT_LABELS[type]}</p>
+        {fulfilmentCheckBadges(order).map(({ flag, label, tone }) => <Badge key={flag} tone={tone}>{label}</Badge>)}
+      </div>
+      <p className="text-[13px] text-muted">{where}</p>
+      {places.map((place) => (
+        <div key={`${place.name}-${place.location}-${place.po}`} className="text-[13px]">
+          <p className="font-semibold text-ink">
+            {[place.name, place.location].filter(Boolean).join(' ') || 'Pit (not named)'}
+          </p>
+          {place.address && <p className="text-muted">{place.address}</p>}
+          {place.po && <p className="text-muted tabular">Supplier PO {place.po}</p>}
+        </div>
+      ))}
+      {order?.fulfilment?.signal && (
+        <p className="text-[12px] text-muted">From the report: "{order.fulfilment.signal.text}"</p>
+      )}
     </div>
   );
 }

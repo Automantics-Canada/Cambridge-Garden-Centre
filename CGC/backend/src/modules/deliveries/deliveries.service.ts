@@ -1,7 +1,7 @@
 import { prisma } from '../../db/prisma.js';
 import { DeliveryStatus, type Prisma } from '@prisma/client';
 import supabaseStorage from '../../services/supabaseStorage.js';
-import { DISPATCH_DOCUMENT_SELECT, pickupFromOf } from '../dispatch/dispatchOrderView.js';
+import { DISPATCH_DOCUMENT_SELECT, fulfilmentByDocument, pickupFromOf } from '../dispatch/dispatchOrderView.js';
 import { deliveryDayDate } from '../dispatch/dispatchDays.js';
 import { businessDayOf } from '../../lib/businessDay.js';
 import { saveTicketImage } from '../../services/fileStorage.js';
@@ -182,12 +182,20 @@ export const DeliveriesService = {
       ? await prisma.delivery.findUnique({ where: { id }, select: DELIVERY_DRIVER_RESPONSE_SELECT })
       : null;
 
-    const pickupFrom = current
-      ? await pickupFromOf(prisma, { documentId: current.document?.id ?? null, orderId: current.orderId })
-      : [];
+    const documentId = current?.document?.id ?? null;
+    const [pickupFrom, fulfilment] = current
+      ? await Promise.all([
+        pickupFromOf(prisma, { documentId, orderId: current.orderId }),
+        documentId ? fulfilmentByDocument(prisma, [documentId]) : Promise.resolve(new Map()),
+      ])
+      : [[], new Map()];
+    // A pit no supplier PO names (721420's "PitBlk"): the driver must not be
+    // told CGC's yard. Only that yes or no reaches the driver, never more.
+    const how = documentId ? fulfilment.get(documentId) : undefined;
+    const pickupAtPit = how?.type === 'supplier_haul_delivery' && pickupFrom.length === 0;
 
     return {
-      data: current ? [{ ...current, pickupFrom }] : [],
+      data: current ? [{ ...current, pickupFrom, pickupAtPit }] : [],
       pagination: { page: 1, limit: 1, totalCount: remaining, totalPages: 1 },
     };
   },

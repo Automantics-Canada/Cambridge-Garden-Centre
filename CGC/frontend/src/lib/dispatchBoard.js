@@ -1,3 +1,4 @@
+import { fulfilmentCheckBadges, flagApplies } from './fulfilment';
 import { flagInfo } from './spruceImport';
 
 export function mergeUnassignedOrders(unassignedOrders = [], unassignedDeliveries = []) {
@@ -69,6 +70,9 @@ export function supplierWithYard(name, location) {
   return name.toLowerCase().includes(location.toLowerCase()) ? name : `${name} - ${location}`;
 }
 
+/** Where a delivery is loaded when no supplier is involved. */
+export const CGC_YARD = 'Cambridge Garden Centre yard';
+
 /** Who and which PO an order waits on, "Unilock PO 2608-355356", or null when it names none. */
 export function awaitingSupplierDetail(order) {
   const named = (order?.awaitingSupplier ?? [])
@@ -85,10 +89,13 @@ export function flagLabel(order, flag) {
 
 /** Badges for an order's flags, the ones needing attention first. */
 export function flagBadges(order) {
-  const flags = order?.flags ?? [];
+  const flags = (order?.flags ?? []).filter((flag) => flagApplies(order, flag));
   const first = flags.filter((flag) => ASSIGN_WARNING_FLAGS.includes(flag));
   const rest = flags.filter((flag) => !ASSIGN_WARNING_FLAGS.includes(flag));
-  return [...first, ...rest].map((flag) => ({ flag, ...flagInfo(flag), label: flagLabel(order, flag) }));
+  return [
+    ...[...first, ...rest].map((flag) => ({ flag, ...flagInfo(flag), label: flagLabel(order, flag) })),
+    ...fulfilmentCheckBadges(order),
+  ];
 }
 
 const DELIVERY_TYPE_LABELS = {
