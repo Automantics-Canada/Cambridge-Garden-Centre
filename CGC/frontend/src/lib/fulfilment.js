@@ -58,6 +58,7 @@ export const FULFILMENT_CHECKS = {
   NOT_IN_ORDER_REPORT: { label: 'Not in Order report', tone: 'neutral' },
   PICKUP_AND_DIRECT_BOTH_NOTED: { label: 'Pickup and direct delivery both noted', tone: 'warn' },
   CHECK_PICKUP_POINT: { label: 'Check pickup point', tone: 'warn' },
+  CHECK_DELIVERY_OR_PICKUP: { label: 'Delivery or pickup? Confirm', tone: 'warn' },
 };
 
 /**

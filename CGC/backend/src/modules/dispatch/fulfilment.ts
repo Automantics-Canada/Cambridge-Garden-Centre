@@ -38,6 +38,11 @@ export type FulfilmentCheck =
   | 'NO_SUPPLIER_PO_YET'
   /** A direct ship the Order report leaves out; why is not yet known. */
   | 'NOT_IN_ORDER_REPORT'
+  /**
+   * A delivery only because a line charges for one: off the Deliveries
+   * report, not SCH, and imported as a pickup. Staff confirm (Manjot, 22/10/2026).
+   */
+  | 'CHECK_DELIVERY_OR_PICKUP'
   | 'PICKUP_AND_DIRECT_BOTH_NOTED'
   /** Yard stock ("YrdBlk") bought on a supplier PO for a scheduled delivery. */
   | 'CHECK_PICKUP_POINT';
@@ -158,9 +163,10 @@ export function classifyFulfilment(order: FulfilmentInput): Fulfilment {
   const descriptions = lines.map(line => squash(line.description));
 
   // Y1: a CGC truck delivers it.
-  const cgcDelivers = order.sourceReports.includes('DELIVERY') ||
-    squash(order.deliveryFlag).toUpperCase() === 'SCH' ||
+  const scheduled = order.sourceReports.includes('DELIVERY') || squash(order.deliveryFlag).toUpperCase() === 'SCH';
+  const cgcDelivers = scheduled ||
     lines.some(line => classOf(line) === 'DELIVERY_CHARGE' && !DIRECT_DELIVERY.test(squash(line.description)));
+  const chargeOnly: FulfilmentCheck[] = cgcDelivers && !scheduled && order.isPickup ? ['CHECK_DELIVERY_OR_PICKUP'] : [];
 
   // D1 / D2: the supplier's truck delivers.
   let direct: Fulfilment['signal'] = null;
@@ -254,8 +260,8 @@ export function classifyFulfilment(order: FulfilmentInput): Fulfilment {
         });
       }
       const checks: FulfilmentCheck[] = bought.some(line => YARD_STOCK.test(squash(line.description)))
-        ? ['CHECK_PICKUP_POINT']
-        : [];
+        ? ['CHECK_PICKUP_POINT', ...chargeOnly]
+        : chargeOnly;
       return { type: 'supplier_haul_delivery', places, signal: { id: 'H1', text: bought[0]!.vendorCode! }, checks };
     }
     const pit = goods.find(line => PIT.test(squash(line.description)));
@@ -264,10 +270,10 @@ export function classifyFulfilment(order: FulfilmentInput): Fulfilment {
         type: 'supplier_haul_delivery',
         places: [{ name: null, location: null, address: null, po: null }],
         signal: { id: 'H1', text: squash(pit.description) },
-        checks: ['NO_SUPPLIER_PO', 'SUPPLIER_NOT_NAMED'],
+        checks: ['NO_SUPPLIER_PO', 'SUPPLIER_NOT_NAMED', ...chargeOnly],
       };
     }
-    return { type: 'yard_delivery', places: [], signal: null, checks: [] };
+    return { type: 'yard_delivery', places: [], signal: null, checks: chargeOnly };
   }
 
   return { type: 'yard_pickup', places: [], signal: null, checks: [] };
