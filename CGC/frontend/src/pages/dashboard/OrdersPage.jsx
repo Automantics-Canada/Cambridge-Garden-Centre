@@ -17,11 +17,12 @@ import {
 import { cn } from '../../lib/cn';
 import { businessDayOf, businessDayOffset, formatCalendarDate } from '../../lib/date';
 import { formatOrderQuantity } from '../../lib/quantity';
-import { deliveryTypeLabel, flagBadges } from '../../lib/dispatchBoard';
+import { flagBadges } from '../../lib/dispatchBoard';
 import { formatDeliveryDay } from '../../lib/dispatchDays';
 import {
   DELIVERY_STATUS_OPTIONS,
   deliveryStatusView,
+  deliveryTypeDetail,
   emptyTitle,
   invoiceSummary,
   pastDueWithoutDriver,
@@ -401,7 +402,7 @@ function OrderRow({ order, onEdit }) {
   const badges = flagBadges(order);
   const status = deliveryStatusView(order);
   const invoice = invoiceSummary(order);
-  const type = deliveryTypeLabel(order.deliveryType);
+  const type = deliveryTypeDetail(order);
   const pastDue = pastDueWithoutDriver(order, businessDayOf());
   const needsLook = pastDue || badges.some(({ tone }) => tone === 'bad' || tone === 'warn');
 
@@ -434,7 +435,7 @@ function OrderRow({ order, onEdit }) {
       <td className="whitespace-nowrap px-3 py-4 text-sm align-top">
         <div className="flex flex-col items-start gap-1">
           {order.isPickup ? <Badge tone="neutral">Pickup</Badge> : <Badge tone="good">Delivery</Badge>}
-          {!order.isPickup && type && <span className="text-[12.5px] text-muted">{type}</span>}
+          {type && <span className="text-[12.5px] text-muted">{type}</span>}
         </div>
       </td>
 

@@ -2,7 +2,18 @@
  * The Orders page's rules, kept apart from the screen so they can be tested.
  * Every day is a 'YYYY-MM-DD' calendar date in the yard's timezone.
  */
+import { deliveryTypeLabel } from './dispatchBoard';
 import { deliveryDay } from './dispatchDays';
+
+/**
+ * How an order goes out, shown under its Delivery badge: "Flatbed",
+ * "Splitbox". Null for a pickup, and for a plain delivery, whose label is
+ * "Delivery" and would only repeat the badge above it.
+ */
+export function deliveryTypeDetail(order) {
+  if (!order || order.isPickup || order.deliveryType === 'GENERAL') return null;
+  return deliveryTypeLabel(order.deliveryType);
+}
 
 /** The delivery-status filter, in the order the menu lists it. */
 export const DELIVERY_STATUS_OPTIONS = [
