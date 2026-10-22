@@ -68,6 +68,12 @@ describe('fulfilment display (the manager\'s acceptance checks)', () => {
     expect(deliveryStatusView(order('yard_pickup')).label).toBe('Pickup at yard');
   });
 
+  it('721442 and 721493: a delivery read from its charge alone asks staff to confirm', () => {
+    const o = order('yard_delivery', [], ['CHECK_DELIVERY_OR_PICKUP']);
+    expect(FULFILMENT_LABELS[fulfilmentType(o)]).toBe('Delivery');
+    expect(flagBadges(o).map((badge) => badge.label)).toEqual(['Delivery or pickup? Confirm']);
+  });
+
   it('13. an external order also on the CGC schedule keeps its type and says so', () => {
     const o = order('external_pickup', [place('Permacon')], ['ON_CGC_DELIVERY_SCHEDULE']);
     expect(FULFILMENT_LABELS[fulfilmentType(o)]).toBe('Supplier pickup');

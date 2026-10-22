@@ -211,5 +211,14 @@ describe('the yard', () => {
       lines: [line({ itemCode: 'SOILSCRNA', description: 'Screened Soil Bulk' }), line({ itemCode: 'MISCDELE', description: 'Slinger Delivery Standard' })],
     }));
     assert.equal(result.type, 'yard_delivery');
+    assert.deepEqual(result.checks, ['CHECK_DELIVERY_OR_PICKUP'], 'staff confirm it is not a pickup');
+  });
+
+  it('asks nothing of a delivery on the Deliveries report, charge or not', () => {
+    const result = classifyFulfilment(order({
+      ...scheduled,
+      lines: [line({ itemCode: 'SOILSCRNA', description: 'Screened Soil Bulk' }), line({ itemCode: 'MISCDELE', description: 'Slinger Delivery Standard' })],
+    }));
+    assert.deepEqual(result.checks, []);
   });
 });
