@@ -13,7 +13,7 @@ import { Badge } from '../../components/ui';
 import { cn } from '../../lib/cn';
 import { formatQuantity } from '../../lib/quantity';
 import { stopView, telHref } from '../../lib/driverStop';
-import { CGC_YARD, supplierWithYard } from '../../lib/dispatchBoard';
+import { CGC_YARD, CGC_YARD_ADDRESS, supplierWithYard } from '../../lib/dispatchBoard';
 
 /** How often the phone checks for its stop while on screen. The office board stays at 10 s. */
 const DRIVER_POLL_MS = 2_000;
@@ -325,6 +325,7 @@ export default function DriverMobileView() {
                           <div className="pt-1 min-w-0">
                             <p className="text-[12.5px] font-semibold text-muted">Pick up at</p>
                             <p className="font-semibold text-ink">{CGC_YARD}</p>
+                            <p className="text-[13px] text-muted leading-relaxed">{CGC_YARD_ADDRESS}</p>
                           </div>
                         </div>
                       )}

@@ -72,6 +72,8 @@ export function supplierWithYard(name, location) {
 
 /** Where a delivery is loaded when no supplier is involved. */
 export const CGC_YARD = 'Cambridge Garden Centre yard';
+/** The yard's street address, as the manager gave it on 22/10/2026. */
+export const CGC_YARD_ADDRESS = '1718 Morrison Rd, Cambridge, ON N1R 5S2';
 
 /** Who and which PO an order waits on, "Unilock PO 2608-355356", or null when it names none. */
 export function awaitingSupplierDetail(order) {
