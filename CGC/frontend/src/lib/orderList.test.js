@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { deliveryStatusView, emptyTitle, invoiceSummary, pastDueWithoutDriver, uploadRange } from './orderList';
+import { deliveryStatusView, deliveryTypeDetail, emptyTitle, invoiceSummary, pastDueWithoutDriver, uploadRange } from './orderList';
 
 const days = { today: '2026-10-05', yesterday: '2026-10-04' };
 
@@ -88,5 +88,22 @@ describe('past due with no driver', () => {
     expect(pastDueWithoutDriver(delivery({ isPickup: true }), TODAY)).toBe(false);
     expect(pastDueWithoutDriver(delivery({ deliveryDate: null }), TODAY)).toBe(false);
     expect(pastDueWithoutDriver(delivery({ flags: ['NOT_OPEN'] }), TODAY)).toBe(false);
+  });
+});
+
+describe('deliveryTypeDetail', () => {
+  it('names how a delivery goes out under its Delivery badge', () => {
+    expect(deliveryTypeDetail({ isPickup: false, deliveryType: 'FLATBED' })).toBe('Flatbed');
+    expect(deliveryTypeDetail({ isPickup: false, deliveryType: 'BAG' })).toBe('Bag delivery');
+  });
+
+  it('says nothing for a plain delivery, which would read "Delivery Delivery"', () => {
+    // 2610-721058 and 2610-721522 on 21/10/2026.
+    expect(deliveryTypeDetail({ isPickup: false, deliveryType: 'GENERAL' })).toBeNull();
+  });
+
+  it('says nothing for a pickup or an order with no type', () => {
+    expect(deliveryTypeDetail({ isPickup: true, deliveryType: 'FLATBED' })).toBeNull();
+    expect(deliveryTypeDetail({ isPickup: false, deliveryType: null })).toBeNull();
   });
 });
