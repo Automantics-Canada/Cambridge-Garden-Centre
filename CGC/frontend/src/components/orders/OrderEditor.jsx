@@ -5,7 +5,7 @@ import toast from 'react-hot-toast';
 import api from '../../api/axios';
 import { Badge, Button, Field, Input, ModalOverlay, Select, Textarea } from '../ui';
 import { flagInfo } from '../../lib/spruceImport';
-import { flagLabel } from '../../lib/dispatchBoard';
+import { CGC_YARD_ADDRESS, flagLabel } from '../../lib/dispatchBoard';
 import { FULFILMENT_LABELS, fulfilmentCheckBadges, fulfilmentType } from '../../lib/fulfilment';
 import {
   DELIVERY_TYPE_OPTIONS,
@@ -285,8 +285,8 @@ function Fulfilment({ order }) {
   const type = fulfilmentType(order);
   const places = order?.fulfilment?.places ?? [];
   const where = {
-    yard_pickup: 'The customer collects at the Cambridge Garden Centre yard.',
-    yard_delivery: 'Pick up at the Cambridge Garden Centre yard, then deliver to the address below.',
+    yard_pickup: `The customer collects at the Cambridge Garden Centre yard, ${CGC_YARD_ADDRESS}.`,
+    yard_delivery: `Pick up at the Cambridge Garden Centre yard, ${CGC_YARD_ADDRESS}, then deliver to the address below.`,
     supplier_haul_delivery: 'Collect at the supplier below, then deliver to the address below.',
     external_pickup: 'The customer collects at the supplier below. No CGC truck.',
     supplier_direct_ship: 'The supplier\'s own truck delivers to the address below. No CGC driver.',
