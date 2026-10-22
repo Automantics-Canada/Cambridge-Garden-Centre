@@ -12,6 +12,7 @@ import { cn } from '../../lib/cn';
 import { isTerminal, statusErrorMessage, statusOptionsFor } from '../../lib/deliveryTransitions';
 import { formatOrderQuantity } from '../../lib/quantity';
 import { assignWarning, awaitingSupplierDetail, awaitingSupplierText, deliveryTypeLabel, flagBadges, mergeUnassignedOrders, orderRef, updatedTitle } from '../../lib/dispatchBoard';
+import { flagApplies, routeLine } from '../../lib/fulfilment';
 import { flagInfo } from '../../lib/spruceImport';
 import { canCorrectHistory, deliveryDay, formatDeliveryDay, isPastDay, returnsTo, upcomingSummary, uploadedOn } from '../../lib/dispatchDays';
 import OrderEditor from '../../components/orders/OrderEditor';
@@ -34,6 +35,9 @@ function OrderDestination({ order }) {
       <p className={order.address ? 'text-muted' : 'text-clay font-semibold'}>
         {order.address || 'No address'}
       </p>
+      {routeLine(order) && (
+        <p className="text-ink truncate w-0 min-w-full" title={routeLine(order)}>{routeLine(order)}</p>
+      )}
       {order.deliveryInstructions && (
         <p className="text-muted truncate w-0 min-w-full" title={order.deliveryInstructions}>
           {order.deliveryInstructions}
@@ -79,7 +83,7 @@ function OrderFlags({ order }) {
           <Badge key={flag} tone={tone}>{flag === 'AWAITING_SUPPLIER' ? flagInfo(flag).label : label}</Badge>
         ))}
       </div>
-      {supplierDetail && order?.flags?.includes('AWAITING_SUPPLIER') && (
+      {supplierDetail && order?.flags?.includes('AWAITING_SUPPLIER') && flagApplies(order, 'AWAITING_SUPPLIER') && (
         <p className="mt-1 text-[12.5px] text-muted truncate w-0 min-w-full" title={awaitingSupplierText(order)}>
           {supplierDetail}
         </p>

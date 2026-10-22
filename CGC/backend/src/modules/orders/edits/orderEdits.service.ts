@@ -9,7 +9,7 @@ import {
   type OrderFlag,
 } from '../import/mergeOrderFacts.js';
 import { NO_UPDATES, updatesForDay } from '../import/orderChanges.js';
-import { awaitingSupplierByOrder } from '../../dispatch/dispatchOrderView.js';
+import { awaitingSupplierByOrder, fulfilmentByDocument, pickupFromByDocument } from '../../dispatch/dispatchOrderView.js';
 import {
   EditValidationError,
   columnToStored,
@@ -291,7 +291,8 @@ export async function resetOrderEdit(documentId: string, field: string, lineId: 
  * upload (was …)". A field the dispatcher has corrected is not among them.
  *
  * `awaitingSupplier` names who the order waits on and under which PO, for
- * the "Awaiting supplier" flag. The screen is office-only.
+ * the "Awaiting supplier" flag; `pickupFrom` where the driver collects the
+ * material (empty: CGC's own yard). The screen is office-only.
  *
  * @param today 'YYYY-MM-DD' in the yard's timezone; for tests.
  */
@@ -333,10 +334,12 @@ export async function getOrderForEditing(idOrNumber: string, today?: string) {
   });
   if (!document) throw new OrderEditError(404, 'That order is not in the system.');
 
-  const [suggestion, changed, awaiting] = await Promise.all([
+  const [suggestion, changed, awaiting, pickup, fulfilment] = await Promise.all([
     addressSuggestion(document),
     updatesForDay(prisma, [document.id], today),
     awaitingSupplierByOrder(prisma, [document]),
+    pickupFromByDocument(prisma, [document.id]),
+    fulfilmentByDocument(prisma, [document.id]),
   ]);
   const { updatedFields, updates } = changed.get(document.id) ?? NO_UPDATES;
   return {
@@ -345,6 +348,8 @@ export async function getOrderForEditing(idOrNumber: string, today?: string) {
     updatedFields,
     updates,
     awaitingSupplier: awaiting.get(document.id) ?? [],
+    pickupFrom: pickup.get(document.id) ?? [],
+    fulfilment: fulfilment.get(document.id) ?? null,
   };
 }
 

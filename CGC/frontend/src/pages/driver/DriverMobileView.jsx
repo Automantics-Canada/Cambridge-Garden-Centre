@@ -13,7 +13,7 @@ import { Badge } from '../../components/ui';
 import { cn } from '../../lib/cn';
 import { formatQuantity } from '../../lib/quantity';
 import { stopView, telHref } from '../../lib/driverStop';
-import { supplierWithYard } from '../../lib/dispatchBoard';
+import { CGC_YARD, supplierWithYard } from '../../lib/dispatchBoard';
 
 /** How often the phone checks for its stop while on screen. The office board stays at 10 s. */
 const DRIVER_POLL_MS = 2_000;
@@ -302,6 +302,29 @@ export default function DriverMobileView() {
                                 <p className="text-[13px] text-ink tabular">Quote PO <span className="font-semibold">{pickup.po}</span></p>
                               </div>
                             ))}
+                          </div>
+                        </div>
+                      )}
+                      {stop.pickupAtPit && (
+                        <div className="flex items-start gap-4 text-sm pt-4 border-t border-line">
+                          <div className="w-8 h-8 rounded-pill bg-surface flex items-center justify-center shadow-card border border-line flex-shrink-0">
+                            <Warehouse className="text-brand" size={16} strokeWidth={2} />
+                          </div>
+                          <div className="pt-1 min-w-0">
+                            <p className="text-[12.5px] font-semibold text-muted">Pick up first</p>
+                            <p className="font-semibold text-ink">At the pit</p>
+                            <p className="text-[13px] text-muted">The order does not name the pit. Ask dispatch which one before you leave.</p>
+                          </div>
+                        </div>
+                      )}
+                      {stop.pickupAtYard && (
+                        <div className="flex items-start gap-4 text-sm pt-4 border-t border-line">
+                          <div className="w-8 h-8 rounded-pill bg-surface flex items-center justify-center shadow-card border border-line flex-shrink-0">
+                            <Warehouse className="text-brand" size={16} strokeWidth={2} />
+                          </div>
+                          <div className="pt-1 min-w-0">
+                            <p className="text-[12.5px] font-semibold text-muted">Pick up at</p>
+                            <p className="font-semibold text-ink">{CGC_YARD}</p>
                           </div>
                         </div>
                       )}

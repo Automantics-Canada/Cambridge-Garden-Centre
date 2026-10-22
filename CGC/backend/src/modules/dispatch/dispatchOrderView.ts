@@ -1,4 +1,5 @@
 import type { Prisma } from '@prisma/client';
+import { classifyFulfilment, type Fulfilment } from './fulfilment.js';
 
 import { classifyLine } from '../orders/import/lineClass.js';
 import { updatesForDay } from '../orders/import/orderChanges.js';
@@ -73,6 +74,13 @@ export interface QuantityTotal {
 }
 
 export interface DispatchOrderView {
+  /**
+   * Where the material is picked up: the suppliers bought from under a PO.
+   * Empty means Cambridge Garden Centre's own yard. Set by the office board.
+   */
+  pickupFrom?: PickupFrom[];
+  /** How the goods reach the customer. Set by the office board. */
+  fulfilment?: Fulfilment;
   /** The order's id. Assigning and unassigning name it. */
   id: string;
   /** Always true: this row is a whole order, not a single line. */
@@ -407,31 +415,139 @@ export interface PickupFrom {
  * @param stop The stop's order, or its single line for a stop made before
  *   orders were dispatched whole.
  */
+/** The lines that say where an order is picked up: those bought in on a supplier PO. */
+const PICKUP_LINE_SELECT = {
+  documentId: true,
+  poNumber: true,
+  vendorCode: true,
+  vendorLocation: true,
+  supplier: { select: { name: true, address: true } },
+} as const;
+
+type PickupLine = {
+  poNumber: string | null;
+  vendorCode: string | null;
+  vendorLocation: string | null;
+  supplier: { name: string; address: string | null } | null;
+};
+
+/**
+ * Where each order's material is picked up, by order: the suppliers its lines
+ * were bought from under a PO. An order with none is picked up at Cambridge
+ * Garden Centre's own yard. Read whatever the order's state: the place does
+ * not stop mattering once the material has arrived.
+ */
+export async function pickupFromByDocument(
+  db: Pick<Prisma.TransactionClient, 'order' | 'supplierSpruceVendor'>,
+  documentIds: string[]
+): Promise<Map<string, PickupFrom[]>> {
+  const ids = [...new Set(documentIds)];
+  const result = new Map<string, PickupFrom[]>(ids.map(id => [id, []]));
+  if (ids.length === 0) return result;
+
+  const lines = await db.order.findMany({
+    where: { documentId: { in: ids }, poNumber: { not: null } },
+    select: PICKUP_LINE_SELECT,
+    orderBy: [{ lineNumber: 'asc' }, { id: 'asc' }],
+  });
+  const suppliers = await suppliersForVendors(db, lines);
+  for (const id of ids) {
+    result.set(id, pickupPlaces(lines.filter(line => line.documentId === id), suppliers));
+  }
+  return result;
+}
+
+/**
+ * Where the driver collects the material for one stop. Prices never come
+ * back from this: the driver sees who, which yard and which PO to quote.
+ */
 export async function pickupFromOf(
   db: Pick<Prisma.TransactionClient, 'order' | 'supplierSpruceVendor'>,
   stop: { documentId: string | null; orderId: string }
 ): Promise<PickupFrom[]> {
-  const lines = await db.order.findMany({
-    where: {
-      ...(stop.documentId ? { documentId: stop.documentId } : { id: stop.orderId }),
-      poNumber: { not: null },
-    },
-    select: { poNumber: true, vendorCode: true, vendorLocation: true, supplier: { select: { name: true, address: true } } },
-    orderBy: [{ lineNumber: 'asc' }, { id: 'asc' }],
-  });
+  if (stop.documentId) return (await pickupFromByDocument(db, [stop.documentId])).get(stop.documentId) ?? [];
 
+  const lines = await db.order.findMany({
+    where: { id: stop.orderId, poNumber: { not: null } },
+    select: PICKUP_LINE_SELECT,
+  });
+  return pickupPlaces(lines, await suppliersForVendors(db, lines));
+}
+
+/**
+ * How each order's goods reach the customer (see fulfilment.ts), by order.
+ * One read of the orders and their lines for any number of them.
+ */
+export async function fulfilmentByDocument(
+  db: Pick<Prisma.TransactionClient, 'orderDocument' | 'order' | 'supplierSpruceVendor'>,
+  documentIds: string[]
+): Promise<Map<string, Fulfilment>> {
+  const ids = [...new Set(documentIds)];
+  const result = new Map<string, Fulfilment>();
+  if (ids.length === 0) return result;
+
+  const [documents, lines] = await Promise.all([
+    db.orderDocument.findMany({
+      where: { id: { in: ids } },
+      select: {
+        id: true, isPickup: true, shippingAddress: true, deliveryInstructions: true,
+        orderNotes: true, deliveryFlag: true, sourceReports: true,
+      },
+    }),
+    db.order.findMany({
+      where: { documentId: { in: ids } },
+      select: {
+        documentId: true, spruceItemNumber: true, product: true, lineClass: true,
+        poNumber: true, vendorCode: true, vendorLocation: true,
+        supplier: { select: { name: true, address: true } },
+      },
+      orderBy: [{ lineNumber: 'asc' }, { id: 'asc' }],
+    }),
+  ]);
+  const suppliers = await suppliersForVendors(db, lines);
+
+  for (const document of documents) {
+    result.set(document.id, classifyFulfilment({
+      ...document,
+      lines: lines
+        .filter(line => line.documentId === document.id)
+        .map(line => {
+          const known = line.supplier ?? (line.vendorCode ? suppliers.get(vendorKey(line.vendorCode)) : undefined);
+          return {
+            itemCode: line.spruceItemNumber,
+            description: line.product,
+            lineClass: line.lineClass,
+            poNumber: line.poNumber,
+            vendorCode: line.vendorCode,
+            vendorLocation: line.vendorLocation,
+            supplierName: known?.name ?? null,
+            supplierAddress: known?.address ?? null,
+          };
+        }),
+    }));
+  }
+  return result;
+}
+
+/** The supplier each unlinked line's vendor code is mapped to. */
+async function suppliersForVendors(
+  db: Pick<Prisma.TransactionClient, 'supplierSpruceVendor'>,
+  lines: PickupLine[]
+): Promise<Map<string, { name: string; address: string | null }>> {
   const unnamed = [...new Set(
     lines.filter(line => !line.supplier && line.vendorCode).map(line => vendorKey(line.vendorCode!))
   )];
   const mapped = new Map<string, { name: string; address: string | null }>();
-  if (unnamed.length > 0) {
-    const mappings = await db.supplierSpruceVendor.findMany({
-      where: { code: { in: unnamed }, active: true, supplier: { active: true } },
-      select: { code: true, supplier: { select: { name: true, address: true } } },
-    });
-    for (const mapping of mappings) mapped.set(vendorKey(mapping.code), mapping.supplier);
-  }
+  if (unnamed.length === 0) return mapped;
+  const mappings = await db.supplierSpruceVendor.findMany({
+    where: { code: { in: unnamed }, active: true, supplier: { active: true } },
+    select: { code: true, supplier: { select: { name: true, address: true } } },
+  });
+  for (const mapping of mappings) mapped.set(vendorKey(mapping.code), mapping.supplier);
+  return mapped;
+}
 
+function pickupPlaces(lines: PickupLine[], mapped: Map<string, { name: string; address: string | null }>): PickupFrom[] {
   const seen = new Set<string>();
   const result: PickupFrom[] = [];
   for (const line of lines) {
@@ -455,12 +571,38 @@ export async function pickupFromOf(
  * list of rows. One read for the whole board, like `withUpdatedFields`.
  */
 export async function withAwaitingSupplier<T extends BoardLike | unknown[]>(
-  db: Pick<Prisma.TransactionClient, 'order' | 'supplierSpruceVendor'>,
+  db: Pick<Prisma.TransactionClient, 'orderDocument' | 'order' | 'supplierSpruceVendor'>,
   board: T
 ): Promise<T> {
   const orders = wholeOrdersIn(board);
-  const awaiting = await awaitingSupplierByOrder(db, orders);
-  for (const order of orders) order.awaitingSupplier = awaiting.get(order.id) ?? [];
+  const [awaiting, pickup, fulfilment] = await Promise.all([
+    awaitingSupplierByOrder(db, orders),
+    pickupFromByDocument(db, orders.map(order => order.id)),
+    fulfilmentByDocument(db, orders.map(order => order.id)),
+  ]);
+  for (const order of orders) {
+    order.awaitingSupplier = awaiting.get(order.id) ?? [];
+    order.pickupFrom = pickup.get(order.id) ?? [];
+    const how = fulfilment.get(order.id);
+    if (how) order.fulfilment = how;
+  }
+  return withoutDirectShips(board);
+}
+
+/**
+ * A supplier's own truck delivers a direct ship, so no CGC driver is ever
+ * given it: it leaves the board's pools, and stays on the Orders page.
+ */
+function withoutDirectShips<T extends BoardLike | unknown[]>(board: T): T {
+  const kept = (rows: unknown[] | undefined) =>
+    rows?.filter(row => !(isWholeOrder(row) && row.fulfilment?.type === 'supplier_direct_ship'));
+  if (Array.isArray(board)) {
+    const rows = kept(board)!;
+    board.splice(0, board.length, ...rows);
+    return board;
+  }
+  if (board.unassignedOrders) board.unassignedOrders = kept(board.unassignedOrders) as typeof board.unassignedOrders;
+  if (board.carriedOver) board.carriedOver = kept(board.carriedOver) as typeof board.carriedOver;
   return board;
 }
 

@@ -5,10 +5,14 @@ import { endOfBusinessDay, startOfBusinessDay } from '../../lib/businessDay.js';
 import {
   DISPATCH_DOCUMENT_SELECT,
   awaitingSupplierByOrder,
+  fulfilmentByDocument,
+  pickupFromByDocument,
   toDispatchOrder,
   type AwaitingSupplier,
   type DispatchOrderView,
+  type PickupFrom,
 } from '../dispatch/dispatchOrderView.js';
+import type { Fulfilment } from '../dispatch/fulfilment.js';
 
 /**
  * The Orders page: one row per Spruce order, as the three reports merged it.
@@ -96,7 +100,12 @@ export interface OrderListRow extends DispatchOrderView {
   ticketCount: number;
 }
 
-function toRow(document: ListedDocument, awaiting: AwaitingSupplier[]): OrderListRow {
+function toRow(
+  document: ListedDocument,
+  awaiting: AwaitingSupplier[],
+  pickupFrom: PickupFrom[],
+  fulfilment: Fulfilment | undefined
+): OrderListRow {
   const poNumbers = [...new Set(
     [document.poNumber, ...document.lines.map(line => line.poNumber)]
       .map(po => po?.trim())
@@ -106,6 +115,8 @@ function toRow(document: ListedDocument, awaiting: AwaitingSupplier[]): OrderLis
   return {
     ...toDispatchOrder(document),
     awaitingSupplier: awaiting,
+    pickupFrom,
+    ...(fulfilment ? { fulfilment } : {}),
     isPickup: document.isPickup,
     buyerType: document.buyerType,
     poNumbers,
@@ -210,10 +221,17 @@ export async function listOrders(filters: Record<string, any>) {
     prisma.orderDocument.count({ where }),
   ]);
 
-  const awaiting = await awaitingSupplierByOrder(prisma, documents);
+  const ids = documents.map(document => document.id);
+  const [awaiting, pickup, fulfilment] = await Promise.all([
+    awaitingSupplierByOrder(prisma, documents),
+    pickupFromByDocument(prisma, ids),
+    fulfilmentByDocument(prisma, ids),
+  ]);
 
   return {
-    data: documents.map(document => toRow(document, awaiting.get(document.id) ?? [])),
+    data: documents.map(document =>
+      toRow(document, awaiting.get(document.id) ?? [], pickup.get(document.id) ?? [], fulfilment.get(document.id))
+    ),
     pagination: { total, page, limit: take, totalPages: Math.max(1, Math.ceil(total / take)) },
   };
 }

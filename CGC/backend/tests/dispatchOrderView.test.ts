@@ -177,6 +177,7 @@ describe('who an order is awaiting', () => {
       { documentId: 'doc-2', poNumber: '9900-100004', vendorCode: 'NEWVEND01', supplier: null },
     ];
     return {
+      orderDocument: { findMany: async () => [] },
       order: {
         findMany: async ({ where }: { where: { documentId: { in: string[] } } }) => {
           seen.lineIds = where.documentId.in;
