@@ -1,4 +1,5 @@
 import { GmailService } from '../services/gmail.service.js';
+import { GMAIL_POLL_INTERVAL_MS } from '../services/gmailStatus.js';
 import { processPendingOcrJobs } from '../services/ocrJobProcessor.js';
 import { startMatchTicketsOrdersJob } from '../jobs/matchTicketsOrders.job.js';
 import { startWorkerHeartbeat, type WorkerProcessMode } from './heartbeat.js';
@@ -17,7 +18,8 @@ import { startWorkerHeartbeat, type WorkerProcessMode } from './heartbeat.js';
  * call in `server.ts` needs no change.
  */
 export function startWorkers(mode: WorkerProcessMode = 'inline'): () => void {
-  const GMAIL_POLL_INTERVAL = 60 * 1000;
+  // Shared with gmailStatus.ts, which judges a missing poll by it.
+  const GMAIL_POLL_INTERVAL = GMAIL_POLL_INTERVAL_MS;
   const OCR_POLL_INTERVAL = 2 * 60 * 1000;
 
   console.log(`📧 Gmail sync active every ${GMAIL_POLL_INTERVAL / 1000}s.`);
