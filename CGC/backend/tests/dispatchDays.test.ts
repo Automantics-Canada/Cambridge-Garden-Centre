@@ -54,7 +54,7 @@ describe('board days', () => {
         OR: [
           { deliveryDate: new Date('2026-08-15T00:00:00.000Z') },
           // An upload Spruce no longer lists as open is waiting for nothing.
-          { AND: [uploadedOnWhere('2026-08-15'), { NOT: { flags: { has: 'NOT_OPEN' } } }] },
+          { AND: [uploadedOnWhere('2026-08-15'), { NOT: { flags: { hasSome: ['NOT_OPEN', 'QUOTE'] } } }] },
         ],
       },
     ]);
@@ -66,7 +66,7 @@ describe('board days', () => {
     assert.equal(where.isPickup, false);
     // Spruce has invoiced, closed or voided a NOT_OPEN order: nothing to carry.
     // One in today's upload is in today's pool instead.
-    assert.deepEqual(where.NOT, [{ flags: { has: 'NOT_OPEN' } }, uploadedOnWhere('2026-08-15')]);
+    assert.deepEqual(where.NOT, [{ flags: { hasSome: ['NOT_OPEN', 'QUOTE'] } }, uploadedOnWhere('2026-08-15')]);
     assert.deepEqual(where.OR, [
       { delivery: null },
       { delivery: { driverId: null, status: { notIn: ['DELIVERED', 'CANCELLED'] } } },
@@ -82,7 +82,7 @@ describe('board days', () => {
 
   it('lists open pickups and open undated deliveries, searched by number or customer', () => {
     // NOT_OPEN leaves out a pickup as well as an undated delivery.
-    const open = { NOT: { flags: { has: 'NOT_OPEN' } }, OR: [{ isPickup: true }, { deliveryDate: null }] };
+    const open = { NOT: { flags: { hasSome: ['NOT_OPEN', 'QUOTE'] } }, OR: [{ isPickup: true }, { deliveryDate: null }] };
     assert.deepEqual(undatedWhere(), open);
     assert.deepEqual(undatedWhere('   '), open);
     assert.deepEqual(undatedWhere(' 712589 ').AND, [

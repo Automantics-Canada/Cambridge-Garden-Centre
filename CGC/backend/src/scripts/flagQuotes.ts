@@ -31,7 +31,9 @@
  *   - none of its lines has a supplier PO;
  *   - it has no stop, and no line has a driver, an invoice or a ticket.
  * Writing adds QUOTE, drops NOT_OPEN (the two say different things about the
- * same document; the import sets one or the other) and sets isPickup false.
+ * same document; the import sets one or the other) and the state flags the
+ * import never raises on a quotation (no address, no phone, ...), and sets
+ * isPickup false.
  * Nothing is deleted. To undo, put back the "before" flags this prints.
  *
  * DATABASE_URL must be set in the environment: the database is never read
@@ -43,7 +45,7 @@ import { fileURLToPath } from 'node:url';
 
 import type { PrismaClient } from '@prisma/client';
 
-import { ORDER_FLAGS } from '../modules/orders/import/mergeOrderFacts.js';
+import { ORDER_FLAGS, STATE_FLAGS } from '../modules/orders/import/mergeOrderFacts.js';
 
 const LOOPBACK = ['127.0.0.1', 'localhost', '::1', '[::1]'];
 
@@ -132,12 +134,16 @@ export function isQuoteCandidate(document: StoredDocument): boolean {
 }
 
 /**
- * QUOTE in, NOT_OPEN out, every other flag kept. In the vocabulary's order,
- * as the import stores them, so the next import does not rewrite them.
+ * QUOTE in, NOT_OPEN out, and the flags read off the order's state out too
+ * (no address, no phone, ...): the import raises none of them on a quotation,
+ * which is going nowhere, so leaving them would show it as needing attention.
+ * Every other flag is kept. In the vocabulary's order, as the import stores
+ * them, so the next import does not rewrite them.
  */
 export function quoteFlags(flags: readonly string[]): string[] {
   const vocabulary: readonly string[] = ORDER_FLAGS;
-  const all = new Set([...flags.filter(flag => flag !== 'NOT_OPEN'), 'QUOTE']);
+  const dropped: readonly string[] = ['NOT_OPEN', ...STATE_FLAGS];
+  const all = new Set([...flags.filter(flag => !dropped.includes(flag)), 'QUOTE']);
   return [...vocabulary.filter(flag => all.has(flag)), ...flags.filter(flag => !vocabulary.includes(flag))];
 }
 

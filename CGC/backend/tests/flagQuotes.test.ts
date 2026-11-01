@@ -85,6 +85,8 @@ describe('flagQuotes', () => {
     assert.deepEqual(quoteFlags(['DATE_MISMATCH', 'NOT_OPEN']), ['DATE_MISMATCH', 'QUOTE']);
     assert.deepEqual(quoteFlags([]), ['QUOTE']);
     assert.deepEqual(quoteFlags(['SPRUCE_VALUE_CHANGED', 'NOT_OPEN']), ['QUOTE', 'SPRUCE_VALUE_CHANGED'], 'in the order the import stores');
-    assert.deepEqual(quoteFlags(['SOMETHING_RETIRED']), ['QUOTE', 'SOMETHING_RETIRED'], 'nothing dropped');
+    assert.deepEqual(quoteFlags(['SOMETHING_RETIRED']), ['QUOTE', 'SOMETHING_RETIRED'], 'nothing unknown dropped');
+    // The import raises no state flag on a quotation; the backfill agrees.
+    assert.deepEqual(quoteFlags(['NO_ADDRESS', 'NO_PHONE', 'NOT_OPEN', 'READ_DIFFERENTLY']), ['READ_DIFFERENTLY', 'QUOTE']);
   });
 });
