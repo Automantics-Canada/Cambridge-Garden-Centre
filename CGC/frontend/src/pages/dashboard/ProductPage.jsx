@@ -30,7 +30,7 @@ export default function ProductPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [deleteConfirm, setDeleteConfirm] = useState(null);
   const [productName, setProductName] = useState('');
-  const [productUnit, setProductUnit] = useState('ton');
+  const [productUnit, setProductUnit] = useState('tonne');
 
   useEffect(() => {
     dispatch(fetchProducts());
@@ -43,7 +43,7 @@ export default function ProductPage() {
        dispatch(clearSuccess());
       setIsModalOpen(false);
       setProductName('');
-      setProductUnit('ton');
+      setProductUnit('tonne');
       setSelectedProduct(null);
     }
   }, [success, successMessage, dispatch]);
@@ -58,14 +58,14 @@ export default function ProductPage() {
    const handleCreateNew = () => {
     setSelectedProduct(null);
     setProductName('');
-    setProductUnit('ton');
+    setProductUnit('tonne');
     setIsModalOpen(true);
   };
 
    const handleEdit = (product) => {
     setSelectedProduct(product);
     setProductName(product.name);
-    setProductUnit(product.unit || 'ton');
+    setProductUnit(product.unit || 'tonne');
     setIsModalOpen(true);
   };
 

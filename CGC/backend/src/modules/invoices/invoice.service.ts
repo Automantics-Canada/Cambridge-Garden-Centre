@@ -364,6 +364,82 @@ async function refuseOrReleaseSettledLines(
   }
 }
 
+/**
+ * Compares the invoice total with what the agreed rates say it should be, and
+ * writes the outcome to `disputeNote`.
+ *
+ * Only lines with an applicable agreed rate can be totalled. Lines without one
+ * were previously counted at a rate of zero, so a single unpriced product
+ * dragged the expected total far below the billed total and stamped a "total
+ * amount mismatch" dispute on an invoice that was very likely correct. On a
+ * supplier who has just introduced a product, that fired on every invoice, and
+ * a dispute note that is usually wrong is one nobody reads. With unpriced lines
+ * present the totals are not comparable at all, so the check is skipped and the
+ * reason is recorded instead.
+ *
+ * Runs after OCR, after a recompute, and after the supplier's rates change.
+ * The note used to say "add the missing rates, then reopen to re-check", but
+ * reopening recomputed nothing; now adding the rate is enough.
+ *
+ * Only an invoice still PENDING_REVIEW is touched. On a disputed invoice the
+ * note is the person's own words about the dispute, and a verified or paid one
+ * is settled; neither is rewritten behind anyone's back.
+ */
+export async function refreshInvoiceTotalCheck(
+  invoiceId: string
+): Promise<'skipped' | 'unpriced' | 'mismatch' | 'ok' | 'no-lines'> {
+  const invoice = await prisma.invoice.findUnique({
+    where: { id: invoiceId },
+    select: { status: true, totalAmount: true },
+  });
+  if (!invoice || invoice.status !== InvoiceStatus.PENDING_REVIEW) return 'skipped';
+
+  const lineItems = await prisma.invoiceLineItem.findMany({
+    where: { invoiceId },
+    select: { description: true, quantity: true, negotiatedRate: true },
+    orderBy: { lineNumber: 'asc' },
+  });
+  if (lineItems.length === 0) return 'no-lines';
+
+  const pricedLines = lineItems.filter(item => item.negotiatedRate !== null);
+  const unpricedLines = lineItems.filter(item => item.negotiatedRate === null);
+  const billedTotal = Number(invoice.totalAmount);
+
+  if (unpricedLines.length > 0) {
+    await prisma.invoice.update({
+      where: { id: invoiceId },
+      data: {
+        disputeNote:
+          `Total not checked: ${unpricedLines.length} of ${lineItems.length} line(s) have no ` +
+          `applicable agreed rate (${unpricedLines.map(l => l.description).join('; ')}). ` +
+          `Billed: $${billedTotal.toFixed(2)}. It is checked again automatically once those rates are added.`,
+      },
+    });
+    return 'unpriced';
+  }
+
+  const totalApprovedSubtotal = pricedLines.reduce(
+    (sum, item) => sum + Number(item.quantity) * Number(item.negotiatedRate),
+    0
+  );
+
+  // HST is Ontario's 13%. Hard-coded because every supplier here is
+  // Ontario-registered; revisit if that stops being true.
+  const totalApprovedWithHst = totalApprovedSubtotal * 1.13;
+  const totalDiscrepancy = Math.abs(totalApprovedWithHst - billedTotal);
+  const mismatch = totalDiscrepancy > 0.05;
+
+  await prisma.invoice.update({
+    where: { id: invoiceId },
+    data: {
+      disputeNote: mismatch
+        ? `Total amount mismatch. Expected pay: $${totalApprovedWithHst.toFixed(2)} (Subtotal: $${totalApprovedSubtotal.toFixed(2)} + 13% HST). Billed: $${billedTotal.toFixed(2)}.`
+        : null,
+    },
+  });
+  return mismatch ? 'mismatch' : 'ok';
+}
+
 export const InvoiceService = {
   async ingestEmailInvoice(params: {
     buffer: Buffer;
@@ -571,55 +647,10 @@ export const InvoiceService = {
         }
       }
 
-      // --- Total Discrepancy Match ---
-      //
-      // Only lines with an applicable agreed rate can be totalled. Lines
-      // without one were previously counted at a rate of zero, so a single
-      // unpriced product dragged the expected total far below the billed total
-      // and stamped a "total amount mismatch" dispute on an invoice that was
-      // very likely correct. On a supplier who has just introduced a product,
-      // that fired on every invoice â€” and a dispute note that is usually wrong
-      // is one nobody reads.
-      //
-      // With unpriced lines present the totals are not comparable at all, so
-      // the check is skipped and the reason is recorded instead.
-      const lineItems = await prisma.invoiceLineItem.findMany({ where: { invoiceId } });
-      const pricedLines = lineItems.filter(item => item.negotiatedRate !== null);
-      const unpricedLines = lineItems.filter(item => item.negotiatedRate === null);
-
-      const billedTotal = Number(updatedInvoice.totalAmount);
-
-      if (unpricedLines.length > 0) {
-        await prisma.invoice.update({
-          where: { id: invoiceId },
-          data: {
-            disputeNote:
-              `Total not checked: ${unpricedLines.length} of ${lineItems.length} line(s) have no ` +
-              `applicable agreed rate (${unpricedLines.map(l => l.description).join('; ')}). ` +
-              `Billed: $${billedTotal.toFixed(2)}. Add the missing rates, then reopen to re-check.`,
-          },
-        });
-      } else if (lineItems.length > 0) {
-        const totalApprovedSubtotal = pricedLines.reduce(
-          (sum, item) => sum + Number(item.quantity) * Number(item.negotiatedRate),
-          0
-        );
-
-        // HST is Ontario's 13%. Hard-coded because every supplier here is
-        // Ontario-registered; revisit if that stops being true.
-        const totalApprovedWithHst = totalApprovedSubtotal * 1.13;
-        const totalDiscrepancy = Math.abs(totalApprovedWithHst - billedTotal);
-
-        await prisma.invoice.update({
-          where: { id: invoiceId },
-          data: {
-            disputeNote:
-              totalDiscrepancy > 0.05
-                ? `Total amount mismatch. Expected pay: $${totalApprovedWithHst.toFixed(2)} (Subtotal: $${totalApprovedSubtotal.toFixed(2)} + 13% HST). Billed: $${billedTotal.toFixed(2)}.`
-                : null,
-          },
-        });
-      }
+      // The invoice total is checked against the agreed rates the lines now
+      // carry. The same check runs again whenever this supplier's rates
+      // change, so the note never tells anyone to reopen the invoice.
+      await refreshInvoiceTotalCheck(invoiceId);
 
       if (ocrJob) {
         await prisma.ocrJob.update({

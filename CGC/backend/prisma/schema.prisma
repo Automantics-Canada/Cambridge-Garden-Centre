@@ -295,19 +295,35 @@ model InvoiceLineItem {
 }
 
 
+/// One agreed price for one product, in one unit, over one period.
+///
+/// A rate is identified by supplier, product, canonical unit and its effective
+/// period. A new price does not overwrite the old one: the old period is closed
+/// the day before the new one starts, so an invoice dated earlier is still
+/// checked against the price that applied then.
 model NegotiatedRate {
-  id            String    @id @default(uuid()) @db.Uuid
-  supplierId    String    @db.Uuid
-  productName   String
-  rate          Decimal   @db.Decimal
-  unit          String
-  effectiveFrom DateTime  @db.Date
-  effectiveTo   DateTime? @db.Date
-  notes         String?
-  createdById   String    @db.Uuid
-  createdAt     DateTime  @default(now())
-  createdBy     User      @relation(fields: [createdById], references: [id])
-  supplier      Supplier  @relation(fields: [supplierId], references: [id])
+  id               String    @id @default(uuid()) @db.Uuid
+  supplierId       String    @db.Uuid
+  productName      String
+  rate             Decimal   @db.Decimal
+  unit             String
+  effectiveFrom    DateTime  @db.Date
+  effectiveTo      DateTime? @db.Date
+  notes            String?
+  /// The Spruce item number for this product (`Order.spruceItemNumber`), when
+  /// the price list gives one. Lets a later lookup find the rate by code.
+  spruceItemCode   String?
+  /// The supplier's own code for the product, as printed on their paperwork.
+  supplierItemCode String?
+  createdById      String    @db.Uuid
+  createdAt        DateTime  @default(now())
+  /// Null on rows written before this column existed.
+  updatedAt        DateTime? @updatedAt
+  createdBy        User      @relation(fields: [createdById], references: [id])
+  supplier         Supplier  @relation(fields: [supplierId], references: [id])
+
+  @@index([supplierId, effectiveFrom])
+  @@index([supplierId, spruceItemCode])
 }
 
 model Supplier {
@@ -782,6 +798,11 @@ enum AuditActionType {
   TICKET_REVIEWED
   RATE_CREATED
   RATE_UPDATED
+  /// A rate's period was ended (its effectiveTo set) instead of deleting it.
+  RATE_EXPIRED
+  /// A Spruce vendor code was mapped to a supplier, or retired.
+  SPRUCE_VENDOR_MAPPED
+  SPRUCE_VENDOR_RETIRED
   EMAIL_INGESTION_ERROR
   WHATSAPP_WEBHOOK_ERROR
   OCR_RETRY

@@ -2,6 +2,10 @@ import type { Response } from 'express';
 import { SupplierService } from './supplier.service.js';
 import type { AuthRequest } from '../../middleware/authMiddleware.js';
 import { SupplierType } from '@prisma/client';
+import { RateService } from './rates.service.js';
+import { PriceListService, parseTonMeans } from './priceList.service.js';
+import { scheduleRateRecheck } from './rateRecheck.js';
+import { sanitizeFilename } from '../../middleware/uploadValidation.js';
 
 export const listSuppliers = async (_req: AuthRequest, res: Response) => {
   const suppliers = await SupplierService.list();
@@ -54,45 +58,89 @@ export const deleteSupplier = async (req: AuthRequest, res: Response) => {
   res.json(supplier);
 };
 
-export const addRate = async (req: AuthRequest, res: Response) => {
-  const { id } = req.params;
+/**
+ * Rates. The rules are in rates.service.ts; these only pass the request
+ * through. A change to a supplier's rates re-checks its open invoices in the
+ * background, so the person saving a rate does not wait for that.
+ */
+function requireUser(req: AuthRequest): string {
   const userId = req.user?.id;
-  
-  if (!userId) {
-    return res.status(401).json({ error: 'User ID missing in token' });
-  }
+  if (!userId) throw Object.assign(new Error('User ID missing in token'), { status: 401 });
+  return userId;
+}
 
-  const { productName, rate, unit, effectiveFrom, effectiveTo, notes } = req.body;
-
-  if (!productName || rate === undefined || !unit || !effectiveFrom) {
-    return res.status(400).json({ error: 'productName, rate, unit, and effectiveFrom are required' });
-  }
-
-  const newRate = await SupplierService.addNegotiatedRate(id as string, {
-    productName,
-    rate: Number(rate),
-    unit,
-    effectiveFrom: new Date(effectiveFrom),
-    ...(effectiveTo ? { effectiveTo: new Date(effectiveTo) } : {}),
-    ...(notes !== undefined ? { notes } : {}),
-    createdById: userId
-  });
-
-  res.status(201).json(newRate);
-};
-
-export const removeRate = async (req: AuthRequest, res: Response) => {
-  const { rateId } = req.params;
-  await SupplierService.removeNegotiatedRate(rateId as string);
-  res.json({ success: true });
+export const addRate = async (req: AuthRequest, res: Response) => {
+  const supplierId = req.params.id as string;
+  const saved = await RateService.addRate(supplierId, req.body ?? {}, requireUser(req));
+  if (saved.action !== 'UNCHANGED') scheduleRateRecheck(supplierId, 'Rate saved');
+  res.status(saved.action === 'CREATE' || saved.action === 'SUPERSEDE' ? 201 : 200).json(saved);
 };
 
 export const updateRate = async (req: AuthRequest, res: Response) => {
-  const { rateId } = req.params;
-  const data = req.body;
-  const updated = await SupplierService.updateNegotiatedRate(rateId as string, data);
+  const supplierId = req.params.id as string;
+  const updated = await RateService.updateRate(supplierId, req.params.rateId as string, req.body ?? {}, requireUser(req));
+  scheduleRateRecheck(supplierId, 'Rate edited');
   res.json(updated);
 };
+
+export const expireRate = async (req: AuthRequest, res: Response) => {
+  const supplierId = req.params.id as string;
+  const expired = await RateService.expireRate(supplierId, req.params.rateId as string, req.body ?? {}, requireUser(req));
+  scheduleRateRecheck(supplierId, 'Rate expired');
+  res.json(expired);
+};
+
+export const removeRate = async (req: AuthRequest, res: Response) => {
+  const supplierId = req.params.id as string;
+  await RateService.removeRate(supplierId, req.params.rateId as string, requireUser(req));
+  scheduleRateRecheck(supplierId, 'Rate deleted');
+  res.json({ success: true });
+};
+
+function uploadedFile(req: AuthRequest) {
+  const file = (req as AuthRequest & { file?: Express.Multer.File }).file;
+  if (!file) throw Object.assign(new Error('Choose a .csv or .xlsx file'), { status: 400 });
+  return { buffer: file.buffer, originalname: sanitizeFilename(file.originalname) };
+}
+
+/** Sends a refusal that carries a fresh preview, so the page can show it. */
+function sendPriceListError(res: Response, error: unknown) {
+  const err = error as { status?: number; message?: string; preview?: unknown };
+  if (err?.status && err.status < 500) {
+    return res.status(err.status).json({ error: err.message, ...(err.preview ? { preview: err.preview } : {}) });
+  }
+  throw error;
+}
+
+export const previewPriceListImport = async (req: AuthRequest, res: Response) => {
+  try {
+    const preview = await PriceListService.preview(
+      req.params.id as string,
+      uploadedFile(req),
+      parseTonMeans(req.body?.tonMeans)
+    );
+    res.json(preview);
+  } catch (error) {
+    sendPriceListError(res, error);
+  }
+};
+
+export const commitPriceListImport = async (req: AuthRequest, res: Response) => {
+  const supplierId = req.params.id as string;
+  try {
+    const result = await PriceListService.commit(
+      supplierId,
+      uploadedFile(req),
+      { token: String(req.body?.token ?? ''), tonMeans: parseTonMeans(req.body?.tonMeans) },
+      requireUser(req)
+    );
+    scheduleRateRecheck(supplierId, 'Price list saved');
+    res.json(result);
+  } catch (error) {
+    sendPriceListError(res, error);
+  }
+};
+
 export const listProductAliases = async (req: AuthRequest, res: Response) => {
   const { id } = req.params;
   const aliases = await SupplierService.listProductAliases(id as string);

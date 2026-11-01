@@ -771,3 +771,45 @@ export async function recomputeInvoiceLinesSafely(
     console.error(`[Matching] ${context}: invoice line recompute failed:`, error);
   }
 }
+
+/**
+ * Re-runs one supplier's unresolved invoice lines, after its rates changed.
+ *
+ * Until price lists are loaded, every line reads "no agreed rate". Once a
+ * rate is added, nothing else would look at those lines again: the invoice
+ * would keep saying the rate is missing until someone re-ran it by hand. This
+ * is what re-runs them.
+ *
+ * Only invoices still being worked on (not VERIFIED or PAID) are touched, and
+ * `persist` leaves alone any verdict a person has resolved. Bounded, so one
+ * supplier with a long backlog cannot pull the whole ledger into a single
+ * pass. Newest invoice first: those are the ones a new price list is about,
+ * and the lines still unresolved after a pass are picked again by the next
+ * one, so starting from the oldest would re-check the same old lines every
+ * time and never reach this week's invoices. Lines beyond the limit wait for
+ * a manual re-run of their invoice.
+ */
+export const RECOMPUTE_SUPPLIER_LINE_LIMIT = 500;
+
+export async function recomputeInvoiceLinesForSupplier(
+  supplierId: string,
+  limit = RECOMPUTE_SUPPLIER_LINE_LIMIT
+): Promise<{ lines: number; invoiceIds: string[]; capped: boolean }> {
+  const lines = await prisma.invoiceLineItem.findMany({
+    where: {
+      invoice: { supplierId, status: { in: ['PENDING_REVIEW', 'DISPUTED'] } },
+      OR: [{ matchResult: null }, { matchResult: { resolution: null } }],
+    },
+    select: { id: true, invoiceId: true },
+    orderBy: [{ invoice: { invoiceDate: 'desc' } }, { invoiceId: 'asc' }, { lineNumber: 'asc' }],
+    take: limit + 1,
+  });
+
+  const capped = lines.length > limit;
+  const batch = lines.slice(0, limit);
+  for (const line of batch) {
+    await matchInvoiceLineById(line.id);
+  }
+
+  return { lines: batch.length, invoiceIds: [...new Set(batch.map((line) => line.invoiceId))], capped };
+}
