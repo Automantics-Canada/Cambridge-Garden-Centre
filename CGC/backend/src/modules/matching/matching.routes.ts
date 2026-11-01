@@ -3,6 +3,7 @@ import type { Request, Response } from 'express';
 import { prisma } from '../../db/prisma.js';
 import { authMiddleware, requireRole, type AuthRequest } from '../../middleware/authMiddleware.js';
 import { matchInvoiceById, matchTicketById } from './matching.service.js';
+import { refreshInvoiceTotalCheck } from '../invoices/invoice.service.js';
 import {
   reopenMatchResult,
   resolveMatchResult,
@@ -66,6 +67,8 @@ router.post('/recompute/ticket/:id', async (req: Request, res: Response) => {
 router.post('/recompute/invoice/:id', async (req: Request, res: Response) => {
   try {
     const decisions = await matchInvoiceById(req.params.id as string);
+    // The lines' agreed rates may have changed, so the total check follows.
+    await refreshInvoiceTotalCheck(req.params.id as string);
     return res.json({ lines: decisions.length, decisions });
   } catch (error) {
     console.error('[Matching] invoice recompute failed:', error);

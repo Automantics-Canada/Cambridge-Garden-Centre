@@ -1,6 +1,16 @@
 import { prisma } from "../../db/prisma.js";
+import { RATE_UNITS } from "../supplier/rateRules.js";
 
-const DEFAULT_UNITS = ['ton', 'kg', 'lb', 'load', 'yard', 'meter', 'each', 'tm', 'cy'];
+/**
+ * Units offered by default: exactly the ones the invoice check can compare.
+ *
+ * The old list offered `tm`, `yard` and `meter`, which the check does not
+ * recognise, so a rate entered in them could never be compared with anything;
+ * and a bare `ton`, which could mean a metric tonne or a short ton. A price
+ * entered against the wrong one of those is off by ten percent. Custom units
+ * can still be added, for products; rates accept only these.
+ */
+const DEFAULT_UNITS = [...RATE_UNITS];
 
 export const UnitService = {
   async list() {

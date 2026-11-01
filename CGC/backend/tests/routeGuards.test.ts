@@ -26,6 +26,7 @@ import orderRouter from '../src/modules/orders/order.routes.js';
 import authRouter from '../src/modules/auth/auth.routes.js';
 import supplierRouter from '../src/modules/supplier/supplier.routes.js';
 import productRouter from '../src/modules/products/product.routes.js';
+import spruceVendorRouter from '../src/modules/supplier/spruceVendors.routes.js';
 
 const OPERATIONS: UserRole[] = ['AP_USER', 'OWNER', 'ADMIN'];
 
@@ -256,6 +257,56 @@ describe('supplier routes', () => {
       admittedRoles(effectiveChain(supplierRouter, 'get', '/options'))?.includes('DRIVER'),
       false
     );
+  });
+});
+
+describe('rate and price-list routes', () => {
+  // These decide what an invoice is checked against, so they are office work
+  // and a DRIVER must never reach them.
+  const routes: Array<[string, string]> = [
+    ['post', '/:id/rates'],
+    ['patch', '/:id/rates/:rateId'],
+    ['post', '/:id/rates/:rateId/expire'],
+    ['delete', '/:id/rates/:rateId'],
+    ['post', '/:id/rates/import/preview'],
+    ['post', '/:id/rates/import'],
+  ];
+
+  for (const [method, path] of routes) {
+    it(`${method.toUpperCase()} ${path} is office-only`, () => {
+      assertGuarded(supplierRouter, method, path, OPERATIONS);
+      assert.equal(admittedRoles(effectiveChain(supplierRouter, method, path))?.includes('DRIVER'), false);
+    });
+  }
+
+  it('the price-list upload is bounded by multer before the handler runs', () => {
+    for (const path of ['/:id/rates/import/preview', '/:id/rates/import']) {
+      const chain = effectiveChain(supplierRouter, 'post', path);
+      assert.ok(chain.names.includes('multerMiddleware'), `${path} must bound the upload`);
+    }
+  });
+});
+
+describe('Spruce vendor code routes', () => {
+  const routes: Array<[string, string]> = [
+    ['get', '/'],
+    ['get', '/unmapped'],
+    ['post', '/'],
+    ['delete', '/:code'],
+  ];
+
+  for (const [method, path] of routes) {
+    it(`${method.toUpperCase()} ${path} is office-only`, () => {
+      assertGuarded(spruceVendorRouter, method, path, OPERATIONS);
+      assert.equal(admittedRoles(effectiveChain(spruceVendorRouter, method, path))?.includes('DRIVER'), false);
+    });
+  }
+
+  it('GET /unmapped is registered before anything that could swallow it', () => {
+    const index = (method: string, path: string) =>
+      spruceVendorRouter.stack.findIndex((layer: any) => layer.route?.path === path && layer.route?.methods?.[method]);
+    assert.ok(index('get', '/unmapped') >= 0);
+    assert.ok(index('get', '/unmapped') < index('delete', '/:code'));
   });
 });
 
