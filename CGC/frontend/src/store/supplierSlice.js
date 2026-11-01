@@ -74,6 +74,19 @@ export const updateSupplierRate = createAsyncThunk(
   }
 );
 
+/** Ends a rate's period (today by default) instead of deleting it. */
+export const expireSupplierRate = createAsyncThunk(
+  'suppliers/expireSupplierRate',
+  async ({ supplierId, rateId, effectiveTo }, { rejectWithValue }) => {
+    try {
+      const response = await api.post(`/api/suppliers/${supplierId}/rates/${rateId}/expire`, effectiveTo ? { effectiveTo } : {});
+      return { supplierId, rateId, rate: response.data };
+    } catch (error) {
+      return rejectWithValue(error.response?.data?.error || 'Failed to end rate');
+    }
+  }
+);
+
 export const deleteSupplierRate = createAsyncThunk(
   'suppliers/deleteSupplierRate',
   async ({ supplierId, rateId }, { rejectWithValue }) => {
@@ -185,21 +198,11 @@ const supplierSlice = createSlice({
       .addCase(addSupplierRate.pending, (state) => {
         state.loading = true;
       })
-      .addCase(addSupplierRate.fulfilled, (state, action) => {
+      .addCase(addSupplierRate.fulfilled, (state) => {
+        // A new price can close another rate's period, so the caller refetches
+        // the suppliers rather than this guessing which row changed. Merging
+        // by product name here used to replace the old period with the new one.
         state.loading = false;
-        const supplier = state.suppliers.find(s => s.id === action.payload.supplierId);
-        if (supplier) {
-          if (!supplier.negotiatedRates) supplier.negotiatedRates = [];
-          const existingIndex = supplier.negotiatedRates.findIndex(r => 
-            r.id === action.payload.rate.id || 
-            r.productName.toLowerCase() === action.payload.rate.productName.toLowerCase()
-          );
-          if (existingIndex !== -1) {
-            supplier.negotiatedRates[existingIndex] = action.payload.rate;
-          } else {
-            supplier.negotiatedRates.push(action.payload.rate);
-          }
-        }
       })
       .addCase(addSupplierRate.rejected, (state, action) => {
         state.loading = false;
@@ -222,6 +225,19 @@ const supplierSlice = createSlice({
         }
       })
       .addCase(updateSupplierRate.rejected, (state, action) => {
+        state.loading = false;
+        state.error = action.payload;
+      });
+
+    // Expire Rate
+    builder
+      .addCase(expireSupplierRate.pending, (state) => {
+        state.loading = true;
+      })
+      .addCase(expireSupplierRate.fulfilled, (state) => {
+        state.loading = false;
+      })
+      .addCase(expireSupplierRate.rejected, (state, action) => {
         state.loading = false;
         state.error = action.payload;
       });
