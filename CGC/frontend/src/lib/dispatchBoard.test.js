@@ -3,13 +3,38 @@ import {
   assignWarning,
   awaitingSupplierDetail,
   awaitingSupplierText,
+  canMarkDoneOutside,
+  doneOutsideConfirm,
   flagBadges,
+  LIKELY_DELIVERED_TITLE,
+  splitLikelyDelivered,
   flagLabel,
   mergeUnassignedOrders,
   orderRef,
   stopSummary,
   updatedTitle,
 } from './dispatchBoard';
+
+describe("today's orders most likely delivered already", () => {
+  it('takes them out of the day\'s work into their own group, in order', () => {
+    const work = [{ id: 'a' }, { id: 'c', likelyDelivered: false }];
+    const done = [{ id: 'b', likelyDelivered: true }, { id: 'd', likelyDelivered: true }];
+    expect(splitLikelyDelivered([work[0], done[0], work[1], done[1]])).toEqual({ work, likelyDelivered: done });
+    expect(splitLikelyDelivered()).toEqual({ work: [], likelyDelivered: [] });
+    expect(LIKELY_DELIVERED_TITLE).toBe("Likely already delivered (not on today's Deliveries report)");
+  });
+
+  it('can be marked done outside the app unless a driver has it on the truck or it is finished', () => {
+    const order = { id: 'doc-1', wholeOrder: true, spruceOrderId: '9900-000601' };
+    expect(canMarkDoneOutside(order)).toBe(true);
+    expect(canMarkDoneOutside(order, 'PLACED')).toBe(true);
+    for (const status of ['OUT_FOR_DELIVERY', 'IN_TRANSIT', 'DELIVERED', 'CANCELLED']) {
+      expect(canMarkDoneOutside(order, status)).toBe(false);
+    }
+    expect(canMarkDoneOutside({ id: 'line-1', wholeOrder: false })).toBe(false);
+    expect(doneOutsideConfirm(order)).toMatch(/^Mark 9900-000601 as delivered outside the app\?/);
+  });
+});
 
 describe('mergeUnassignedOrders', () => {
   it('returns unassigned deliveries to the dispatch pool', () => {

@@ -19,6 +19,36 @@ export function mergeUnassignedOrders(unassignedOrders = [], unassignedDeliverie
 }
 
 /**
+ * Today's pool, with the orders most likely delivered already (the server's
+ * `likelyDelivered`: undated, on no Deliveries report, a delivery only because
+ * a line charges for one) taken out of the day's work into a group of their
+ * own. The client (Oct 2026): those were done on an earlier day.
+ */
+export function splitLikelyDelivered(orders = []) {
+  const work = [];
+  const likelyDelivered = [];
+  for (const order of orders) (order?.likelyDelivered ? likelyDelivered : work).push(order);
+  return { work, likelyDelivered };
+}
+
+/** The heading of that group. */
+export const LIKELY_DELIVERED_TITLE = "Likely already delivered (not on today's Deliveries report)";
+
+/**
+ * Whether the office can mark this row done outside the app: a whole order
+ * that is not on a driver's truck right now and not finished. A started stop
+ * is the driver's to finish on the phone.
+ */
+export function canMarkDoneOutside(order, deliveryStatus = null) {
+  if (!order?.wholeOrder) return false;
+  return !['OUT_FOR_DELIVERY', 'IN_TRANSIT', 'DELIVERED', 'CANCELLED'].includes(deliveryStatus);
+}
+
+/** The question asked before marking an order done outside the app. */
+export const doneOutsideConfirm = (order) =>
+  `Mark ${order?.spruceOrderId ?? order?.documentNumber ?? 'this order'} as delivered outside the app? It leaves the board and its lists.`;
+
+/**
  * How the dispatch routes name a row: a whole Spruce order by its id, or —
  * for a stop made before orders were dispatched whole — the single line.
  */

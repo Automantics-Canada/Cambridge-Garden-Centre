@@ -1,7 +1,9 @@
 /**
  * How an order's goods reach the customer, as the screens say it. The server
  * decides the type (backend/src/modules/dispatch/fulfilment.ts); these are the
- * display rules of the manager's spec of 22/10/2026, "Order Fulfilment Types".
+ * display rules of the manager's spec of 22/10/2026, "Order Fulfilment Types",
+ * with the client's answers of Oct 2026: dispatch can set the type on an
+ * order, and the pit or supplier it is loaded at.
  */
 
 export const FULFILMENT_LABELS = {
@@ -11,6 +13,27 @@ export const FULFILMENT_LABELS = {
   external_pickup: 'Supplier pickup',
   supplier_direct_ship: 'Direct ship',
 };
+
+/**
+ * The order editor's choices for the type: the reports' own reading, or one
+ * of the five set by dispatch. The values are what the server stores.
+ */
+export const FULFILMENT_OPTIONS = [
+  { value: '', label: 'As the reports say' },
+  ...Object.entries(FULFILMENT_LABELS).map(([value, label]) => ({ value, label })),
+];
+
+/**
+ * Why the order has its type, in a line: dispatch set it, dispatch chose the
+ * pit, or the report's own words. Null where nothing in particular decided.
+ */
+export function fulfilmentSignalText(order) {
+  const signal = order?.fulfilment?.signal;
+  if (!signal) return null;
+  if (signal.id === 'STAFF') return 'Set by dispatch';
+  if (signal.id === 'H2') return signal.text;
+  return `From the report: "${signal.text}"`;
+}
 
 /** The type, falling back to what the import decided for an answer without one. */
 export const fulfilmentType = (order) =>
@@ -55,10 +78,13 @@ export const FULFILMENT_CHECKS = {
   SUPPLIER_NOT_NAMED: { label: 'Supplier not named', tone: 'warn' },
   NO_SUPPLIER_PO: { label: 'No supplier PO', tone: 'warn' },
   NO_SUPPLIER_PO_YET: { label: 'No supplier PO yet', tone: 'warn' },
-  NOT_IN_ORDER_REPORT: { label: 'Not in Order report', tone: 'neutral' },
+  NOT_IN_ORDER_REPORT: { label: 'Not in Order report: usually a quotation', tone: 'neutral' },
   PICKUP_AND_DIRECT_BOTH_NOTED: { label: 'Pickup and direct delivery both noted', tone: 'warn' },
-  CHECK_PICKUP_POINT: { label: 'Check pickup point', tone: 'warn' },
-  CHECK_DELIVERY_OR_PICKUP: { label: 'Delivery or pickup? Confirm', tone: 'warn' },
+  // The order's wording says a supplier delivers; it stays CGC work until
+  // dispatch sets "Direct ship" on it.
+  SUPPLIER_DELIVERY_NOTED: { label: 'Supplier delivery mentioned: confirm', tone: 'warn' },
+  // Undated and on no Deliveries report: most likely delivered already.
+  NOT_ON_DELIVERIES_REPORT: { label: 'Not on a Deliveries report: likely delivered already', tone: 'neutral' },
 };
 
 /**
