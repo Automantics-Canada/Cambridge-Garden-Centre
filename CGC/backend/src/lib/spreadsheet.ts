@@ -191,7 +191,11 @@ interface Bounded {
 
 /** Applies column and cell limits to one row; reports whether it cut anything. */
 function boundRow(cells: string[], limits: SpreadsheetLimits): { row: string[]; cut: boolean } {
-  let cut = cells.length > limits.maxColumns;
+  // Only columns past the limit that hold something count as cut. Excel
+  // writes empty cells out to the edge of whatever range was ever formatted,
+  // so a CSV with a long run of trailing commas, or a workbook with a styled
+  // row, would otherwise be refused for losing nothing.
+  let cut = cells.slice(limits.maxColumns).some((cell) => cell.trim() !== '');
   const row = cells.slice(0, limits.maxColumns).map((cell) => {
     const text = cell.replace(/\r\n?/g, '\n').trim();
     if (text.length > limits.maxCellChars) {
@@ -206,7 +210,11 @@ function boundRow(cells: string[], limits: SpreadsheetLimits): { row: string[]; 
 
 function pushRow(target: Bounded, cells: string[], rowNumber: number, limits: SpreadsheetLimits, overflow: 'error' | 'truncate') {
   const { row, cut } = boundRow(cells, limits);
-  if (row.length === 0) return true;
+  if (row.length === 0) {
+    // A row whose only content lies past the column limit was still cut.
+    if (cut) target.truncated = true;
+    return true;
+  }
   if (target.rows.length >= limits.maxRows) {
     if (overflow === 'error') {
       throw new SpreadsheetError(
@@ -223,8 +231,23 @@ function pushRow(target: Bounded, cells: string[], rowNumber: number, limits: Sp
   return true;
 }
 
+/**
+ * The CSV's text. Excel's plain "CSV" (not "CSV UTF-8") is Windows-1252, where
+ * an en dash or an accented letter is a byte that is not valid UTF-8. Read as
+ * UTF-8, those became replacement characters, and a product name carrying one
+ * could never equal the name on an order. Valid UTF-8 is read as UTF-8;
+ * anything else as Windows-1252.
+ */
+function csvText(buffer: Buffer): string {
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(buffer);
+  } catch {
+    return new TextDecoder('windows-1252').decode(buffer);
+  }
+}
+
 function readCsv(buffer: Buffer, limits: SpreadsheetLimits, overflow: 'error' | 'truncate'): SpreadsheetSheet {
-  const text = buffer.toString('utf8');
+  const text = csvText(buffer);
   // Blank lines count as records here, hence the headroom. Parsing stops at
   // this many, so a file of a million lines is never read in full.
   const ceiling = limits.maxRows * 2 + 100;
@@ -283,9 +306,17 @@ async function readXlsx(buffer: Buffer, limits: SpreadsheetLimits, overflow: 'er
     let stopped = false;
     worksheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
       if (stopped) return;
-      const cells: string[] = [];
-      const width = Math.min(row.cellCount, limits.maxColumns + 1);
-      for (let col = 1; col <= width; col++) cells.push(cellText(row.getCell(col).value));
+      // Only the cells that hold a value are visited (a styled empty cell is
+      // skipped), so a stray cell at column XFD costs one read, not 16,384.
+      // Anything past the column limit is kept as one marker so boundRow can
+      // say the row was cut.
+      const cells: string[] = Array.from({ length: Math.min(row.cellCount, limits.maxColumns) }, () => '');
+      let beyond = false;
+      row.eachCell({ includeEmpty: false }, (cell, col) => {
+        if (col <= limits.maxColumns) cells[col - 1] = cellText(cell.value);
+        else if (!beyond && cellText(cell.value).trim() !== '') beyond = true;
+      });
+      if (beyond) cells.push(...Array.from({ length: limits.maxColumns - cells.length }, () => ''), 'x');
       if (!pushRow(sheet, cells, rowNumber, limits, overflow)) stopped = true;
     });
     sheets.push({ name: worksheet.name, ...sheet });

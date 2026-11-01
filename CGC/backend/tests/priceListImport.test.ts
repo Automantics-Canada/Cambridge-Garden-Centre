@@ -116,6 +116,18 @@ describe('prices and dates', () => {
     }
     assert.equal(parseRate(Number.NaN), null);
     assert.equal(parseRate(-1), null);
+    assert.equal(parseRate(2_000_000), null);
+  });
+
+  it('never reads a decimal comma as a thousands separator', () => {
+    // "18,50" is $18.50 in a decimal-comma locale; stripping the comma made it
+    // $1,850. Only a comma between groups of three digits is a separator.
+    for (const text of ['18,50', '1,25', '12,5', '1,2345.00', ',500']) {
+      assert.equal(parseRate(text), null, text);
+    }
+    assert.equal(parseRate('1,250'), 1250);
+    assert.equal(parseRate('12,345,678.5'), null, 'over the ceiling');
+    assert.equal(parseRate('123,456.78'), 123456.78);
   });
 
   it('accepts only real calendar dates, written year first', () => {

@@ -781,9 +781,13 @@ export async function recomputeInvoiceLinesSafely(
  * is what re-runs them.
  *
  * Only invoices still being worked on (not VERIFIED or PAID) are touched, and
- * `persist` leaves alone any verdict a person has resolved. Bounded, oldest
- * invoice first, so one supplier with a long history cannot pull the whole
- * ledger into a single pass; a second change runs the next pass.
+ * `persist` leaves alone any verdict a person has resolved. Bounded, so one
+ * supplier with a long backlog cannot pull the whole ledger into a single
+ * pass. Newest invoice first: those are the ones a new price list is about,
+ * and the lines still unresolved after a pass are picked again by the next
+ * one, so starting from the oldest would re-check the same old lines every
+ * time and never reach this week's invoices. Lines beyond the limit wait for
+ * a manual re-run of their invoice.
  */
 export const RECOMPUTE_SUPPLIER_LINE_LIMIT = 500;
 
@@ -797,7 +801,7 @@ export async function recomputeInvoiceLinesForSupplier(
       OR: [{ matchResult: null }, { matchResult: { resolution: null } }],
     },
     select: { id: true, invoiceId: true },
-    orderBy: [{ invoice: { invoiceDate: 'asc' } }, { invoiceId: 'asc' }, { lineNumber: 'asc' }],
+    orderBy: [{ invoice: { invoiceDate: 'desc' } }, { invoiceId: 'asc' }, { lineNumber: 'asc' }],
     take: limit + 1,
   });
 

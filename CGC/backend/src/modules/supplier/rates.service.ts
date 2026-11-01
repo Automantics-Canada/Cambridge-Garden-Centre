@@ -107,13 +107,19 @@ function sameKey(all: PeriodRate[], productName: string, unit: string): PeriodRa
   return all.filter((rate) => rateKey(rate.productName, normaliseUnit(rate.unit)) === key);
 }
 
+// A malformed id in the URL is "not found", not a database error: Postgres
+// refuses to cast it to uuid, which used to surface as a 500.
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export async function requireActiveSupplier(tx: Tx, supplierId: string): Promise<{ id: string; name: string }> {
+  if (!UUID.test(supplierId)) throw rateFailure(404, 'Supplier not found');
   const supplier = await tx.supplier.findUnique({ where: { id: supplierId }, select: { id: true, name: true, active: true } });
   if (!supplier || !supplier.active) throw rateFailure(404, 'Supplier not found');
   return { id: supplier.id, name: supplier.name };
 }
 
 async function requireOwnedRate(tx: Tx, supplierId: string, rateId: string): Promise<PeriodRate> {
+  if (!UUID.test(rateId)) throw rateFailure(404, 'Rate not found for this supplier');
   const row = await tx.negotiatedRate.findUnique({ where: { id: rateId }, select: RATE_SELECT });
   // The same answer for "no such rate" and "another supplier's rate", so the
   // URL cannot be used to probe or edit rates under the wrong supplier.

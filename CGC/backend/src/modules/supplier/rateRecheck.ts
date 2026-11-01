@@ -34,7 +34,7 @@ async function runPasses(supplierId: string, context: string): Promise<void> {
       const counts = await recheckSupplierInvoices(supplierId);
       console.log(
         `[Rates] ${context}: re-checked ${counts.lines} open invoice line(s) on ${counts.invoices} invoice(s)` +
-          (counts.capped ? ' (limit reached; the rest are checked on the next change or re-run)' : '') +
+          (counts.capped ? ' (limit reached: older invoices were not re-checked; re-run them from the invoice page)' : '') +
           '.'
       );
     } catch (error) {

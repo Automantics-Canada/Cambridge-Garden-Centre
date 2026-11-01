@@ -11,7 +11,11 @@ import jwt from 'jsonwebtoken';
 
 import { env } from '../src/config/env.js';
 import { prisma } from '../src/db/prisma.js';
-import { matchInvoiceById, matchInvoiceLineById } from '../src/modules/matching/matching.service.js';
+import {
+  matchInvoiceById,
+  matchInvoiceLineById,
+  recomputeInvoiceLinesForSupplier,
+} from '../src/modules/matching/matching.service.js';
 import { refreshInvoiceTotalCheck } from '../src/modules/invoices/invoice.service.js';
 import { waitForRateRechecks } from '../src/modules/supplier/rateRecheck.js';
 
@@ -272,6 +276,10 @@ describe('agreed rates (PostgreSQL)', { skip: !runnable }, () => {
       assert.equal((await api('DELETE', base)).status, 404);
       const row = await prisma.negotiatedRate.findUniqueOrThrow({ where: { id: rateId } });
       assert.equal(Number(row.rate), 18);
+
+      // A malformed id is "not found", not a database error.
+      assert.equal((await api('PATCH', `/api/suppliers/${supplierId}/rates/not-a-uuid`, { rate: 1 })).status, 404);
+      assert.equal((await api('POST', '/api/suppliers/not-a-uuid/rates', { productName: PRODUCT, rate: 1, unit: 'tonne', effectiveFrom: '2026-01-01' })).status, 404);
     });
 
     it('expires a rate on the given day and keeps it on record', async () => {
@@ -448,6 +456,19 @@ describe('agreed rates (PostgreSQL)', { skip: !runnable }, () => {
       assert.equal((await prisma.invoiceLineItem.findUniqueOrThrow({ where: { id: resolved.lineId } })).negotiatedRate, null);
 
       assert.equal((await prisma.invoiceLineItem.findUniqueOrThrow({ where: { id: verified.lineId } })).negotiatedRate, null);
+    });
+
+    it('a capped pass starts from the newest invoices, so recent ones are never starved', async () => {
+      // Unresolved lines stay unresolved after a pass, so oldest-first would
+      // pick the same old lines every time and never reach this week's.
+      const old = await seedInvoice('INV-JAN', '2026-01-05', 19.5);
+      const recent = await seedInvoice('INV-RECENT', '2026-11-03', 19.5);
+      const first = await recomputeInvoiceLinesForSupplier(supplierId, 1);
+      assert.equal(first.capped, true);
+      assert.deepEqual(first.invoiceIds, [recent.invoiceId]);
+      const all = await recomputeInvoiceLinesForSupplier(supplierId, 5);
+      assert.equal(all.capped, false);
+      assert.deepEqual(all.invoiceIds, [recent.invoiceId, old.invoiceId]);
     });
   });
 

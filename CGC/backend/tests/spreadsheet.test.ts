@@ -87,6 +87,28 @@ describe('CSV', () => {
     assert.deepEqual(sheet.rows[1], ['xxxxxxxxxx', '2']);
     assert.equal(sheet.truncated, true);
   });
+
+  it('does not count empty trailing columns as cut', async () => {
+    // Excel writes commas out to the edge of any range ever formatted.
+    const result = await readSpreadsheet(Buffer.from(`a,b,,,,\n1,2,,,,\n`), { limits: { maxColumns: 2 } });
+    assert.deepEqual(result.sheets[0]!.rows, [['a', 'b'], ['1', '2']]);
+    assert.equal(result.sheets[0]!.truncated, false);
+  });
+
+  it('reads a plain Excel CSV (Windows-1252) without mangling accents and dashes', async () => {
+    // "Pierre – Sablé" in Windows-1252: 0x96 is an en dash, 0xE9 is é.
+    const bytes = Buffer.concat([
+      Buffer.from('product,rate\r\nPierre '),
+      Buffer.from([0x96]),
+      Buffer.from(' Sabl'),
+      Buffer.from([0xe9]),
+      Buffer.from(',18.50\r\n'),
+    ]);
+    const result = await readSpreadsheet(bytes, { filename: 'prices.csv' });
+    assert.deepEqual(result.sheets[0]!.rows[1], ['Pierre – Sablé', '18.50']);
+    const utf8 = await readSpreadsheet(Buffer.from('product,rate\nPierre – Sablé,18.50\n'), { filename: 'prices.csv' });
+    assert.deepEqual(utf8.sheets[0]!.rows[1], ['Pierre – Sablé', '18.50']);
+  });
 });
 
 describe('.xlsx', () => {
@@ -111,6 +133,28 @@ describe('.xlsx', () => {
       ['Test Stone', '', '2026-11-01'],
     ]);
     assert.deepEqual(sheet.rowNumbers, [1, 2, 3, 5]);
+  });
+
+  it('ignores styled empty cells past the column limit, but marks a value there as cut', async () => {
+    const buffer = await workbook((wb) => {
+      const ws = wb.addWorksheet('Prices');
+      ws.addRow(['product', 'rate']);
+      ws.addRow(['Test Sand', 32]);
+      // A border on an empty cell far to the right, as a formatted range leaves.
+      ws.getCell('AZ2').border = { top: { style: 'thin' } };
+    });
+    const clean = await readSpreadsheet(buffer, { limits: { maxColumns: 5 } });
+    assert.deepEqual(clean.sheets[0]!.rows, [['product', 'rate'], ['Test Sand', '32']]);
+    assert.equal(clean.sheets[0]!.truncated, false);
+
+    const withValue = await workbook((wb) => {
+      const ws = wb.addWorksheet('Prices');
+      ws.addRow(['product', 'rate']);
+      ws.getCell('AZ2').value = 'stray';
+    });
+    const cut = await readSpreadsheet(withValue, { limits: { maxColumns: 5 } });
+    assert.equal(cut.sheets[0]!.truncated, true);
+    assert.equal(cut.sheets[0]!.rows[0]!.length, 2);
   });
 
   it('reads every sheet, and the first with rows is the one a price list uses', async () => {

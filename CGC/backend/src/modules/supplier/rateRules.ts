@@ -129,13 +129,20 @@ export function dayBefore(iso: string): string {
  *
  * `$1,250.50` and ` 18 ` are fine; `18/t`, `-3` and `1e3` are not. Zero is
  * allowed, for charges a supplier has agreed to waive.
+ *
+ * A comma is read only as a thousands separator in groups of three. A file
+ * saved with a decimal comma (`18,50`, as Excel writes in some locales, often
+ * in the same semicolon CSV the reader accepts) is refused rather than read as
+ * $1,850.
  */
+const MAX_RATE = 1_000_000;
+
 export function parseRate(raw: string | number | null | undefined): number | null {
-  if (typeof raw === 'number') return Number.isFinite(raw) && raw >= 0 ? raw : null;
-  const text = (raw ?? '').trim().replace(/^\$/, '').replace(/,/g, '').trim();
-  if (!/^\d+(\.\d+)?$/.test(text)) return null;
-  const value = Number(text);
-  return Number.isFinite(value) && value <= 1_000_000 ? value : null;
+  if (typeof raw === 'number') return Number.isFinite(raw) && raw >= 0 && raw <= MAX_RATE ? raw : null;
+  const text = (raw ?? '').trim().replace(/^\$/, '').trim();
+  if (!/^(\d+|\d{1,3}(,\d{3})+)(\.\d+)?$/.test(text)) return null;
+  const value = Number(text.replace(/,/g, ''));
+  return Number.isFinite(value) && value <= MAX_RATE ? value : null;
 }
 
 export interface PeriodRate {
