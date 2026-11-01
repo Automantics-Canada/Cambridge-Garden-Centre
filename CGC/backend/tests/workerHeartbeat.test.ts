@@ -7,6 +7,12 @@ import {
   deriveWorkerHealth,
   type WorkerHeartbeat,
 } from '../src/workers/heartbeat.js';
+import {
+  GMAIL_STATUS_STALE_AFTER_MS,
+  deriveGmailHealth,
+  describeError,
+  maskAddress,
+} from '../src/services/gmailStatus.js';
 
 /**
  * Whether the background worker is running the code we think it is.
@@ -120,5 +126,71 @@ describe('deriveWorkerHealth', () => {
   test('the default clock is now, so a fresh heartbeat is fresh', () => {
     const health = deriveWorkerHealth(heartbeat({ lastSeenAt: new Date().toISOString() }), 'unknown');
     assert.equal(health.stale, false);
+  });
+});
+
+/**
+ * The Gmail poll status beside the heartbeat. Same rules: no record, or an old
+ * one, is stale; a hand-edited row is read defensively; nothing published can
+ * carry a secret or a full address.
+ */
+describe('deriveGmailHealth', () => {
+  const record = {
+    mode: 'observe',
+    enabled: true,
+    disabledReason: null,
+    invoiceLabel: 'cgc-invoices',
+    invoiceLabelFound: true,
+    processedLabel: 'cgc-processed',
+    observedLabel: 'cgc-observed',
+    pollAfter: '2026-11-02',
+    unreadOnly: false,
+    trustedForwarders: 1,
+    allowlistEntries: 0,
+    mailbox: 'in…@example.test',
+    mailboxMatchesConfig: true,
+    lastPollAt: NOW.toISOString(),
+    lastResult: 'ok',
+    lastError: null,
+    lastSuccessAt: NOW.toISOString(),
+    counts: { listed: 2, observed: 2 },
+    truncated: false,
+  };
+
+  test('a recent poll is reported and fresh, with every counter filled in', () => {
+    const health = deriveGmailHealth(record, NOW);
+    assert.equal(health.reported, true);
+    assert.equal(health.stale, false);
+    assert.equal(health.mode, 'observe');
+    assert.equal(health.counts?.observed, 2);
+    assert.equal(health.counts?.invoicesCreated, 0);
+  });
+
+  test('no record is not reported and stale', () => {
+    const health = deriveGmailHealth(null, NOW);
+    assert.equal(health.reported, false);
+    assert.equal(health.stale, true);
+    assert.equal(health.mode, null);
+    assert.equal(health.counts, null);
+  });
+
+  test('a poll older than three intervals is stale', () => {
+    const lastPollAt = new Date(NOW.getTime() - GMAIL_STATUS_STALE_AFTER_MS - 1_000).toISOString();
+    assert.equal(deriveGmailHealth({ ...record, lastPollAt }, NOW).stale, true);
+  });
+
+  test('values of the wrong type are dropped, not trusted', () => {
+    const health = deriveGmailHealth({ ...record, mode: 'everything', enabled: 'yes', counts: { listed: 'many' } }, NOW);
+    assert.equal(health.mode, null);
+    assert.equal(health.enabled, null);
+    assert.equal(health.counts?.listed, 0);
+    assert.equal(deriveGmailHealth('not an object', NOW).reported, false);
+  });
+
+  test('addresses are masked and token-like text removed from errors', () => {
+    assert.equal(maskAddress('inbox@example.test'), 'in…@example.test');
+    assert.equal(maskAddress(''), null);
+    const line = describeError(new Error('invalid_grant for inbox@example.test using 1//0gExampleRefreshTokenValue123456'));
+    assert.equal(line, 'invalid_grant for in…@example.test using [redacted]');
   });
 });
