@@ -84,10 +84,11 @@ describe('past due with no driver', () => {
     expect(pastDueWithoutDriver(delivery({ delivery: { status: 'DELIVERED', driverName: null } }), TODAY)).toBe(false);
   });
 
-  it('never flags pickups, undated orders, or orders Spruce has closed', () => {
+  it('never flags pickups, undated orders, orders Spruce has closed, or quotations', () => {
     expect(pastDueWithoutDriver(delivery({ isPickup: true }), TODAY)).toBe(false);
     expect(pastDueWithoutDriver(delivery({ deliveryDate: null }), TODAY)).toBe(false);
     expect(pastDueWithoutDriver(delivery({ flags: ['NOT_OPEN'] }), TODAY)).toBe(false);
+    expect(pastDueWithoutDriver(delivery({ flags: ['QUOTE'] }), TODAY)).toBe(false);
   });
 });
 

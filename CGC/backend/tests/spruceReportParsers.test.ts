@@ -262,6 +262,19 @@ describe('parseOrderSummaryReport', () => {
     assert.deepEqual(parseOrderSummaryReport(orderSummaryReport()).unreadable, []);
   });
 
+  it('names the document of a line it cannot read, so the order still counts as on the report', () => {
+    // 2608-700001's quantity is missing: an open order with one misread line
+    // must not look like a document the Order Report left out (a quotation).
+    const [only] = orderSummaryReport();
+    const misread = { ...only!, runs: only!.runs.filter(r => !(r.text === '3' && Math.abs(r.y - 9.86) < 0.01)) };
+    const { rows, unreadable } = parseOrderSummaryReport([misread]);
+
+    assert.ok(!rows.some(r => r.documentNumber === '2608-700001'));
+    assert.equal(unreadable.length, 1);
+    assert.equal(unreadable[0]!.documentNumber, '2608-700001');
+    assert.match(unreadable[0]!.reason, /quantity for document 2608-700001/);
+  });
+
   it('copies the order row\'s own facts onto each of its lines', () => {
     const { rows } = parseOrderSummaryReport(orderSummaryReport());
     const unscheduled = rows.find(r => r.itemNumber === 'SOILGRDNA');

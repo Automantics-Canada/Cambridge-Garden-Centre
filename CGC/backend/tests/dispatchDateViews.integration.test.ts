@@ -105,6 +105,8 @@ describe('the board across days (PostgreSQL)', { skip: !disposableConfirmed }, (
     // Invoiced, closed or voided in Spruce since: never carried over.
     await seedOrder('9900-000011', '2026-08-14', { flags: ['NOT_OPEN'] });
     const closedTakenBack = await seedOrder('9900-000012', '2026-08-13', { flags: ['NO_ADDRESS', 'NOT_OPEN'] });
+    // A quotation was never an order: nothing to carry either.
+    await seedOrder('9900-000013', '2026-08-14', { flags: ['QUOTE'] });
 
     await DispatchService.assignOrder(onRun.id, driver.id);
     await finish(delivered.id, driver.id, 'DELIVERED', new Date('2026-08-14T16:00:00Z'));
@@ -151,6 +153,8 @@ describe('the board across days (PostgreSQL)', { skip: !disposableConfirmed }, (
     await seedOrder('9900-000006', '2026-08-19', { createdAt: lastNight });
     await seedOrder('9900-000007', null, { createdAt: thisMorning, isPickup: true });
     await seedOrder('9900-000008', '2026-08-19', { createdAt: thisMorning, flags: ['NOT_OPEN'] });
+    // A quotation in this morning's upload is not work for the board.
+    await seedOrder('9900-000011', null, { createdAt: thisMorning, flags: ['QUOTE'] });
     const given = await seedOrder('9900-000009', '2026-08-19', { createdAt: thisMorning });
     await seedOrder('9900-000010', TODAY); // due today, uploaded another day
     await DispatchService.assignOrder(given.id, driver.id);
@@ -231,6 +235,7 @@ describe('the board across days (PostgreSQL)', { skip: !disposableConfirmed }, (
     await seedOrder('9900-000003', null); // a delivery with no date yet
     const closed = await seedOrder('9900-000006', null); // invoiced or voided in Spruce since
     await prisma.orderDocument.update({ where: { id: closed.id }, data: { flags: ['NOT_OPEN'] } });
+    await seedOrder('9900-000009', null, { customerName: 'Pat Quoted', flags: ['QUOTE'] }); // a quotation
     await seedOrder('9900-000004', TODAY);
     await seedOrder('9900-000005', '2026-08-17');
 
@@ -248,6 +253,7 @@ describe('the board across days (PostgreSQL)', { skip: !disposableConfirmed }, (
     // A search does not bring a closed pickup back.
     assert.deepEqual(await DispatchService.getUndatedOrders('Pat Closed'), []);
     assert.deepEqual(await DispatchService.getUndatedOrders('9900-000007'), []);
+    assert.deepEqual(await DispatchService.getUndatedOrders('Pat Quoted'), []);
   });
 
   it('refuses to change a finished past order, and keeps an unfinished one assignable', async () => {

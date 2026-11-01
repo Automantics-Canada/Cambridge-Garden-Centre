@@ -3,18 +3,19 @@ import type { Prisma, PrismaClient } from '@prisma/client';
 
 import { parseSpruceDate } from '../../../lib/spruceDate.js';
 import { OrderPdfImportService, type ImportSummary } from '../orderPdfImport.service.js';
-import type { ParsedSpruceReport, SpruceReportType } from '../spruce/spruceReportTypes.js';
+import type { ParsedSpruceReport, ParsedSpruceRow, SpruceReportType } from '../spruce/spruceReportTypes.js';
 import { deliveryTypeOf } from './lineClass.js';
 import { reassertOverrides } from '../edits/orderEdits.service.js';
 import { diffOrder, isOverridden, snapshotOrders, type ChangeRow, type OrderSnapshot } from './orderChanges.js';
 import {
   batchFlags,
   combineFlags,
-  isPickupOrder,
+  derivePickup,
+  derivedStateFlags,
   mergeOrderFacts,
   normalizeAddress,
-  stateFlags,
   withFlag,
+  type DeriveInput,
   type OrderFlag,
   type ReportRows,
 } from './mergeOrderFacts.js';
@@ -149,8 +150,32 @@ export interface BatchSummary {
   issues: BatchOrder[];
   /** Each report's AI double-check, where one ran. Absent from older summaries. */
   aiChecks?: BatchAiCheck[];
+  /**
+   * Quotations among the documents this upload described. Left out of every
+   * count and list above: they are not work. Absent from older summaries.
+   */
+  quotes?: number;
+  quoteNumbers?: string[];
+  /** How much of the Item Tracking Report was used; null without one. Absent from older summaries. */
+  itemTracking?: ItemTrackingScope | null;
   warnings: string[];
   errors: string[];
+}
+
+/**
+ * The Item Tracking Report's documents, and how many this upload used.
+ *
+ * The client exports it over a rolling range (about 30 days) so that orders
+ * entered weeks before their delivery still get an address. Only the
+ * documents the day's other reports speak to are used; the rest are read and
+ * left alone.
+ */
+export interface ItemTrackingScope {
+  documentsRead: number;
+  documentsUsed: number;
+  /** The entry dates the report was run for, as `YYYY-MM-DD`. */
+  dateFrom: string | null;
+  dateTo: string | null;
 }
 
 export function hashFile(buffer: Buffer): string {
@@ -208,7 +233,11 @@ function fileWarnings(files: BatchFile[], dispatchDate: Date): string[] {
 
   const present = new Set(files.map(file => file.reportType));
   if (!present.has('ORDER_SUMMARY')) {
-    warnings.push('No Order Report: prices, totals and the scheduled-delivery flag were not refreshed.');
+    warnings.push(
+      'No Order Report: prices, totals and the scheduled-delivery flag were not refreshed, ' +
+        'and quotations could not be recognised.' +
+        (present.has('ITEM_TRACKING') ? ' Item Tracking was used only for the Delivery Report\'s orders.' : '')
+    );
   }
   if (!present.has('ITEM_TRACKING')) {
     warnings.push('No Item Tracking Report: addresses, delivery instructions and supplier POs were not refreshed.');
@@ -294,6 +323,85 @@ function rowsByDocument(files: BatchFile[]): Map<string, ReportRows> {
     }
   }
   return byDocument;
+}
+
+/**
+ * Documents the order summary or delivery report names on a line it could
+ * not read. They are on the report, and count as on it.
+ */
+function mentionedUnread(files: BatchFile[]): Set<string> {
+  return new Set(
+    files
+      .filter(file => file.reportType !== 'ITEM_TRACKING')
+      .flatMap(file => file.report.unreadable.map(entry => entry.documentNumber))
+      .filter((documentNumber): documentNumber is string => Boolean(documentNumber))
+  );
+}
+
+/**
+ * The upload with its Item Tracking Report cut down to the documents the day
+ * is about: those on this upload's Delivery Report or Order Report, and those
+ * entered inside the Order Report's printed range (where a document the
+ * summary leaves out is a quotation or closed, which is worth knowing).
+ *
+ * Item Tracking is filtered on entry date, so a range wide enough to give
+ * today's deliveries their addresses also lists weeks of older orders. Taken
+ * whole, each of them would count as part of today's upload: created if new,
+ * re-dated and re-described by Item Tracking alone, marked Updated and put on
+ * today's board. Cut here, before anything is stored, every later step — the
+ * stored extraction, the writes, the merge, the change log, the summary and a
+ * replay's summary — sees the same rows. The file hashes are of the bytes, so
+ * replay detection is unchanged.
+ */
+export function trackingRowsInScope(files: BatchFile[]): { files: BatchFile[]; scope: ItemTrackingScope | null } {
+  const tracking = files.find(file => file.reportType === 'ITEM_TRACKING');
+  if (!tracking) return { files, scope: null };
+
+  const named = mentionedUnread(files);
+  for (const file of files) {
+    if (file.reportType === 'ITEM_TRACKING') continue;
+    for (const row of file.report.rows) named.add(row.documentNumber);
+  }
+  const summary = files.find(file => file.reportType === 'ORDER_SUMMARY');
+  const range = summary ? reportRange(summary.report) : null;
+
+  const entered = new Map<string, Date>();
+  for (const row of tracking.report.rows) {
+    const date = parseSpruceDate(row.orderDateRaw);
+    if (date && !entered.has(row.documentNumber)) entered.set(row.documentNumber, date);
+  }
+  const inScope = (documentNumber: string) => {
+    if (named.has(documentNumber)) return true;
+    const date = entered.get(documentNumber);
+    return Boolean(range && date && date >= range.from && date <= range.to);
+  };
+
+  const rows: ParsedSpruceRow[] = tracking.report.rows.filter(row => inScope(row.documentNumber));
+  const report: ParsedSpruceReport = {
+    ...tracking.report,
+    rows,
+    // A line the reader could not place in a document is still reported.
+    unreadable: tracking.report.unreadable.filter(entry => !entry.documentNumber || inScope(entry.documentNumber)),
+    ...(tracking.report.aiCheck
+      ? {
+          aiCheck: {
+            ...tracking.report.aiCheck,
+            differences: tracking.report.aiCheck.differences.filter(difference => inScope(difference.documentNumber)),
+          },
+        }
+      : {}),
+  };
+  const trackingRange = reportRange(tracking.report);
+
+  return {
+    files: files.map(file => (file === tracking ? { ...file, report } : file)),
+    scope: {
+      documentsRead: new Set(tracking.report.rows.map(row => row.documentNumber)).size,
+      documentsUsed: new Set(rows.map(row => row.documentNumber)).size,
+      dateFrom: trackingRange ? iso(trackingRange.from) : null,
+      dateTo: trackingRange ? iso(trackingRange.to) : null,
+    },
+  };
 }
 
 function toOrder(document: {
@@ -384,18 +492,24 @@ async function summarize(
     updated: number;
     /** Orders dropped from the day that no report in the upload mentions. */
     dropped: string[];
+    itemTracking: ItemTrackingScope | null;
     warnings: string[];
     errors: string[];
   }
 ): Promise<BatchSummary> {
-  const described = [...rowsByDocument(input.files).keys()];
+  const byDocument = rowsByDocument(input.files);
+  const described = [...byDocument.keys()];
   const stored = await client.orderDocument.findMany({
     where: { documentNumber: { in: [...described, ...input.dropped] } },
     select: SUMMARY_ORDER_SELECT,
   });
   const byNumber = new Map(stored.map(document => [document.documentNumber, toOrder(document)]));
   // A document every report refused was never stored; the importer said why.
-  const orders = described.flatMap(documentNumber => byNumber.get(documentNumber) ?? []);
+  const all = described.flatMap(documentNumber => byNumber.get(documentNumber) ?? []);
+  // A quotation is not work: named once, then left out of everything else.
+  const isQuote = (order: BatchOrder) => order.flags.includes('QUOTE');
+  const quoteNumbers = all.filter(isQuote).map(order => order.documentNumber).sort();
+  const orders = all.filter(order => !isQuote(order));
   const describedSet = new Set(described);
   const dropped = input.dropped
     .filter(documentNumber => !describedSet.has(documentNumber))
@@ -403,8 +517,26 @@ async function summarize(
 
   const day = iso(input.dispatchDate);
   const deliveries = await client.orderDocument.count({
-    where: { deliveryDate: input.dispatchDate, isPickup: false },
+    where: { deliveryDate: input.dispatchDate, isPickup: false, NOT: { flags: { has: 'QUOTE' } } },
   });
+
+  // Today's deliveries with no address because the Item Tracking export does
+  // not reach back to when they were entered: the fix is its start date.
+  const warnings = [...input.warnings];
+  if (input.itemTracking) {
+    const missing = orders.filter(order =>
+      (byDocument.get(order.documentNumber)?.DELIVERY?.length ?? 0) > 0 && order.flags.includes('NOT_IN_ITEM_TRACKING')
+    ).length;
+    if (missing > 0) {
+      const start = input.itemTracking.dateFrom;
+      warnings.push(
+        `${missing} ${missing === 1 ? 'delivery on the Delivery Report is' : 'deliveries on the Delivery Report are'} ` +
+          'not in the Item Tracking Report' +
+          (start ? ` (it starts ${shortDay(new Date(`${start}T00:00:00Z`))})` : '') +
+          `, so ${missing === 1 ? 'it has' : 'they have'} no address. Export Item Tracking from an earlier date.`
+      );
+    }
+  }
 
   return {
     batchId: input.batchId,
@@ -419,7 +551,10 @@ async function summarize(
     orders,
     issues: [...orders, ...dropped].filter(needsAttention),
     aiChecks: aiChecksOf(input.files),
-    warnings: input.warnings,
+    quotes: quoteNumbers.length,
+    quoteNumbers,
+    itemTracking: input.itemTracking,
+    warnings,
     errors: input.errors,
   };
 }
@@ -455,7 +590,8 @@ async function replaySummary(
   client: PrismaClient,
   batch: { id: string; summary: Prisma.JsonValue },
   dispatchDate: Date,
-  files: BatchFile[]
+  files: BatchFile[],
+  itemTracking: ItemTrackingScope | null
 ): Promise<BatchSummary> {
   const earlier = (batch.summary ?? {}) as Partial<BatchSummary>;
   const dropped = await findDroppedFromDay(client, files, dispatchDate);
@@ -467,6 +603,7 @@ async function replaySummary(
     reports: files.map(file => reportSummary(file, NOTHING_WRITTEN)),
     updated: 0,
     dropped: dropped.map(document => document.documentNumber),
+    itemTracking,
     warnings: fileWarnings(files, dispatchDate),
     errors: Array.isArray(earlier.errors) ? earlier.errors : [],
   });
@@ -479,21 +616,24 @@ export async function runImportBatch(
   const dispatchDate = parseSpruceDate(input.dispatchDate);
   if (!dispatchDate) throw new ImportBatchError(`"${input.dispatchDate}" is not a date.`);
 
-  const files = WRITE_ORDER
+  const ordered = WRITE_ORDER
     .map(type => input.files.find(file => file.reportType === type))
     .filter((file): file is BatchFile => file !== undefined);
-  if (files.length !== input.files.length) {
+  if (ordered.length !== input.files.length) {
     throw new ImportBatchError('Each report may be uploaded once per import.');
   }
   // It is the one report that says what goes out today. Without it there is
   // no day to dispatch, only orders.
-  if (!files.some(file => file.reportType === 'DELIVERY')) {
+  if (!ordered.some(file => file.reportType === 'DELIVERY')) {
     throw new ImportBatchError('The Delivery Report is required: it is the list of what goes out today.');
   }
 
+  // From here on the Item Tracking Report holds only what the day is about.
+  const { files, scope } = trackingRowsInScope(ordered);
+
   const hashes = files.map(file => hashFile(file.buffer));
   const identical = await findIdenticalBatch(client, dispatchDate, hashes);
-  if (identical) return replaySummary(client, identical, dispatchDate, files);
+  if (identical) return replaySummary(client, identical, dispatchDate, files, scope);
 
   const batch = await client.importBatch.create({
     data: {
@@ -502,6 +642,8 @@ export async function runImportBatch(
       files: {
         create: files.map((file, index) => {
           const range = reportRange(file.report);
+          // The rows kept are the rows used. Item Tracking's others are only
+          // counted, so a month-wide export is not stored again every morning.
           return {
             reportType: file.reportType,
             fileName: file.fileName,
@@ -518,6 +660,7 @@ export async function runImportBatch(
               readBy: file.report.readBy ?? null,
               aiFailed: file.report.aiFailed ?? null,
               aiCheck: file.report.aiCheck ?? null,
+              ...(file.reportType === 'ITEM_TRACKING' && scope ? { scope } : {}),
             } as unknown as Prisma.InputJsonValue,
           };
         }),
@@ -527,7 +670,7 @@ export async function runImportBatch(
   });
 
   try {
-    const summary = await mergeBatch(client, batch.id, dispatchDate, files);
+    const summary = await mergeBatch(client, batch.id, dispatchDate, files, scope);
     await client.importBatch.update({
       where: { id: batch.id },
       data: {
@@ -549,7 +692,8 @@ async function mergeBatch(
   client: PrismaClient,
   batchId: string,
   dispatchDate: Date,
-  files: BatchFile[]
+  files: BatchFile[],
+  itemTracking: ItemTrackingScope | null
 ): Promise<BatchSummary> {
   const warnings = fileWarnings(files, dispatchDate);
   const errors: string[] = [];
@@ -596,7 +740,11 @@ async function mergeBatch(
   const presentReports = new Set(files.map(file => file.reportType));
   const summaryFile = files.find(file => file.reportType === 'ORDER_SUMMARY');
   const summaryRange = summaryFile ? reportRange(summaryFile.report) : null;
-  const context = { reports: presentReports, ...(summaryRange ? { orderSummaryRange: summaryRange } : {}) };
+  const context = {
+    reports: presentReports,
+    mentioned: mentionedUnread(files),
+    ...(summaryRange ? { orderSummaryRange: summaryRange } : {}),
+  };
   // Decided by any upload carrying the delivery report: an order on it is,
   // by definition, in the latest one.
   const alsoDecided: OrderFlag[] = presentReports.has('DELIVERY') ? ['NOT_IN_LATEST_REPORT'] : [];
@@ -613,7 +761,17 @@ async function mergeBatch(
         phone: true,
         shippingAddress: true,
         deliveryInstructions: true,
-        lines: { select: { spruceItemNumber: true, product: true, poNumber: true } },
+        delivery: { select: { id: true } },
+        lines: {
+          select: {
+            spruceItemNumber: true,
+            product: true,
+            poNumber: true,
+            driverId: true,
+            hasInvoice: true,
+            _count: { select: { deliveries: true, tickets: true, lineItems: true, ticketMatches: true } },
+          },
+        },
       },
     });
     // The per-report importer refused it and has already said why.
@@ -636,20 +794,36 @@ async function mergeBatch(
       phone: patch.phone ?? stored.phone,
       orderDate: patch.orderDate ?? stored.orderDate,
       inItemTracking: stored.sourceReports.includes('ITEM_TRACKING') || (rows.ITEM_TRACKING?.length ?? 0) > 0,
+      inDeliveryReport: stored.sourceReports.includes('DELIVERY') || (rows.DELIVERY?.length ?? 0) > 0,
     };
 
-    const decided = batchFlags(rows, context);
+    // What has happened to it in the app, for telling a quotation from an
+    // order closed since: a stop, a driver, an invoice or a ticket.
+    const history = {
+      sourceReports: stored.sourceReports,
+      hasPo: stored.lines.some(line => line.poNumber),
+      hasActivity: stored.delivery !== null || stored.lines.some(line =>
+        line.driverId !== null || line.hasInvoice ||
+        line._count.deliveries > 0 || line._count.tickets > 0 ||
+        line._count.lineItems > 0 || line._count.ticketMatches > 0
+      ),
+      orderDate: stored.orderDate,
+    };
+    const decided = batchFlags(rows, context, history);
     const checkedByAi = readDifferently(files, documentNumber, rows);
     if (checkedByAi.decided) decided.decided.push('READ_DIFFERENTLY');
     if (checkedByAi.differs) decided.flags.push('READ_DIFFERENTLY');
-    // An order closed in Spruce is not waiting to be collected either.
-    const isPickup = decided.flags.includes('NOT_OPEN') ? false : isPickupOrder(state);
+    const derive: DeriveInput = {
+      state,
+      flags: { stored: stored.flags, decided: [...decided.decided, ...alsoDecided], fresh: decided.flags },
+    };
+    const isPickup = derivePickup(derive);
     const flags = combineFlags(
       stored.flags,
       [...decided.decided, ...alsoDecided],
       [
         ...decided.flags,
-        ...stateFlags(state, isPickup),
+        ...derivedStateFlags(derive, isPickup),
         ...(keptDay ? (['NOT_IN_LATEST_REPORT'] as const) : []),
       ]
     );
@@ -701,6 +875,7 @@ async function mergeBatch(
     reports,
     updated,
     dropped: dropped.map(document => document.documentNumber),
+    itemTracking,
     warnings,
     errors,
   });

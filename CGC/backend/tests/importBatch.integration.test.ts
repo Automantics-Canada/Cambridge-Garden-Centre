@@ -5,11 +5,12 @@ import assert from 'node:assert/strict';
 import { after, beforeEach, describe, it } from 'node:test';
 
 import { prisma } from '../src/db/prisma.js';
+import { DispatchService } from '../src/modules/dispatch/dispatch.service.js';
 import { parseEditRequest } from '../src/modules/orders/edits/editableFields.js';
 import { applyOrderEdits } from '../src/modules/orders/edits/orderEdits.service.js';
 import { ImportBatchError, runImportBatch, type BatchFile } from '../src/modules/orders/import/importBatch.service.js';
 import { parseSprucePages } from '../src/modules/orders/spruce/parseSprucePdf.js';
-import type { ParsedSpruceReport, SpruceReportType } from '../src/modules/orders/spruce/spruceReportTypes.js';
+import type { ParsedSpruceReport, ParsedSpruceRow, SpruceReportType } from '../src/modules/orders/spruce/spruceReportTypes.js';
 import { deliveryReport, itemTrackingReport, orderSummaryReport } from './fixtures/spruceLayouts.js';
 
 /**
@@ -415,5 +416,235 @@ describe('Spruce morning import (PostgreSQL)', { skip: !disposableConfirmed }, (
     assert.ok(summary.warnings.some(warning => /No Item Tracking Report/.test(warning)));
     // Nothing reported where it goes: both deliveries need an address.
     assert.ok((await document('2608-700001')).flags.includes('NOT_IN_ITEM_TRACKING'), 'no address, because the Item Tracking report was not uploaded');
+  });
+});
+
+/** A report's rows under another (invented) document number, with changes. */
+const renumbered = (rows: ParsedSpruceRow[], from: string, to: string, extra: Partial<ParsedSpruceRow> = {}) =>
+  rows.filter(row => row.documentNumber === from).map(row => ({ ...row, documentNumber: to, ...extra }));
+
+const dated = (report: ParsedSpruceReport, fromRaw: string, toRaw = fromRaw): ParsedSpruceReport => ({
+  ...report,
+  dateRange: { fromRaw, toRaw },
+});
+
+describe('a rolling Item Tracking export and quotations (PostgreSQL)', { skip: !disposableConfirmed }, () => {
+  let userId: string;
+  const run = (dispatchDate: string, stamp: string, reports: Partial<Record<SpruceReportType, ParsedSpruceReport>>) =>
+    runImportBatch(prisma, {
+      dispatchDate,
+      createdById: userId,
+      files: (Object.keys(reports) as SpruceReportType[]).map(reportType => ({
+        reportType,
+        fileName: `${reportType}.pdf`,
+        buffer: Buffer.from(`${stamp}-${reportType}`),
+        report: reports[reportType]!,
+      })),
+    });
+  const flagsOf = async (documentNumber: string) => (await document(documentNumber)).flags;
+
+  beforeEach(async () => {
+    await resetDatabase();
+    await prisma.$executeRawUnsafe('TRUNCATE TABLE "Delivery", "Driver" RESTART IDENTITY CASCADE');
+    userId = await seedUser();
+  });
+
+  after(async () => {
+    await prisma.$disconnect();
+  });
+
+  it('uses a month of Item Tracking only for the day: older orders are not re-dated, re-described, created or touched', async () => {
+    // 8/12: an order entered 8/10, delivered that day; the dispatcher fixed its address.
+    const first = await run('2026-08-12', 'aug12', {
+      DELIVERY: dated({
+        ...parsed.DELIVERY,
+        rows: renumbered(parsed.DELIVERY.rows, '2608-700001', '2608-690001', { deliveryDateRaw: '08/12/26' }),
+      }, '08/12/26'),
+      ITEM_TRACKING: {
+        ...parsed.ITEM_TRACKING,
+        rows: renumbered(parsed.ITEM_TRACKING.rows, '2608-700001', '2608-690001', { orderDateRaw: '8/10/2026' }),
+      },
+    });
+    const old = await document('2608-690001');
+    await applyOrderEdits(old.id, parseEditRequest({ fields: { shippingAddress: '9 Old Quarry Rd, Cambridge' } }), userId);
+    const before = await document('2608-690001');
+    const changesBefore = await prisma.orderChange.count({ where: { documentId: old.id } });
+
+    // 9/2: Item Tracking now runs from 8/1, so it lists the old order again
+    // (with another date and wording) and one never imported at all.
+    const wide: ParsedSpruceReport = dated({
+      ...parsed.ITEM_TRACKING,
+      rows: [
+        ...parsed.ITEM_TRACKING.rows,
+        ...renumbered(parsed.ITEM_TRACKING.rows, '2608-700001', '2608-690001', {
+          orderDateRaw: '8/10/2026', deliveryDateRaw: '9/9/2026', product: 'Garden Soil Bulk Premium', shippingAddress: '1 Other St, Ayr',
+        }),
+        ...renumbered(parsed.ITEM_TRACKING.rows, '2608-700001', '2608-690002', { orderDateRaw: '8/11/2026', deliveryDateRaw: '9/2/2026' }),
+      ],
+    }, '8/1/2026', '9/2/2026');
+    const today = {
+      ORDER_SUMMARY: dated(parsed.ORDER_SUMMARY, '09/02/26'),
+      DELIVERY: parsed.DELIVERY,
+      ITEM_TRACKING: wide,
+    };
+    const summary = await run('2026-09-02', 'sep2', today);
+
+    assert.equal(await prisma.orderDocument.count({ where: { documentNumber: '2608-690002' } }), 0, 'an older order is never created');
+    const after = await document('2608-690001');
+    assert.equal(after.deliveryDate?.toISOString().slice(0, 10), '2026-08-12', 'not re-dated');
+    assert.equal(after.lastBatchId, first.batchId, 'not part of today\'s upload, so not in today\'s pool');
+    assert.equal(after.shippingAddress, '9 Old Quarry Rd, Cambridge', "the dispatcher's correction stands");
+    assert.deepEqual(after.lines.map(line => [line.id, line.product, line.deliveryDate?.toISOString()]),
+      before.lines.map(line => [line.id, line.product, line.deliveryDate?.toISOString()]), 'not re-described');
+    assert.deepEqual(after.flags, before.flags);
+    assert.equal(await prisma.orderChange.count({ where: { documentId: old.id } }), changesBefore, 'nothing marked Updated');
+    assert.equal(await prisma.orderOverride.count({ where: { documentId: old.id } }), 1);
+
+    assert.ok(!summary.orders.some(order => order.documentNumber.startsWith('2608-6900')));
+    assert.deepEqual(summary.itemTracking, { documentsRead: 4, documentsUsed: 2, dateFrom: '2026-08-01', dateTo: '2026-09-02' });
+    // What is stored for the upload is what it used.
+    const stored = await prisma.importBatchFile.findFirstOrThrow({ where: { batchId: summary.batchId, reportType: 'ITEM_TRACKING' } });
+    const extraction = stored.extraction as { rows: ParsedSpruceRow[]; scope: unknown };
+    assert.deepEqual([...new Set(extraction.rows.map(row => row.documentNumber))].sort(), ['2608-700001', '2608-700002']);
+    assert.deepEqual(extraction.scope, summary.itemTracking);
+
+    // The same reports again at noon: no duplicates, nothing new.
+    const counts = { documents: await prisma.orderDocument.count(), lines: await prisma.order.count() };
+    await run('2026-09-02', 'sep2-noon', today);
+    assert.deepEqual({ documents: await prisma.orderDocument.count(), lines: await prisma.order.count() }, counts);
+  });
+
+  it('says when today\'s deliveries are missing from Item Tracking, and where it starts', async () => {
+    const summary = await run('2026-09-02', 'sep2', {
+      ORDER_SUMMARY: dated(parsed.ORDER_SUMMARY, '09/02/26'),
+      DELIVERY: parsed.DELIVERY,
+      ITEM_TRACKING: dated({
+        ...parsed.ITEM_TRACKING,
+        rows: parsed.ITEM_TRACKING.rows.filter(row => row.documentNumber !== '2608-700001'),
+      }, '9/1/2026', '9/2/2026'),
+    });
+
+    assert.ok((await flagsOf('2608-700001')).includes('NOT_IN_ITEM_TRACKING'));
+    assert.deepEqual(summary.warnings.filter(warning => /not in the Item Tracking Report/.test(warning)), [
+      '1 delivery on the Delivery Report is not in the Item Tracking Report (it starts 9/1), so it has no address. ' +
+        'Export Item Tracking from an earlier date.',
+    ]);
+  });
+
+  it('recognises a quotation, keeps it through a wider Item Tracking, and lets it come back as an order', async () => {
+    // 700009: on Item Tracking only, entered on the Order Report's day, no PO.
+    // 700008: the same, but with a supplier PO: an order closed since.
+    const tracking = (range: [string, string]) => dated({
+      ...parsed.ITEM_TRACKING,
+      rows: [
+        ...parsed.ITEM_TRACKING.rows,
+        ...renumbered(parsed.ITEM_TRACKING.rows, '2608-700001', '2608-700009', { orderDateRaw: '9/2/2026', deliveryDateRaw: '9/2/2026' }),
+        ...renumbered(parsed.ITEM_TRACKING.rows, '2608-700001', '2608-700008', { orderDateRaw: '9/2/2026', poNumber: '2608-300008' }),
+      ],
+    }, ...range);
+
+    const morning = await run('2026-09-02', 'sep2', {
+      ORDER_SUMMARY: dated(parsed.ORDER_SUMMARY, '09/02/26'),
+      DELIVERY: parsed.DELIVERY,
+      ITEM_TRACKING: tracking(['9/2/2026', '9/2/2026']),
+    });
+
+    const quote = await document('2608-700009');
+    assert.ok(quote.flags.includes('QUOTE'));
+    assert.ok(!quote.flags.includes('NOT_OPEN'));
+    assert.equal(quote.isPickup, false);
+    assert.deepEqual(quote.flags, ['QUOTE'], 'and no delivery checks on it');
+    const closed = await flagsOf('2608-700008');
+    assert.ok(closed.includes('NOT_OPEN') && !closed.includes('QUOTE'), 'a PO means it was an order');
+
+    assert.equal(morning.quotes, 1);
+    assert.deepEqual(morning.quoteNumbers, ['2608-700009']);
+    assert.ok(!morning.orders.some(order => order.documentNumber === '2608-700009'));
+    assert.ok(!morning.issues.some(issue => issue.documentNumber === '2608-700009'));
+    assert.equal(morning.deliveries, 2, 'the quotation dated today is not a delivery');
+    assert.equal(morning.onBoard, morning.orders.filter(order => !order.isPickup && !order.flags.includes('NOT_OPEN')).length);
+
+    // 9/3: the Order Report is for 9/3, and Item Tracking reaches back to 9/1.
+    const nextDay = await run('2026-09-03', 'sep3', {
+      ORDER_SUMMARY: dated(parsed.ORDER_SUMMARY, '09/03/26'),
+      DELIVERY: parsed.DELIVERY,
+      ITEM_TRACKING: tracking(['9/1/2026', '9/3/2026']),
+    });
+    assert.deepEqual(await flagsOf('2608-700009'), ['QUOTE'], 'still a quotation');
+    assert.ok((await flagsOf('2608-700008')).includes('NOT_OPEN'), 'still closed');
+    assert.ok(!nextDay.orders.some(order => order.documentNumber === '2608-700009'));
+
+    // 9/4: the quotation was converted, and the Order Report lists it.
+    await run('2026-09-04', 'sep4', {
+      ORDER_SUMMARY: dated({
+        ...parsed.ORDER_SUMMARY,
+        rows: [...parsed.ORDER_SUMMARY.rows, ...renumbered(parsed.ORDER_SUMMARY.rows, '2608-700001', '2608-700009')],
+      }, '09/04/26'),
+      DELIVERY: parsed.DELIVERY,
+      ITEM_TRACKING: tracking(['9/1/2026', '9/4/2026']),
+    });
+    const converted = await flagsOf('2608-700009');
+    assert.ok(!converted.includes('QUOTE') && !converted.includes('NOT_OPEN'), 'an order now');
+  });
+
+  it('never takes an order for a quotation because one of its Order Report lines could not be read', async () => {
+    await run('2026-09-02', 'sep2', {
+      ORDER_SUMMARY: {
+        ...dated(parsed.ORDER_SUMMARY, '09/02/26'),
+        unreadable: [{ page: 1, row: 30, reason: 'could not read the quantity for document 2608-700009', documentNumber: '2608-700009' }],
+      },
+      DELIVERY: parsed.DELIVERY,
+      ITEM_TRACKING: {
+        ...parsed.ITEM_TRACKING,
+        rows: [...parsed.ITEM_TRACKING.rows, ...renumbered(parsed.ITEM_TRACKING.rows, '2608-700001', '2608-700009', { orderDateRaw: '9/2/2026' })],
+      },
+    });
+
+    const flags = await flagsOf('2608-700009');
+    assert.ok(!flags.includes('QUOTE') && !flags.includes('NOT_OPEN'), `flags: ${flags.join(', ')}`);
+  });
+
+  it('asks for a phone only on orders that have been on a Delivery Report', async () => {
+    // 700011 is dated by the Order Report and on no Delivery Report yet;
+    // 700002's Delivery Report line prints no phone.
+    await run('2026-09-02', 'sep2', {
+      ORDER_SUMMARY: {
+        ...parsed.ORDER_SUMMARY,
+        rows: [...parsed.ORDER_SUMMARY.rows, ...renumbered(parsed.ORDER_SUMMARY.rows, '2608-700002', '2608-700011')],
+      },
+      DELIVERY: {
+        ...parsed.DELIVERY,
+        rows: parsed.DELIVERY.rows.map(row => (row.documentNumber === '2608-700002' ? { ...row, phone: undefined } : row)),
+      },
+      ITEM_TRACKING: parsed.ITEM_TRACKING,
+    });
+
+    assert.ok(!(await flagsOf('2608-700011')).includes('NO_PHONE'), 'not missing: nothing could have given it one');
+    assert.ok((await flagsOf('2608-700002')).includes('NO_PHONE'));
+  });
+
+  it('refreshes an order with identical loads after it has been given to a driver', async () => {
+    // 700002 carries the same 40 MT load twice.
+    const load = parsed.DELIVERY.rows.find(row => row.documentNumber === '2608-700002' && row.itemNumber === 'AGG01')!;
+    const twoLoads: ParsedSpruceReport = {
+      ...parsed.DELIVERY,
+      rows: parsed.DELIVERY.rows.flatMap(row => (row === load ? [row, { ...row, source: { ...row.source, row: row.source.row + 50 } }] : [row])),
+    };
+    await run('2026-09-02', 'morning', { DELIVERY: twoLoads });
+    const order = await document('2608-700002');
+    assert.equal(order.lines.filter(line => line.spruceItemNumber === 'AGG01').length, 2);
+    const driver = await prisma.driver.create({ data: { name: 'Test Driver', phone: '519-555-0199' } });
+    await DispatchService.assignOrder(order.id, driver.id);
+
+    const noon = await run('2026-09-02', 'noon', { DELIVERY: twoLoads, ITEM_TRACKING: parsed.ITEM_TRACKING });
+
+    assert.deepEqual(noon.errors.filter(error => /matched safely/.test(error)), [], 'the document is no longer refused');
+    const after = await document('2608-700002');
+    const loads = (lines: Array<{ id: string; spruceItemNumber: string | null }>) =>
+      lines.filter(line => line.spruceItemNumber === 'AGG01').map(line => line.id).sort();
+    assert.deepEqual(loads(after.lines), loads(order.lines), 'the same two loads, none duplicated');
+    assert.ok(after.lines.filter(line => line.spruceItemNumber === 'AGG01').every(line => line.driverId === driver.id), 'still with the driver');
+    assert.ok(after.sourceReports.includes('ITEM_TRACKING'), 'refreshed from the noon reports');
+    assert.equal((await prisma.delivery.findUniqueOrThrow({ where: { documentId: order.id } })).driverId, driver.id);
   });
 });

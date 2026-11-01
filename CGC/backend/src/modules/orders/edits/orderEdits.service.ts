@@ -3,9 +3,10 @@ import type { Prisma } from '@prisma/client';
 import { prisma } from '../../../db/prisma.js';
 import {
   combineFlags,
-  isPickupOrder,
+  derivePickup,
+  derivedStateFlags,
   normalizeAddress,
-  stateFlags,
+  type DeriveInput,
   type OrderFlag,
 } from '../import/mergeOrderFacts.js';
 import { NO_UPDATES, updatesForDay } from '../import/orderChanges.js';
@@ -92,9 +93,13 @@ async function recomputeDerived(db: Db, documentId: string): Promise<void> {
     phone: document.phone,
     orderDate: document.orderDate,
     inItemTracking: document.sourceReports.includes('ITEM_TRACKING'),
+    inDeliveryReport: document.sourceReports.includes('DELIVERY'),
   };
-  const isPickup = document.flags.includes('NOT_OPEN') ? false : isPickupOrder(state);
-  const fresh = stateFlags(state, isPickup);
+  // The same rule the import applies, from the same flags, so an edit never
+  // turns an order the import closed back into a pickup, or the other way.
+  const derive: DeriveInput = { state, flags: { stored: document.flags } };
+  const isPickup = derivePickup(derive);
+  const fresh = derivedStateFlags(derive, isPickup);
   if (document.overrides.some(override => override.spruceChanged)) fresh.push(CHANGED);
 
   await db.orderDocument.update({

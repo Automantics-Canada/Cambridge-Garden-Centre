@@ -26,10 +26,12 @@ export const dayOfDeliveryDate = (date: Date) => date.toISOString().slice(0, 10)
 export const isPastDay = (day: string, today: string) => day < today;
 
 /**
- * Orders Spruce no longer lists as open: invoiced, closed or voided since.
- * They are waiting for nothing, so Carried over and Pickups leave them out.
+ * Orders Spruce no longer lists as open: invoiced, closed or voided since,
+ * or quotations that were never orders. They are waiting for nothing, so
+ * Carried over and Pickups leave them out. A quotation used to be flagged
+ * NOT_OPEN; now that it has its own flag it must stay out just the same.
  */
-const CLOSED_IN_SPRUCE: Prisma.OrderDocumentWhereInput = { flags: { has: 'NOT_OPEN' } };
+const CLOSED_IN_SPRUCE: Prisma.OrderDocumentWhereInput = { flags: { hasSome: ['NOT_OPEN', 'QUOTE'] } };
 
 /**
  * Orders an upload described on `day`: first imported that day, or described

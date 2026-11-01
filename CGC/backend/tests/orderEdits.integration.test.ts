@@ -185,3 +185,79 @@ describe('correcting an order (PostgreSQL)', { skip: !disposableConfirmed }, () 
     assert.equal(after.overrides.length, 0);
   });
 });
+
+describe('an edit and an import decide a pickup the same way (PostgreSQL)', { skip: !disposableConfirmed }, () => {
+  let userId: string;
+  const run = (dispatchDate: string, stamp: string, reports: Partial<Record<SpruceReportType, ParsedSpruceReport>>) =>
+    runImportBatch(prisma, {
+      dispatchDate,
+      createdById: userId,
+      files: (Object.keys(reports) as SpruceReportType[]).map(reportType => ({
+        reportType,
+        fileName: `${reportType}.pdf`,
+        buffer: Buffer.from(`${stamp}-${reportType}`),
+        report: reports[reportType]!,
+      })),
+    });
+  const as = (from: string, to: string, rows: ParsedSpruceReport['rows'], extra: Partial<ParsedSpruceReport['rows'][number]> = {}) =>
+    rows.filter(row => row.documentNumber === from).map(row => ({ ...row, documentNumber: to, ...extra }));
+  const edit = async (documentNumber: string, address: string) =>
+    applyOrderEdits((await order(documentNumber)).id, parseEditRequest({ fields: { shippingAddress: address } }), userId);
+
+  beforeEach(async () => {
+    await prisma.$executeRawUnsafe(
+      'TRUNCATE TABLE "ImportBatch", "OrderDocument", "Order", "User", "Delivery", "Driver", "AuditLog" RESTART IDENTITY CASCADE'
+    );
+    userId = (await prisma.user.create({
+      data: { name: 'Dispatcher', email: 'dispatcher@example.test', passwordHash: 'x', role: 'ADMIN' },
+    })).id;
+  });
+
+  after(async () => {
+    await prisma.$disconnect();
+  });
+
+  it('keeps a quotation and a closed order out of the pickups after an edit, and follows a converted quotation back', async () => {
+    // Both undated with nothing charged for delivery, so either would be a
+    // pickup if it were open. 700009 is a quotation; 700008 has a PO, so it
+    // was an order, closed since.
+    const tracking = (extra: ParsedSpruceReport['rows']) => ({
+      ...parsed.ITEM_TRACKING,
+      rows: [
+        ...parsed.ITEM_TRACKING.rows,
+        ...as('2608-700001', '2608-700009', parsed.ITEM_TRACKING.rows, { orderDateRaw: '9/2/2026' }),
+        ...as('2608-700001', '2608-700008', parsed.ITEM_TRACKING.rows, { orderDateRaw: '9/2/2026', poNumber: '2608-300008' }),
+        ...extra,
+      ],
+    });
+    const summary = { ...parsed.ORDER_SUMMARY, dateRange: { fromRaw: '09/02/26', toRaw: '09/02/26' } };
+    await run('2026-09-02', 'morning', { ORDER_SUMMARY: summary, DELIVERY: parsed.DELIVERY, ITEM_TRACKING: tracking([]) });
+
+    for (const [documentNumber, flag] of [['2608-700009', 'QUOTE'], ['2608-700008', 'NOT_OPEN']] as const) {
+      const imported = await order(documentNumber);
+      assert.ok(imported.flags.includes(flag), `${documentNumber} is ${flag}`);
+      assert.equal(imported.isPickup, false, `${documentNumber}: the import says not a pickup`);
+
+      await edit(documentNumber, '5 Example Lane, Cambridge');
+      const edited = await order(documentNumber);
+      assert.equal(edited.isPickup, false, `${documentNumber}: and so does an edit`);
+      assert.ok(edited.flags.includes(flag), `${documentNumber}: the edit keeps ${flag}`);
+    }
+
+    // The quotation was converted: the Order Report lists it, open, as a pickup.
+    await run('2026-09-03', 'next', {
+      ORDER_SUMMARY: {
+        ...parsed.ORDER_SUMMARY,
+        dateRange: { fromRaw: '09/03/26', toRaw: '09/03/26' },
+        rows: [...parsed.ORDER_SUMMARY.rows, ...as('2608-700001', '2608-700009', parsed.ORDER_SUMMARY.rows)],
+      },
+      DELIVERY: parsed.DELIVERY,
+      ITEM_TRACKING: tracking([]),
+    });
+    const converted = await order('2608-700009');
+    assert.ok(!converted.flags.includes('QUOTE'));
+    assert.equal(converted.isPickup, true, 'the import: a pickup now');
+    await edit('2608-700009', '6 Example Lane, Cambridge');
+    assert.equal((await order('2608-700009')).isPickup, true, 'and the edit agrees');
+  });
+});

@@ -288,6 +288,7 @@ export function parseItemTrackingReport(pages: PdfTextPage[]): ParsedSpruceRepor
           reason: `could not read the ${missing.join(', ')}${
             hasDocumentNumber ? ` for document ${documentNumber}` : ''
           }`,
+          ...(hasDocumentNumber && documentNumber ? { documentNumber } : {}),
         });
         continue;
       }

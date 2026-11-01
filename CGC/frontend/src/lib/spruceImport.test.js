@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { aiCheckBadge, aiOnlyNote, dateWarning, flagInfo, processState, slotStatus, summaryLine } from './spruceImport';
+import { aiCheckBadge, aiOnlyNote, dateWarning, flagInfo, processState, scopeNotes, slotStatus, summaryLine } from './spruceImport';
 import { assignWarning } from './dispatchBoard';
 
 const ready = (reportType, extra = {}) => ({ reportType, dateFrom: '2026-08-14', dateTo: '2026-08-14', ...extra });
@@ -68,6 +68,34 @@ describe('wording', () => {
       .toBe('16 deliveries for 8/14, 3 upcoming, 5 pickups, 2 updated.');
     expect(summaryLine({ deliveries: 16, upcoming: 3, pickups: 5, updated: 0, dispatchDate: '2026-08-14' }))
       .toBe('16 deliveries for 8/14, 3 upcoming, 5 pickups.');
+  });
+
+  it('says how many quotations were left off, only when there were some', () => {
+    expect(summaryLine({ deliveries: 0, upcoming: 0, onBoard: 4, pickups: 1, quotes: 2, dispatchDate: '2026-10-22' }))
+      .toBe('4 deliveries on the dispatch board, 1 pickup, 2 quotations left off.');
+    expect(summaryLine({ deliveries: 0, upcoming: 0, onBoard: 4, pickups: 1, quotes: 1, dispatchDate: '2026-10-22' }))
+      .toBe('4 deliveries on the dispatch board, 1 pickup, 1 quotation left off.');
+    expect(summaryLine({ deliveries: 0, upcoming: 0, onBoard: 4, pickups: 1, quotes: 0, dispatchDate: '2026-10-22' }))
+      .toBe('4 deliveries on the dispatch board, 1 pickup.');
+  });
+
+  it('says how much of the Item Tracking export was used, and names the quotations', () => {
+    expect(scopeNotes({
+      itemTracking: { documentsRead: 412, documentsUsed: 18, dateFrom: '2026-09-22', dateTo: '2026-10-21' },
+      quoteNumbers: ['9900-000009'],
+    })).toEqual(['Item Tracking: 412 read, 18 used.', 'Quotation, not on the board: 9900-000009.']);
+
+    const many = Array.from({ length: 12 }, (_, i) => `9900-0000${String(i).padStart(2, '0')}`);
+    expect(scopeNotes({ quoteNumbers: many })[0]).toMatch(/^Quotations, not on the board: 9900-000000, .* and 2 more\.$/);
+  });
+
+  it('says nothing extra for an older summary', () => {
+    expect(scopeNotes({})).toEqual([]);
+    expect(scopeNotes({ itemTracking: null, quoteNumbers: [] })).toEqual([]);
+  });
+
+  it('names a quotation', () => {
+    expect(flagInfo('QUOTE')).toEqual({ label: 'Quotation', tone: 'neutral' });
   });
 
   it('names every flag, and an unknown one by its code rather than not at all', () => {

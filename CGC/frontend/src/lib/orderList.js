@@ -64,7 +64,8 @@ export function deliveryStatusView(order) {
  */
 export function pastDueWithoutDriver(order, today) {
   if (!order || isCollected(order) || isExternal(order) || !today) return false;
-  if ((order.flags ?? []).includes('NOT_OPEN')) return false;
+  // A quotation is not an order, so nothing about it is overdue.
+  if ((order.flags ?? []).some(flag => flag === 'NOT_OPEN' || flag === 'QUOTE')) return false;
   const due = deliveryDay(order.deliveryDate);
   if (!due || due >= today) return false;
   return deliveryStatusView(order).label === 'No driver yet';
