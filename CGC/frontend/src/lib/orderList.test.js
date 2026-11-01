@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { MISSING_OPTIONS, QUOTE_OPTIONS, deliveryStatusView, deliveryTypeDetail, emptyTitle, invoiceSummary, pastDueWithoutDriver, uploadRange } from './orderList';
+import { MISSING_OPTIONS, QUOTE_OPTIONS, countNoun, deliveryStatusView, deliveryTypeDetail, emptyTitle, invoiceSummary, pastDueWithoutDriver, uploadRange } from './orderList';
 
 const days = { today: '2026-10-05', yesterday: '2026-10-04' };
 
@@ -75,6 +75,15 @@ describe('filter options', () => {
   it('offers Missing: Phone, sent as the value the server reads', () => {
     expect(MISSING_OPTIONS.map(({ value }) => value)).toEqual(['', 'phone']);
     expect(MISSING_OPTIONS.find(({ value }) => value === 'phone').label).toBe('Phone');
+    // The unfiltered choice must not read as "missing anything".
+    expect(MISSING_OPTIONS[0].label).toBe('No filter');
+  });
+
+  it('counts quotations as quotations in their view', () => {
+    expect(countNoun(1)).toBe('order');
+    expect(countNoun(3)).toBe('orders');
+    expect(countNoun(0, { quotations: true })).toBe('quotations');
+    expect(countNoun(1, { quotations: true })).toBe('quotation');
   });
 });
 

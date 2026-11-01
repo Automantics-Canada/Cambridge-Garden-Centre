@@ -41,7 +41,8 @@ export const QUOTE_OPTIONS = [
  * report with no phone: the only report that prints one.
  */
 export const MISSING_OPTIONS = [
-  { value: '', label: 'Anything' },
+  // Not "Anything": that reads as orders missing anything at all.
+  { value: '', label: 'No filter' },
   { value: 'phone', label: 'Phone' },
 ];
 
@@ -120,6 +121,11 @@ export function emptyTitle({ filter, from, to, filtered, quotations = false }) {
   if (filter === 'yesterday') return `No ${things} uploaded yesterday`;
   if (filter === 'all') return `No ${things} yet`;
   return `No ${things} uploaded on these days`;
+}
+
+/** What the list's count is counting: "order", "orders", "quotations". */
+export function countNoun(total, { quotations = false } = {}) {
+  return `${quotations ? 'quotation' : 'order'}${total === 1 ? '' : 's'}`;
 }
 
 /** "Invoiced", "2 of 3 invoiced" or "Not invoiced". */

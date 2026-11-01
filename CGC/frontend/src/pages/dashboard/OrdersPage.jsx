@@ -24,6 +24,7 @@ import {
   DELIVERY_STATUS_OPTIONS,
   MISSING_OPTIONS,
   QUOTE_OPTIONS,
+  countNoun,
   deliveryStatusView,
   deliveryTypeDetail,
   emptyTitle,
@@ -405,7 +406,7 @@ export default function OrdersPage() {
           </div>
           <div className="hidden sm:flex sm:flex-1 sm:items-center sm:justify-between">
             <p className="tabular text-sm text-muted">
-              <span className="font-medium text-ink">{total}</span> order{total === 1 ? '' : 's'} · page <span className="font-medium text-ink">{page}</span> of <span className="font-medium text-ink">{totalPages}</span>
+              <span className="font-medium text-ink">{total}</span> {countNoun(total, { quotations: quotes === 'only' })} · page <span className="font-medium text-ink">{page}</span> of <span className="font-medium text-ink">{totalPages}</span>
             </p>
             <div className="flex gap-2">
               <Button size="sm" onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1}>
