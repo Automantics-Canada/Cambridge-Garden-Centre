@@ -761,6 +761,9 @@ async function mergeBatch(
         phone: true,
         shippingAddress: true,
         deliveryInstructions: true,
+        orderNotes: true,
+        deliveryFlag: true,
+        fulfilmentOverride: true,
         delivery: { select: { id: true } },
         lines: {
           select: {
@@ -813,9 +816,18 @@ async function mergeBatch(
     const checkedByAi = readDifferently(files, documentNumber, rows);
     if (checkedByAi.decided) decided.decided.push('READ_DIFFERENTLY');
     if (checkedByAi.differs) decided.flags.push('READ_DIFFERENTLY');
+    const sourceReports = [...new Set([...stored.sourceReports, ...Object.keys(rows)])].sort();
     const derive: DeriveInput = {
       state,
       flags: { stored: stored.flags, decided: [...decided.decided, ...alsoDecided], fresh: decided.flags },
+      // The dispatcher's type is ours, never written by an import, so it
+      // holds through every re-upload; isPickup follows it here too.
+      fulfilment: {
+        orderNotes: patch.orderNotes ?? stored.orderNotes,
+        deliveryFlag: patch.deliveryFlag ?? stored.deliveryFlag,
+        sourceReports,
+        override: stored.fulfilmentOverride,
+      },
     };
     const isPickup = derivePickup(derive);
     const flags = combineFlags(
@@ -836,7 +848,7 @@ async function mergeBatch(
         deliveryType: deliveryTypeOf(lines),
         isPickup,
         flags,
-        sourceReports: [...new Set([...stored.sourceReports, ...Object.keys(rows)])].sort(),
+        sourceReports,
         lastBatchId: batchId,
       },
       select: { id: true },

@@ -46,7 +46,7 @@ describe('driver responses carry no prices (PostgreSQL)', { skip: !disposableCon
 
   before(async () => {
     await prisma.$executeRawUnsafe(
-      'TRUNCATE TABLE "OrderDocument", "Order", "Driver", "User", "Delivery", "Supplier", "SupplierSpruceVendor" RESTART IDENTITY CASCADE'
+      'TRUNCATE TABLE "OrderDocument", "Order", "Driver", "User", "Delivery", "Supplier", "SupplierSpruceVendor", "NegotiatedRate" RESTART IDENTITY CASCADE'
     );
     await prisma.supplier.create({
       data: {
@@ -143,6 +143,43 @@ describe('driver responses carry no prices (PostgreSQL)', { skip: !disposableCon
     assert.deepEqual(atYard.data[0]!.pickupFrom, [
       { name: 'Example Quarry', location: 'Example Yard', address: '9 Quarry Line, Example Yard', po: '9900-100777' },
     ]);
+  });
+
+  it('names the pit dispatch chose, with its address and no PO, under the same four keys and nothing else', async () => {
+    // The pit dispatch chose is a supplier with rates of its own: none of
+    // that, nor the office's choice itself, may reach the phone.
+    const pit = await prisma.supplier.create({
+      data: {
+        name: 'Example Pit',
+        type: 'SUPPLIER',
+        address: '1 Pit Rd, Example Yard',
+        emailDomains: [],
+        keywords: [],
+        negotiatedRates: {
+          create: { productName: 'Clear Stone', unit: 'MT', rate: '19.75', effectiveFrom: new Date('2026-01-01'), createdById: userId },
+        },
+      },
+    });
+    await prisma.orderDocument.update({
+      where: { documentNumber: '9900-000777' },
+      data: { pickupSupplierId: pit.id, pickupLocation: 'Example Yard', fulfilmentOverride: 'supplier_haul_delivery' },
+    });
+    try {
+      const current = await DeliveriesService.getCurrentStop(driverId);
+      const pickupFrom = current.data[0]!.pickupFrom;
+      assert.deepEqual(pickupFrom, [{ name: 'Example Pit', location: 'Example Yard', address: '1 Pit Rd, Example Yard', po: null }]);
+      for (const pickup of pickupFrom) assert.deepEqual(Object.keys(pickup).sort(), PICKUP_KEYS);
+      assert.deepEqual(moneyKeysIn(current), []);
+      const text = JSON.stringify(current);
+      for (const leak of ['19.75', 'negotiatedRates', 'fulfilmentOverride', 'pickupSupplierId', 'pickupLocation', 'EXAMPLEV01']) {
+        assert.equal(text.includes(leak), false, leak);
+      }
+    } finally {
+      await prisma.orderDocument.update({
+        where: { documentNumber: '9900-000777' },
+        data: { pickupSupplierId: null, pickupLocation: null, fulfilmentOverride: null },
+      });
+    }
   });
 
   it('keeps prices out of the answer to a driver\'s status update', async () => {

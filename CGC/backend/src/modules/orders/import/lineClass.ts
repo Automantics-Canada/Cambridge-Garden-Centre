@@ -29,6 +29,12 @@ export function classifyLine(itemCode: string | null | undefined, description: s
   return 'PRODUCT';
 }
 
+/** The delivery charges whose code alone says how the order goes out. */
+const LISTED_CHARGES = new Set(['MISCDEL', 'MISCDELG', 'MISCDELI', 'MISCDELD']);
+
+const SLINGER = /\bslinger\b/i;
+const TRI_AXLE = /\btri[\s-]?axle\b/i;
+
 /**
  * How the order goes out, from its delivery charge.
  *
@@ -36,17 +42,28 @@ export function classifyLine(itemCode: string | null | undefined, description: s
  * is a slinger job whatever else is on it. Bagged material is sold with the
  * delivery built in — its description ends `DEL` — so it has no charge line
  * of its own and is recognised from the product instead.
+ *
+ * A delivery charge under a code not listed here (721442's slinger is
+ * `MISCDELE`) is read by its description instead: a slinger is a slinger, a
+ * tri-axle is a dump truck, and anything else is still a delivery. The client
+ * confirmed (Oct 2026) that any delivery charge on an order makes it one.
  */
 export function deliveryTypeOf(
   lines: ReadonlyArray<{ itemCode?: string | null; description?: string | null }>
 ): DeliveryType | null {
   const codes = new Set(lines.map(line => (line.itemCode ?? '').trim().toUpperCase()));
+  const unlisted = lines
+    .filter(line => {
+      const code = (line.itemCode ?? '').trim().toUpperCase();
+      return code.startsWith('MISCDEL') && !LISTED_CHARGES.has(code);
+    })
+    .map(line => line.description ?? '');
 
-  if (codes.has('MISCDELG')) return 'SLINGER';
+  if (codes.has('MISCDELG') || unlisted.some(text => SLINGER.test(text))) return 'SLINGER';
   if (codes.has('MISCDELI')) return 'SPLITBOX';
   if (codes.has('MISCDELD')) return 'FLATBED';
-  if ([...codes].some(code => BULK_TIER.test(code))) return 'DUMP';
+  if ([...codes].some(code => BULK_TIER.test(code)) || unlisted.some(text => TRI_AXLE.test(text))) return 'DUMP';
   if (lines.some(line => /\bDEL$/i.test((line.description ?? '').trim()))) return 'BAG';
-  if (codes.has('MISCDEL')) return 'GENERAL';
+  if (codes.has('MISCDEL') || unlisted.length > 0) return 'GENERAL';
   return null;
 }

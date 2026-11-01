@@ -13,6 +13,7 @@ import {
   normalizeAddress,
   stateFlags,
   withFlag,
+  type FulfilmentFacts,
   type ReportRows,
 } from '../src/modules/orders/import/mergeOrderFacts.js';
 import type { ParsedSpruceRow } from '../src/modules/orders/spruce/spruceReportTypes.js';
@@ -128,6 +129,16 @@ describe('line classification', () => {
     assert.equal(deliveryTypeOf([{ itemCode: 'MISCDEL' }]), 'GENERAL');
     assert.equal(deliveryTypeOf([{ itemCode: 'AGG01' }]), null, 'no charge line says nothing about how');
   });
+
+  it('reads an unlisted delivery charge by its description: 721442\'s MISCDELE slinger, a tri-axle', () => {
+    assert.equal(deliveryTypeOf([{ itemCode: 'MISCDELE', description: 'Slinger Delivery Standard' }]), 'SLINGER');
+    for (const description of ['Tri-Axle Delivery', 'Triaxle delivery 1-3', 'TRI AXLE Load']) {
+      assert.equal(deliveryTypeOf([{ itemCode: 'MISCDELT', description }]), 'DUMP', description);
+    }
+    assert.equal(deliveryTypeOf([{ itemCode: 'MISCDELX', description: 'Delivery Charge' }]), 'GENERAL', 'still a delivery');
+    // A listed code still says it, whatever its description.
+    assert.equal(deliveryTypeOf([{ itemCode: 'MISCDELD', description: 'Slinger? no, flatbed' }]), 'FLATBED');
+  });
 });
 
 describe('addresses', () => {
@@ -154,16 +165,30 @@ describe('pickups', () => {
   });
 
   it('is a pickup when the address, a comment or the absence of any delivery charge says so', () => {
-    assert.equal(isPickupOrder({ ...base, shippingAddress: 'Pickup @ Yard,', lines: lines('MISCDEL') }), true);
+    assert.equal(isPickupOrder({ ...base, shippingAddress: 'Pickup @ Yard,', lines: lines('SOILGRDNA') }), true);
     assert.equal(
-      isPickupOrder({ ...base, lines: [{ itemCode: 'COMMENT', description: '**Pickup direct pricing**' }, { itemCode: 'MISCDEL' }] }),
+      isPickupOrder({ ...base, lines: [{ itemCode: 'COMMENT', description: '**Pickup direct pricing**' }, { itemCode: 'SOILGRDNA' }] }),
       true
     );
     assert.equal(isPickupOrder({ ...base, lines: lines('SOILGRDNA') }), true);
   });
 
-  it('keeps an undated order with a delivery charge as a delivery still to be scheduled', () => {
+  // The client (Oct 2026): "any order with a delivery charge on the line items
+  // can be treated as a delivery." Before, an unlisted code (721442's MISCDELE,
+  // 721493's tri-axle) left the order a pickup, and pickup wording beside a
+  // charge made it one; both asked staff to confirm instead.
+  it('is a delivery whenever CGC charges for one, whatever the code or the address says', () => {
     assert.equal(isPickupOrder({ ...base, lines: lines('SOILGRDNA', 'SOILYELG1-5') }), false);
+    assert.equal(isPickupOrder({ ...base, lines: [{ itemCode: 'MISCDELE', description: 'Slinger Delivery Standard' }] }), false);
+    assert.equal(isPickupOrder({ ...base, lines: [{ itemCode: 'MISCDELT', description: 'Tri-axle Delivery' }] }), false);
+    assert.equal(isPickupOrder({ ...base, shippingAddress: 'Pickup @ Yard,', lines: lines('MISCDEL') }), false);
+  });
+
+  it('does not count a supplier\'s "Direct Delivery" line as CGC\'s charge', () => {
+    assert.equal(
+      isPickupOrder({ ...base, shippingAddress: 'Pickup at Unilock,', lines: [{ itemCode: 'MISCDELX', description: 'Unilock Direct Delivery' }] }),
+      true
+    );
   });
 });
 
@@ -360,6 +385,38 @@ describe('derivePickup: one rule for the import and for edits', () => {
 
   it('follows the order again once an upload clears the flag', () => {
     assert.equal(derivePickup({ state: collect, flags: { stored: ['QUOTE'], decided: ['QUOTE', 'NOT_OPEN'], fresh: [] } }), true);
+  });
+
+  const facts = (fields: Partial<FulfilmentFacts> = {}): FulfilmentFacts => ({
+    orderNotes: null, deliveryFlag: null, sourceReports: ['ITEM_TRACKING', 'ORDER_SUMMARY'], override: null, ...fields,
+  });
+  const fobLines = [{ itemCode: 'BHS6CSR', description: 'Example Paver 60mm' }, { itemCode: 'COMMENT', description: 'FOB UNILOCK AYR' }];
+
+  // The client (Oct 2026): FOB + supplier = the customer collects there.
+  it('is a pickup for an FOB order, even dated or charged for delivery, so it stays off the pools', () => {
+    const fob = { ...collect, lines: fobLines };
+    assert.equal(derivePickup({ state: fob, flags: { stored: [] }, fulfilment: facts() }), true);
+    const dated = { ...fob, deliveryDate: day('2026-09-05') };
+    assert.equal(derivePickup({ state: dated, flags: { stored: [] }, fulfilment: facts({ sourceReports: ['DELIVERY'] }) }), true);
+    const charged = { ...fob, lines: [...fobLines, { itemCode: 'MISCDELD', description: 'Flatbed Curbside Delivery' }] };
+    assert.equal(derivePickup({ state: charged, flags: { stored: [] }, fulfilment: facts() }), true);
+    // Without the fulfilment facts, as before: the date decides.
+    assert.equal(derivePickup({ state: dated, flags: { stored: [] } }), false);
+  });
+
+  it('is a delivery when CGC charges for one, an unlisted code included (721442)', () => {
+    const charged = { ...collect, lines: [...collect.lines, { itemCode: 'MISCDELE', description: 'Slinger Delivery Standard' }] };
+    assert.equal(derivePickup({ state: charged, flags: { stored: [] }, fulfilment: facts() }), false);
+  });
+
+  it('follows the type dispatch set, either way, but never reopens a closed order', () => {
+    const fob = { ...collect, lines: fobLines };
+    assert.equal(derivePickup({ state: fob, flags: { stored: [] }, fulfilment: facts({ override: 'supplier_haul_delivery' }) }), false);
+    assert.equal(derivePickup({ state: fob, flags: { stored: [] }, fulfilment: facts({ override: 'yard_delivery' }) }), false);
+    const charged = { ...collect, lines: [{ itemCode: 'MISCDEL', description: 'Delivery' }] };
+    assert.equal(derivePickup({ state: charged, flags: { stored: [] }, fulfilment: facts({ override: 'yard_pickup' }) }), true);
+    assert.equal(derivePickup({ state: charged, flags: { stored: [] }, fulfilment: facts({ override: 'external_pickup' }) }), true);
+    assert.equal(derivePickup({ state: collect, flags: { stored: ['QUOTE'] }, fulfilment: facts({ override: 'yard_pickup' }) }), false);
   });
 
   it('raises no delivery checks on a quotation', () => {

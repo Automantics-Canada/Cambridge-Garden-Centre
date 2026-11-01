@@ -109,6 +109,7 @@ describe('dispatch routes', () => {
     ['post', '/assign'],
     ['post', '/unassign'],
     ['post', '/reorder'],
+    ['post', '/orders/:documentId/done-outside-app'],
   ];
 
   for (const [method, path] of routes) {
@@ -116,6 +117,11 @@ describe('dispatch routes', () => {
       assertGuarded(dispatchRouter, method, path, OPERATIONS);
     });
   }
+
+  it('keeps DRIVER from marking an order done outside the app', () => {
+    const roles = admittedRoles(effectiveChain(dispatchRouter, 'post', '/orders/:documentId/done-outside-app'));
+    assert.equal(roles?.includes('DRIVER'), false);
+  });
 });
 
 describe('invoice routes', () => {
