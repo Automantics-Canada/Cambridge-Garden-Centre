@@ -917,6 +917,182 @@ describe('choosing between agreed rates', () => {
 });
 
 /**
+ * Finding the agreed rate by the order line's Spruce item code.
+ *
+ * Suppliers word their invoices their own way ("Triple Mix Bulk") and Spruce
+ * words the order line its own way ("SOIL GARDEN MIX"), so a rate entered
+ * against either wording misses the other. A price list can carry the Spruce
+ * code, and the order line always does, so the code is the fallback. Wording
+ * still comes first: it is what somebody entered the rate against.
+ */
+describe('agreed rate by Spruce item code', () => {
+  const load = (): DeliveredTicket => ({
+    id: 'ticket-1',
+    ticketNumber: '88213',
+    poNumber: '482913',
+    quantity: 24.6,
+    unit: 'tonnes',
+    material: 'Triple Mix Bulk',
+    supplierId: SUPPLIER,
+    claim: null,
+  });
+
+  const soilOrder = (overrides: Partial<CandidateOrder> = {}) =>
+    order({ product: 'SOIL GARDEN MIX', spruceItemNumber: 'SOILGRDNA', ...overrides });
+
+  const soilLine = (overrides: Partial<InvoiceLineSubject> = {}) =>
+    invoiceLine({ description: 'Triple Mix Bulk', unitRate: 18, ...overrides });
+
+  const lineInputs = (overrides: Partial<Parameters<typeof matchInvoiceLine>[1]> = {}) => ({
+    ...inputs({ orders: [soilOrder()] }),
+    agreedRates: [
+      { productName: 'Garden Soil', rate: 18, unit: 'tonnes', spruceItemCode: 'SOILGRDNA' },
+    ],
+    tickets: [load()],
+    competingLines: [],
+    ...overrides,
+  });
+
+  test('a rate no wording finds is found by the order line item code, and says so', () => {
+    const decision = matchInvoiceLine(soilLine(), lineInputs());
+    const rate = check(decision, 'rate');
+    assert.equal(rate?.passed, true);
+    assert.match(rate?.detail ?? '', /found by item code SOILGRDNA/);
+    assert.equal(decision.totals?.agreedRate, 18);
+  });
+
+  test('a rate found by item code still catches being billed above it', () => {
+    const decision = matchInvoiceLine(soilLine({ unitRate: 21.4 }), lineInputs());
+    const rate = check(decision, 'rate');
+    assert.equal(rate?.passed, false);
+    assert.match(rate?.detail ?? '', /18\.9%/);
+    assert.match(rate?.detail ?? '', /found by item code SOILGRDNA/);
+    assert.equal(decision.totals?.rateDiscrepancy, 3.4);
+  });
+
+  test('item codes are compared without regard to case or spacing', () => {
+    const decision = matchInvoiceLine(
+      soilLine(),
+      lineInputs({ orders: [soilOrder({ spruceItemNumber: ' soilgrdna ' })] })
+    );
+    assert.equal(decision.totals?.agreedRate, 18);
+  });
+
+  test('with no rate on the code either, the price is not checked', () => {
+    const decision = matchInvoiceLine(
+      soilLine(),
+      lineInputs({
+        agreedRates: [{ productName: 'Garden Soil', rate: 18, unit: 'tonnes', spruceItemCode: 'SOILTOPA' }],
+      })
+    );
+    assert.equal(check(decision, 'rate')?.passed, false);
+    assert.match(check(decision, 'rate')?.detail ?? '', /No agreed rate/);
+    assert.equal(decision.totals?.agreedRate, null);
+  });
+
+  test('a catch-all MISC code is never used to find a rate', () => {
+    // MISC carries unrelated items under one code; a price agreed for one of
+    // them says nothing about another.
+    const decision = matchInvoiceLine(
+      soilLine(),
+      lineInputs({
+        orders: [soilOrder({ spruceItemNumber: 'MISC' })],
+        agreedRates: [{ productName: 'Quikrete Type S', rate: 18, unit: 'tonnes', spruceItemCode: 'MISC' }],
+      })
+    );
+    assert.equal(check(decision, 'rate')?.passed, false);
+    assert.match(check(decision, 'rate')?.detail ?? '', /MISC is a catch-all/);
+    assert.equal(decision.totals?.agreedRate, null);
+  });
+
+  test('a MISCDEL delivery code is a catch-all too', () => {
+    const decision = matchInvoiceLine(
+      soilLine(),
+      lineInputs({
+        orders: [soilOrder({ spruceItemNumber: 'MISCDELD' })],
+        agreedRates: [{ productName: 'Flatbed', rate: 18, unit: 'tonnes', spruceItemCode: 'MISCDELD' }],
+      })
+    );
+    assert.equal(decision.totals?.agreedRate, null);
+  });
+
+  test('a matching wording is preferred over the item code', () => {
+    const decision = matchInvoiceLine(
+      soilLine(),
+      lineInputs({
+        agreedRates: [
+          { productName: 'Garden Soil', rate: 25, unit: 'tonnes', spruceItemCode: 'SOILGRDNA' },
+          { productName: 'Triple Mix Bulk', rate: 18, unit: 'tonnes' },
+        ],
+      })
+    );
+    assert.equal(decision.totals?.agreedRate, 18);
+    assert.doesNotMatch(check(decision, 'rate')?.detail ?? '', /item code/);
+  });
+
+  test("an order line from another supplier never borrows this supplier's rate", () => {
+    // Found by PO, but the PO was raised on someone else.
+    const decision = matchInvoiceLine(
+      soilLine(),
+      lineInputs({ orders: [soilOrder({ supplierId: OTHER_SUPPLIER })] })
+    );
+    assert.equal(decision.totals?.agreedRate, null);
+  });
+
+  test('with no single matched order there is no item code to go by', () => {
+    const decision = matchInvoiceLine(
+      soilLine({ quantity: null }),
+      lineInputs({ orders: [soilOrder({ id: 'order-1' }), soilOrder({ id: 'order-2' })] })
+    );
+    assert.equal(decision.status, 'CONFLICT');
+    assert.equal(decision.totals?.agreedRate, null);
+  });
+
+  test("the supplier's own code, when both sides give it, must agree", () => {
+    const rates = [
+      {
+        productName: 'Garden Soil',
+        rate: 18,
+        unit: 'tonnes',
+        spruceItemCode: 'SOILGRDNA',
+        supplierItemCode: 'GS-100',
+      },
+    ];
+    const agreeing = matchInvoiceLine(soilLine({ supplierItemCode: 'gs-100' }), lineInputs({ agreedRates: rates }));
+    assert.equal(agreeing.totals?.agreedRate, 18);
+
+    const differing = matchInvoiceLine(soilLine({ supplierItemCode: 'GS-200' }), lineInputs({ agreedRates: rates }));
+    assert.equal(differing.totals?.agreedRate, null);
+  });
+
+  test('two products sharing one code at different prices are not guessed between', () => {
+    const decision = matchInvoiceLine(
+      soilLine(),
+      lineInputs({
+        agreedRates: [
+          { productName: 'Garden Soil', rate: 18, unit: 'tonnes', spruceItemCode: 'SOILGRDNA' },
+          { productName: 'Garden Soil Premium', rate: 24, unit: 'tonnes', spruceItemCode: 'SOILGRDNA' },
+        ],
+      })
+    );
+    assert.equal(check(decision, 'rate')?.passed, false);
+    assert.match(check(decision, 'rate')?.detail ?? '', /share item code SOILGRDNA at different prices/);
+    assert.equal(decision.totals?.agreedRate, null);
+  });
+
+  test('a code rate in an incomparable unit is named, and not applied', () => {
+    const decision = matchInvoiceLine(
+      soilLine(),
+      lineInputs({
+        agreedRates: [{ productName: 'Garden Soil', rate: 260, unit: 'skid', spruceItemCode: 'SOILGRDNA' }],
+      })
+    );
+    assert.match(check(decision, 'rate')?.detail ?? '', /found by item code SOILGRDNA\) is per skid/);
+    assert.equal(decision.totals?.rateUnitMismatch, true);
+  });
+});
+
+/**
  * The numbers the invoice screens store on the line itself.
  *
  * They used to be computed a second time, by a looser comparison, so the line

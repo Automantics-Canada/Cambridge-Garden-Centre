@@ -78,6 +78,11 @@ export interface CandidateOrder {
   /** Null for an order only the delivery report has seen; it prints no entry date. */
   orderDate: Date | null;
   deliveryDate?: Date | null;
+  /**
+   * Spruce's item code for the line, e.g. `SOILGRDNA`. Lets an agreed rate be
+   * found by code when the invoice words the product differently.
+   */
+  spruceItemNumber?: string | null;
 }
 
 /**
@@ -112,6 +117,12 @@ export interface InvoiceLineSubject {
   unitRate: number | null;
   supplierId: string | null;
   invoiceDate: Date | null;
+  /**
+   * The supplier's own code for the product, where the invoice prints one and
+   * it was read. Invoice extraction does not read it yet, so this is usually
+   * absent; when present it must agree with the rate's.
+   */
+  supplierItemCode?: string | null;
 }
 
 /**
@@ -203,6 +214,59 @@ export interface AgreedRate {
   productName: string;
   rate: number;
   unit: string;
+  /** The Spruce item code the price list gave for this product, if any. */
+  spruceItemCode?: string | null;
+  /** The supplier's own code for it, if any. */
+  supplierItemCode?: string | null;
+}
+
+/** Item codes compared the way Spruce prints them: case and spacing ignored. */
+function itemCodeKey(code: string | null | undefined): string | null {
+  const key = (code ?? '').replace(/\s+/g, '').toUpperCase();
+  return key || null;
+}
+
+/**
+ * Spruce's catch-all codes. MISC carries unrelated items under one code
+ * (Quikrete and grout on the same order, both MISC), and MISCDEL* are
+ * delivery charges, so a code like this says nothing about which product was
+ * bought and is never used to find a rate.
+ */
+function isCatchAllCode(key: string): boolean {
+  return key.startsWith('MISC');
+}
+
+/**
+ * Agreed rates for the matched order line's Spruce item code.
+ *
+ * The fallback for when the invoice words the product in a way no rate or
+ * alias recognises: supplier invoices rarely print Spruce's description, but a
+ * price list can carry the Spruce code, and the order line always does. Only
+ * the supplier's own rates are ever passed in (the caller loads them by the
+ * invoice's supplier), and the order line must be that supplier's too, so a
+ * code on another supplier's PO never borrows this supplier's price.
+ */
+function ratesByItemCode(
+  line: InvoiceLineSubject,
+  order: CandidateOrder | null,
+  agreedRates: ReadonlyArray<AgreedRate>
+): { code: string | null; catchAll: boolean; rates: AgreedRate[] } {
+  const code = itemCodeKey(order?.spruceItemNumber);
+  if (!order || !code) return { code: null, catchAll: false, rates: [] };
+  if (isCatchAllCode(code)) return { code, catchAll: true, rates: [] };
+  if (!line.supplierId || order.supplierId !== line.supplierId) {
+    return { code, catchAll: false, rates: [] };
+  }
+
+  const lineSupplierCode = itemCodeKey(line.supplierItemCode);
+  const rates = agreedRates.filter((rate) => {
+    if (itemCodeKey(rate.spruceItemCode) !== code) return false;
+    // Both sides name the supplier's own code and they differ: the price list
+    // is talking about another of the supplier's products under this code.
+    const rateSupplierCode = itemCodeKey(rate.supplierItemCode);
+    return !(lineSupplierCode && rateSupplierCode && lineSupplierCode !== rateSupplierCode);
+  });
+  return { code, catchAll: false, rates };
 }
 
 /** A confirmed mapping from a supplier's wording to a CGC product. */
@@ -663,13 +727,29 @@ export function matchInvoiceLine(
   // overcharge. The rate that can actually be compared is preferred; if none
   // can, the first is still reported, so the evidence names a real agreed
   // price rather than saying nothing is on file.
-  const forProduct = productName
+  //
+  // The product's wording, or a confirmed alias for it, is tried first: it is
+  // what a person entered the rate against. Only when that finds nothing is
+  // the matched order line's Spruce item code tried, and the evidence then
+  // says the rate was found by code so the desk can see why it applies.
+  const byWording = productName
     ? inputs.agreedRates.filter(
         (rate) => normalizeProductName(rate.productName) === productName
       )
     : [];
-  const agreed =
-    forProduct.find((rate) => compareUnits(line.unit, rate.unit).comparable) ?? forProduct[0];
+  const byCode =
+    byWording.length > 0
+      ? { code: null, catchAll: false, rates: [] as AgreedRate[] }
+      : ratesByItemCode(line, order, inputs.agreedRates);
+  const foundByCode = byWording.length === 0 && byCode.rates.length > 0;
+  const forProduct = foundByCode ? byCode.rates : byWording;
+  const comparableRates = forProduct.filter((rate) => compareUnits(line.unit, rate.unit).comparable);
+  // Two products on one price list given the same Spruce code, at different
+  // prices: picking one would be a guess about which price applies.
+  const codeAmbiguous =
+    foundByCode && new Set(comparableRates.map((rate) => rate.rate)).size > 1;
+  const agreed = codeAmbiguous ? undefined : comparableRates[0] ?? forProduct[0];
+  const via = foundByCode && byCode.code ? `, found by item code ${byCode.code}` : '';
 
   /** Filled in as the checks below run; see LineTotals for why it exists. */
   const totals: LineTotals = {
@@ -679,18 +759,27 @@ export function matchInvoiceLine(
     rateUnitMismatch: false,
   };
 
-  if (!agreed) {
+  if (codeAmbiguous) {
     checks.push({
       name: 'rate',
       passed: false,
-      detail: 'No agreed rate is on file for this product, so the price was not checked',
+      detail: `${comparableRates.length} agreed rates share item code ${byCode.code} at different prices, so the price was not checked`,
+      found: line.unitRate,
+    });
+  } else if (!agreed) {
+    checks.push({
+      name: 'rate',
+      passed: false,
+      detail: byCode.catchAll
+        ? `No agreed rate is on file for this product, so the price was not checked (item code ${byCode.code} is a catch-all and was not used)`
+        : 'No agreed rate is on file for this product, so the price was not checked',
       found: line.unitRate,
     });
   } else if (line.unitRate === null) {
     checks.push({
       name: 'rate',
       passed: false,
-      detail: 'No rate could be read from the invoice line',
+      detail: `No rate could be read from the invoice line${via}`,
       expected: agreed.rate,
     });
   } else {
@@ -702,7 +791,7 @@ export function matchInvoiceLine(
       checks.push({
         name: 'rate',
         passed: false,
-        detail: `The agreed rate is per ${agreed.unit} and the line is billed per ${line.unit ?? 'an unrecorded unit'}, so the price was not checked`,
+        detail: `The agreed rate${via ? ` (${via.slice(2)})` : ''} is per ${agreed.unit} and the line is billed per ${line.unit ?? 'an unrecorded unit'}, so the price was not checked`,
         expected: agreed.rate,
         found: line.unitRate,
       });
@@ -718,10 +807,10 @@ export function matchInvoiceLine(
         name: 'rate',
         passed,
         detail: passed
-          ? 'Billed rate matches the agreed rate'
+          ? `Billed rate matches the agreed rate${via}`
           : Number.isFinite(difference)
-            ? `Billed at ${line.unitRate} against an agreed ${agreed.rate} per ${agreed.unit}, ${difference.toFixed(1)}% above the ${inputs.tolerances.priceTolerancePct}% allowed`
-            : `Billed at ${line.unitRate} against an agreed rate of 0 per ${agreed.unit}, which cannot be expressed as a percentage`,
+            ? `Billed at ${line.unitRate} against an agreed ${agreed.rate} per ${agreed.unit}${via}, ${difference.toFixed(1)}% above the ${inputs.tolerances.priceTolerancePct}% allowed`
+            : `Billed at ${line.unitRate} against an agreed rate of 0 per ${agreed.unit}${via}, which cannot be expressed as a percentage`,
         expected: agreed.rate,
         found: line.unitRate,
         delta,

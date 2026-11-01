@@ -46,8 +46,13 @@ import { onSamePo, poKey } from './poKey.js';
  * the second.
  */
 
-/** Bump when the cascade changes, so old verdicts can be told apart. */
-export const ENGINE_VERSION = 4;
+/**
+ * Bump when the cascade changes, so old verdicts can be told apart.
+ *
+ * 5: an agreed rate can be found by the order line's Spruce item code, and
+ * quotations are never candidates.
+ */
+export const ENGINE_VERSION = 5;
 
 /**
  * `matchMethod` recorded for a link the engine made.
@@ -112,6 +117,38 @@ async function loadAliases(supplierId: string | null): Promise<ProductAlias[]> {
 }
 
 /**
+ * Order lines that can never back a ticket or an invoice: those on a document
+ * the import recognised as a quotation (QUOTE). A quote is a price someone was
+ * given, not material anyone ordered. Its lines carry the same supplier and
+ * dates as real orders, so without this a quote could be offered as a match,
+ * or stand beside the real order as a second candidate and turn a good invoice
+ * line into CONFLICT.
+ *
+ * NOT_OPEN is deliberately not excluded, although the dispatch board leaves it
+ * out as well. The board shows work still to do, and a NOT_OPEN order has none:
+ * it was invoiced, closed or voided in Spruce since. Matching looks backwards.
+ * The supplier's invoice and the late tickets for an order arrive after the
+ * order was delivered and invoiced, which is exactly when it leaves the Order
+ * report and is flagged NOT_OPEN. Excluding it here would leave every finished
+ * order's supplier invoice unmatched.
+ *
+ * A line with no document (rows from the legacy import) is kept: nothing says
+ * it is a quote.
+ */
+export const NOT_ON_A_QUOTATION: Prisma.OrderWhereInput = {
+  NOT: { document: { is: { flags: { has: 'QUOTE' } } } },
+};
+
+/** Whether this order line is on a quotation, for the automatic ticket link. */
+async function isOnQuotation(tx: Prisma.TransactionClient, orderId: string): Promise<boolean> {
+  const row = await tx.order.findUnique({
+    where: { id: orderId },
+    select: { document: { select: { flags: true } } },
+  });
+  return row?.document?.flags.includes('QUOTE') ?? false;
+}
+
+/**
  * Orders worth considering for one subject.
  *
  * Deliberately narrow. Loading every order to let the engine filter would work
@@ -141,7 +178,9 @@ async function loadCandidateOrders(
   if (where.length === 0) return [];
 
   const rows = await prisma.order.findMany({
-    where: { OR: where },
+    // Both routes, the PO and the supplier within the window, leave quotations
+    // out; see NOT_ON_A_QUOTATION.
+    where: { AND: [{ OR: where }, NOT_ON_A_QUOTATION] },
     select: {
       id: true,
       poNumber: true,
@@ -151,6 +190,7 @@ async function loadCandidateOrders(
       supplierId: true,
       orderDate: true,
       deliveryDate: true,
+      spruceItemNumber: true,
     },
     // A subject that somehow matches hundreds of orders is a data problem, not
     // a match; the engine will call it a CONFLICT either way, and this stops
@@ -167,6 +207,7 @@ async function loadCandidateOrders(
     supplierId: row.supplierId,
     orderDate: row.orderDate,
     deliveryDate: row.deliveryDate,
+    spruceItemNumber: row.spruceItemNumber,
   }));
 }
 
@@ -322,7 +363,14 @@ async function applyAutomaticTicketLink(
   // worth overriding that with.
   if (ticket.linkMethod === MANUAL_LINK || ticket.status === TicketStatus.REVIEWED) return;
 
-  const orderId = shouldAutoLink(decision);
+  // The candidates never include a quotation's lines, so the engine cannot
+  // name one. Checked here as well because this writes the link: a ticket must
+  // never be attached to a quote, and one attached before the document was
+  // recognised as a quote has its automatic link taken away below.
+  const proposed = shouldAutoLink(decision);
+  const orderId = proposed && !(await isOnQuotation(tx, proposed)) ? proposed : null;
+  const linkedToQuotation =
+    ticket.linkedOrderId !== null && (await isOnQuotation(tx, ticket.linkedOrderId));
 
   if (orderId) {
     // Writing the identical row again changes nothing but wakes every realtime
@@ -367,7 +415,9 @@ async function applyAutomaticTicketLink(
   // by the supplier/date/product fallback is left exactly as it was for a
   // person to settle. And only an automatic link: a ticket carrying no link
   // method has nothing here to undo, and MANUAL was returned from above.
-  if (!shouldRemoveAutoLink(decision)) return;
+  // The one exception is an automatic link to a quotation, which is never
+  // right whatever the verdict now says.
+  if (!shouldRemoveAutoLink(decision) && !linkedToQuotation) return;
   if (ticket.linkMethod !== AUTO_LINK) return;
 
   await tx.ticketOrderMatch.deleteMany({
@@ -549,7 +599,13 @@ export async function matchInvoiceLineById(lineId: string): Promise<MatchDecisio
             effectiveFrom: { lte: invoiceDate ?? new Date() },
             OR: [{ effectiveTo: null }, { effectiveTo: { gte: invoiceDate ?? new Date() } }],
           },
-          select: { productName: true, rate: true, unit: true },
+          select: {
+            productName: true,
+            rate: true,
+            unit: true,
+            spruceItemCode: true,
+            supplierItemCode: true,
+          },
         })
       : Promise.resolve([]),
   ]);
@@ -577,7 +633,17 @@ export async function matchInvoiceLineById(lineId: string): Promise<MatchDecisio
 
   const agreedRates: AgreedRate[] = rates.flatMap((rate) => {
     const value = toNumber(rate.rate);
-    return value === null ? [] : [{ productName: rate.productName, rate: value, unit: rate.unit }];
+    return value === null
+      ? []
+      : [
+          {
+            productName: rate.productName,
+            rate: value,
+            unit: rate.unit,
+            spruceItemCode: rate.spruceItemCode,
+            supplierItemCode: rate.supplierItemCode,
+          },
+        ];
   });
 
   const decision = matchInvoiceLine(
