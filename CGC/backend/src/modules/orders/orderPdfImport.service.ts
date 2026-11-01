@@ -283,9 +283,9 @@ export async function importDocument(
       hasInvoice: true,
       deliveryStatus: true,
       driverId: true,
+      deliveries: { select: { documentId: true } },
       _count: {
         select: {
-          deliveries: true,
           lineItems: true,
           tickets: true,
           ticketMatches: true,
@@ -294,23 +294,29 @@ export async function importDocument(
     },
   });
 
-  const existingLines: ExistingLine[] = storedLines.map(line => ({
-    id: line.id,
-    product: line.product,
-    quantity: line.quantity,
-    unit: line.unit,
-    spruceItemNumber: line.spruceItemNumber,
-    lineNumber: line.lineNumber,
-    poNumber: line.poNumber,
-    hasOperationalLinks:
+  const existingLines: ExistingLine[] = storedLines.map(line => {
+    // Links that belong to this line and no other: an invoice, a ticket, a
+    // stop of its own. The driver and the order's own stop are put there by
+    // giving the whole order to a driver, and are the same on its twins.
+    const ownLinks =
       line.hasInvoice ||
-      line.driverId !== null ||
       line.deliveryStatus !== 'NOT_STARTED' ||
-      line._count.deliveries > 0 ||
+      line.deliveries.some(delivery => delivery.documentId !== document.id) ||
       line._count.lineItems > 0 ||
       line._count.tickets > 0 ||
-      line._count.ticketMatches > 0,
-  }));
+      line._count.ticketMatches > 0;
+    return {
+      id: line.id,
+      product: line.product,
+      quantity: line.quantity,
+      unit: line.unit,
+      spruceItemNumber: line.spruceItemNumber,
+      lineNumber: line.lineNumber,
+      poNumber: line.poNumber,
+      hasOperationalLinks: ownLinks || line.driverId !== null || line.deliveries.length > 0,
+      dispatchOnly: !ownLinks,
+    };
+  });
 
   const plan = reconcileDocumentLines(rows, existingLines);
 

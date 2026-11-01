@@ -41,6 +41,8 @@ interface FakeOrder {
   hasInvoice: boolean;
   deliveryStatus: 'NOT_STARTED' | 'IN_PROGRESS' | 'COMPLETED';
   driverId: string | null;
+  /** The stops hung on this line, and which order each belongs to. */
+  deliveries: Array<{ documentId: string | null }>;
   _count: { deliveries: number; lineItems: number; tickets: number; ticketMatches: number };
 }
 
@@ -115,6 +117,7 @@ function makeClient(): FakeClient {
           id: `ord-${++seq}`,
           deliveryStatus: 'NOT_STARTED',
           driverId: null,
+          deliveries: [],
           _count: { deliveries: 0, lineItems: 0, tickets: 0, ticketMatches: 0 },
           ...data,
         } as FakeOrder;
@@ -210,6 +213,7 @@ function seedLegacyRow(orders: Map<string, FakeOrder>): void {
     hasInvoice: true,
     deliveryStatus: 'NOT_STARTED',
     driverId: null,
+    deliveries: [],
     _count: { deliveries: 0, lineItems: 1, tickets: 1, ticketMatches: 1 },
   });
 }
