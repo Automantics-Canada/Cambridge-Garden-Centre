@@ -28,9 +28,13 @@
  *
  *   GMAIL_INVOICE_LABEL         required. The Gmail label a filter puts on
  *                               mail forwarded from the AP mailbox.
- *   GMAIL_SENDER_ALLOWLIST      comma list of sender domains or addresses.
- *                               Required in ingest mode, matched against the
- *                               original sender (see services/emailSender.ts).
+ *   GMAIL_SENDER_ALLOWLIST      optional comma list of sender domains or
+ *                               addresses, matched against the original
+ *                               sender (see services/emailSender.ts). Senders
+ *                               are known from the supplier records
+ *                               (services/knownSenders.ts); this list only adds
+ *                               to them. A free-mail domain here counts for
+ *                               nothing; list the full address.
  *   GMAIL_TRUSTED_FORWARDERS    comma list of addresses that forward supplier
  *                               mail to this inbox, e.g. the AP mailbox. Only
  *                               full addresses: a domain would trust every
@@ -44,6 +48,11 @@
  *                               hides it from the poller.
  *   GMAIL_OBSERVED_LABEL        added in observe mode (default cgc-observed),
  *                               so a census does not mark mail as ingested.
+ *   GMAIL_REVIEW_LABEL          added to mail waiting on the review queue
+ *                               (default cgc-review): an unknown sender, or
+ *                               nothing the app can read. The query excludes
+ *                               it, so the email is not fetched every minute;
+ *                               approving the sender reads it again.
  *   GMAIL_POLL_AFTER            YYYY-MM-DD. Mail received before it is never
  *                               read. Without it the query also keeps
  *                               `is:unread`, as before, so turning this version
@@ -58,6 +67,7 @@ export type GmailIngestMode = 'ingest' | 'observe';
 
 export const DEFAULT_PROCESSED_LABEL = 'cgc-processed';
 export const DEFAULT_OBSERVED_LABEL = 'cgc-observed';
+export const DEFAULT_REVIEW_LABEL = 'cgc-review';
 
 export interface GmailInboxConfig {
   clientId: string;
@@ -70,6 +80,7 @@ export interface GmailInboxConfig {
   invoiceLabel: string;
   processedLabel: string;
   observedLabel: string;
+  reviewLabel: string;
   senderAllowlist: string[];
   trustedForwarders: string[];
   /** YYYY-MM-DD, or null when no cutoff is set. */
@@ -125,6 +136,7 @@ export function readGmailInboxConfig(source: EnvSource): GmailInboxConfig {
     invoiceLabel: source.GMAIL_INVOICE_LABEL?.trim() ?? '',
     processedLabel: source.GMAIL_PROCESSED_LABEL?.trim() || DEFAULT_PROCESSED_LABEL,
     observedLabel: source.GMAIL_OBSERVED_LABEL?.trim() || DEFAULT_OBSERVED_LABEL,
+    reviewLabel: source.GMAIL_REVIEW_LABEL?.trim() || DEFAULT_REVIEW_LABEL,
     senderAllowlist: parseList(source.GMAIL_SENDER_ALLOWLIST),
     // Addresses only. `@x.ca` or `x.ca` would make every mailbox at that
     // domain a forwarder whose message bodies we believe.
@@ -160,14 +172,15 @@ export function gmailPollDisabledReason(config: GmailInboxConfig): string | null
   if (!config.invoiceLabel) {
     return 'GMAIL_INVOICE_LABEL is not set. Without it every unread attachment would be read as an invoice.';
   }
-  const labels = [config.invoiceLabel, config.processedLabel, config.observedLabel].map(l => l.toLowerCase());
+  const labels = [config.invoiceLabel, config.processedLabel, config.observedLabel, config.reviewLabel]
+    .map(l => l.toLowerCase());
   if (new Set(labels).size !== labels.length) {
-    return 'GMAIL_INVOICE_LABEL, GMAIL_PROCESSED_LABEL and GMAIL_OBSERVED_LABEL must all differ.';
+    return 'GMAIL_INVOICE_LABEL, GMAIL_PROCESSED_LABEL, GMAIL_OBSERVED_LABEL and GMAIL_REVIEW_LABEL must all differ.';
   }
-  if (config.ingestMode === 'ingest' && config.senderAllowlist.length === 0) {
-    return 'GMAIL_SENDER_ALLOWLIST is empty, so ingest mode would accept no sender. ' +
-      'Use GMAIL_INGEST_MODE=observe to record who sends mail first.';
-  }
+  // An empty GMAIL_SENDER_ALLOWLIST used to stop ingest mode, because the
+  // list was the only thing between a labelled email and a new invoice. Mail
+  // from a sender no supplier record knows now waits in the review queue and
+  // never becomes an invoice, so an empty list is safe.
   return null;
 }
 
@@ -182,6 +195,7 @@ export function buildInboxQuery(config: GmailInboxConfig): string {
     'has:attachment',
     `label:${JSON.stringify(config.invoiceLabel)}`,
     `-label:${JSON.stringify(config.processedLabel)}`,
+    `-label:${JSON.stringify(config.reviewLabel)}`,
   ];
   if (config.ingestMode === 'observe') {
     terms.push(`-label:${JSON.stringify(config.observedLabel)}`);

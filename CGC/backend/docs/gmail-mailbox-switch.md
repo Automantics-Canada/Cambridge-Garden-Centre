@@ -13,14 +13,34 @@ behaviour we have not seen on CGC's own systems. Check them on the day.
 2. M365 forwards a copy to `cgcsoftware1718@gmail.com` and keeps the original.
 3. A Gmail filter puts the invoice label (e.g. `cgc-invoices`) on that copy.
 4. Every minute the poller (`src/services/gmail.service.ts`) reads labelled
-   mail with attachments that is not yet labelled processed. It works out the
-   original sender (`src/services/emailSender.ts`), checks it against
-   `GMAIL_SENDER_ALLOWLIST`, turns each PDF/image into a `PENDING_REVIEW`
-   invoice, then adds the processed label and marks the email read.
+   mail with attachments that is not yet labelled processed or review. It
+   works out the original sender (`src/services/emailSender.ts`) and looks it
+   up in the supplier records (`src/services/knownSenders.ts`): a supplier's
+   email domains, its exact addresses and its contact email, plus
+   `GMAIL_SENDER_ALLOWLIST` if set. A known sender's PDFs and images become
+   `PENDING_REVIEW` invoices; the email gets the processed label and is marked
+   read.
+5. Anything else goes to the **review queue**: the email gets the review label
+   (`cgc-review`), stays unread, and appears under **Unrecognised senders** on
+   the Invoices page. That is mail from a sender no supplier record knows, a
+   forward whose original sender could not be read, an Excel/CSV attachment
+   (reading those comes in a later update), or an email with nothing the app
+   reads. An owner or admin approves the sender onto a supplier (the email is
+   then read on the next poll) or ignores the email. AP staff can see the list.
 
 A message is done when it has the processed label, not when it is read, so
-someone opening it in Gmail no longer hides it from the poller. Mail from a
-sender who is not on the allowlist is left as it is for a person to look at.
+someone opening it in Gmail no longer hides it from the poller.
+
+**Free-mail senders.** gmail.com, outlook.com, hotmail.com, yahoo.*, icloud.com
+and similar shared domains (the full list is `FREE_MAIL_DOMAINS` in
+`knownSenders.ts`, including Canadian ISPs such as rogers.com) never identify a
+supplier by domain. A trucking company on Gmail is entered by its full address.
+The supplier form and the API refuse such a domain.
+
+**Attachments** are chosen by type and content (`src/services/emailAttachments.ts`):
+a PDF is read whatever it is called, inline signature logos are skipped, and
+every attachment is listed on the email's log row (`EmailIngestionEvent.attachments`)
+with what happened to it and why.
 
 ## 0. Before you start
 
@@ -87,8 +107,8 @@ then redeploy both.
 | `GMAIL_TRUSTED_FORWARDERS` | `ap@cambridgegardencentre.ca` |
 | `GMAIL_POLL_AFTER` | go-live date, `YYYY-MM-DD` |
 | `GMAIL_INGEST_MODE` | `observe` first, `ingest` later |
-| `GMAIL_SENDER_ALLOWLIST` | supplier domains/addresses; required for `ingest` only |
-| `GMAIL_PROCESSED_LABEL`, `GMAIL_OBSERVED_LABEL` | optional; default `cgc-processed`, `cgc-observed` |
+| `GMAIL_SENDER_ALLOWLIST` | optional; senders known even without a supplier record. Free-mail domains here count for nothing |
+| `GMAIL_PROCESSED_LABEL`, `GMAIL_OBSERVED_LABEL`, `GMAIL_REVIEW_LABEL` | optional; default `cgc-processed`, `cgc-observed`, `cgc-review` |
 
 **Do not change** `GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET`,
 `GMAIL_REFRESH_TOKEN`, `GMAIL_USER` or `GMAIL_PASS`. They send driver email,
@@ -113,8 +133,8 @@ new filter*:
 - **Do NOT tick "Also apply filter to matching conversations".** That labels
   the whole backlog, and the poller would read paid invoices as new.
 
-The poller creates `cgc-processed` / `cgc-observed` itself the first time it
-needs them. Do not add them by hand except to deliberately skip a message.
+The poller creates `cgc-processed`, `cgc-review` and `cgc-observed` itself the
+first time it needs them. Do not add them by hand except to deliberately skip a message.
 
 ## 5. Prove the M365 forward end to end
 
@@ -153,25 +173,33 @@ needs them. Do not add them by hand except to deliberately skip a message.
    `mailboxMatchesConfig: true`, `invoiceLabelFound: true`,
    `lastResult: "ok"`, `stale: false`.
 4. **Observe for 1–2 weeks.** Each email becomes one `EmailIngestionEvent` row
-   (sender, subject, To, and a census note in `errorMessage` with the mode,
-   forwarder, whether the sender is allowlisted and the attachment names and
-   types). No invoice is created and the email stays unread. A read-only
-   census, run under the production access rules in `AGENTS.md`:
+   (sender, subject, To, `originalFrom`, `forwardedBy`, `senderMode`, the
+   attachments, and a census note in `note` with the mode, forwarder, whether
+   the sender is known and the attachment names and types). No invoice is
+   created and the email stays unread. Senders no supplier record knows also
+   appear under **Unrecognised senders** on the Invoices page, so the client
+   can map them to suppliers there during the census; approvals made now are
+   read once ingest mode is on. A read-only census, run under the production
+   access rules in `AGENTS.md`:
 
    ```sql
    SELECT "fromAddress", count(*) AS emails, min("receivedAt") AS first_seen, max("receivedAt") AS last_seen
    FROM "EmailIngestionEvent"
-   WHERE "errorMessage" LIKE 'observe;%'
+   WHERE "note" LIKE 'observe;%'
    GROUP BY "fromAddress"
    ORDER BY emails DESC;
    ```
+
+   (Census rows written before the review-queue migration had the note in
+   `errorMessage`; the migration moved them to `note`.)
 
    Rows whose note says `mode=unknown` are forwards whose sender could not be
    found; look at one with *Show original*. The census only sees mail that
    reaches the label, so also ask the client which suppliers bill by portal or
    post.
-5. Map the senders to suppliers with the client and set
-   `GMAIL_SENDER_ALLOWLIST`.
+5. Map the senders to suppliers with the client: approve them from the
+   Invoices page, or enter their domains/addresses on the Supplier page.
+   `GMAIL_SENDER_ALLOWLIST` is no longer needed.
 6. Switch to `GMAIL_INGEST_MODE=ingest`. Observed emails are not marked
    processed, so ingest reads them unless the cutoff excludes them: keep
    `GMAIL_POLL_AFTER` at the observe start to ingest the census period, or move
@@ -198,11 +226,11 @@ back to the previous mailbox credentials.
 | `enabled`, `disabledReason` | whether the last poll ran, and why not |
 | `mode` | `ingest` or `observe` (null when the setting is invalid) |
 | `invoiceLabel`, `invoiceLabelFound` | the label, and whether it exists in the mailbox |
-| `processedLabel`, `observedLabel`, `pollAfter`, `unreadOnly` | tracking labels and cutoff; `unreadOnly` while no cutoff is set |
+| `processedLabel`, `observedLabel`, `reviewLabel`, `pollAfter`, `unreadOnly` | tracking labels and cutoff; `unreadOnly` while no cutoff is set |
 | `mailbox`, `mailboxMatchesConfig` | polled account (masked), and whether it is `GMAIL_INBOX_USER` |
 | `trustedForwarders`, `allowlistEntries` | how many are configured (not the values) |
 | `lastPollAt`, `lastResult`, `lastError`, `lastSuccessAt` | last poll; errors are shortened with addresses masked |
-| `counts` | last poll: `listed`, `processed`, `invoicesCreated`, `observed`, `duplicates`, `legacySkipped`, `rejectedSender`, `unresolvedSender`, `noAttachments`, `failed` |
+| `counts` | last poll: `listed`, `processed`, `invoicesCreated`, `observed`, `duplicates`, `legacySkipped`, `rejectedSender` (unknown sender, queued), `unresolvedSender` (forward with no readable sender, queued), `noAttachments` and `needsReview` (nothing readable, or a spreadsheet, queued), `requeued` (approved emails read again), `failed` |
 | `truncated` | more mail matched than one poll reads (100); the rest waits a minute |
 
 No secret, token or full email address is ever written to the status.
@@ -214,8 +242,11 @@ No secret, token or full email address is ever written to the status.
   that already has an invoice under the old key is never ingested again; it is
   just labelled processed (`legacySkipped`). An email the old poller had only
   partly ingested is not completed: upload any missing attachment by hand.
-- A rejected email is not fetched again until the next deploy (the allowlist
-  only changes with one).
+- An email waiting for review carries the review label, so it is not fetched
+  again until its sender is approved. Removing that label by hand puts it back
+  in the poll; an ignored email gets the label straight back.
+- An empty `GMAIL_SENDER_ALLOWLIST` no longer stops ingest mode: unknown
+  senders wait in the review queue instead of becoming invoices.
 
 ## For the client: exporting the ap@ Safe Senders list
 
@@ -254,5 +285,5 @@ Get-MailboxJunkEmailConfiguration -Identity ap@cambridgegardencentre.ca |
   redirects are also recognised by `Resent-*`, an SRS `Return-Path` or the
   original `To:`.
 - Who controls `cgcsoftware1718@gmail.com` (2-Step Verification, recovery).
-- Known senders from supplier records and a review queue for unknown senders
-  come in a later change; until then the allowlist is this env variable.
+- Reading Excel/CSV invoices: until then they wait in the review queue with
+  "spreadsheet: reading arrives in a later update", for manual entry.

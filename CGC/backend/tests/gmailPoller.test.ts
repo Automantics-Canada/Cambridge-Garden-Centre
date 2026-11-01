@@ -48,6 +48,8 @@ const mailbox = {
   messages: [] as FakeMessage[],
   /** Bumped per attachments.get, so attachment ids are never the same twice. */
   fetches: 0,
+  /** Attachment bytes by `messageId:partId`; a fake PDF when absent. */
+  contents: new Map<string, Buffer>(),
   failList: null as Error | null,
 };
 const calls: Array<{ client: 'inbox' | 'outbound'; method: string; args: any }> = [];
@@ -103,11 +105,12 @@ function fakeClient(client: 'inbox' | 'outbound') {
         },
         get: async (args: any) => {
           record('messages.get', args);
-          const message = mailbox.messages.find(m => m.id === args.id)!;
+          const message = mailbox.messages.find(m => m.id === args.id);
+          if (!message) throw Object.assign(new Error('Requested entity was not found.'), { code: 404 });
           // Gmail hands out a fresh attachmentId on every fetch; the key must not depend on it.
           const reissue = (part: FakePart): FakePart => ({
             ...part,
-            ...(part.body?.attachmentId ? { body: { attachmentId: `ATT-${part.partId}-${++mailbox.fetches}` } } : {}),
+            ...(part.body?.attachmentId ? { body: { ...part.body, attachmentId: `ATT-${part.partId}-${++mailbox.fetches}` } } : {}),
             ...(part.parts ? { parts: part.parts.map(reissue) } : {}),
           });
           return { data: { id: message.id, labelIds: [...message.labelIds], payload: reissue(message.payload) } };
@@ -127,7 +130,10 @@ function fakeClient(client: 'inbox' | 'outbound') {
         attachments: {
           get: async (args: any) => {
             record('attachments.get', args);
-            return { data: { data: b64(`%PDF-1.4 fake invoice ${args.messageId} ${args.id.split('-')[1]}`) } };
+            const partId = args.id.split('-')[1];
+            const content = mailbox.contents.get(`${args.messageId}:${partId}`);
+            if (content) return { data: { data: content.toString('base64url') } };
+            return { data: { data: b64(`%PDF-1.4 fake invoice ${args.messageId} ${partId}`) } };
           },
         },
       },
@@ -145,25 +151,46 @@ mock.method(google, 'gmail', (options: any) => {
 
 // ------------------------------------------------------------ fake Prisma
 
-const invoices = new Map<string, { gmailMessageId: string; fromEmail: string; subject: string }>();
+const invoices = new Map<string, { id: string; gmailMessageId: string; fromEmail: string; subject: string; originalName: string }>();
 const events = new Map<string, any>();
 const settings = new Map<string, unknown>();
+/** Active suppliers as the known-senders lookup reads them. */
+const suppliers: Array<{ id: string; name: string; type: 'SUPPLIER' | 'TRUCKING_COMPANY'; emailDomains: string[]; emailAddresses: string[]; contactEmail: string | null }> = [];
 let failIngestFor: string | null = null;
 
 (globalThis as { Prisma?: unknown }).Prisma = {
   invoice: {
     findMany: async ({ where }: any) =>
-      [...invoices.keys()]
-        .filter(key => key.startsWith(where.gmailMessageId.startsWith))
-        .map(gmailMessageId => ({ gmailMessageId })),
+      [...invoices.values()]
+        .filter(row => row.gmailMessageId.startsWith(where.gmailMessageId.startsWith))
+        .map(row => ({ id: row.id, gmailMessageId: row.gmailMessageId })),
+  },
+  supplier: {
+    findMany: async () => suppliers.map(s => ({ ...s })),
   },
   emailIngestionEvent: {
     findUnique: async ({ where }: any) => events.get(where.gmailMessageId) ?? null,
     create: async ({ data }: any) => {
       if (events.has(data.gmailMessageId)) throw Object.assign(new Error('unique'), { code: 'P2002' });
-      events.set(data.gmailMessageId, data);
+      events.set(data.gmailMessageId, { createdInvoiceIds: [], requeuedAt: null, ...data });
       return data;
     },
+    upsert: async ({ where, create, update }: any) => {
+      const current = events.get(where.gmailMessageId);
+      events.set(where.gmailMessageId, current ? { ...current, ...update } : { ...create });
+      return events.get(where.gmailMessageId);
+    },
+    update: async ({ where, data }: any) => {
+      const current = events.get(where.gmailMessageId);
+      if (!current) throw Object.assign(new Error('not found'), { code: 'P2025' });
+      events.set(where.gmailMessageId, { ...current, ...data });
+      return events.get(where.gmailMessageId);
+    },
+    findMany: async ({ where, take }: any) =>
+      [...events.values()]
+        .filter(e => e.status === where.status && (where.requeuedAt?.not === null ? e.requeuedAt != null : true))
+        .slice(0, take)
+        .map(e => ({ gmailMessageId: e.gmailMessageId })),
   },
   systemSetting: {
     upsert: async ({ where, create, update }: any) => {
@@ -178,13 +205,18 @@ const { InvoiceService } = await import('../src/modules/invoices/invoice.service
 mock.method(InvoiceService, 'ingestEmailInvoice', async (params: any) => {
   if (failIngestFor && params.gmailMessageId === failIngestFor) throw new Error('storage unavailable');
   if (invoices.has(params.gmailMessageId)) throw Object.assign(new Error('unique'), { code: 'P2002' });
-  invoices.set(params.gmailMessageId, { gmailMessageId: params.gmailMessageId, fromEmail: params.fromEmail, subject: params.subject });
-  return { invoice: { id: `inv-${invoices.size}` }, ocrJob: { id: `job-${invoices.size}` } };
+  const id = `inv-${invoices.size + 1}`;
+  invoices.set(params.gmailMessageId, {
+    id, gmailMessageId: params.gmailMessageId, fromEmail: params.fromEmail, subject: params.subject, originalName: params.originalName,
+  });
+  return { invoice: { id }, ocrJob: { id: `job-${invoices.size}` } };
 });
 
 const { GmailService, PAGE_SIZE, MAX_PAGES } = await import('../src/services/gmail.service.js');
 const { readGmailInboxConfig, buildInboxQuery, gmailPollDisabledReason } = await import('../src/config/gmailConfig.js');
 const { readGmailStatus, deriveGmailHealth, GMAIL_STATUS_KEY } = await import('../src/services/gmailStatus.js');
+const { invalidateKnownSenders } = await import('../src/services/knownSenders.js');
+const { ATTACHMENT_REASONS } = await import('../src/services/emailAttachments.js');
 
 const ocrJobs: string[] = [];
 GmailService.triggerOcr = (id: string) => { ocrJobs.push(id); };
@@ -210,7 +242,13 @@ function addMessage(options: {
   from?: string;
   extraHeaders?: Record<string, string>;
   text?: string;
-  attachments?: Array<{ filename: string; mimeType?: string }>;
+  attachments?: Array<{
+    filename: string;
+    mimeType?: string;
+    headers?: Array<{ name: string; value: string }>;
+    size?: number;
+    content?: Buffer;
+  }>;
   unread?: boolean;
   labelled?: boolean;
 } = {}) {
@@ -235,12 +273,16 @@ function addMessage(options: {
       headers,
       parts: [
         { partId: '0', mimeType: 'text/plain', body: { data: b64(options.text ?? 'Invoice attached.') } },
-        ...attachments.map((a, i) => ({
-          partId: String(i + 1),
-          mimeType: a.mimeType ?? 'application/pdf',
-          filename: a.filename,
-          body: { attachmentId: `ATT-${i + 1}-0` },
-        })),
+        ...attachments.map((a, i) => {
+          if (a.content) mailbox.contents.set(`${id}:${i + 1}`, a.content);
+          return {
+            partId: String(i + 1),
+            mimeType: a.mimeType ?? 'application/pdf',
+            filename: a.filename,
+            ...(a.headers ? { headers: a.headers } : {}),
+            body: { attachmentId: `ATT-${i + 1}-0`, ...(a.size !== undefined ? { size: a.size } : {}) },
+          };
+        }),
       ],
     },
   });
@@ -268,10 +310,13 @@ beforeEach((t) => {
   mailbox.labels = [{ id: 'Label_invoices', name: 'cgc-invoices' }];
   mailbox.messages = [];
   mailbox.failList = null;
+  mailbox.contents.clear();
   calls.length = 0;
   invoices.clear();
   events.clear();
   settings.clear();
+  suppliers.length = 0;
+  invalidateKnownSenders();
   ocrJobs.length = 0;
   failIngestFor = null;
   GmailService.resetState();
@@ -320,6 +365,7 @@ describe('configuration', () => {
     assert.equal(c.ingestMode, 'ingest');
     assert.equal(c.processedLabel, 'cgc-processed');
     assert.equal(c.observedLabel, 'cgc-observed');
+    assert.equal(c.reviewLabel, 'cgc-review');
     assert.equal(c.pollAfter, null);
   });
 
@@ -334,25 +380,29 @@ describe('configuration', () => {
     assert.match(gmailPollDisabledReason(config({ GMAIL_POLL_AFTER: '11/02/2026' }))!, /GMAIL_POLL_AFTER/);
   });
 
-  it('needs credentials and a label; ingest also needs an allowlist, observe does not', () => {
+  // An empty allowlist used to stop ingest mode: it was all that stood between
+  // a labelled email and an invoice. Unknown senders now go to the review
+  // queue and never become invoices, so ingest runs without one.
+  it('needs credentials and a label; neither mode needs an allowlist any more', () => {
     assert.match(gmailPollDisabledReason(config({ GMAIL_INBOX_REFRESH_TOKEN: '' }))!, /credentials/);
     assert.match(gmailPollDisabledReason(config({ GMAIL_INVOICE_LABEL: '' }))!, /GMAIL_INVOICE_LABEL/);
-    assert.match(gmailPollDisabledReason(config({ GMAIL_SENDER_ALLOWLIST: '' }))!, /GMAIL_SENDER_ALLOWLIST/);
+    assert.equal(gmailPollDisabledReason(config({ GMAIL_SENDER_ALLOWLIST: '' })), null);
     assert.equal(gmailPollDisabledReason(config({ GMAIL_SENDER_ALLOWLIST: '', GMAIL_INGEST_MODE: 'observe' })), null);
     assert.match(gmailPollDisabledReason(config({ GMAIL_PROCESSED_LABEL: 'CGC-Invoices' }))!, /must all differ/);
+    assert.match(gmailPollDisabledReason(config({ GMAIL_REVIEW_LABEL: 'cgc-processed' }))!, /must all differ/);
   });
 });
 
 describe('query', () => {
-  it('excludes the processed label and adds the cutoff, with no is:unread', () => {
+  it('excludes the processed and review labels and adds the cutoff, with no is:unread', () => {
     const q = buildInboxQuery(config());
-    assert.equal(q, 'has:attachment label:"cgc-invoices" -label:"cgc-processed" after:2026/11/02');
+    assert.equal(q, 'has:attachment label:"cgc-invoices" -label:"cgc-processed" -label:"cgc-review" after:2026/11/02');
   });
 
   it('keeps is:unread while no cutoff is set, so an upgrade cannot reach mail already read', () => {
     assert.equal(
       buildInboxQuery(config({ GMAIL_POLL_AFTER: undefined })),
-      'has:attachment label:"cgc-invoices" -label:"cgc-processed" is:unread'
+      'has:attachment label:"cgc-invoices" -label:"cgc-processed" -label:"cgc-review" is:unread'
     );
   });
 
@@ -367,13 +417,14 @@ describe('query', () => {
 });
 
 describe('processed label', () => {
-  it('creates the label once when missing, then adds it and marks the message read', async () => {
+  // The review label is created alongside the processed one: the query
+  // excludes both, so both must exist before the first search.
+  it('creates the labels once when missing, then adds processed and marks the message read', async () => {
     const id = addMessage();
     await GmailService.pollInvoices(config());
     await GmailService.pollInvoices(config());
 
-    assert.equal(inboxCalls('labels.create').length, 1);
-    assert.equal(inboxCalls('labels.create')[0]!.args.requestBody.name, 'cgc-processed');
+    assert.deepEqual(inboxCalls('labels.create').map(c => c.args.requestBody.name), ['cgc-processed', 'cgc-review']);
     assert.ok(labelsOf(id).includes('cgc-processed'));
     assert.ok(!labelsOf(id).includes('UNREAD'));
     assert.equal(invoices.size, 1);
@@ -408,12 +459,18 @@ describe('processed label', () => {
     assert.equal(status().counts.duplicates, 1);
   });
 
-  it('a message with no PDF or image is labelled done without an invoice', async () => {
+  // This used to be labelled processed and forgotten. Nothing is dropped
+  // without a trace now: it waits on the review queue with its reason.
+  it('a message with only an unsupported file goes to review, not done', async () => {
     const id = addMessage({ attachments: [{ filename: 'notes.docx', mimeType: 'application/msword' }] });
     await GmailService.pollInvoices(config());
     assert.equal(invoices.size, 0);
-    assert.ok(labelsOf(id).includes('cgc-processed'));
-    assert.equal(status().counts.noAttachments, 1);
+    assert.ok(!labelsOf(id).includes('cgc-processed'));
+    assert.ok(labelsOf(id).includes('cgc-review'));
+    assert.equal(events.get(id).status, 'NEEDS_REVIEW');
+    assert.equal(events.get(id).reviewReason, 'UNSUPPORTED_ATTACHMENTS');
+    assert.equal(events.get(id).attachments[0].reason, ATTACHMENT_REASONS.unsupported);
+    assert.equal(status().counts.needsReview, 1);
   });
 });
 
@@ -431,7 +488,9 @@ describe('idempotency', () => {
 
   it('never ingests again a message the old poller keyed by attachmentId', async () => {
     const id = addMessage({ unread: false });
-    invoices.set(`${id}:ANGjdJ8-legacyAttachmentIdFromTheOldPoller`, { gmailMessageId: `${id}:ANGjdJ8-legacy`, fromEmail: SUPPLIER, subject: 'x' });
+    invoices.set(`${id}:ANGjdJ8-legacyAttachmentIdFromTheOldPoller`, {
+      id: 'inv-legacy', gmailMessageId: `${id}:ANGjdJ8-legacy`, fromEmail: SUPPLIER, subject: 'x', originalName: 'x.pdf',
+    });
 
     await GmailService.pollInvoices(config());
 
@@ -439,6 +498,8 @@ describe('idempotency', () => {
     assert.equal(inboxCalls('attachments.get').length, 0);
     assert.ok(labelsOf(id).includes('cgc-processed'));
     assert.equal(status().counts.legacySkipped, 1);
+    assert.equal(events.get(id).status, 'PROCESSED');
+    assert.deepEqual(events.get(id).createdInvoiceIds, ['inv-legacy']);
   });
 
   it('falls back to a content hash when Gmail reports no part id', async () => {
@@ -485,6 +546,12 @@ describe('sender gate', () => {
 
     const [invoice] = [...invoices.values()];
     assert.equal(invoice?.fromEmail, SUPPLIER, 'supplier lookup must see the supplier, not the AP mailbox');
+    const [event] = [...events.values()];
+    assert.equal(event.status, 'PROCESSED');
+    assert.equal(event.originalFrom, SUPPLIER);
+    assert.equal(event.forwardedBy, FORWARDER);
+    assert.equal(event.senderMode, 'forward');
+    assert.deepEqual(event.createdInvoiceIds, [invoice!.id]);
   });
 
   it('a redirect keeps the supplier as the sender', async () => {
@@ -499,21 +566,28 @@ describe('sender gate', () => {
 
     assert.equal(invoices.size, 0);
     assert.ok(!labelsOf(id).includes('cgc-processed'), 'left for a person');
+    assert.ok(labelsOf(id).includes('cgc-review'));
+    assert.equal(events.get(id).reviewReason, 'UNRESOLVED_SENDER');
+    assert.equal(events.get(id).originalFrom, null);
     assert.equal(status().counts.unresolvedSender, 1);
   });
 
-  it('a forward naming a supplier off the allowlist is refused, and not fetched again', async () => {
+  it('a forward naming an unknown supplier goes to review, and is not fetched again', async () => {
     addMessage({
       from: FORWARDER,
       extraHeaders: { 'Authentication-Results': AUTH_PASS },
       text: '-----Original Message-----\nFrom: someone@unknown-sender.test\nSent: Monday\nSubject: Hi\n',
     });
     await GmailService.pollInvoices(config());
+    assert.equal(status().counts.rejectedSender, 1);
+    // The review label keeps it out of the query: it was refused once, not
+    // once a minute. (Before the queue, a per-process set did this until the
+    // next deploy.)
     await GmailService.pollInvoices(config());
 
     assert.equal(invoices.size, 0);
     assert.equal(inboxCalls('messages.get').length, 1);
-    assert.equal(status().counts.rejectedSender, 1);
+    assert.equal(inboxCalls('attachments.get').length, 0, 'nothing from an unknown sender is downloaded');
   });
 
   it('a direct sender off the allowlist is refused', async () => {
@@ -537,13 +611,21 @@ describe('observe mode', () => {
 
     assert.equal(invoices.size, 0);
     assert.equal(inboxCalls('attachments.get').length, 0, 'observe never downloads attachments');
+    // The census note has its own column now; errorMessage is for errors.
     const event = events.get(id);
     assert.equal(event.fromAddress, SUPPLIER);
     assert.equal(event.toAddress, INBOX);
-    assert.match(event.errorMessage, /mode=forward/);
-    assert.match(event.errorMessage, /forwardedBy=ap@garden-centre\.test/);
-    assert.match(event.errorMessage, /allowlisted=no/);
-    assert.match(event.errorMessage, /inv\.pdf \(application\/pdf\), detail\.xlsx/);
+    assert.equal(event.errorMessage, undefined);
+    assert.match(event.note, /mode=forward/);
+    assert.match(event.note, /forwardedBy=ap@garden-centre\.test/);
+    assert.match(event.note, /known=no/);
+    assert.match(event.note, /inv\.pdf \(application\/pdf\), detail\.xlsx/);
+    assert.equal(event.originalFrom, SUPPLIER);
+    assert.equal(event.senderMode, 'forward');
+    // Unknown to the supplier records, so it shows on the review queue.
+    assert.equal(event.status, 'NEEDS_REVIEW');
+    assert.equal(event.reviewReason, 'UNKNOWN_SENDER');
+    assert.deepEqual(event.attachments.map((a: any) => [a.name, a.action]), [['inv.pdf', 'held'], ['detail.xlsx', 'review']]);
     assert.deepEqual(labelsOf(id).filter(l => l.startsWith('cgc-')).sort(), ['cgc-invoices', 'cgc-observed']);
     assert.ok(labelsOf(id).includes('UNREAD'));
     assert.equal(status().mode, 'observe');
@@ -565,7 +647,248 @@ describe('observe mode', () => {
     const id = addMessage({ from: FORWARDER, extraHeaders: { 'Authentication-Results': AUTH_PASS }, text: 'see attached' });
     await GmailService.pollInvoices(observe());
     assert.equal(events.get(id).fromAddress, FORWARDER);
-    assert.match(events.get(id).errorMessage, /mode=unknown/);
+    assert.match(events.get(id).note, /mode=unknown/);
+    assert.equal(events.get(id).reviewReason, 'UNRESOLVED_SENDER');
+  });
+});
+
+describe('known senders from the supplier records', () => {
+  // No env allowlist: the supplier records alone decide.
+  const records = () => config({ GMAIL_SENDER_ALLOWLIST: '' });
+  const supplier = (over: Partial<(typeof suppliers)[number]>) => {
+    suppliers.push({
+      id: `sup-${suppliers.length + 1}`, name: 'Example Stone', type: 'SUPPLIER',
+      emailDomains: [], emailAddresses: [], contactEmail: null, ...over,
+    });
+    return suppliers[suppliers.length - 1]!;
+  };
+
+  it('a supplier domain makes its senders known, and the event names the supplier', async () => {
+    const s = supplier({ emailDomains: ['stone-supplier.test'] });
+    const id = addMessage();
+    await GmailService.pollInvoices(records());
+
+    assert.equal(invoices.size, 1);
+    assert.equal(events.get(id).status, 'PROCESSED');
+    assert.equal(events.get(id).supplierId, s.id);
+    assert.equal(events.get(id).senderTypeResolved, 'SUPPLIER');
+    assert.ok(labelsOf(id).includes('cgc-processed'));
+  });
+
+  it('a trucking company is resolved as one', async () => {
+    supplier({ type: 'TRUCKING_COMPANY', emailAddresses: [SUPPLIER] });
+    const id = addMessage();
+    await GmailService.pollInvoices(records());
+    assert.equal(events.get(id).senderTypeResolved, 'TRUCKING_COMPANY');
+  });
+
+  it('an unknown sender is queued for review: an event, the review label, no invoice, nothing downloaded', async () => {
+    supplier({ emailDomains: ['other-supplier.test'] });
+    const id = addMessage({ from: 'Someone New <billing@new-supplier.test>' });
+    await GmailService.pollInvoices(records());
+
+    assert.equal(invoices.size, 0);
+    assert.equal(inboxCalls('attachments.get').length, 0);
+    const event = events.get(id);
+    assert.equal(event.status, 'NEEDS_REVIEW');
+    assert.equal(event.reviewReason, 'UNKNOWN_SENDER');
+    assert.equal(event.originalFrom, 'billing@new-supplier.test');
+    assert.equal(event.senderMode, 'direct');
+    assert.equal(event.supplierId, null);
+    assert.deepEqual(event.attachments, [{
+      name: 'invoice-90001.pdf', mimeType: 'application/pdf', size: null, partId: '1',
+      kind: 'pdf', action: 'held', reason: ATTACHMENT_REASONS.held,
+    }]);
+    assert.ok(labelsOf(id).includes('cgc-review'));
+    assert.ok(labelsOf(id).includes('UNREAD'), 'AP still sees it unread');
+    assert.ok(!labelsOf(id).includes('cgc-processed'));
+  });
+
+  it('a free-mail domain on a supplier identifies nobody; an exact free-mail address does', async () => {
+    supplier({ name: 'Old Record', emailDomains: ['gmail.com'] });
+    supplier({ name: 'Owner Operator', type: 'TRUCKING_COMPANY', emailAddresses: ['owner.operator@gmail.com'] });
+    const stranger = addMessage({ from: 'stranger@gmail.com' });
+    const operator = addMessage({ from: 'Owner Operator <Owner.Operator@gmail.com>' });
+    await GmailService.pollInvoices(records());
+
+    assert.equal(events.get(stranger).status, 'NEEDS_REVIEW');
+    assert.equal(events.get(operator).status, 'PROCESSED');
+    assert.equal(events.get(operator).supplierId, 'sup-2');
+    assert.deepEqual([...invoices.values()].map(i => i.fromEmail), ['owner.operator@gmail.com']);
+  });
+
+  it('the env allowlist still makes a sender known when no supplier names it', async () => {
+    const id = addMessage();
+    await GmailService.pollInvoices(config());
+    assert.equal(events.get(id).status, 'PROCESSED');
+    assert.equal(events.get(id).supplierId, null);
+    assert.equal(events.get(id).senderTypeResolved, 'UNKNOWN');
+  });
+
+  it('approving the sender re-queues its email: read on the next poll and moved off the review label', async () => {
+    const id = addMessage({ from: 'billing@new-supplier.test' });
+    await GmailService.pollInvoices(records());
+    assert.equal(events.get(id).status, 'NEEDS_REVIEW');
+
+    // What POST /api/email-events/:id/approve leaves behind (its own test is
+    // tests/emailReviewQueue.integration.test.ts).
+    supplier({ emailAddresses: ['billing@new-supplier.test'] });
+    events.set(id, { ...events.get(id), requeuedAt: new Date(), reviewedById: 'user-1' });
+    invalidateKnownSenders();
+    calls.length = 0;
+    await GmailService.pollInvoices(records());
+
+    assert.equal(invoices.size, 1);
+    assert.deepEqual(inboxCalls('messages.get').map(c => c.args.id), [id], 'fetched by id, once');
+    const event = events.get(id);
+    assert.equal(event.status, 'PROCESSED');
+    assert.equal(event.requeuedAt, null);
+    assert.equal(event.supplierId, 'sup-1');
+    assert.equal(event.reviewedById, 'user-1', 'who approved it stays on record');
+    assert.ok(labelsOf(id).includes('cgc-processed'));
+    assert.ok(!labelsOf(id).includes('cgc-review'));
+    assert.equal(status().counts.requeued, 1);
+
+    await GmailService.pollInvoices(records());
+    assert.equal(invoices.size, 1, 'read once');
+  });
+
+  it('observe mode leaves approved mail for ingest mode', async () => {
+    const id = addMessage({ from: 'billing@new-supplier.test' });
+    await GmailService.pollInvoices(records());
+    events.set(id, { ...events.get(id), requeuedAt: new Date() });
+    await GmailService.pollInvoices(config({ GMAIL_INGEST_MODE: 'observe', GMAIL_SENDER_ALLOWLIST: '' }));
+    assert.equal(invoices.size, 0);
+    assert.notEqual(events.get(id).requeuedAt, null);
+  });
+
+  it('approved mail deleted from Gmail meanwhile is marked failed, not retried every minute', async () => {
+    const id = addMessage({ from: 'billing@new-supplier.test' });
+    await GmailService.pollInvoices(records());
+    events.set(id, { ...events.get(id), requeuedAt: new Date() });
+    mailbox.messages = [];
+    await GmailService.pollInvoices(records());
+
+    assert.equal(events.get(id).status, 'FAILED');
+    assert.equal(events.get(id).requeuedAt, null);
+    assert.match(events.get(id).errorMessage, /no longer in the Gmail inbox/);
+  });
+
+  it('an ignored email that comes back to the query is put back on the review label', async () => {
+    const id = addMessage();
+    events.set(id, { gmailMessageId: id, status: 'IGNORED', createdInvoiceIds: [], requeuedAt: null });
+    await GmailService.pollInvoices(config());
+    assert.equal(invoices.size, 0);
+    assert.ok(labelsOf(id).includes('cgc-review'));
+    assert.equal(events.get(id).status, 'IGNORED');
+  });
+});
+
+describe('attachment selection', () => {
+  const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+  const png = (bytes: number) => Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(bytes),
+  ]);
+
+  it('a spreadsheet-only email is queued with the reason, never marked processed, never downloaded', async () => {
+    const id = addMessage({ attachments: [{ filename: 'invoice-90002.xlsx', mimeType: XLSX_MIME }] });
+    await GmailService.pollInvoices(config());
+
+    assert.equal(invoices.size, 0);
+    assert.equal(inboxCalls('attachments.get').length, 0);
+    const event = events.get(id);
+    assert.equal(event.status, 'NEEDS_REVIEW');
+    assert.equal(event.reviewReason, 'SPREADSHEET');
+    assert.equal(event.attachments[0].kind, 'spreadsheet');
+    assert.equal(event.attachments[0].reason, 'spreadsheet: reading arrives in a later update');
+    assert.ok(labelsOf(id).includes('cgc-review'));
+    assert.ok(!labelsOf(id).includes('cgc-processed'));
+  });
+
+  it('.xls and .csv are recognised as spreadsheets too', async () => {
+    const id = addMessage({ attachments: [
+      { filename: 'old.xls', mimeType: 'application/vnd.ms-excel' },
+      { filename: 'loads.csv', mimeType: 'text/csv' },
+    ] });
+    await GmailService.pollInvoices(config());
+    assert.deepEqual(events.get(id).attachments.map((a: any) => a.kind), ['spreadsheet', 'spreadsheet']);
+  });
+
+  it('a PDF beside a spreadsheet is read, and the email still waits for the spreadsheet', async () => {
+    const id = addMessage({ attachments: [
+      { filename: 'invoice-90003.pdf' },
+      { filename: 'invoice-90003-detail.xlsx', mimeType: XLSX_MIME },
+    ] });
+    await GmailService.pollInvoices(config());
+
+    assert.deepEqual([...invoices.keys()], [`${id}:1`]);
+    const event = events.get(id);
+    assert.equal(event.status, 'NEEDS_REVIEW');
+    assert.equal(event.reviewReason, 'SPREADSHEET');
+    assert.deepEqual(event.createdInvoiceIds, ['inv-1']);
+    assert.deepEqual(event.attachments.map((a: any) => [a.name, a.action, a.invoiceId ?? null]), [
+      ['invoice-90003.pdf', 'read', 'inv-1'],
+      ['invoice-90003-detail.xlsx', 'review', null],
+    ]);
+    assert.ok(labelsOf(id).includes('cgc-review'));
+  });
+
+  it('an inline signature logo is skipped and listed; the PDF is the only invoice', async () => {
+    const id = addMessage({ attachments: [
+      { filename: 'invoice-90004.pdf' },
+      {
+        filename: 'image001.png', mimeType: 'image/png', size: 4_200,
+        headers: [{ name: 'Content-ID', value: '<image001.png@01DA0000.00000000>' }, { name: 'Content-Disposition', value: 'inline; filename="image001.png"' }],
+      },
+    ] });
+    await GmailService.pollInvoices(config());
+
+    assert.deepEqual([...invoices.keys()], [`${id}:1`]);
+    assert.equal(inboxCalls('attachments.get').length, 1, 'the logo is not even downloaded');
+    const logo = events.get(id).attachments[1];
+    assert.equal(logo.action, 'skipped');
+    assert.equal(logo.reason, ATTACHMENT_REASONS.inline);
+    assert.equal(events.get(id).status, 'PROCESSED');
+    assert.ok(labelsOf(id).includes('cgc-processed'));
+  });
+
+  it('a large inline image (a photo pasted into the email) is still read', async () => {
+    const id = addMessage({ attachments: [{
+      filename: 'IMG_0042.png', mimeType: 'image/png', size: 900_000, content: png(20_000),
+      headers: [{ name: 'Content-ID', value: '<photo-1>' }],
+    }] });
+    await GmailService.pollInvoices(config());
+    assert.ok(invoices.has(`${id}:1`));
+  });
+
+  it('a PDF without an extension or a useful type is read, and stored with .pdf', async () => {
+    const id = addMessage({ attachments: [{ filename: 'Invoice 90005', mimeType: 'application/octet-stream' }] });
+    await GmailService.pollInvoices(config());
+
+    const invoice = invoices.get(`${id}:1`);
+    assert.ok(invoice, 'the PDF became an invoice');
+    assert.equal(invoice.originalName, 'Invoice_90005.pdf');
+    assert.equal(events.get(id).attachments[0].kind, 'pdf');
+  });
+
+  it('a file named .pdf that is not a PDF is not read, and the email goes to review', async () => {
+    const id = addMessage({ attachments: [{ filename: 'invoice.pdf', content: Buffer.from('<html>phish</html>') }] });
+    await GmailService.pollInvoices(config());
+
+    assert.equal(invoices.size, 0);
+    assert.equal(events.get(id).reviewReason, 'UNSUPPORTED_ATTACHMENTS');
+    assert.equal(events.get(id).attachments[0].reason, ATTACHMENT_REASONS.mismatch);
+  });
+
+  it('an email with nothing but a logo goes to review instead of vanishing', async () => {
+    const id = addMessage({ attachments: [{
+      filename: 'image001.png', mimeType: 'image/png', size: 3_000,
+      headers: [{ name: 'Content-ID', value: '<image001.png@x>' }],
+    }] });
+    await GmailService.pollInvoices(config());
+    assert.equal(events.get(id).status, 'NEEDS_REVIEW');
+    assert.equal(events.get(id).reviewReason, 'NO_INVOICE_ATTACHMENT');
+    assert.equal(status().counts.noAttachments, 1);
   });
 });
 

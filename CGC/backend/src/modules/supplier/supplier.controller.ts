@@ -6,6 +6,7 @@ import { RateService } from './rates.service.js';
 import { PriceListService, parseTonMeans } from './priceList.service.js';
 import { scheduleRateRecheck } from './rateRecheck.js';
 import { sanitizeFilename } from '../../middleware/uploadValidation.js';
+import { normaliseSenderEntries } from '../../services/knownSenders.js';
 
 export const listSuppliers = async (_req: AuthRequest, res: Response) => {
   const suppliers = await SupplierService.list();
@@ -17,9 +18,35 @@ export const listSupplierOptions = async (_req: AuthRequest, res: Response) => {
   res.json(suppliers);
 };
 
+/**
+ * The supplier's email senders from a request body, or the reason they are
+ * refused. The form sends domains and full addresses in one box, so both lists
+ * are sorted again here. A free-mail domain is refused outright: kept, it
+ * would make every gmail.com (or hotmail.com…) sender this supplier.
+ */
+function senderFields(body: Record<string, unknown>):
+  | { ok: true; emailDomains: string[]; emailAddresses: string[] }
+  | { ok: false; error: string } {
+  const asList = (value: unknown) => (Array.isArray(value) ? value : typeof value === 'string' ? value.split(',') : []);
+  const entries = normaliseSenderEntries(asList(body.emailDomains), asList(body.emailAddresses));
+  if (entries.freeMailDomains.length > 0) {
+    const domain = entries.freeMailDomains[0];
+    return {
+      ok: false,
+      error: `${domain} is shared by many senders, so it cannot identify a supplier. Enter the full address instead, e.g. name@${domain}.`,
+    };
+  }
+  if (entries.invalid.length > 0) {
+    return { ok: false, error: `Not an email domain or address: ${entries.invalid.join(', ')}` };
+  }
+  return { ok: true, emailDomains: entries.emailDomains, emailAddresses: entries.emailAddresses };
+}
+
 export const createSupplier = async (req: AuthRequest, res: Response) => {
-  const { name, type, emailDomains, keywords, contactName, contactEmail, phone, address } =
+  const { name, type, keywords, contactName, contactEmail, phone, address } =
     req.body;
+  const senders = senderFields(req.body ?? {});
+  if (!senders.ok) return res.status(400).json({ error: senders.error });
 
   if (!name || !type) {
     return res.status(400).json({ error: 'name and type are required' });
@@ -33,7 +60,8 @@ export const createSupplier = async (req: AuthRequest, res: Response) => {
   const supplier = await SupplierService.create({
     name,
     type,
-    emailDomains: emailDomains ?? [],
+    emailDomains: senders.emailDomains,
+    emailAddresses: senders.emailAddresses,
     keywords: keywords ?? [],
     contactName,
     contactEmail,
@@ -46,7 +74,17 @@ export const createSupplier = async (req: AuthRequest, res: Response) => {
 
 export const updateSupplier = async (req: AuthRequest, res: Response) => {
   const { id } = req.params;
-  const data = req.body;
+  const data = { ...(req.body ?? {}) };
+  if ('emailDomains' in data || 'emailAddresses' in data) {
+    const senders = senderFields(data);
+    if (!senders.ok) return res.status(400).json({ error: senders.error });
+    data.emailDomains = senders.emailDomains;
+    // Only replaced when the request names the list, so an older client that
+    // sends domains alone does not wipe the addresses.
+    if ('emailAddresses' in data || senders.emailAddresses.length > 0) {
+      data.emailAddresses = senders.emailAddresses;
+    }
+  }
 
   const supplier = await SupplierService.update(id as string, data);
   res.json(supplier);

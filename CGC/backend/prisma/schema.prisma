@@ -331,6 +331,10 @@ model Supplier {
   name            String
   type            SupplierType
   emailDomains    String[]
+  /// Exact sender addresses this supplier emails from, e.g.
+  /// `billing@stone.example`. Needed for senders on shared mail services
+  /// (gmail.com, outlook.com…), whose domain must never identify anyone.
+  emailAddresses  String[]              @default([])
   contactName     String?
   contactEmail    String?
   phone           String?
@@ -411,6 +415,7 @@ model User {
   resolvedMatches  MatchResult[]
   ticketClaims     TicketClaim[]
   linkedTickets    Ticket[]
+  reviewedEmailEvents EmailIngestionEvent[] @relation("EmailEventReviewer")
   driver           Driver?
 }
 
@@ -640,6 +645,12 @@ model OcrJob {
   @@index([status, nextAttemptAt])
 }
 
+/// One row per email the invoice inbox poller has looked at: the mailbox log.
+///
+/// It is also the review queue. Mail from a sender no supplier record knows,
+/// or carrying nothing the app can read, is kept here as NEEDS_REVIEW instead
+/// of being skipped without a trace, and the office approves the sender or
+/// ignores the email from the Invoices page.
 model EmailIngestionEvent {
   id                 String               @id @default(uuid()) @db.Uuid
   gmailMessageId     String               @unique
@@ -653,8 +664,36 @@ model EmailIngestionEvent {
   status             EmailIngestionStatus @default(PROCESSED)
   errorMessage       String?
   receivedAt         DateTime             @default(now())
+  /// Who really sent it, after undoing the AP mailbox's forward; null when
+  /// that could not be established (services/emailSender.ts).
+  originalFrom       String?
+  /// The trusted forwarder that relayed it, e.g. the AP mailbox.
+  forwardedBy        String?
+  /// direct | redirect | forward | unknown, as resolveSender decided.
+  senderMode         String?
+  /// Every attachment and what happened to it:
+  /// [{ name, mimeType, size, partId, kind, action, reason, invoiceId }].
+  /// Nothing is skipped without a line here saying why.
+  attachments        Json?
+  /// Every invoice this email produced. One email can carry several, which
+  /// the single unique `createdInvoiceId` cannot hold.
+  createdInvoiceIds  String[]             @default([])
+  /// Why a NEEDS_REVIEW email waits for a person: UNKNOWN_SENDER,
+  /// UNRESOLVED_SENDER, SPREADSHEET, UNSUPPORTED_ATTACHMENTS or
+  /// NO_INVOICE_ATTACHMENT.
+  reviewReason       String?
+  /// A plain note about the email, e.g. the observe-mode census line.
+  note               String?
+  /// Set when the sender is approved: the poller reads the email again.
+  requeuedAt         DateTime?
+  reviewedById       String?              @db.Uuid
+  reviewedAt         DateTime?
   createdInvoice     Invoice?             @relation(fields: [createdInvoiceId], references: [id])
   supplier           Supplier?            @relation(fields: [supplierId], references: [id])
+  reviewedBy         User?                @relation("EmailEventReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+
+  /// The review queue on the Invoices page, newest first.
+  @@index([status, receivedAt])
 }
 
 model WhatsAppMessage {
@@ -826,6 +865,10 @@ enum ImportStatus {
 enum EmailIngestionStatus {
   PROCESSED
   FAILED
+  /// Waiting for a person: unknown sender or nothing the app can read.
+  NEEDS_REVIEW
+  /// A person decided the email is not an invoice to read.
+  IGNORED
 }
 
 enum SenderTypeResolved {

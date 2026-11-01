@@ -65,7 +65,8 @@ describe('GET /api/health', () => {
       assert.deepEqual(Object.keys(gmail).sort(), [
         'allowlistEntries', 'counts', 'disabledReason', 'enabled', 'invoiceLabel', 'invoiceLabelFound',
         'lastError', 'lastPollAt', 'lastResult', 'lastSuccessAt', 'mailbox', 'mailboxMatchesConfig', 'mode',
-        'observedLabel', 'pollAfter', 'processedLabel', 'reported', 'stale', 'truncated', 'trustedForwarders',
+        'observedLabel', 'pollAfter', 'processedLabel', 'reported', 'reviewLabel', 'stale', 'truncated',
+        'trustedForwarders',
         'unreadOnly',
       ]);
       assert.equal(gmail.reported, false);

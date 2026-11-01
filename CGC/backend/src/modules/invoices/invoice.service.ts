@@ -2,9 +2,11 @@
 import { saveInvoiceImage } from '../../services/fileStorage.js';
 import { extractInvoiceFromUrl } from '../../services/extraction/extraction.service.js';
 import { deriveLineItemFlag } from '../../lib/lineItemFlag.js';
+import { findSupplierForSender } from '../../services/knownSenders.js';
 import {
   InvoiceStatus,
   SenderType,
+  SupplierType,
   OcrJobType,
   OcrProvider,
   OcrJobStatus,
@@ -440,6 +442,18 @@ export async function refreshInvoiceTotalCheck(
   return mismatch ? 'mismatch' : 'ok';
 }
 
+/**
+ * Who billed, as the invoice list's Supplier / Trucking filter reads it.
+ *
+ * Every invoice used to be stored as SUPPLIER, trucking companies included,
+ * so the Trucking filter never showed anything. The supplier record says
+ * which kind of company it is; an invoice nobody has attributed yet stays
+ * SUPPLIER until OCR finds its sender.
+ */
+export function senderTypeFor(supplierType: SupplierType | null | undefined): SenderType {
+  return supplierType === SupplierType.TRUCKING_COMPANY ? SenderType.TRUCKING_COMPANY : SenderType.SUPPLIER;
+}
+
 export const InvoiceService = {
   async ingestEmailInvoice(params: {
     buffer: Buffer;
@@ -450,16 +464,14 @@ export const InvoiceService = {
   }) {
     const fileUrl = await saveInvoiceImage(params.buffer, params.originalName);
 
-    // Find supplier by email domain or keywords
-    const match = params.fromEmail.match(/@(.+)$/);
-    const domain = (match?.[1]?.split('>')[0] ?? '').toLowerCase();
+    // The sender's own supplier record first: an exact address, then its
+    // domain (never a free-mail domain), the same lookup the inbox poller
+    // used to accept the email (services/knownSenders.ts). This used to cut
+    // the domain out of the raw From value, which a display name such as
+    // `"Stone <billing@stone.example>" <someone@gmail.com>` could steer.
+    let supplier: { id: string; type: SupplierType } | null = await findSupplierForSender(params.fromEmail);
 
-    const byDomain = domain
-      ? await prisma.supplier.findFirst({ where: { emailDomains: { hasSome: [domain] } } })
-      : null;
-
-    // Try fuzzy match on name in subject
-    let supplier: { id: string } | null = byDomain;
+    // Then a supplier named in the subject.
     if (!supplier) {
       const allSuppliers = await prisma.supplier.findMany();
       supplier = allSuppliers.find(s => params.subject.toLowerCase().includes(s.name.toLowerCase())) || null;
@@ -485,7 +497,7 @@ export const InvoiceService = {
     const invoice = await prisma.invoice.create({
       data: {
         invoiceNumber: `PENDING-${Date.now()}`,
-        senderType: SenderType.SUPPLIER,
+        senderType: senderTypeFor(supplier.type),
         supplierId: supplier.id,
         invoiceDate: new Date(),
         totalAmount: 0,
@@ -545,16 +557,23 @@ export const InvoiceService = {
       const extracted = await extractInvoiceFromUrl(invoice.fileUrl);
 
       let updatedSupplierId = invoice.supplierId;
+      let updatedSenderType = invoice.senderType;
       if (extracted.supplierName) {
         const { SupplierService } = await import('../supplier/supplier.service.js');
         const found = await SupplierService.findOrCreateSupplier(extracted.supplierName);
-        if (found) updatedSupplierId = found.id;
+        if (found) {
+          updatedSupplierId = found.id;
+          // The sender type follows the supplier OCR settled on, so an invoice
+          // read as a trucking company's lands under Trucking.
+          updatedSenderType = senderTypeFor(found.type);
+        }
       }
 
       const updatedInvoice = await prisma.invoice.update({
         where: { id: invoiceId },
         data: {
           supplierId: updatedSupplierId,
+          senderType: updatedSenderType,
           invoiceNumber: extracted.invoiceNumber || invoice.invoiceNumber,
           invoiceDate: extracted.invoiceDate || invoice.invoiceDate,
           totalAmount: extracted.totalAmount || invoice.totalAmount,
