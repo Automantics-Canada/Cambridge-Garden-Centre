@@ -103,7 +103,8 @@ health block says why. It never falls back to ingesting.
 Settings → *See all settings* → *Filters and Blocked Addresses* → *Create a
 new filter*:
 
-- **From** / **To**: `from:(ap@cambridgegardencentre.ca) OR to:(ap@cambridgegardencentre.ca)`
+- **Has the words** (leave *From* and *To* empty):
+  `from:(ap@cambridgegardencentre.ca) OR to:(ap@cambridgegardencentre.ca)`
   (`from:` catches an Outlook *Forward*, `to:` a *Redirect* or mailbox
   forwarding).
 - **Has attachment**: ticked.

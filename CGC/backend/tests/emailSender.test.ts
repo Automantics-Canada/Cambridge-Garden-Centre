@@ -72,6 +72,17 @@ describe('parseAddress', () => {
     assert.equal(parseAddress(' billing@stone-supplier.test '), SUPPLIER);
   });
 
+  it('takes the real address, not one written into the display name', () => {
+    // The sender chooses the display name. A name that looks like a supplier's
+    // address must not make the message the supplier's.
+    const IMPOSTOR = 'someone@elsewhere.test';
+    assert.equal(parseAddress(`"Stone <${SUPPLIER}>" <${IMPOSTOR}>`), IMPOSTOR);
+    assert.equal(parseAddress(`"${SUPPLIER}" <${IMPOSTOR}>`), IMPOSTOR);
+    assert.equal(parseAddress(`Stone [mailto:${SUPPLIER}] [mailto:${IMPOSTOR}]`), IMPOSTOR);
+    assert.equal(parseAddress(`Stone <${SUPPLIER}> [mailto:${IMPOSTOR}]`), IMPOSTOR);
+    assert.equal(parseAddress(`Stone [mailto:${SUPPLIER}] <${IMPOSTOR}>`), IMPOSTOR);
+  });
+
   it('returns null when there is no address', () => {
     assert.equal(parseAddress('Stone Supplier Billing'), null);
     assert.equal(parseAddress(''), null);
@@ -228,6 +239,27 @@ describe('resolveSender: fails closed', () => {
   it('a block naming a display name only, with no address, is unknown', () => {
     const noAddress = '-----Original Message-----\nFrom: Stone Supplier Billing\nSent: Monday\nSubject: Invoice';
     assert.equal(resolveSender(headers({ From: FORWARDER, 'Authentication-Results': AUTH_PASS }), noAddress, options).mode, 'unknown');
+  });
+
+  it('a forwarded block whose display name imitates a supplier names the real sender', () => {
+    // Outlook copies the display name into the block as it was sent, so an
+    // impostor can make the line read "From: Stone <billing@...> <their own>".
+    const impostor = PLAIN_FORWARD.replace(
+      'From: Stone Supplier Billing <billing@stone-supplier.test>',
+      'From: Stone <billing@stone-supplier.test> <someone@elsewhere.test>'
+    );
+    const result = resolveSender(headers({ From: FORWARDER, 'Authentication-Results': AUTH_PASS }), impostor, options);
+    assert.equal(result.originalSender, 'someone@elsewhere.test');
+    const html = OUTLOOK_HTML_FORWARD.replace(
+      'Stone Supplier Billing &lt;billing@stone-supplier.test&gt;',
+      'Stone [mailto:billing@stone-supplier.test] &lt;someone@elsewhere.test&gt;'
+    );
+    assert.equal(resolveSender(headers({ From: FORWARDER, 'Authentication-Results': AUTH_PASS }), { html }, options).originalSender, 'someone@elsewhere.test');
+  });
+
+  it('a direct sender whose display name imitates a supplier is not that supplier', () => {
+    const result = resolveSender(headers({ From: `"Stone <${SUPPLIER}>" <someone@elsewhere.test>` }), undefined, options);
+    assert.equal(result.originalSender, 'someone@elsewhere.test');
   });
 
   it('a block in another language is unknown rather than guessed', () => {

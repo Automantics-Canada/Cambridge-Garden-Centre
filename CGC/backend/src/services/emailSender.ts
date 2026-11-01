@@ -74,15 +74,29 @@ export function headerValues(headers: HeaderList, name: string): string[] {
   return [];
 }
 
+/** The last match of a global pattern: its first matching group, or the whole match. */
+function lastMatch(value: string, pattern: RegExp): string | undefined {
+  let last: string | undefined;
+  for (const match of value.matchAll(pattern)) last = match.slice(1).find(g => g !== undefined) ?? match[0];
+  return last;
+}
+
+/** `<a@b>` or Outlook's `[mailto:a@b]`, whichever comes last. */
+const BRACKETED = /<([^<>\s]+@[^<>\s]+)>|\[mailto:([^\]\s]+)\]/gi;
+
 /**
  * The address in a From-style value: `Name <a@b>`, `Name [mailto:a@b]`,
  * `"Name" a@b` or a bare `a@b`. Lower-cased; null when there is none.
+ *
+ * The LAST address wins. The display name comes first and the sender writes
+ * it, so `"Stone <billing@stone.test>" <someone@elsewhere.test>`, or a
+ * forwarded block reading `From: Stone <billing@stone.test> <someone@...>`,
+ * is from someone@elsewhere.test, not from the supplier the name imitates.
  */
 export function parseAddress(value: string | null | undefined): string | null {
   if (!value) return null;
-  const bracketed = /<([^<>\s]+@[^<>\s]+)>/.exec(value)?.[1]
-    ?? /\[mailto:([^\]\s]+)\]/i.exec(value)?.[1];
-  const candidate = bracketed ?? ADDRESS.exec(value)?.[0];
+  const bracketed = lastMatch(value, BRACKETED);
+  const candidate = bracketed ?? lastMatch(value, new RegExp(ADDRESS.source, 'gi'));
   if (!candidate) return null;
   const address = candidate.replace(/^mailto:/i, '').trim().toLowerCase();
   return ADDRESS.test(address) ? address : null;
