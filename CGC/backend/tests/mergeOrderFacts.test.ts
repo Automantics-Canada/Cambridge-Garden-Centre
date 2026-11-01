@@ -5,6 +5,8 @@ import { classifyLine, deliveryTypeOf } from '../src/modules/orders/import/lineC
 import {
   batchFlags,
   combineFlags,
+  derivePickup,
+  derivedStateFlags,
   isPickupOrder,
   looksIncomplete,
   mergeOrderFacts,
@@ -274,5 +276,95 @@ describe('flags', () => {
       'SMALL_TRUCK',
       'NOT_IN_LATEST_REPORT',
     ]);
+  });
+});
+
+describe('quotations and orders no longer open (Q3, Q7)', () => {
+  const reports = new Set(['ORDER_SUMMARY', 'DELIVERY', 'ITEM_TRACKING'] as const);
+  const range = { from: day('2026-09-02'), to: day('2026-09-02') };
+  const context = { reports, orderSummaryRange: range };
+  const itemOnly = (overrides: Partial<ParsedSpruceRow> = {}) => ({
+    ITEM_TRACKING: [row({ documentNumber: '9900-000009', orderDateRaw: '9/2/2026', ...overrides })],
+  });
+  const fresh = { sourceReports: [], hasPo: false, hasActivity: false };
+
+  it('takes a document only Item Tracking lists, entered in range, with no history, for a quotation', () => {
+    const result = batchFlags(itemOnly(), context, fresh);
+    assert.deepEqual(result.flags, ['QUOTE']);
+    assert.ok(result.decided.includes('QUOTE') && result.decided.includes('NOT_OPEN'));
+  });
+
+  it('takes it for an order closed since once anything says it was an order', () => {
+    assert.deepEqual(batchFlags(itemOnly(), context, { ...fresh, sourceReports: ['ITEM_TRACKING', 'ORDER_SUMMARY'] }).flags, ['NOT_OPEN']);
+    assert.deepEqual(batchFlags(itemOnly(), context, { ...fresh, sourceReports: ['DELIVERY'] }).flags, ['NOT_OPEN']);
+    assert.deepEqual(batchFlags(itemOnly(), context, { ...fresh, hasPo: true }).flags, ['NOT_OPEN']);
+    assert.deepEqual(batchFlags(itemOnly({ poNumber: '9900-300001' }), context, fresh).flags, ['NOT_OPEN'], 'a PO in this upload');
+    assert.deepEqual(batchFlags(itemOnly(), context, { ...fresh, hasActivity: true }).flags, ['NOT_OPEN'], 'a stop, driver, invoice or ticket');
+    assert.deepEqual(batchFlags(itemOnly(), context).flags, ['NOT_OPEN'], 'no history known: never a guess at a quotation');
+  });
+
+  it('decides nothing for a document entered before the range, so an earlier conclusion stands', () => {
+    const earlier = batchFlags(itemOnly({ orderDateRaw: '8/20/2026' }), context, fresh);
+    assert.deepEqual(earlier, { flags: [], decided: [] });
+    assert.deepEqual(combineFlags(['QUOTE'], earlier.decided, earlier.flags), ['QUOTE']);
+    assert.deepEqual(combineFlags(['NOT_OPEN'], earlier.decided, earlier.flags), ['NOT_OPEN']);
+  });
+
+  it('clears both on a document the order summary or delivery report lists: a quotation converted comes back', () => {
+    for (const rows of [
+      { ...itemOnly(), ORDER_SUMMARY: [row({ documentNumber: '9900-000009' })] },
+      { ...itemOnly(), DELIVERY: [row({ documentNumber: '9900-000009' })] },
+    ]) {
+      const result = batchFlags(rows, context, fresh);
+      assert.ok(!result.flags.includes('QUOTE') && !result.flags.includes('NOT_OPEN'));
+      const after = combineFlags(['QUOTE', 'NOT_OPEN'], result.decided, result.flags);
+      assert.ok(!after.includes('QUOTE') && !after.includes('NOT_OPEN'));
+    }
+    // The delivery report alone is enough: a scheduled order is open.
+    const deliveryOnly = batchFlags({ DELIVERY: [row()] }, { reports: new Set(['DELIVERY'] as const) }, fresh);
+    assert.deepEqual(combineFlags(['NOT_OPEN'], deliveryOnly.decided, deliveryOnly.flags), []);
+  });
+
+  it('counts a document named on an unreadable order summary line as on the report', () => {
+    const result = batchFlags(itemOnly(), { ...context, mentioned: new Set(['9900-000009']) }, fresh);
+    assert.deepEqual(result.flags, []);
+    assert.ok(result.decided.includes('QUOTE'));
+  });
+
+  it('decides nothing about a document only Item Tracking lists when the order summary is missing or undated', () => {
+    assert.deepEqual(batchFlags(itemOnly(), { reports: new Set(['DELIVERY', 'ITEM_TRACKING'] as const) }, fresh).decided, []);
+    assert.deepEqual(batchFlags(itemOnly(), { reports }, fresh).decided, []);
+  });
+
+  it('falls back on the stored entry date when Item Tracking prints none', () => {
+    const result = batchFlags(itemOnly({ orderDateRaw: undefined }), context, { ...fresh, orderDate: day('2026-09-02') });
+    assert.deepEqual(result.flags, ['QUOTE']);
+  });
+});
+
+describe('derivePickup: one rule for the import and for edits', () => {
+  // Undated, nothing charged for delivery: a pickup unless closed.
+  const collect = { deliveryDate: null, shippingAddress: null, deliveryInstructions: null, lines: [{ itemCode: 'SOILGRDNA', description: 'Garden Soil Bulk' }] };
+
+  it('is a pickup when nothing closes the order', () => {
+    assert.equal(derivePickup({ state: collect, flags: { stored: [] } }), true);
+  });
+
+  it('is never a pickup while the order is closed or a quotation, whether stored or just decided', () => {
+    assert.equal(derivePickup({ state: collect, flags: { stored: ['NOT_OPEN'] } }), false);
+    assert.equal(derivePickup({ state: collect, flags: { stored: ['QUOTE'] } }), false);
+    assert.equal(derivePickup({ state: collect, flags: { stored: [], decided: ['QUOTE', 'NOT_OPEN'], fresh: ['QUOTE'] } }), false);
+    // An upload that could not judge keeps what an earlier one decided.
+    assert.equal(derivePickup({ state: collect, flags: { stored: ['NOT_OPEN'], decided: ['TOTAL_MISMATCH'], fresh: [] } }), false);
+  });
+
+  it('follows the order again once an upload clears the flag', () => {
+    assert.equal(derivePickup({ state: collect, flags: { stored: ['QUOTE'], decided: ['QUOTE', 'NOT_OPEN'], fresh: [] } }), true);
+  });
+
+  it('raises no delivery checks on a quotation', () => {
+    const dated = { ...collect, deliveryDate: day('2026-09-05'), phone: null, inDeliveryReport: true };
+    assert.deepEqual(derivedStateFlags({ state: dated, flags: { stored: ['QUOTE'] } }, false), []);
+    assert.deepEqual(derivedStateFlags({ state: dated, flags: { stored: [] } }, false), ['NO_ADDRESS', 'NO_PHONE']);
   });
 });

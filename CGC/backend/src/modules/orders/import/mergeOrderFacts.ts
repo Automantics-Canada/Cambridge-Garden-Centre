@@ -129,6 +129,10 @@ export const ORDER_FLAGS = [
   'READ_DIFFERENTLY',
   'NOT_IN_LATEST_REPORT',
   'NOT_OPEN',
+  // A quotation in Spruce, not an order: on Item Tracking, entered inside the
+  // Order report's range but left off it, and nothing has ever happened to it.
+  // The client confirmed (Oct 2026) that this is what such a document is.
+  'QUOTE',
   // A dispatcher corrected a field and Spruce has since said something else.
   // Kept by the order's corrections, never decided by an import.
   'SPRUCE_VALUE_CHANGED',
@@ -179,6 +183,12 @@ export interface OrderState {
   orderDate?: Date | null;
   /** Whether any upload has carried the order in the Item Tracking report. */
   inItemTracking?: boolean;
+  /**
+   * Whether any upload has carried the order in the Delivery Report, the only
+   * report that prints a phone. Until it has, a blank phone is not missing:
+   * nothing has had the chance to give it one.
+   */
+  inDeliveryReport?: boolean;
 }
 
 /**
@@ -214,13 +224,65 @@ export function stateFlags(state: OrderState, isPickup: boolean): OrderFlag[] {
   if (!address) flags.push(state.inItemTracking === false ? 'NOT_IN_ITEM_TRACKING' : 'NO_ADDRESS');
   else if (looksIncomplete(address)) flags.push('CHECK_ADDRESS');
 
-  if (state.phone !== undefined && !state.phone?.trim()) flags.push('NO_PHONE');
+  // Only the Delivery Report prints a phone. An order dated by the other two,
+  // or given to a driver before its Delivery Report came, is not missing one.
+  if (state.phone !== undefined && state.inDeliveryReport !== false && !state.phone?.trim()) flags.push('NO_PHONE');
   if (state.orderDate && state.deliveryDate < state.orderDate) flags.push('DELIVERY_BEFORE_ENTRY');
 
   if (TRUCK_LIMITS.test(state.deliveryInstructions ?? '')) flags.push('SMALL_TRUCK');
   if (MEET_DRIVER.test(state.deliveryInstructions ?? '')) flags.push('CUSTOMER_ON_SITE');
 
   return flags;
+}
+
+/**
+ * Flags that take an order out of the work: closed in Spruce since, or never
+ * an order at all. Neither is waiting to be delivered or collected.
+ */
+export const CLOSED_FLAGS: readonly OrderFlag[] = ['NOT_OPEN', 'QUOTE'];
+
+/**
+ * What decides an order's derived fields: its state, and its flags as they
+ * will stand — those stored, less what the caller has just decided again,
+ * plus what it found. An object, so that what else comes to decide a pickup
+ * (how the order is fulfilled, a dispatcher's choice) joins it here rather
+ * than at every call site.
+ */
+export interface DeriveInput {
+  state: OrderState;
+  flags: {
+    stored: readonly string[];
+    /** Flags the caller was in a position to judge now; see `batchFlags`. */
+    decided?: readonly OrderFlag[];
+    /** Of those, the ones it set. */
+    fresh?: readonly OrderFlag[];
+  };
+}
+
+function standingFlags(flags: DeriveInput['flags']): OrderFlag[] {
+  return combineFlags(flags.stored, flags.decided ?? [], flags.fresh ?? []);
+}
+
+/**
+ * Whether the customer collects the order, for `OrderDocument.isPickup`.
+ *
+ * The import and a dispatcher's edit both call this, so the two can never
+ * disagree. Before it, the import looked only at what the upload had just
+ * decided and an edit only at the stored flags: an order closed by an earlier
+ * upload went back to being a pickup at the next upload without the Order
+ * report, and stayed a delivery when edited.
+ */
+export function derivePickup(input: DeriveInput): boolean {
+  if (standingFlags(input.flags).some(flag => CLOSED_FLAGS.includes(flag))) return false;
+  return isPickupOrder(input.state);
+}
+
+/**
+ * `stateFlags`, except for a quotation: it is going nowhere, so a missing
+ * address or phone on it is nobody's problem.
+ */
+export function derivedStateFlags(input: DeriveInput, isPickup: boolean): OrderFlag[] {
+  return standingFlags(input.flags).includes('QUOTE') ? [] : stateFlags(input.state, isPickup);
 }
 
 /** Recomputed from every import, so never carried over from a previous one. */
@@ -254,6 +316,39 @@ export interface BatchContext {
   reports: ReadonlySet<SpruceReportType>;
   /** The entry-date range the order summary was filtered on, if it was uploaded. */
   orderSummaryRange?: { from: Date; to: Date };
+  /**
+   * Documents the order summary or delivery report names on a line it could
+   * not read. Such a document is on the report all the same: it must not be
+   * taken for one the report left out.
+   */
+  mentioned?: ReadonlySet<string>;
+}
+
+/**
+ * What has happened to a document before this upload, for telling a
+ * quotation from an order that was closed. Anything here means it was an
+ * order once.
+ */
+export interface DocumentHistory {
+  /** Every report an upload has carried it in (`OrderDocument.sourceReports`). */
+  sourceReports: readonly string[];
+  /** A supplier PO on any of its lines, stored or in this upload. */
+  hasPo: boolean;
+  /** A stop, a driver, an invoice or a ticket on it. */
+  hasActivity: boolean;
+  /** The stored entry date, for an upload whose Item Tracking prints none. */
+  orderDate?: Date | null;
+}
+
+const documentNumberOf = (rows: ReportRows): string | undefined =>
+  Object.values(rows).flatMap(list => list ?? [])[0]?.documentNumber;
+
+/** Nothing about it says it was ever an order. */
+function looksLikeQuote(rows: ReportRows, history: DocumentHistory | undefined): boolean {
+  if (!history) return false;
+  const everOpen = history.sourceReports.includes('ORDER_SUMMARY') || history.sourceReports.includes('DELIVERY');
+  const hasPo = history.hasPo || (rows.ITEM_TRACKING ?? []).some(row => row.poNumber);
+  return !everOpen && !hasPo && !history.hasActivity;
 }
 
 /**
@@ -263,7 +358,11 @@ export interface BatchContext {
  * `decided` names every flag this upload was in a position to judge; a flag
  * outside it keeps whatever an earlier upload concluded.
  */
-export function batchFlags(rows: ReportRows, context: BatchContext): { flags: OrderFlag[]; decided: OrderFlag[] } {
+export function batchFlags(
+  rows: ReportRows,
+  context: BatchContext,
+  history?: DocumentHistory
+): { flags: OrderFlag[]; decided: OrderFlag[] } {
   const flags: OrderFlag[] = [];
   const decided: OrderFlag[] = [];
   const summary = rows.ORDER_SUMMARY ?? [];
@@ -310,13 +409,27 @@ export function batchFlags(rows: ReportRows, context: BatchContext): { flags: Or
     }
   }
 
-  // The order summary lists only open orders. One entered inside its date
-  // range that it leaves out has been invoiced, closed or voided since.
-  if (context.reports.has('ORDER_SUMMARY') && context.orderSummaryRange) {
-    decided.push('NOT_OPEN');
-    const entered = firstDate(rows, 'orderDateRaw', ['ITEM_TRACKING']);
+  // Open, closed or never an order. A document on the order summary or the
+  // delivery report is an open or scheduled order, and one that comes back on
+  // either after being taken for a quotation was converted: both flags clear.
+  const documentNumber = documentNumberOf(rows);
+  const onOpenReport = summary.length > 0 || delivery.length > 0 ||
+    (documentNumber !== undefined && (context.mentioned?.has(documentNumber) ?? false));
+  if (onOpenReport) {
+    decided.push('NOT_OPEN', 'QUOTE');
+  } else if (context.reports.has('ORDER_SUMMARY') && context.orderSummaryRange) {
+    // The order summary lists only open orders. One entered inside its range
+    // that it leaves out was either never an order (a quotation: the client
+    // confirmed these are what Item Tracking lists and the summary does not),
+    // or was invoiced, closed or voided since. Entered before the range, the
+    // summary was never going to list it, so nothing can be concluded and an
+    // earlier upload's conclusion stands.
+    const entered = firstDate(rows, 'orderDateRaw', ['ITEM_TRACKING']) ?? history?.orderDate ?? undefined;
     const { from, to } = context.orderSummaryRange;
-    if (summary.length === 0 && entered && entered >= from && entered <= to) flags.push('NOT_OPEN');
+    if (entered && entered >= from && entered <= to) {
+      decided.push('NOT_OPEN', 'QUOTE');
+      flags.push(looksLikeQuote(rows, history) ? 'QUOTE' : 'NOT_OPEN');
+    }
   }
 
   return { flags, decided };
