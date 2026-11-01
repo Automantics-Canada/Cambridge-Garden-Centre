@@ -136,6 +136,21 @@ describe('dispatching whole orders (PostgreSQL)', { skip: !disposableConfirmed }
     await assert.rejects(DispatchService.unassignOrder(order.id), (err: any) => err.status === 409);
   });
 
+  it('refuses to give a quotation to a driver, as a whole order or by one of its lines', async () => {
+    const quote = await seedOrder('9900-000001');
+    await prisma.orderDocument.update({ where: { id: quote.id }, data: { flags: ['QUOTE'] } });
+    const driver = await seedDriver('Driver', '519-555-0106');
+    const plainly = (err: any) => err.status === 409 && /9900-000001 is a quotation in Spruce, not an order/.test(err.message);
+
+    await assert.rejects(DispatchService.assignOrder(quote.id, driver.id), plainly);
+    // A screen still open from before orders were dispatched whole names a line.
+    const [line] = await prisma.order.findMany({ where: { documentId: quote.id }, orderBy: { lineNumber: 'asc' } });
+    await assert.rejects(DispatchService.assignDriver(line!.id, driver.id), plainly);
+
+    assert.equal(await prisma.delivery.count(), 0, 'no stop made');
+    assert.ok((await prisma.order.findMany({ where: { documentId: quote.id } })).every(row => row.driverId === null));
+  });
+
   it('lists a stop under the day its order goes out, not the day it was made', async () => {
     const order = await seedOrder('9900-000001');
     const driver = await seedDriver('Driver', '519-555-0105');

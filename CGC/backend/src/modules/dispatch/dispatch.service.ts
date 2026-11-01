@@ -11,12 +11,14 @@ import {
 import {
   FINISHED_STATUSES as FINISHED,
   carriedOverWhere,
+  dayPoolWhere,
   deliveryDayDate,
   isPastDay,
   todayPoolWhere,
   undatedWhere,
   upcomingDays,
   upcomingWhere,
+  upcomingWithoutDriverWhere,
 } from './dispatchDays.js';
 
 /** Enough to find an order by number or name; more is a narrower search. */
@@ -24,6 +26,17 @@ const UNDATED_LIMIT = 100;
 
 function dispatchError(status: number, message: string) {
   return Object.assign(new Error(message), { status });
+}
+
+/**
+ * A quotation is a price given to a customer, not an order, so it never goes
+ * to a driver. The board no longer lists one, but a screen left open from
+ * before, or an order flagged since, can still ask.
+ */
+function refuseQuotation(document: { documentNumber: string; flags: string[] } | null | undefined) {
+  if (document?.flags.includes('QUOTE')) {
+    throw dispatchError(409, `${document.documentNumber} is a quotation in Spruce, not an order, so it cannot go to a driver.`);
+  }
 }
 
 /**
@@ -68,7 +81,8 @@ export const DispatchService = {
    * work. Upload time alone was tried before and lost an order the morning
    * after it was imported, even when it was due next week; the delivery date
    * still keeps it, on its own day. Pickups are collected from the yard and
-   * never wait for a driver.
+   * never wait for a driver, and quotations are not orders, so neither is in
+   * any day's pool.
    *
    * Yesterday and older are history: `readOnly`, and each driver's run shows
    * only what was due or finished that day, not the work open now. Today also
@@ -96,14 +110,7 @@ export const DispatchService = {
       : [];
 
     const waiting = await prisma.orderDocument.findMany({
-      where: requestedDay === today
-        ? todayPoolWhere(today)
-        : {
-            deliveryDate: deliveryDay,
-            isPickup: false,
-            // Never dispatched, or dispatched and taken back.
-            OR: [{ delivery: null }, { delivery: { driverId: null } }],
-          },
+      where: requestedDay === today ? todayPoolWhere(today) : dayPoolWhere(requestedDay),
       select: BOARD_DOCUMENT_SELECT,
       orderBy: { documentNumber: 'asc' },
     });
@@ -174,12 +181,11 @@ export const DispatchService = {
    * @param today 'YYYY-MM-DD' in the yard's timezone; for tests.
    */
   async getUpcoming(today: string = businessDayOf()) {
-    const where = upcomingWhere(today);
     const [all, unassigned] = await Promise.all([
-      prisma.orderDocument.groupBy({ by: ['deliveryDate'], where, _count: { _all: true } }),
+      prisma.orderDocument.groupBy({ by: ['deliveryDate'], where: upcomingWhere(today), _count: { _all: true } }),
       prisma.orderDocument.groupBy({
         by: ['deliveryDate'],
-        where: { ...where, OR: [{ delivery: null }, { delivery: { driverId: null } }] },
+        where: upcomingWithoutDriverWhere(today),
         _count: { _all: true },
       }),
     ]);
@@ -219,11 +225,13 @@ export const DispatchService = {
         select: {
           id: true,
           documentNumber: true,
+          flags: true,
           lines: DISPATCH_DOCUMENT_SELECT.lines,
           delivery: { select: { id: true, status: true } },
         },
       });
       if (!document) throw dispatchError(404, 'That order no longer exists.');
+      refuseQuotation(document);
       if (document.delivery && FINISHED.includes(document.delivery.status)) {
         throw dispatchError(409, `${document.documentNumber} is already ${document.delivery.status.toLowerCase()}.`);
       }
@@ -300,6 +308,13 @@ export const DispatchService = {
 
   /** For stops made before orders were dispatched whole, which name one line. */
   async assignDriver(orderId: string, driverId: string, priority: number = 1) {
+    // The line's order decides, as it does for a whole order.
+    const line = await prisma.order.findUnique({
+      where: { id: orderId },
+      select: { document: { select: { documentNumber: true, flags: true } } },
+    });
+    refuseQuotation(line?.document);
+
     console.time(`Assignment-${orderId}`);
     // Check if delivery already exists for this order, or create new
     const existing = await prisma.delivery.findFirst({
