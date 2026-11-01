@@ -448,6 +448,9 @@ export const TicketService = {
   async updateTicket(id: string, data: any) {
     // If we're updating linkedOrderId manually, set linkMethod and status
     if (data.linkedOrderId && data.linkedOrderId !== undefined) {
+      // A quotation is not an order: nothing was delivered against it.
+      const { refuseQuotationLine } = await import('../orders/quotations.js');
+      await refuseQuotationLine(prisma, String(data.linkedOrderId), 'a ticket');
       data.status = TicketStatus.LINKED;
       data.linkMethod = 'MANUAL';
     } else if (data.linkedOrderId === null) {
@@ -500,6 +503,9 @@ export const TicketService = {
   },
 
   async linkTicketToOrder(ticketId: string, orderId: string, userId?: string) {
+    // A quotation is not an order: nothing was delivered against it.
+    const { refuseQuotationLine } = await import('../orders/quotations.js');
+    await refuseQuotationLine(prisma, orderId, 'a ticket');
     // Create junction record
     await prisma.ticketOrderMatch.upsert({
       where: {

@@ -267,7 +267,8 @@ export const linkTicketToOrder = async (req: Request, res: Response) => {
     const ticket = await TicketService.linkTicketToOrder(req.params.id as string, orderId, userId);
     return res.status(200).json(ticket);
   } catch (error: any) {
-    return res.status(500).json({ error: error.message || 'Unexpected error' });
+    // A refused link (a quotation's line) keeps its 409 and its message.
+    return res.status(Number(error?.status) || 500).json({ error: error.message || 'Unexpected error' });
   }
 };
 
@@ -289,7 +290,7 @@ export const updateTicket = async (req: Request, res: Response) => {
     const ticket = await TicketService.updateTicket(req.params.id as string, req.body);
     return res.status(200).json(ticket);
   } catch (error: any) {
-    return res.status(500).json({ error: error.message || 'Unexpected error' });
+    return res.status(Number(error?.status) || 500).json({ error: error.message || 'Unexpected error' });
   }
 };
 

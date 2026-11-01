@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { deliveryStatusView, deliveryTypeDetail, emptyTitle, invoiceSummary, pastDueWithoutDriver, uploadRange } from './orderList';
+import { MISSING_OPTIONS, QUOTE_OPTIONS, deliveryStatusView, deliveryTypeDetail, emptyTitle, invoiceSummary, pastDueWithoutDriver, uploadRange } from './orderList';
 
 const days = { today: '2026-10-05', yesterday: '2026-10-04' };
 
@@ -37,6 +37,13 @@ describe('deliveryStatusView', () => {
     expect(deliveryStatusView({ delivery: { status: 'UNASSIGNED', driverName: null } }).label).toBe('No driver yet');
   });
 
+  it('says a quotation is one, not that it has no driver', () => {
+    expect(deliveryStatusView({ flags: ['QUOTE'], delivery: null })).toEqual({ label: 'Quotation', tone: 'neutral', detail: null });
+    expect(deliveryStatusView({ flags: ['READ_DIFFERENTLY', 'QUOTE'], isPickup: true }).label).toBe('Quotation');
+    // A closed order is still an order.
+    expect(deliveryStatusView({ flags: ['NOT_OPEN'], delivery: null }).label).toBe('No driver yet');
+  });
+
   it('names the driver and how far the stop has got', () => {
     expect(deliveryStatusView({ delivery: { status: 'PLACED', driverName: 'Alex' } })).toEqual({ label: 'With driver', tone: 'neutral', detail: 'Alex' });
     expect(deliveryStatusView({ delivery: { status: 'IN_TRANSIT', driverName: 'Alex' } }).label).toBe('On the way');
@@ -49,6 +56,25 @@ describe('emptyTitle', () => {
     expect(emptyTitle({ filter: 'range', from: '', to: '' })).toBe('Pick the days');
     expect(emptyTitle({ filter: 'today', filtered: true })).toBe('No orders match these filters');
     expect(emptyTitle({ filter: 'today' })).toBe('No orders uploaded today');
+  });
+
+  it('speaks of quotations in the Quotations view', () => {
+    expect(emptyTitle({ filter: 'today', quotations: true })).toBe('No quotations uploaded today');
+    expect(emptyTitle({ filter: 'all', filtered: true, quotations: true })).toBe('No quotations match these filters');
+  });
+});
+
+describe('filter options', () => {
+  it('lists orders by default, and quotations only when asked', () => {
+    expect(QUOTE_OPTIONS).toEqual([
+      { value: '', label: 'Orders' },
+      { value: 'only', label: 'Quotations' },
+    ]);
+  });
+
+  it('offers Missing: Phone, sent as the value the server reads', () => {
+    expect(MISSING_OPTIONS.map(({ value }) => value)).toEqual(['', 'phone']);
+    expect(MISSING_OPTIONS.find(({ value }) => value === 'phone').label).toBe('Phone');
   });
 });
 

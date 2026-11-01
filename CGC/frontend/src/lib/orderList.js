@@ -27,14 +27,36 @@ export const DELIVERY_STATUS_OPTIONS = [
   { value: 'cancelled', label: 'Cancelled' },
 ];
 
+/**
+ * Orders, or the Quotations view. A quotation is a price given to a customer
+ * in Spruce, not an order; the list leaves them out unless asked.
+ */
+export const QUOTE_OPTIONS = [
+  { value: '', label: 'Orders' },
+  { value: 'only', label: 'Quotations' },
+];
+
+/**
+ * What an order is missing. Phone lists deliveries that were on a Deliveries
+ * report with no phone: the only report that prints one.
+ */
+export const MISSING_OPTIONS = [
+  { value: '', label: 'Anything' },
+  { value: 'phone', label: 'Phone' },
+];
+
+const isQuotation = (order) => (order?.flags ?? []).includes('QUOTE');
+
 const STARTED = ['OUT_FOR_DELIVERY', 'IN_TRANSIT'];
 
 /**
  * Where an order stands, for its status badge: what to say, its tone, and the
  * driver's name under it. A pickup is collected at the yard and never gets a
- * stop, so it says so rather than "No driver".
+ * stop, so it says so rather than "No driver". A quotation is going nowhere,
+ * so it says what it is.
  */
 export function deliveryStatusView(order) {
+  if (isQuotation(order)) return { label: 'Quotation', tone: 'neutral', detail: null };
   const external = externalStatus(order);
   if (external) return { label: external, tone: 'neutral', detail: null };
   if (fulfilmentType(order) === 'yard_pickup') return { label: `Pickup at ${order?.collectAt || 'yard'}`, tone: 'neutral', detail: null };
@@ -89,14 +111,15 @@ export function uploadRange({ filter, from, to, today, yesterday }) {
     : { uploadStartDate: end, uploadEndDate: start };
 }
 
-/** The empty list's heading, for what was asked. */
-export function emptyTitle({ filter, from, to, filtered }) {
+/** The empty list's heading, for what was asked: orders, or quotations. */
+export function emptyTitle({ filter, from, to, filtered, quotations = false }) {
+  const things = quotations ? 'quotations' : 'orders';
   if (filter === 'range' && !from && !to) return 'Pick the days';
-  if (filtered) return 'No orders match these filters';
-  if (filter === 'today') return 'No orders uploaded today';
-  if (filter === 'yesterday') return 'No orders uploaded yesterday';
-  if (filter === 'all') return 'No orders yet';
-  return 'No orders uploaded on these days';
+  if (filtered) return `No ${things} match these filters`;
+  if (filter === 'today') return `No ${things} uploaded today`;
+  if (filter === 'yesterday') return `No ${things} uploaded yesterday`;
+  if (filter === 'all') return `No ${things} yet`;
+  return `No ${things} uploaded on these days`;
 }
 
 /** "Invoiced", "2 of 3 invoiced" or "Not invoiced". */

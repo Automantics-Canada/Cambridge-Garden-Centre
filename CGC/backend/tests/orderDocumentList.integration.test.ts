@@ -149,3 +149,76 @@ describe('Orders list of whole orders', { skip: !runnable && 'needs CGC_TEST_CON
     await assert.rejects(listOrders({ uploadStartDate: '2026-10-10', uploadEndDate: '2026-10-07' }), (err: any) => err.status === 400);
   });
 });
+
+/**
+ * Quotations, hidden unless asked for, and orders missing a phone, so the
+ * office can find real examples in the live app (the client asked for some).
+ * Every name and number here is invented.
+ */
+async function seedQuotesAndPhones() {
+  await prisma.$executeRawUnsafe(
+    'TRUNCATE TABLE "Delivery", "Order", "OrderDocument", "ImportBatch", "Driver", "User" RESTART IDENTITY CASCADE'
+  );
+  const order = (documentNumber: string, data: Record<string, unknown>) =>
+    prisma.orderDocument.create({
+      data: {
+        documentNumber,
+        customerName: `Customer ${documentNumber}`,
+        createdAt: OCT_9,
+        shippingAddress: '1 Example St',
+        lines: { create: [line(documentNumber, 1, 'Gravel', { createdAt: OCT_9 })] },
+        ...data,
+      },
+    });
+  const onDeliveries = ['ITEM_TRACKING', 'ORDER_SUMMARY', 'DELIVERY'];
+
+  // On a Deliveries report that printed no phone: what the client wants to see.
+  await order('2610-200001', { sourceReports: onDeliveries, phone: null, flags: ['NO_PHONE'] });
+  // A phone cleared to an empty string by an older path counts the same.
+  await order('2610-200002', { sourceReports: onDeliveries, phone: '' });
+  // Has a phone.
+  await order('2610-200003', { sourceReports: onDeliveries, phone: '519-555-0142' });
+  // Never on a Deliveries report, so no report could have given it a phone;
+  // a stale NO_PHONE flag does not put it on the list.
+  await order('2610-200004', { sourceReports: ['ITEM_TRACKING', 'ORDER_SUMMARY'], phone: null, flags: ['NO_PHONE'] });
+  // A pickup needs no phone for a driver.
+  await order('2610-200005', { sourceReports: onDeliveries, phone: null, isPickup: true });
+  // Quotations: never on a Deliveries report, so never on the phone list either.
+  await order('2610-200006', { sourceReports: ['ITEM_TRACKING'], flags: ['QUOTE'] });
+  await order('2610-200007', { sourceReports: ['ITEM_TRACKING'], flags: ['READ_DIFFERENTLY', 'QUOTE'], createdAt: OCT_7 });
+  // Uploaded another day, on a Deliveries report, no phone.
+  await order('2610-200008', { sourceReports: onDeliveries, phone: null, createdAt: OCT_7 });
+}
+
+describe('Orders list: quotations and missing phones', { skip: !runnable && 'needs CGC_TEST_CONFIRM_DISPOSABLE=1 and a loopback DATABASE_URL' }, () => {
+  before(seedQuotesAndPhones);
+  after(() => prisma.$disconnect());
+
+  it('leaves quotations out unless the Quotations view is asked for, and does not count them', async () => {
+    const real = ['2610-200008', '2610-200005', '2610-200004', '2610-200003', '2610-200002', '2610-200001'];
+    assert.deepEqual(await numbers({}), real);
+    assert.deepEqual(await numbers({ quotes: 'exclude' }), real);
+    assert.equal((await listOrders({})).pagination.total, real.length);
+
+    assert.deepEqual(await numbers({ quotes: 'only' }), ['2610-200007', '2610-200006']);
+    assert.equal((await listOrders({ quotes: 'only' })).pagination.total, 2);
+    // The view combines with the other filters.
+    assert.deepEqual(await numbers({ quotes: 'only', uploadStartDate: '2026-10-09', uploadEndDate: '2026-10-09' }), ['2610-200006']);
+    assert.deepEqual(await numbers({ quotes: 'only', search: '200007' }), ['2610-200007']);
+  });
+
+  it('lists deliveries that were on a Deliveries report with no phone, never pickups or orders never on one', async () => {
+    assert.deepEqual(await numbers({ missing: 'phone' }), ['2610-200008', '2610-200002', '2610-200001']);
+    assert.deepEqual(
+      await numbers({ missing: 'phone', uploadStartDate: '2026-10-09', uploadEndDate: '2026-10-09' }),
+      ['2610-200002', '2610-200001'],
+    );
+    assert.deepEqual(await numbers({ missing: 'phone', quotes: 'only' }), []);
+  });
+
+  it('rejects an unknown quotations view or missing field rather than listing everything', async () => {
+    for (const filters of [{ quotes: 'all' }, { quotes: 'constructor' }, { missing: 'address' }, { missing: 'toString' }]) {
+      await assert.rejects(listOrders(filters), (err: any) => err.status === 400, JSON.stringify(filters));
+    }
+  });
+});
