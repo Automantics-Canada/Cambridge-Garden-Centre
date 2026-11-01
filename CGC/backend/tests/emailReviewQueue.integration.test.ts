@@ -253,5 +253,29 @@ describe('email review queue (PostgreSQL)', { skip: !(confirmed && loopback) }, 
     const refused = await api('PUT', `/api/suppliers/${created.body.id}`, { emailDomains: ['gmail.com'] });
     assert.equal(refused.status, 400);
     assert.match(refused.body.error, /shared by many senders/);
+
+    // A request naming one list leaves the other alone.
+    const addressesOnly = await api('PUT', `/api/suppliers/${created.body.id}`, { emailAddresses: ['office@mulch-yard.test'] });
+    assert.equal(addressesOnly.status, 200, JSON.stringify(addressesOnly.body));
+    assert.deepEqual(addressesOnly.body.emailDomains, ['mulch-yard.test']);
+    assert.deepEqual(addressesOnly.body.emailAddresses, ['office@mulch-yard.test']);
+    const domainsOnly = await api('PUT', `/api/suppliers/${created.body.id}`, { emailDomains: ['mulch-yard.test', 'mulch-depot.test'] });
+    assert.equal(domainsOnly.status, 200, JSON.stringify(domainsOnly.body));
+    assert.deepEqual(domainsOnly.body.emailDomains, ['mulch-yard.test', 'mulch-depot.test']);
+    assert.deepEqual(domainsOnly.body.emailAddresses, ['office@mulch-yard.test']);
+  });
+
+  it('a sender cannot be approved onto the unidentified-supplier placeholder', async () => {
+    const placeholder = await prisma.supplier.create({
+      data: { name: 'Unidentified supplier', type: 'SUPPLIER', emailDomains: [] },
+    });
+    const event = await queued('accounts@placeholder-test.test');
+    const onto = await api('POST', `/api/email-events/${event.id}/approve`, { supplierId: placeholder.id });
+    assert.equal(onto.status, 400);
+    const named = await api('POST', `/api/email-events/${event.id}/approve`, { newSupplier: { name: 'unidentified supplier' } });
+    assert.equal(named.status, 400);
+    const after = await prisma.supplier.findUniqueOrThrow({ where: { id: placeholder.id } });
+    assert.deepEqual(after.emailAddresses, []);
+    assert.equal((await prisma.emailIngestionEvent.findUniqueOrThrow({ where: { id: event.id } })).requeuedAt, null);
   });
 });

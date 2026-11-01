@@ -78,9 +78,12 @@ export const updateSupplier = async (req: AuthRequest, res: Response) => {
   if ('emailDomains' in data || 'emailAddresses' in data) {
     const senders = senderFields(data);
     if (!senders.ok) return res.status(400).json({ error: senders.error });
-    data.emailDomains = senders.emailDomains;
-    // Only replaced when the request names the list, so an older client that
-    // sends domains alone does not wipe the addresses.
+    // Each list is only replaced when the request names it (or an entry of
+    // that kind arrived in the other list), so a client that sends one list
+    // alone does not wipe the other.
+    if ('emailDomains' in data || senders.emailDomains.length > 0) {
+      data.emailDomains = senders.emailDomains;
+    }
     if ('emailAddresses' in data || senders.emailAddresses.length > 0) {
       data.emailAddresses = senders.emailAddresses;
     }

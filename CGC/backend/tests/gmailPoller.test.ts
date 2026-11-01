@@ -731,10 +731,11 @@ describe('known senders from the supplier records', () => {
     assert.equal(events.get(id).status, 'NEEDS_REVIEW');
 
     // What POST /api/email-events/:id/approve leaves behind (its own test is
-    // tests/emailReviewQueue.integration.test.ts).
+    // tests/emailReviewQueue.integration.test.ts). The approval runs in the
+    // API process, so this process's cached sender list is not cleared: the
+    // poller must read the supplier records afresh by itself.
     supplier({ emailAddresses: ['billing@new-supplier.test'] });
     events.set(id, { ...events.get(id), requeuedAt: new Date(), reviewedById: 'user-1' });
-    invalidateKnownSenders();
     calls.length = 0;
     await GmailService.pollInvoices(records());
 

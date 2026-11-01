@@ -1,6 +1,7 @@
 import { EmailIngestionStatus, SupplierType, type Prisma } from '@prisma/client';
 import { prisma } from '../../db/prisma.js';
 import { domainOf, invalidateKnownSenders, isFreeMailDomain } from '../../services/knownSenders.js';
+import { UNIDENTIFIED_SUPPLIER_NAME } from '../invoices/invoice.service.js';
 
 /**
  * The email review queue on the Invoices page.
@@ -193,6 +194,11 @@ async function resolveSupplier(tx: Prisma.TransactionClient, input: ApproveInput
     if (!isUuid(input.supplierId)) throw httpError(400, 'supplierId must be a supplier id');
     const supplier = await tx.supplier.findUnique({ where: { id: input.supplierId }, select });
     if (!supplier || !supplier.active) throw httpError(404, 'Supplier not found');
+    // The holding record for invoices OCR has not attributed yet. A sender
+    // filed under it would have every invoice read as nobody's, for good.
+    if (supplier.name.trim().toLowerCase() === UNIDENTIFIED_SUPPLIER_NAME.toLowerCase()) {
+      throw httpError(400, 'Choose the real supplier, or create one. "Unidentified supplier" is only a placeholder.');
+    }
     return supplier;
   }
 
@@ -201,6 +207,9 @@ async function resolveSupplier(tx: Prisma.TransactionClient, input: ApproveInput
   const type = input.newSupplier?.type ?? SupplierType.SUPPLIER;
   if (!Object.values(SupplierType).includes(type as SupplierType)) {
     throw httpError(400, `Invalid supplier type: ${String(type)}`);
+  }
+  if (name.toLowerCase() === UNIDENTIFIED_SUPPLIER_NAME.toLowerCase()) {
+    throw httpError(400, 'Give the new supplier its real name.');
   }
   const clash = await tx.supplier.findFirst({
     where: { name: { equals: name, mode: 'insensitive' }, active: true },

@@ -15,7 +15,7 @@ import {
   resolveSender,
   type ResolvedSender,
 } from './emailSender.js';
-import { knownSenders, lookupSender, type SenderLookup } from './knownSenders.js';
+import { invalidateKnownSenders, knownSenders, lookupSender, type SenderLookup } from './knownSenders.js';
 import {
   ATTACHMENT_REASONS,
   attachmentReviewReason,
@@ -331,6 +331,11 @@ export class GmailService {
           take: PAGE_SIZE,
           select: { gmailMessageId: true },
         });
+        // The approval was saved by the API, usually another process, whose
+        // cache clear does not reach this one. Read the supplier records
+        // afresh, or a list cached before the approval would send the email
+        // straight back to the queue with its re-queue used up.
+        if (requeued.length > 0) invalidateKnownSenders();
         for (const { gmailMessageId } of requeued) {
           handled.add(gmailMessageId);
           const outcome = await this.processMessage(gmailMessageId, config, pollLabels, counts, true);
