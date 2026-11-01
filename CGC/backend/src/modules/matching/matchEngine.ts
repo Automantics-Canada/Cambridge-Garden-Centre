@@ -779,7 +779,9 @@ export function matchInvoiceLine(
     checks.push({
       name: 'rate',
       passed: false,
-      detail: `No rate could be read from the invoice line${via}`,
+      // Said as the agreed rate's provenance: "the line, found by item code"
+      // would read as though the invoice line had been found that way.
+      detail: `No rate could be read from the invoice line${via ? ` (the agreed rate was ${via.slice(2)})` : ''}`,
       expected: agreed.rate,
     });
   } else {

@@ -379,6 +379,34 @@ describe('quotations and item-code rates (PostgreSQL)', { skip: !runnable }, () 
     assert.equal(decision?.orderId, REAL_LINE_ID);
   });
 
+  it('an order line with no document (legacy import) stays a candidate while a quotation exists', async () => {
+    // The filter is a NOT over a nullable relation. Written as a subquery it
+    // would be NULL for a line with no document, and SQL would drop the line
+    // the moment any quotation existed; this pins that it does not.
+    await resetAll();
+    await documentWithLine({ documentId: QUOTE_DOC_ID, documentNumber: '9901-100002', flags: ['QUOTE'], lineId: QUOTE_LINE_ID, poNumber: '482913' });
+    await prisma.order.create({
+      data: {
+        id: REAL_LINE_ID,
+        spruceOrderId: 'LEGACY-1',
+        poNumber: '482913',
+        customerName: 'Test Customer',
+        product: 'A Gravel 19mm',
+        quantity: 24.6,
+        unit: 'tonnes',
+        supplierId: SUPPLIER_ID,
+        orderDate: new Date('2026-08-13'),
+      },
+    });
+    await ticketFor(TICKET_A, '482913');
+
+    const decision = await matchTicketById(TICKET_A);
+    assert.equal(decision?.status, 'MATCHED');
+    assert.equal(decision?.orderId, REAL_LINE_ID);
+    const ticket = await prisma.ticket.findUnique({ where: { id: TICKET_A } });
+    assert.equal(ticket?.linkedOrderId, REAL_LINE_ID);
+  });
+
   it('an order closed in Spruce (NOT_OPEN) is still matched: its invoice comes after', async () => {
     await resetAll();
     await documentWithLine({ documentId: CLOSED_DOC_ID, documentNumber: '9901-100003', flags: ['NOT_OPEN'], lineId: CLOSED_LINE_ID, poNumber: '482913' });

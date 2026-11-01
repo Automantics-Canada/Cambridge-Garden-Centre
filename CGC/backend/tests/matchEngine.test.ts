@@ -1080,6 +1080,17 @@ describe('agreed rate by Spruce item code', () => {
     assert.equal(decision.totals?.agreedRate, null);
   });
 
+  test('with no billed rate read, the evidence still says how the agreed rate was found', () => {
+    const decision = matchInvoiceLine(soilLine({ unitRate: null }), lineInputs());
+    const rate = check(decision, 'rate');
+    assert.equal(rate?.passed, false);
+    assert.equal(rate?.expected, 18);
+    assert.equal(
+      rate?.detail,
+      'No rate could be read from the invoice line (the agreed rate was found by item code SOILGRDNA)'
+    );
+  });
+
   test('a code rate in an incomparable unit is named, and not applied', () => {
     const decision = matchInvoiceLine(
       soilLine(),
