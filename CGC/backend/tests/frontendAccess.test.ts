@@ -49,6 +49,7 @@ const PAGES = [
   'pages/dashboard/TicketsPage.jsx',
   'pages/dispatch/DispatchBoard.jsx',
   'pages/driver/DriverMobileView.jsx',
+  'components/invoices/UnrecognisedSendersPanel.jsx',
 ] as const;
 
 describe('polling replacement does not reintroduce anon table access', () => {
@@ -130,6 +131,19 @@ describe('polling replacement does not reintroduce anon table access', () => {
     assert.equal(codeOnly('// limit=1000 was removed\nconst a = 1;').includes('limit=1000'), false);
     assert.equal(codeOnly("fetch('x?limit=1000')").includes('limit=1000'), true);
     assert.equal(codeOnly("const u = 'https://x/y';").includes('https://x/y'), true);
+  });
+
+  it('the review queue on InvoicesPage reads and acts through the authenticated email-events API', () => {
+    const page = codeOnly(readPage('pages/dashboard/InvoicesPage.jsx'));
+    assert.match(page, /<UnrecognisedSendersPanel/);
+    const panel = codeOnly(readPage('components/invoices/UnrecognisedSendersPanel.jsx'));
+    assert.match(panel, /from '\.\.\/\.\.\/api\/axios'/);
+    assert.match(panel, /api\.get\('\/api\/email-events'/);
+    assert.match(panel, /\/api\/email-events\/\$\{event\.id\}\/approve/);
+    assert.match(panel, /\/api\/email-events\/\$\{event\.id\}\/ignore/);
+    // The buttons are hidden from AP staff; the server refuses them anyway
+    // (tests/routeGuards.test.ts).
+    assert.match(panel, /canManageQueue\(role\)/);
   });
 
   it('InvoicesPage staff upload hits the operations endpoint, not the ADMIN simulator', () => {

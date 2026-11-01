@@ -32,6 +32,7 @@ import {
 } from '../../components/ui';
 import { cn } from '../../lib/cn';
 import { formatCalendarDate } from '../../lib/date';
+import UnrecognisedSendersPanel from '../../components/invoices/UnrecognisedSendersPanel';
 
 const STATUS_TABS = [
   { id: 'ALL', name: 'All invoices' },
@@ -45,6 +46,9 @@ const INVOICES_PER_PAGE = 25;
 export default function InvoicesPage() {
   const navigate = useNavigate();
   const userId = useSelector((state) => state.auth.user?.id);
+  const role = useSelector((state) => state.auth.user?.role);
+  // Bumped by Refresh so the review queue reloads with the list.
+  const [queueRefreshKey, setQueueRefreshKey] = useState(0);
   const [searchParams, setSearchParams] = useSearchParams();
   const activeTab = searchParams.get('status') || 'ALL';
   const [invoices, setInvoices] = useState([]);
@@ -166,6 +170,7 @@ export default function InvoicesPage() {
    */
   const handleManualRefresh = useCallback(async () => {
     setIsRefreshing(true);
+    setQueueRefreshKey((key) => key + 1);
     try {
       await fetchInvoices(true);
     } finally {
@@ -173,9 +178,9 @@ export default function InvoicesPage() {
     }
   }, [fetchInvoices]);
 
-  const fetchSuppliers = useCallback(async () => {
+  const fetchSuppliers = useCallback(async (force = false) => {
     try {
-      setSuppliers(await loadSupplierOptions(userId));
+      setSuppliers(await loadSupplierOptions(userId, force ? { force: true } : undefined));
     } catch (err) {
       // The dropdown degrades to "All suppliers"; the table is still usable.
       console.error('Error fetching supplier options:', err);
@@ -282,6 +287,13 @@ export default function InvoicesPage() {
             </Button>
           </>
         }
+      />
+
+      <UnrecognisedSendersPanel
+        role={role}
+        suppliers={suppliers}
+        refreshKey={queueRefreshKey}
+        onSupplierCreated={() => fetchSuppliers(true)}
       />
 
       <Card className="overflow-hidden">
