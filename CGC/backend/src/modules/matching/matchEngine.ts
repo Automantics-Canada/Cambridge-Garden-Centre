@@ -219,6 +219,12 @@ interface Load {
   copies: DeliveredTicket[];
   /** What the counted copy did not show and another copy supplied, e.g. "PO". */
   filled: string[];
+  /**
+   * The quantity counted came from the supplier's emailed copy: the driver's
+   * photo did not show one. The load is real, but the figure it is paid on is
+   * the biller's own.
+   */
+  billerQuantity: boolean;
 }
 
 /**
@@ -230,9 +236,13 @@ interface Load {
  * value the counted copy does show is never replaced (that is a disagreement,
  * reported by copyDisagreements).
  */
-function fillGaps(counted: DeliveredTicket, copies: readonly DeliveredTicket[]): { ticket: DeliveredTicket; filled: string[] } {
+function fillGaps(
+  counted: DeliveredTicket,
+  copies: readonly DeliveredTicket[]
+): { ticket: DeliveredTicket; filled: string[]; billerQuantity: boolean } {
   const ticket = { ...counted };
   const filled: string[] = [];
+  let billerQuantity = false;
   const donors = copies
     .filter((copy) => copy.id !== counted.id)
     .sort((a, b) => Number(a.emailedBySupplier === true) - Number(b.emailedBySupplier === true));
@@ -246,6 +256,7 @@ function fillGaps(counted: DeliveredTicket, copies: readonly DeliveredTicket[]):
       ticket.quantity = donor.quantity;
       ticket.unit = donor.unit;
       filled.push('quantity');
+      billerQuantity = donor.emailedBySupplier === true;
     }
     if (!ticket.material && donor.material) {
       ticket.material = donor.material;
@@ -260,7 +271,7 @@ function fillGaps(counted: DeliveredTicket, copies: readonly DeliveredTicket[]):
       filled.push('date');
     }
   }
-  return { ticket, filled };
+  return { ticket, filled, billerQuantity };
 }
 
 /**
@@ -287,8 +298,8 @@ export function groupLoads(tickets: ReadonlyArray<DeliveredTicket>, lineId: stri
       copies[0]!;
     const claims = copies.map((copy) => copy.claim).filter((claim): claim is TicketClaimRef => claim != null);
     const claim = claims.find((entry) => entry.invoiceLineId !== lineId) ?? claims[0] ?? null;
-    const { ticket, filled } = fillGaps(counted, copies);
-    return { counted: { ...ticket, claim }, copies, filled };
+    const { ticket, filled, billerQuantity } = fillGaps(counted, copies);
+    return { counted: { ...ticket, claim }, copies, filled, billerQuantity };
   });
 }
 
@@ -1242,6 +1253,28 @@ export function matchInvoiceLine(
         'Check the load with the yard before paying.',
       found: comparable.length,
     });
+  } else {
+    // The driver's photo backs the load, but could not show its quantity, so
+    // the figure counted is the supplier's own. Counted all the same (the load
+    // happened), but the quantity the supplier is paid for is its own word,
+    // which is the case A15's rule is there for: a person checks it.
+    const billerFigures = loads.filter((load) => load.billerQuantity && comparable.includes(load.counted));
+    if (billerFigures.length > 0) {
+      const named = billerFigures
+        .map((load) => {
+          const { ticketNumber, id, quantity, unit } = load.counted;
+          return `${ticketNumber ?? id.slice(0, 6)} (${quantity}${unit ? ` ${unit}` : ''})`;
+        })
+        .join(', ');
+      checks.push({
+        name: 'billerTicketsOnly',
+        passed: false,
+        detail:
+          `The quantity of ticket ${named} is shown only on the supplier's emailed copy: the driver's photo does not show it. ` +
+          'Check the quantity with the yard before paying.',
+        found: billerFigures.length,
+      });
+    }
   }
 
   // Reuse only *fails* when the remaining tickets cannot cover the line.

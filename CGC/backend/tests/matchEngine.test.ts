@@ -1455,6 +1455,33 @@ describe('two copies of one load: the driver photo and the supplier emailed tick
     assert.match(check(decision, 'copiesAgree')?.detail ?? '', /did not show its quantity/);
   });
 
+  test("a quantity only the supplier's emailed copy shows is never passed automatically", () => {
+    // The load is real (the driver photographed it), but the quantity paid
+    // for would be the biller's own figure, which nobody has checked.
+    const decision = decide([driverCopy({ quantity: null, unit: null }), emailedCopy({ quantity: 30 })], { quantity: 30 });
+    assert.equal(check(decision, 'ticketCoverage')?.passed, true, 'the load still counts');
+    const biller = check(decision, 'billerTicketsOnly');
+    assert.equal(biller?.passed, false);
+    assert.match(biller?.detail ?? '', /T-501.*only on the supplier's emailed copy/);
+    assert.equal(decision.status, 'PARTIAL');
+  });
+
+  test("a PO or date borrowed from the supplier copy, with the driver's own quantity, still passes", () => {
+    const decision = decide([driverCopy({ poNumber: null, ticketDate: null }), emailedCopy()]);
+    assert.equal(check(decision, 'billerTicketsOnly'), undefined);
+    assert.equal(decision.status, 'MATCHED');
+  });
+
+  test("a quantity borrowed from another driver copy is the yard's evidence, not the biller's", () => {
+    const decision = decide([
+      driverCopy({ quantity: null, unit: null }),
+      driverCopy({ id: 'driver-copy-2', duplicateOfTicketId: 'driver-copy' }),
+      emailedCopy(),
+    ]);
+    assert.equal(check(decision, 'ticketCoverage')?.passed, true);
+    assert.equal(check(decision, 'billerTicketsOnly'), undefined);
+  });
+
   test('a value the driver copy does show is never replaced by the supplier copy', () => {
     const decision = decide([driverCopy({ quantity: 20 }), emailedCopy()], { quantity: 20 });
     assert.equal(check(decision, 'ticketCoverage')?.found, 20);

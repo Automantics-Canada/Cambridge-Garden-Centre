@@ -65,7 +65,9 @@ import { onSamePo, poKey } from './poKey.js';
  * 9: a haul line that fits several hauls, every one of them already paid, says
  * it is already paid instead of asking a person to choose one. A load by the
  * load with no quantity entered is one load, and a line billed by the load
- * must bill exactly the loads dispatch sent (no estimate tolerance).
+ * must bill exactly the loads dispatch sent (no estimate tolerance). A load
+ * whose quantity only the supplier's emailed copy shows is never passed
+ * automatically.
  */
 export const ENGINE_VERSION = 9;
 
