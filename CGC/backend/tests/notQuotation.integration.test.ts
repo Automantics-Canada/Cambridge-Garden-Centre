@@ -143,6 +143,49 @@ describe('"Not a quotation" (PostgreSQL)', { skip: !runnable && 'needs CGC_TEST_
     assert.ok((await documentOf(ALSO_CLOSED)).flags.includes('QUOTE'));
   });
 
+  it('takes QUOTE off when Item Tracking later shows a PO on it, after its entry date left the Order report\'s range', async () => {
+    await importDay('morning');
+    assert.ok((await documentOf(CLOSED_SAME_DAY)).flags.includes('QUOTE'));
+
+    // The next day: the Order report covers only 9/3, so the 9/2 documents
+    // are outside its range. Item Tracking still lists them, and one now
+    // carries a supplier PO: it is an order, whatever the dates.
+    const NEXT = '9/3/2026';
+    const nextOpen = '9900-000103';
+    const tracking = { orderDateRaw: SPRUCE_DAY, deliveryDateRaw: NEXT, shippingAddress: '1 Example Rd, Cambridge' };
+    const nextReports: Record<SpruceReportType, ParsedSpruceReport> = {
+      ITEM_TRACKING: {
+        ...report('ITEM_TRACKING', [
+          row(CLOSED_SAME_DAY, { ...tracking, poNumber: '9900-300101' }),
+          row(ALSO_CLOSED, tracking),
+          row(nextOpen, { orderDateRaw: NEXT, deliveryDateRaw: NEXT }),
+        ]),
+        dateRange: { fromRaw: SPRUCE_DAY, toRaw: NEXT },
+      },
+      ORDER_SUMMARY: {
+        ...report('ORDER_SUMMARY', [row(nextOpen, { orderDateRaw: NEXT, unitPrice: 40, remaining: 120 })]),
+        dateRange: { fromRaw: NEXT, toRaw: NEXT },
+      },
+      DELIVERY: report('DELIVERY', [row(nextOpen, { deliveryDateRaw: NEXT, phone: '519-555-0101' })]),
+    };
+    await runImportBatch(prisma, {
+      dispatchDate: '2026-09-03',
+      createdById: userId,
+      files: (['ITEM_TRACKING', 'ORDER_SUMMARY', 'DELIVERY'] as const).map(reportType => ({
+        reportType,
+        fileName: `${reportType}.pdf`,
+        buffer: Buffer.from(`next-${reportType}`),
+        report: nextReports[reportType],
+      })),
+    });
+
+    const withPo = await documentOf(CLOSED_SAME_DAY);
+    assert.ok(!withPo.flags.includes('QUOTE'), `flags: ${withPo.flags.join(', ')}`);
+    assert.ok(withPo.lines.some(line => line.poNumber === '9900-300101'));
+    // Nothing new about the other one: still a quotation, and not re-read.
+    assert.ok((await documentOf(ALSO_CLOSED)).flags.includes('QUOTE'));
+  });
+
   it('answers 404 for an order that is not there', async () => {
     await assert.rejects(markNotQuotation('00000000-0000-4000-8000-000000000000', userId), (err: any) => err.status === 404);
   });
