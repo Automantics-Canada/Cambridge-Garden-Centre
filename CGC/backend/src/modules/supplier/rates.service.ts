@@ -222,6 +222,11 @@ export const RateService = {
         case 'UNCHANGED':
           return { action: plan.action, rate: plan.rate };
         case 'CORRECT': {
+          // Notes and codes are written only where the plan changes them: a
+          // same-price rate re-added with a newer date and a blank box
+          // corrects the running rate without clearing what it holds.
+          const changing = (field: 'notes' | 'spruceItemCode' | 'supplierItemCode') =>
+            plan.changes.some((change) => change.field === field);
           const updated = await tx.negotiatedRate.update({
             where: { id: plan.corrects.id },
             data: {
@@ -229,9 +234,9 @@ export const RateService = {
               unit,
               rate,
               effectiveTo: effectiveTo ? dateOf(effectiveTo) : null,
-              ...(notes !== undefined ? { notes } : {}),
-              ...(spruceItemCode !== undefined ? { spruceItemCode } : {}),
-              ...(supplierItemCode !== undefined ? { supplierItemCode } : {}),
+              ...(changing('notes') ? { notes: notes ?? null } : {}),
+              ...(changing('spruceItemCode') ? { spruceItemCode: spruceItemCode ?? null } : {}),
+              ...(changing('supplierItemCode') ? { supplierItemCode: supplierItemCode ?? null } : {}),
             },
             select: RATE_SELECT,
           });

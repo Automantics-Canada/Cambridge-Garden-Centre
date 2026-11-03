@@ -218,6 +218,30 @@ describe('agreed rates (PostgreSQL)', { skip: !runnable }, () => {
       assert.deepEqual((await rates()).map((r) => r.unit).sort(), ['skid', 'tonne']);
     });
 
+    it('re-adding the running price with a newer date and empty boxes keeps its notes and codes', async () => {
+      // The Add rate form always sends notes, '' when the box is left empty.
+      const first = await api('POST', `/api/suppliers/${supplierId}/rates`, {
+        productName: PRODUCT, rate: 18, unit: 'tonne', effectiveFrom: '2026-01-01', notes: 'Yard price', spruceItemCode: 'GRVL19',
+      });
+      assert.equal(first.status, 201);
+      const kept = async () =>
+        prisma.negotiatedRate.findUniqueOrThrow({ where: { id: first.body.rate.id }, select: { notes: true, spruceItemCode: true, effectiveFrom: true } });
+
+      const again = await api('POST', `/api/suppliers/${supplierId}/rates`, {
+        productName: PRODUCT, rate: 18, unit: 'tonne', effectiveFrom: '2026-11-01', effectiveTo: '', notes: '',
+      });
+      assert.equal(again.body.action, 'UNCHANGED', JSON.stringify(again.body));
+      assert.deepEqual(await kept(), { notes: 'Yard price', spruceItemCode: 'GRVL19', effectiveFrom: new Date('2026-01-01') });
+
+      // A note that is given is saved; a code sent blank is still not cleared.
+      const noted = await api('POST', `/api/suppliers/${supplierId}/rates`, {
+        productName: PRODUCT, rate: 18, unit: 'tonne', effectiveFrom: '2026-11-01', notes: 'Price held for 2027', spruceItemCode: null,
+      });
+      assert.equal(noted.body.action, 'CORRECT', JSON.stringify(noted.body));
+      assert.deepEqual(await kept(), { notes: 'Price held for 2027', spruceItemCode: 'GRVL19', effectiveFrom: new Date('2026-01-01') });
+      assert.equal((await rates()).length, 1);
+    });
+
     it('refuses a start that would overlap a later rate', async () => {
       await api('POST', `/api/suppliers/${supplierId}/rates`, { productName: PRODUCT, rate: 18, unit: 'tonne', effectiveFrom: '2026-06-01' });
       const early = await api('POST', `/api/suppliers/${supplierId}/rates`, { productName: PRODUCT, rate: 17, unit: 'tonne', effectiveFrom: '2026-01-01' });

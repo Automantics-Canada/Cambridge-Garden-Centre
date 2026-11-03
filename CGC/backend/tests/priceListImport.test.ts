@@ -194,6 +194,20 @@ describe('planning one rate against the stored ones', () => {
     }
   });
 
+  it('never clears the running rate\'s codes or notes with blanks sent with the same price and a newer date', () => {
+    // The Add rate form always sends notes, '' (null) when left empty. Re-adding
+    // the price already running must not wipe the notes or codes it carries.
+    const running = stored({ notes: 'Yard price', spruceItemCode: 'GRVL19', supplierItemCode: 'SUP-19' });
+    const blank = { ...next, rate: 18, notes: null, spruceItemCode: null, supplierItemCode: null };
+    assert.equal(planRateChange(blank, [running]).action, 'UNCHANGED');
+    // A value that is sent still corrects it, and only that value.
+    const decision = planRateChange({ ...blank, notes: 'New yard price' }, [running]);
+    assert.equal(decision.action, 'CORRECT');
+    if (decision.action === 'CORRECT') {
+      assert.deepEqual(decision.changes, [{ field: 'notes', from: 'Yard price', to: 'New yard price' }]);
+    }
+  });
+
   it('refuses a start before a later stored rate it would overlap', () => {
     const decision = planRateChange({ ...next, effectiveFrom: '2025-06-01' }, [stored()]);
     assert.equal(decision.action, 'ERROR');

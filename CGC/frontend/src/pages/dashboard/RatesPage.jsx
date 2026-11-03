@@ -152,7 +152,7 @@ export default function RatesPage() {
         const messages = {
           CREATE: 'Rate added',
           SUPERSEDE: 'New price saved. The previous price stays on record for older invoices.',
-          CORRECT: 'Rate with this start date corrected',
+          CORRECT: 'The rate on record was updated',
           UNCHANGED: 'This rate is already on record',
         };
         toast.success(messages[data?.action] || 'Rate saved');

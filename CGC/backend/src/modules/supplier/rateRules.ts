@@ -294,8 +294,18 @@ export function planRateChange(next: RateCandidate, sameKey: PeriodRate[]): Rate
   // Item codes or notes it brings are still saved on the running rate (its
   // start date kept): dropped, the rate is never found by the order line's
   // Spruce item code and differently worded lines read "No agreed rate".
+  // Only values it gives count: the Add rate form sends an empty notes box as
+  // null, and re-adding the running price must not wipe what that rate holds.
   if (prior.effectiveTo === null && next.effectiveTo === null && prior.rate === next.rate) {
-    const changes = correctionChanges(prior, { ...next, productName: prior.productName, unit: prior.unit });
+    const given = <T>(value: T | null | undefined) => (value === null ? undefined : value);
+    const changes = correctionChanges(prior, {
+      ...next,
+      productName: prior.productName,
+      unit: prior.unit,
+      notes: given(next.notes),
+      spruceItemCode: given(next.spruceItemCode),
+      supplierItemCode: given(next.supplierItemCode),
+    });
     return changes.length === 0 ? { action: 'UNCHANGED', rate: prior } : { action: 'CORRECT', corrects: prior, changes };
   }
 
