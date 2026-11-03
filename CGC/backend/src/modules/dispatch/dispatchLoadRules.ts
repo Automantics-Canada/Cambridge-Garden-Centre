@@ -219,12 +219,13 @@ export interface HaulLoad {
 }
 
 /**
- * One thing a trucking company bills CGC for: a single load, or a brokered
- * trip that served several orders.
+ * One thing a trucking company bills CGC for: a single load, a brokered trip
+ * that served several orders, or one load of such a trip billed on its own
+ * line (`tripLoadHaul`).
  */
 export interface BillableHaul {
   carrierSupplierId: string;
-  /** Null for a single load. */
+  /** The trip the haul is, or belongs to; null for a load on no trip. */
   tripRef: string | null;
   loadIds: string[];
   documentIds: string[];
@@ -235,9 +236,9 @@ export interface BillableHaul {
   rateConflict: boolean;
   /**
    * The expected quantity in `rateUnit`: a single load's own; for a trip by
-   * the tonne the tonnes of all its loads; a trip by the load is one load.
-   * Null when unknown, and for a trip by the hour (not yet known how the
-   * client records the hours of a shared trip).
+   * the load the number of its loads, and by the tonne the tonnes of all its
+   * loads. Null when unknown, and for a trip by the hour (not yet known how
+   * the client records the hours of a shared trip).
    */
   quantity: string | null;
   /** Every load of it is already paid by an invoice line. */
@@ -247,13 +248,20 @@ export interface BillableHaul {
 const decimalSum = (values: string[]) =>
   (Math.round(values.reduce((sum, value) => sum + Number(value) * 10_000, 0)) / 10_000).toString();
 
+/** A load's rate and unit as one comparable value. */
+const rateKey = (load: HaulLoad) => (load.rate === null ? 'none' : `${Number(load.rate)}|${load.rateUnit}`);
+
 /**
  * What a carrier can bill for, out of its loads: each load on its own, except
- * the loads of one trip, which are one haul at the trip's rate. The rate on
- * a trip's loads is the trip's rate repeated, never a share of it (the
- * client's A4: one brokered truck collects several POs), so a trip is checked
- * once against that rate and paid once. CGC's own trucks bill nobody and are
- * left out.
+ * the loads of one trip, which are also one haul together. CGC's own trucks
+ * bill nobody and are left out.
+ *
+ * The rate on a load is what that load costs (the client's A14: "a spot for a
+ * rate on every single dispatch load"), and a trip is the loads one brokered
+ * truck collected together (A4). So a carrier may bill a trip in two ways,
+ * and both cost the same: one line for the whole trip, its loads times the
+ * rate, or one line per load, each against its own load (`tripLoadHaul`).
+ * The matcher decides which a line is; either way a load is paid once.
  *
  * This is the contract the trucking-invoice matcher reads loads through.
  */
@@ -270,14 +278,14 @@ export function billableHauls(loads: HaulLoad[]): BillableHaul[] {
   return [...groups.values()].map(group => {
     const first = group[0]!;
     const trip = first.tripRef ? normaliseTripRef(first.tripRef) : null;
-    const rates = new Set(group.map(load => (load.rate === null ? 'none' : `${Number(load.rate)}|${load.rateUnit}`)));
-    const rateConflict = rates.size > 1;
+    const rateConflict = new Set(group.map(rateKey)).size > 1;
     const priced = !rateConflict && first.rate !== null;
     const unit = priced ? first.rateUnit : null;
 
     let quantity: string | null = null;
     if (!trip) quantity = first.quantity;
-    else if (unit === 'LOAD') quantity = '1';
+    // Each load counts as the loads dispatch expected on it, one unless it says otherwise.
+    else if (unit === 'LOAD') quantity = decimalSum(group.map(load => load.quantity ?? '1'));
     else if (unit === 'TONNE' && group.every(load => load.quantity !== null)) {
       quantity = decimalSum(group.map(load => load.quantity!));
     }
@@ -294,4 +302,25 @@ export function billableHauls(loads: HaulLoad[]): BillableHaul[] {
       claimed: group.every(load => load.claimedByLineItemId !== null),
     };
   });
+}
+
+/**
+ * One load of a brokered trip, billed on a line of its own: checked against
+ * that load's own rate and quantity, and paying only that load. The trip is
+ * kept as `tripRef` so the desk can say which trip it belongs to.
+ *
+ * Only for a load with a carrier: CGC's own trucks bill nobody.
+ */
+export function tripLoadHaul(load: HaulLoad & { carrierSupplierId: string }): BillableHaul {
+  return {
+    carrierSupplierId: load.carrierSupplierId,
+    tripRef: load.tripRef ? normaliseTripRef(load.tripRef) : null,
+    loadIds: [load.id],
+    documentIds: [load.documentId],
+    rate: load.rate,
+    rateUnit: load.rate === null ? null : load.rateUnit,
+    rateConflict: false,
+    quantity: load.quantity,
+    claimed: load.claimedByLineItemId !== null,
+  };
 }

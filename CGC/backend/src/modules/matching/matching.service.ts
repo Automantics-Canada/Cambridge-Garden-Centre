@@ -59,8 +59,11 @@ import { onSamePo, poKey } from './poKey.js';
  * 7: a trucking company's invoice lines are checked against the dispatch
  * loads they bill and the rate dispatch set (haulMatch.ts), not against
  * order lines and scale tickets.
+ * 8: a brokered trip may be billed load by load: a line whose ticket is the
+ * one dispatch wrote on one load of the trip bills (and claims) that load
+ * alone, and a whole-trip line by the load expects one load per trip load.
  */
-export const ENGINE_VERSION = 7;
+export const ENGINE_VERSION = 8;
 
 /**
  * `matchMethod` recorded for a link the engine made.

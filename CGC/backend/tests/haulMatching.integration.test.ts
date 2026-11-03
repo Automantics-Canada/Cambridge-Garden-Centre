@@ -300,13 +300,81 @@ describe('trucking invoices against dispatch loads (PostgreSQL)', { skip: !runna
 
   it('one line for a brokered trip claims every load of the trip', async () => {
     await prisma.dispatchLoad.updateMany({ where: { id: { in: [loads.A, loads.B] } }, data: { tripRef: 'TRIP-5' } });
-    const { lineIds } = await haulInvoice([{ poNumber: '700002' }]);
+    // Two loads at $185 a load: the trip billed whole is two loads.
+    const { lineIds } = await haulInvoice([{ poNumber: '700002', quantity: 2 }]);
     const verdict = await verdictOf(lineIds[0]!);
     assert.equal(verdict.status, 'MATCHED', verdict.reason);
     assert.deepEqual(new Set(verdict.loadIds), new Set([loads.A, loads.B]));
     assert.equal((await resolveMatchResult({ matchResultId: verdict.id, resolution: 'CONFIRMED', userId: USER_ID })).ok, true);
     assert.equal((await loadRow(loads.A)).claimedByLineItemId, lineIds[0]);
     assert.equal((await loadRow(loads.B)).claimedByLineItemId, lineIds[0]);
+  });
+
+  it('a trip billed one line per load: both lines pass and verifying pays each its own load', async () => {
+    await prisma.dispatchLoad.updateMany({ where: { id: { in: [loads.A, loads.B] } }, data: { tripRef: 'TRIP-6' } });
+    const { invoiceId, lineIds } = await haulInvoice([{ ticketNumber: 'TK-7001' }, { ticketNumber: 'TK-7002' }]);
+
+    for (const [index, key] of (['A', 'B'] as const).entries()) {
+      const verdict = await verdictOf(lineIds[index]!);
+      assert.equal(verdict.status, 'MATCHED', verdict.reason);
+      assert.deepEqual(verdict.loadIds, [loads[key]], 'one load of the trip, not the whole trip');
+      const line = await prisma.invoiceLineItem.findUniqueOrThrow({ where: { id: lineIds[index]! } });
+      assert.equal(Number(line.approvedTotal), 185);
+    }
+
+    const verified = await InvoiceService.verifyInvoice(invoiceId, USER_ID);
+    assert.ok(verified);
+    const [a, b] = await Promise.all([loadRow(loads.A), loadRow(loads.B)]);
+    assert.equal(a.claimedByLineItemId, lineIds[0]);
+    assert.equal(b.claimedByLineItemId, lineIds[1], 'the second load is not refused as already paid');
+    const verdicts = await Promise.all(lineIds.map(verdictOf));
+    assert.deepEqual(verdicts.map((verdict) => verdict.resolution), ['CONFIRMED', 'CONFIRMED']);
+  });
+
+  it('a whole-trip line and a line for one of its loads are caught as billing that load twice', async () => {
+    await prisma.dispatchLoad.updateMany({ where: { id: { in: [loads.A, loads.B] } }, data: { tripRef: 'TRIP-7' } });
+    const whole = await haulInvoice([{ poNumber: '700001', quantity: 2 }]);
+    const single = await haulInvoice([{ ticketNumber: 'TK-7002' }]);
+
+    const singleVerdict = await verdictOf(single.lineIds[0]!);
+    assert.deepEqual(singleVerdict.loadIds, [loads.B]);
+    assert.equal(singleVerdict.status, 'PARTIAL');
+    const duplicate = (singleVerdict.evidence as Array<{ name: string; passed: boolean; detail: string }>).find(
+      (check) => check.name === 'duplicateBilling'
+    );
+    assert.equal(duplicate?.passed, false);
+    assert.match(duplicate!.detail, /HAUL-0+\d+ line 1/);
+
+    // Once the trip line is paid, the load's own line is refused outright.
+    const wholeVerdict = await verdictOf(whole.lineIds[0]!);
+    assert.deepEqual(new Set(wholeVerdict.loadIds), new Set([loads.A, loads.B]));
+    const paid = await resolveMatchResult({
+      matchResultId: wholeVerdict.id, resolution: 'CONFIRMED', note: 'The trip, billed whole.', userId: USER_ID,
+    });
+    assert.equal(paid.ok, true);
+    const refused = await resolveMatchResult({
+      matchResultId: singleVerdict.id, resolution: 'CONFIRMED', note: 'Checked.', userId: USER_ID,
+    });
+    assert.equal(!refused.ok && refused.code, 'LOAD_ALREADY_CLAIMED');
+    assert.equal((await loadRow(loads.B)).claimedByLineItemId, whole.lineIds[0]);
+  });
+
+  it('an override onto an order of a trip billed load by load pays only that order\'s load', async () => {
+    await prisma.dispatchLoad.updateMany({ where: { id: { in: [loads.A, loads.B] } }, data: { tripRef: 'TRIP-8' } });
+    const first = await haulInvoice([{ ticketNumber: 'TK-7001' }]);
+    await resolveMatchResult({ matchResultId: (await verdictOf(first.lineIds[0]!)).id, resolution: 'CONFIRMED', userId: USER_ID });
+
+    // The second load's line is dated a month off, so the matcher finds no
+    // load for it, and a person says which order it was.
+    const second = await haulInvoice([{ serviceDate: new Date('2026-11-30T00:00:00.000Z') }]);
+    const verdict = await verdictOf(second.lineIds[0]!);
+    assert.equal(verdict.status, 'UNMATCHED', verdict.reason);
+    const outcome = await resolveMatchResult({
+      matchResultId: verdict.id, resolution: 'OVERRIDDEN', orderId: orderLines.B, note: 'The second load of the trip.', userId: USER_ID,
+    });
+    assert.equal(outcome.ok, true, JSON.stringify(outcome));
+    assert.equal((await loadRow(loads.B)).claimedByLineItemId, second.lineIds[0]);
+    assert.equal((await loadRow(loads.A)).claimedByLineItemId, first.lineIds[0]);
   });
 
   it('a rate above the dispatcher rate is RATE_MISMATCH, approved at the dispatcher rate', async () => {

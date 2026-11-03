@@ -96,7 +96,9 @@ class LoadClaimConflict extends Error {}
  * hauled. The verdict's own loads when they are on that order; otherwise the
  * order's loads by this carrier, grouped the way the matcher groups them
  * (a trip is one haul, a day at a time), leaving out hauls another line paid.
- * Null when the order had more than one such haul and nothing says which.
+ * A trip that other lines have started paying load by load gives only the
+ * chosen order's own unpaid load. Null when the order had more than one such
+ * haul and nothing says which.
  */
 async function overrideLoadIds(
   orderId: string,
@@ -109,8 +111,16 @@ async function overrideLoadIds(
   const documentId = order.documentId;
 
   if (verdictLoadIds.length > 0) {
-    const onOrder = await prisma.dispatchLoad.count({ where: { id: { in: verdictLoadIds }, documentId } });
-    if (onOrder > 0) return verdictLoadIds;
+    const verdictLoads = await prisma.dispatchLoad.findMany({
+      where: { id: { in: verdictLoadIds } },
+      select: { documentId: true, claimedByLineItemId: true },
+    });
+    // The verdict's haul, unless another line has since paid part of it (a
+    // trip billed load by load): then the order's own load is worked out below.
+    const unpaid = verdictLoads.every(
+      (load) => load.claimedByLineItemId === null || load.claimedByLineItemId === invoiceLineId
+    );
+    if (unpaid && verdictLoads.some((load) => load.documentId === documentId)) return verdictLoadIds;
   }
 
   const own = await prisma.dispatchLoad.findMany({
@@ -126,13 +136,19 @@ async function overrideLoadIds(
     carrierSupplierId,
     OR: [{ documentId }, ...(trips.length > 0 ? [{ tripRef: { in: trips } }] : [])],
   });
-  const hauls = haulCandidates(loads, carrierSupplierId, null, 0).filter(
-    (candidate) =>
-      candidate.haul.documentIds.includes(documentId) &&
-      candidate.loads.every((load) => load.claimedByLineItemId === null || load.claimedByLineItemId === invoiceLineId)
-  );
-  if (hauls.length === 1) return hauls[0]!.haul.loadIds;
-  return hauls.length === 0 ? [] : null;
+  const free = (load: { claimedByLineItemId: string | null }) =>
+    load.claimedByLineItemId === null || load.claimedByLineItemId === invoiceLineId;
+  const choices = haulCandidates(loads, carrierSupplierId, null, 0)
+    .filter((candidate) => candidate.haul.documentIds.includes(documentId))
+    .flatMap((candidate) => {
+      if (candidate.loads.every(free)) return [candidate.haul.loadIds];
+      // A trip the carrier is billing load by load, some loads already paid:
+      // this line can only be for the chosen order's own unpaid load of it.
+      if (!candidate.haul.tripRef) return [];
+      return candidate.loads.filter((load) => load.documentId === documentId && free(load)).map((load) => [load.id]);
+    });
+  if (choices.length === 1) return choices[0]!;
+  return choices.length === 0 ? [] : null;
 }
 
 export async function resolveMatchResult(params: {

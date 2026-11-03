@@ -20,8 +20,9 @@ import {
  * dispatched and it is matched up when the invoice comes in").
  *
  * Every case is one CGC could pay a hauler wrongly over: the wrong load, a
- * rate above what dispatch agreed, a trip paid once per order, a load paid
- * twice, a guess passed off as a match. Every name and number is invented.
+ * rate above what dispatch agreed, a trip's load paid twice (once on the
+ * trip's line, once on its own), a load paid twice, a guess passed off as a
+ * match, or a fair line refused. Every name and number is invented.
  */
 
 const CARRIER = 'carrier-example-haulage';
@@ -174,26 +175,29 @@ describe('finding the load', () => {
 
 describe('a brokered trip (A4: one truck, several POs)', () => {
   const trip = () => [
-    load({ tripRef: 'T-12', poNumbers: ['2608-100001'], quantity: '20', rate: '150', rateUnit: 'LOAD' }),
-    load({ tripRef: 'T-12', poNumbers: ['2608-100002'], quantity: '18', rate: '150', rateUnit: 'LOAD' }),
+    load({ tripRef: 'T-12', poNumbers: ['2608-100001'], rate: '150', rateUnit: 'LOAD' }),
+    load({ tripRef: 'T-12', poNumbers: ['2608-100002'], rate: '150', rateUnit: 'LOAD' }),
     load({ tripRef: 'T-12', poNumbers: ['2608-100003'], rate: '150', rateUnit: 'LOAD' }),
   ];
 
-  test('one invoice line at the trip rate covers every load of the trip', () => {
+  test('one invoice line for the whole trip bills every load of it at the rate', () => {
     const loads = trip();
-    const decision = matchHaulLine(line({ poNumber: '100002', unitRate: 150 }), loads, { tolerances });
-    assert.equal(decision.status, 'MATCHED');
+    const decision = matchHaulLine(line({ poNumber: '100002', unitRate: 150, quantity: 3 }), loads, { tolerances });
+    assert.equal(decision.status, 'MATCHED', decision.reason);
     assert.deepEqual(decision.loadIds, loads.map((entry) => entry.id));
     assert.equal(decision.totals?.agreedRate, 150);
+    assert.equal(check(decision, 'haulQuantity')!.expected, 3);
   });
 
-  test('billing the trip once per order is three loads where dispatch expected one', () => {
-    const decision = matchHaulLine(line({ poNumber: '100002', unitRate: 150, quantity: 3 }), trip(), { tolerances });
+  test('a whole-trip line billing fewer loads than the trip had is for a person', () => {
+    // Nothing on the line names one load, so it is read as the trip: one
+    // load billed for three is not passed (the others may come on their own lines).
+    const decision = matchHaulLine(line({ poNumber: '100002', unitRate: 150, quantity: 1 }), trip(), { tolerances });
     assert.equal(decision.status, 'PARTIAL');
     const quantity = check(decision, 'haulQuantity')!;
     assert.equal(quantity.passed, false);
-    assert.equal(quantity.expected, 1);
-    assert.equal(decision.totals?.quantityDiscrepancy, 2);
+    assert.equal(quantity.expected, 3);
+    assert.match(quantity.detail, /trip T-12 has 3 loads/);
   });
 
   test('a trip whose loads carry different rates is for dispatch to settle', () => {
@@ -244,6 +248,132 @@ describe('a brokered trip (A4: one truck, several POs)', () => {
     const nextWeek = load({ tripRef: 'T-12', poNumbers: ['2608-100001'], haulDate: daysFrom(DAY, 9) });
     const decision = matchHaulLine(line({ poNumber: '100001' }), [nextWeek], { tolerances });
     assert.equal(decision.status, 'UNMATCHED');
+  });
+});
+
+describe('a brokered trip billed load by load (Q14: a rate on every load)', () => {
+  const trip = (unit: 'LOAD' | 'TONNE' | 'HOUR' = 'LOAD') => [
+    load({ tripRef: 'T-30', ticketNumber: 'DX-1101', poNumbers: ['2608-200001'], rate: '140', rateUnit: unit, quantity: unit === 'LOAD' ? '1' : '14' }),
+    load({ tripRef: 'T-30', ticketNumber: 'DX-1102', poNumbers: ['2608-200002'], rate: '140', rateUnit: unit, quantity: unit === 'LOAD' ? '1' : '16' }),
+  ];
+
+  test("a line whose ticket names one load of the trip bills that load alone", () => {
+    const [first, second] = trip();
+    const decision = matchHaulLine(line({ ticketNumber: 'DX-1102', unitRate: 140 }), [first!, second!], { tolerances });
+    assert.equal(decision.status, 'MATCHED', decision.reason);
+    assert.deepEqual(decision.loadIds, [second!.id]);
+    assert.equal(decision.orderId, second!.orderLineId);
+    assert.equal(decision.totals?.agreedRate, 140);
+    assert.match(check(decision, 'haulLoad')!.detail, /load 1 of trip T-30/);
+    assert.equal(check(decision, 'haulQuantity')!.expected, 1);
+  });
+
+  test('two lines for the two loads of a trip both pass, each with its own load', () => {
+    const loads = trip();
+    const one = matchHaulLine(line({ id: 'line-1', ticketNumber: 'DX-1101', unitRate: 140 }), loads, { tolerances });
+    const two = matchHaulLine(line({ id: 'line-2', ticketNumber: 'DX-1102', unitRate: 140 }), loads, {
+      tolerances,
+      // The first line's verdict is open: it counts another load, so it is no repeat.
+      competingLines: [{ invoiceLineId: 'line-1', invoiceNumber: 'DX-301', lineNumber: 1, loadIds: one.loadIds }],
+    });
+    assert.equal(one.status, 'MATCHED', one.reason);
+    assert.equal(two.status, 'MATCHED', two.reason);
+    assert.deepEqual([...one.loadIds, ...two.loadIds], loads.map((entry) => entry.id));
+    assert.equal(check(two, 'duplicateBilling'), undefined);
+  });
+
+  test("the first load paid does not make the trip's next load already paid", () => {
+    const [first, second] = trip();
+    first!.claimedByLineItemId = 'line-paid';
+    first!.claim = { invoiceNumber: 'DX-300', lineNumber: 1 };
+    const decision = matchHaulLine(line({ ticketNumber: 'DX-1102', unitRate: 140 }), [first!, second!], { tolerances });
+    assert.equal(decision.status, 'MATCHED', decision.reason);
+    assert.equal(check(decision, 'loadReuse')!.passed, true);
+    assert.deepEqual(decision.loadIds, [second!.id]);
+  });
+
+  test('a load billed on its own line is refused again on a later whole-trip line', () => {
+    const [first, second] = trip();
+    first!.claimedByLineItemId = 'line-paid';
+    first!.claim = { invoiceNumber: 'DX-300', lineNumber: 1 };
+    const decision = matchHaulLine(line({ poNumber: '200002', unitRate: 140, quantity: 2 }), [first!, second!], { tolerances });
+    assert.equal(decision.status, 'PARTIAL');
+    assert.deepEqual(decision.loadIds, [first!.id, second!.id]);
+    const reuse = check(decision, 'loadReuse')!;
+    assert.equal(reuse.code, 'LOAD_ALREADY_CLAIMED');
+    assert.match(reuse.detail, /load 1 of trip T-30 was already paid on invoice DX-300 line 1/);
+  });
+
+  test('a whole-trip line and a line for one of its loads, both open, are double billing', () => {
+    const loads = trip();
+    const whole = matchHaulLine(line({ id: 'line-1', poNumber: '200001', unitRate: 140, quantity: 2 }), loads, { tolerances });
+    assert.equal(whole.status, 'MATCHED', whole.reason);
+    assert.equal(whole.loadIds.length, 2);
+    const single = matchHaulLine(line({ id: 'line-2', ticketNumber: 'DX-1101', unitRate: 140 }), loads, {
+      tolerances,
+      competingLines: [{ invoiceLineId: 'line-1', invoiceNumber: 'DX-301', lineNumber: 1, loadIds: whole.loadIds }],
+    });
+    assert.deepEqual(single.loadIds, [loads[0]!.id]);
+    assert.equal(single.status, 'PARTIAL');
+    assert.equal(check(single, 'duplicateBilling')!.passed, false);
+    assert.match(check(single, 'duplicateBilling')!.detail, /DX-301 line 1/);
+  });
+
+  test("a line quoting one load's ticket but billing the whole trip is the whole trip", () => {
+    const loads = trip();
+    const decision = matchHaulLine(line({ ticketNumber: 'DX-1101', unitRate: 140, quantity: 2 }), loads, { tolerances });
+    assert.equal(decision.status, 'MATCHED', decision.reason);
+    assert.deepEqual(decision.loadIds, loads.map((entry) => entry.id));
+  });
+
+  test('by the tonne, a load billed on its own is checked against its own tonnes', () => {
+    const [first, second] = trip('TONNE');
+    const decision = matchHaulLine(
+      line({ ticketNumber: 'DX-1102', unit: 'tonnes', unitRate: 140, quantity: 16 }), [first!, second!], { tolerances }
+    );
+    assert.equal(decision.status, 'MATCHED', decision.reason);
+    assert.deepEqual(decision.loadIds, [second!.id]);
+    assert.equal(check(decision, 'haulQuantity')!.expected, 16);
+    const whole = matchHaulLine(
+      line({ ticketNumber: 'DX-1102', unit: 'tonnes', unitRate: 140, quantity: 30 }), [first!, second!], { tolerances }
+    );
+    assert.deepEqual(whole.loadIds, [first!.id, second!.id], '30 t is the whole trip, not the 16 t load');
+  });
+
+  test('a trip by the hour is billed whole whatever ticket the line quotes', () => {
+    const loads = trip('HOUR');
+    const decision = matchHaulLine(line({ ticketNumber: 'DX-1101', unit: 'hr', unitRate: 140, quantity: 6 }), loads, { tolerances });
+    assert.deepEqual(decision.loadIds, loads.map((entry) => entry.id));
+  });
+
+  test('a ticket the trip shares names the trip, not one load', () => {
+    const loads = trip();
+    for (const entry of loads) entry.ticketNumber = 'DX-TRIP-9';
+    const decision = matchHaulLine(line({ ticketNumber: 'DX-TRIP-9', unitRate: 140, quantity: 2 }), loads, { tolerances });
+    assert.equal(decision.status, 'MATCHED', decision.reason);
+    assert.deepEqual(decision.loadIds, loads.map((entry) => entry.id));
+  });
+
+  test("one load of a trip is checked against its own rate, though the trip's rates differ", () => {
+    const [first, second] = trip();
+    second!.rate = '150';
+    const own = matchHaulLine(line({ ticketNumber: 'DX-1102', unitRate: 150 }), [first!, second!], { tolerances });
+    assert.equal(own.status, 'MATCHED', own.reason);
+    assert.equal(own.totals?.agreedRate, 150);
+    // Billed whole, nobody can say which rate the trip is at.
+    const whole = matchHaulLine(line({ poNumber: '200001', unitRate: 140, quantity: 2 }), [first!, second!], { tolerances });
+    assert.equal(check(whole, 'haulRate')!.code, 'TRIP_RATES_DIFFER');
+  });
+
+  test("one load of a trip whose reference also falls on another day is still shown to a person", () => {
+    const [first, second] = trip();
+    const later = load({ tripRef: 'T-30', poNumbers: ['2608-200009'], rate: '140', haulDate: daysFrom(DAY, 2) });
+    const decision = matchHaulLine(line({ ticketNumber: 'DX-1101', unitRate: 140 }), [first!, second!, later], { tolerances });
+    assert.deepEqual(decision.loadIds, [first!.id]);
+    const spans = check(decision, 'haulTrip')!;
+    assert.equal(spans.code, 'TRIP_SPANS_DAYS');
+    assert.equal(spans.found, 1, "the same day's other load is not another day");
+    assert.match(spans.detail, /Only \d+ load 1 is counted on this line/);
   });
 });
 

@@ -515,8 +515,9 @@ export const DispatchLoadsService = {
   },
 
   /**
-   * Gives every other load of this load's trip the same rate and unit: a
-   * brokered trip is billed once, at one rate (A4). Loads already paid, and
+   * Gives every other load of this load's trip the same rate and unit: the
+   * loads one brokered truck collected together (A4) are priced alike,
+   * whether the carrier bills the trip on one line or load by load. Loads already paid, and
    * loads on an order that is now a quotation, are left as they are and
    * counted as skipped.
    */

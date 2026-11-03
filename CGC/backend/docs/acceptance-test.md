@@ -117,8 +117,8 @@ any table, nor a stored file, changes.
 whole; a material invoice line finds its agreed rate by the Spruce item code
 although the price list words the product differently. Dispatch sets one rate
 on the two loads of a brokered trip, $200 on another load, and leaves one load
-unpriced. The carrier's invoice is checked per line: the trip line passes at
-rate x quantity, the line 5% over is a rate mismatch approved at $200, the
+unpriced. The carrier's invoice is checked per line: the line billing the
+whole trip (two loads) passes at rate x quantity, the line 5% over is a rate mismatch approved at $200, the
 unpriced load says "No haul rate set". Verifying is refused until every
 finding is settled; dispatch then sets the missing rate (the waiting line is
 re-checked by itself), AP accepts the over-billed line at the agreed rate, and
