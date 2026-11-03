@@ -9,3 +9,7 @@ ocr_debug.log
 # the extraction eval's golden set, and documents downloaded for processing.
 .extraction-eval/
 .temp-ocr/
+
+# The client's sample invoices (A13) and the dry-run report written beside them.
+# Sent directly to us, never loaded into production, never committed.
+.samples/

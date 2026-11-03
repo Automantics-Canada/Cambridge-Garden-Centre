@@ -1,0 +1,68 @@
+{
+  "notes": "Invented example of the records a sample is matched against. Write one from the Spruce order/PO numbers, the driver tickets and the agreed rates the client sends. Suppliers are referred to by id or by exact name.",
+  "tolerances": { "quantityTolerancePct": 2, "dateWindowDays": 3, "priceTolerancePct": 1 },
+  "suppliers": [
+    { "id": "sup-example-aggregates", "name": "Example Aggregates Ltd.", "type": "SUPPLIER" },
+    { "id": "sup-sample-haulage", "name": "Sample Haulage Inc.", "type": "TRUCKING_COMPANY" }
+  ],
+  "aliases": [
+    { "supplier": "sup-example-aggregates", "aliasText": "3/4 Clear Stone", "productName": "Test Clear Stone 19mm" }
+  ],
+  "orders": [
+    {
+      "id": "ord-990101-1",
+      "orderNumber": "990101",
+      "poNumber": "2610-900101",
+      "product": "Test Clear Stone 19mm",
+      "quantity": 30,
+      "unit": "tonne",
+      "supplier": "sup-example-aggregates",
+      "orderDate": "2026-10-21",
+      "spruceItemNumber": "TESTCLR19"
+    },
+    {
+      "id": "ord-990102-1",
+      "orderNumber": "990102",
+      "poNumber": "2610-900102",
+      "product": "Test Screened Sand",
+      "quantity": 12,
+      "unit": "tonne",
+      "supplier": "Example Aggregates Ltd.",
+      "orderDate": "2026-10-21"
+    },
+    {
+      "id": "ord-990103-1",
+      "orderNumber": "990103",
+      "poNumber": "2610-900103",
+      "product": "Test Haul Triaxle",
+      "quantity": 4,
+      "unit": "load",
+      "supplier": "sup-sample-haulage",
+      "orderDate": "2026-10-22"
+    },
+    {
+      "id": "ord-990199-1",
+      "orderNumber": "990199",
+      "poNumber": "2610-900101",
+      "product": "Test Clear Stone 19mm",
+      "quantity": 30,
+      "unit": "tonne",
+      "supplier": "sup-example-aggregates",
+      "orderDate": "2026-10-20",
+      "quote": true
+    }
+  ],
+  "tickets": [
+    { "id": "t-1", "ticketNumber": "EX-70011", "poNumber": "2610-900101", "quantity": 15.1, "unit": "t", "material": "Test Clear Stone 19mm", "supplier": "sup-example-aggregates", "ticketDate": "2026-10-21", "source": "MANUAL" },
+    { "id": "t-2", "ticketNumber": "EX-70012", "poNumber": "2610-900101", "quantity": 14.9, "unit": "t", "material": "Test Clear Stone 19mm", "supplier": null, "ticketDate": "2026-10-21", "source": "WHATSAPP" },
+    { "id": "t-3", "ticketNumber": "EX-70013", "poNumber": "2610-900102", "quantity": 12, "unit": "t", "material": "Test Screened Sand", "supplier": "sup-example-aggregates", "ticketDate": "2026-10-21", "source": "MANUAL" },
+    { "id": "t-4", "ticketNumber": "SH-501", "poNumber": "2610-900103", "quantity": 1, "unit": "load", "material": "Test Haul Triaxle", "supplier": "sup-sample-haulage", "ticketDate": "2026-10-22", "source": "MANUAL", "claimedBy": { "invoiceNumber": "SH-2026-101", "lineNumber": 1 } }
+  ],
+  "rates": [
+    { "supplier": "sup-example-aggregates", "productName": "Test Clear Stone 19mm", "rate": 31.5, "unit": "tonne", "effectiveFrom": "2026-01-01", "spruceItemCode": "TESTCLR19" },
+    { "supplier": "sup-sample-haulage", "productName": "Test Haul Triaxle", "rate": 225, "unit": "load", "effectiveFrom": "2026-01-01" }
+  ],
+  "openInvoiceLines": [
+    { "invoiceNumber": "SH-2026-099", "lineNumber": 2, "poNumber": "2610-900103", "supplier": "sup-sample-haulage", "invoiceDate": "2026-10-20" }
+  ]
+}
