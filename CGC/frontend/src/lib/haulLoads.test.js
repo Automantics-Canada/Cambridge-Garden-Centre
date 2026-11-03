@@ -7,6 +7,7 @@ import {
   formatHaulRate,
   loadForm,
   loadSummary,
+  loadedAtSuppliers,
   needsHaulRate,
   newLoadForm,
   suggestedCarrier,
@@ -138,5 +139,17 @@ describe('tripText', () => {
     expect(tripText({ tripRef: 'T-21' })).toBe('Trip T-21');
     expect(tripText({ tripRef: 'T-21', trip: { loads: 2, orders: ['9900-1', '9900-2'], sameRate: true } }))
       .toBe('Trip T-21: 2 loads, 9900-1, 9900-2');
+  });
+});
+
+describe('loadedAtSuppliers', () => {
+  it('never offers a trucking company as where a load was loaded', () => {
+    const suppliers = [
+      { id: 's1', name: 'Example Pit', type: 'SUPPLIER' },
+      { id: 't1', name: 'Example Haulage', type: 'TRUCKING_COMPANY' },
+      { id: 's2', name: 'Untyped Yard' },
+    ];
+    expect(loadedAtSuppliers(suppliers).map((supplier) => supplier.id)).toEqual(['s1', 's2']);
+    expect(loadedAtSuppliers(undefined)).toEqual([]);
   });
 });
