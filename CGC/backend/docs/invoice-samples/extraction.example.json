@@ -1,0 +1,36 @@
+{
+  "triage": {
+    "pages": [
+      { "page": 1, "kind": "invoice" },
+      { "page": 2, "kind": "invoice" },
+      { "page": 3, "kind": "delivery_ticket" }
+    ]
+  },
+  "invoice": {
+    "supplierName": "Example Aggregates Ltd.",
+    "invoiceNumber": "INV-55001",
+    "date": "2026-10-22",
+    "poNumber": null,
+    "totalAmount": 1491.84,
+    "lineItems": [
+      { "description": "3/4 Clear Stone", "quantity": 30, "unit": "t", "unitPrice": 31.5, "totalPrice": 945, "poNumber": "2610-900101" },
+      { "description": "Test Screened Sand", "quantity": 12, "unit": "t", "unitPrice": 24.75, "totalPrice": 297, "poNumber": "2610-900102" },
+      { "description": "Fuel surcharge", "quantity": 1, "unit": "ld", "unitPrice": 78.21, "totalPrice": 78.21, "poNumber": "2610-900102" }
+    ],
+    "readability": "clear",
+    "uncertainFields": []
+  },
+  "tickets": {
+    "3": {
+      "supplierName": "Example Aggregates Ltd.",
+      "date": "2026-10-21",
+      "ticketNumber": "EX-70013",
+      "poNumber": "2610-900102",
+      "material": "Test Screened Sand",
+      "quantity": 12,
+      "unit": "t",
+      "readability": "clear",
+      "uncertainFields": []
+    }
+  }
+}
