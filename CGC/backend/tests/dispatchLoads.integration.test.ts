@@ -327,4 +327,53 @@ describe('dispatch loads (PostgreSQL)', { skip: !runnable }, () => {
     const run = boardAfter.drivers.find((driver: { id: string }) => driver.id === broker.id);
     assert.equal(run.deliveries[0].order.haulLoads.length, 2);
   });
+
+  it('moves the loads\' brokered driver with the stop, but not a paid load or a driver named on purpose', async () => {
+    const haulage = await supplier('Example Haulage', 'TRUCKING_COMPANY');
+    const { document } = await seedOrder('9900-100011');
+    const brokerA = await prisma.driver.create({ data: { name: 'Example Broker A', phone: '519-555-0721', type: 'INDEPENDENT' } });
+    const brokerB = await prisma.driver.create({ data: { name: 'Example Broker B', phone: '519-555-0722', type: 'INDEPENDENT' } });
+    const brokerC = await prisma.driver.create({ data: { name: 'Example Broker C', phone: '519-555-0723', type: 'INDEPENDENT' } });
+    const fleet = await prisma.driver.create({ data: { name: 'Example Fleet Driver', phone: '519-555-0724', type: 'CGC_FLEET' } });
+
+    // A load waiting in the pool takes the brokered driver it is given to.
+    const pooled = await api('POST', `/api/dispatch/orders/${document.id}/loads`, { carrierSupplierId: haulage.id });
+    assert.equal(pooled.body.driverId, null);
+    assert.equal((await api('POST', '/api/dispatch/assign', { documentId: document.id, driverId: brokerA.id })).status, 200);
+    const driverOf = async (id: string) => (await prisma.dispatchLoad.findUniqueOrThrow({ where: { id } })).driverId;
+    assert.equal(await driverOf(pooled.body.id), brokerA.id);
+
+    const onPurpose = await api('POST', `/api/dispatch/orders/${document.id}/loads`, { driverId: brokerC.id });
+    const paid = await api('POST', `/api/dispatch/orders/${document.id}/loads`, { carrierSupplierId: haulage.id, rate: '90', rateUnit: 'LOAD' });
+    assert.equal(paid.body.driverId, brokerA.id);
+    const invoice = await prisma.invoice.create({
+      data: {
+        invoiceNumber: 'INV-EX-2', senderType: 'TRUCKING_COMPANY', supplierId: haulage.id, invoiceDate: today(),
+        totalAmount: 90, currency: 'CAD', fileUrl: 'test://invoice', emailFrom: 'billing@haulage.example',
+        emailSubject: 'Invoice', gmailMessageId: 'loads-test-2',
+      },
+    });
+    const line = await prisma.invoiceLineItem.create({
+      data: { invoiceId: invoice.id, lineNumber: 1, description: 'Haul', quantity: 1, unit: 'LOAD', unitRate: 90, lineTotal: 90, flag: 'OK' },
+    });
+    await prisma.dispatchLoad.update({ where: { id: paid.body.id }, data: { claimedByLineItemId: line.id, claimedAt: new Date() } });
+
+    // Moved to another brokered truck: the loads that went with A go with B.
+    assert.equal((await api('POST', '/api/dispatch/assign', { documentId: document.id, driverId: brokerB.id })).status, 200);
+    assert.equal(await driverOf(pooled.body.id), brokerB.id);
+    assert.equal(await driverOf(onPurpose.body.id), brokerC.id);
+    assert.equal(await driverOf(paid.body.id), brokerA.id, 'a paid load keeps its driver');
+
+    // Moved to a CGC truck: no brokered driver is named any more.
+    assert.equal((await api('POST', '/api/dispatch/assign', { documentId: document.id, driverId: fleet.id })).status, 200);
+    assert.equal(await driverOf(pooled.body.id), null);
+    assert.equal(await driverOf(onPurpose.body.id), brokerC.id);
+
+    // Back to a broker, then off any truck.
+    assert.equal((await api('POST', '/api/dispatch/assign', { documentId: document.id, driverId: brokerB.id })).status, 200);
+    assert.equal(await driverOf(pooled.body.id), brokerB.id);
+    assert.equal((await api('POST', '/api/dispatch/unassign', { documentId: document.id })).status, 200);
+    assert.equal(await driverOf(pooled.body.id), null);
+    assert.equal(await driverOf(onPurpose.body.id), brokerC.id);
+  });
 });

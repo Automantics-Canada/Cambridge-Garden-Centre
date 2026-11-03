@@ -119,7 +119,8 @@ function toView(row: LoadRow, trips: Map<string, TripSummary>): DispatchLoadView
     ticketNumber: row.ticketNumber,
     notes: row.notes,
     claimed: row.claimedByLineItemId !== null,
-    claimedAt: row.claimedAt,
+    // The paying line can be deleted (the key clears, the date does not).
+    claimedAt: row.claimedByLineItemId !== null ? row.claimedAt : null,
     setByName: row.setBy?.name ?? null,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
@@ -329,6 +330,35 @@ async function loadFor(tx: Prisma.TransactionClient, loadId: string) {
     : null;
   if (!load) throw new DispatchLoadError(404, 'That load no longer exists. Refresh the board.');
   return load;
+}
+
+/**
+ * When an order's stop moves to another truck, the loads that went with the
+ * old truck go with the new one: a brokered (INDEPENDENT) driver is named on
+ * them, any other driver leaves them unnamed. Without this a load keeps the
+ * first brokered driver for good (the board's form has no driver field), and
+ * the "No haul rate" badge and the matcher would still read that driver after
+ * dispatch moved the order to a CGC truck.
+ *
+ * Only loads that named the stop's old driver, or no driver, move; a driver
+ * set on purpose to someone else stays. A paid load keeps its figures.
+ */
+export async function loadsFollowStopDriver(
+  tx: Pick<Prisma.TransactionClient, 'dispatchLoad'>,
+  documentId: string,
+  fromDriverId: string | null,
+  to: { id: string; type: string } | null
+) {
+  const toDriverId = to?.type === 'INDEPENDENT' ? to.id : null;
+  // Moving to no brokered driver only clears the old one's name.
+  const named = toDriverId
+    ? [{ driverId: null }, ...(fromDriverId ? [{ driverId: fromDriverId }] : [])]
+    : fromDriverId ? [{ driverId: fromDriverId }] : [];
+  if (named.length === 0) return;
+  await tx.dispatchLoad.updateMany({
+    where: { documentId, claimedByLineItemId: null, OR: named },
+    data: { driverId: toDriverId },
+  });
 }
 
 const CLAIMED_MESSAGE = 'This load is already paid on a trucking invoice, so its figures are locked. Only the note can change.';
