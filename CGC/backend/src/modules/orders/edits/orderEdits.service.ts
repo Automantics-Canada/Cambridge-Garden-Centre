@@ -243,6 +243,9 @@ async function applyFulfilmentEdits(db: Db, row: FulfilmentColumns, edits: Parse
     data.pickupSupplierId = edits.pickupSupplierId;
     changes.push({ field: 'pickupSupplierId', lineId: null, from: row.pickupSupplierId, to: edits.pickupSupplierId });
   }
+  // Nor can a yard be named on its own: with no supplier chosen, it stays empty.
+  const supplierId = edits.pickupSupplierId !== undefined ? edits.pickupSupplierId : row.pickupSupplierId;
+  if (supplierId === null && location !== undefined) location = null;
 
   if (location !== undefined && location !== row.pickupLocation) {
     data.pickupLocation = location;

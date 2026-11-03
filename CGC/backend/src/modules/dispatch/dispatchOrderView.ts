@@ -449,8 +449,9 @@ type PickupLine = {
 
 /**
  * Where a driver loads an order, from how it reaches the customer: the places
- * of a delivery via a supplier or pit, and nothing for the other types (CGC's
- * own yard, or no CGC truck at all).
+ * of a delivery via a supplier or pit, or of a supplier pickup a CGC truck
+ * has anyway, and nothing for the other types (CGC's own yard, or no CGC
+ * truck at all).
  *
  * The same places the office sees, so dispatch and the driver never disagree:
  * an FOB order dispatch sends a CGC truck for goes to the FOB yard, a pit
@@ -462,7 +463,11 @@ type PickupLine = {
  * to the driver's phone.
  */
 export function driverPickupsOf(fulfilment: Fulfilment | undefined | null): PickupFrom[] {
-  if (fulfilment?.type !== 'supplier_haul_delivery') return [];
+  // A supplier pickup has no CGC driver as a rule; one that has a stop on a
+  // truck anyway (given out before dispatch set the type, or assigned before
+  // FOB orders counted as the customer's) is the CGC truck collecting there,
+  // so it goes to that supplier, never to CGC's yard where the goods are not.
+  if (fulfilment?.type !== 'supplier_haul_delivery' && fulfilment?.type !== 'external_pickup') return [];
   return fulfilment.places
     .filter(place => place.name)
     .map(({ name, location, address, po }) => ({ name, location, address, po }));

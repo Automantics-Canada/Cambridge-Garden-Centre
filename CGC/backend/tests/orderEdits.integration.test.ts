@@ -363,6 +363,10 @@ describe('dispatch sets how an order reaches the customer (PostgreSQL)', { skip:
       ['pickupLocation', null],
     ]);
 
+    // A yard of no supplier is not stored: the request changes nothing.
+    assert.deepEqual(await applyOrderEdits(id, parseEditRequest({ pickupLocation: 'Nowhere' }), userId), []);
+    assert.equal((await order('2608-700001')).pickupLocation, null);
+
     // A deleted supplier leaves the order, without its pit.
     await applyOrderEdits(id, parseEditRequest({ pickupSupplierId: pit.id }), userId);
     await prisma.supplier.delete({ where: { id: pit.id } });

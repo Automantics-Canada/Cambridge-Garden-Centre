@@ -277,4 +277,19 @@ describe('where a driver loads first (PostgreSQL)', { skip: !disposableConfirmed
     assert.deepEqual(now.pickupFrom, [{ name: 'Unilock', location: 'Ayr', address: null, po: '9900-100904' }]);
     assert.equal(JSON.stringify(now).includes('fulfilmentOverride'), false, 'the office\'s choice stays in the office');
   });
+
+  // Given to a driver before FOB orders counted as the customer's, or before
+  // dispatch set the type: the truck still collects at the FOB yard, never at
+  // CGC's yard, where the goods are not.
+  it('an FOB order already on a truck with no type set: the FOB yard, not CGC\'s yard', async () => {
+    const vendor = { poNumber: '9900-100905', vendorCode: 'UNILOCKL01', vendorLocation: 'Georgetown' };
+    await stop('9900-000905', [
+      { spruceItemNumber: 'BHS6CSR', product: 'Example Paver 60mm', lineClass: 'PRODUCT', ...vendor },
+      { spruceItemNumber: 'COMMENT', product: 'FOB UNILOCK AYR', lineClass: 'COMMENT', ...vendor },
+    ]);
+
+    const now = await current();
+    assert.deepEqual(now.pickupFrom, [{ name: 'Unilock', location: 'Ayr', address: null, po: '9900-100905' }]);
+    assert.equal(now.pickupAtPit, false);
+  });
 });

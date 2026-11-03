@@ -283,10 +283,19 @@ describe('where the driver loads', () => {
 
   it('leaves out a pit nobody named, and sends nobody to a supplier for the other types', () => {
     assert.deepEqual(driverPickupsOf(haul([{ name: null, location: null, address: null, po: null }])), []);
-    for (const type of ['yard_delivery', 'yard_pickup', 'external_pickup', 'supplier_direct_ship'] as const) {
+    for (const type of ['yard_delivery', 'yard_pickup', 'supplier_direct_ship'] as const) {
       assert.deepEqual(driverPickupsOf({ type, places: [{ name: 'Example', location: null, address: null, po: '9900-1' }], signal: null, checks: [] }), [], type);
     }
     assert.deepEqual(driverPickupsOf(undefined), []);
+  });
+
+  // An FOB order already on a truck (assigned before FOB orders counted as the
+  // customer's, or before dispatch set the type): the CGC truck collects at
+  // the supplier. Sending it to CGC's yard would send it where the goods are not.
+  it('sends a driver who has a supplier pickup to that supplier, never to the yard', () => {
+    const place = { name: 'Example Supply', location: 'North', address: null, po: '9900-1', extra: 'never sent' };
+    const pickups = driverPickupsOf({ type: 'external_pickup', places: [place], signal: null, checks: [] });
+    assert.deepEqual(pickups, [{ name: 'Example Supply', location: 'North', address: null, po: '9900-1' }]);
   });
 });
 

@@ -56,7 +56,9 @@ describe('supplier delivery wording (D1, D2): CGC work, noted', () => {
       ],
     }));
     assert.equal(result.type, 'yard_delivery');
-    assert.deepEqual(result.checks, ['SUPPLIER_DELIVERY_NOTED', 'NOT_IN_ORDER_REPORT', 'NOT_ON_DELIVERIES_REPORT']);
+    // No NOT_ON_DELIVERIES_REPORT: the supplier's line is not CGC's charge, so
+    // nothing says a CGC truck already took it.
+    assert.deepEqual(result.checks, ['SUPPLIER_DELIVERY_NOTED', 'NOT_IN_ORDER_REPORT']);
     assert.deepEqual(result.signal, { id: 'D1', text: 'Unilock Direct Delivery' });
   });
 
@@ -76,6 +78,12 @@ describe('supplier delivery wording (D1, D2): CGC work, noted', () => {
     assert.equal(result.type, 'supplier_haul_delivery');
     assert.deepEqual(result.places, [{ name: 'Rinox', location: null, address: null, po: '2610-300001' }]);
     assert.ok(result.checks.includes('SUPPLIER_DELIVERY_NOTED'));
+  });
+
+  it('never calls an undated order with supplier wording and no CGC charge likely delivered', () => {
+    const result = classifyFulfilment(order({ isPickup: false, orderNotes: 'Drop ship to site', lines: [line({ itemCode: 'P90' })] }));
+    assert.equal(result.type, 'yard_delivery');
+    assert.deepEqual(result.checks, ['SUPPLIER_DELIVERY_NOTED']);
   });
 
   it('never reads CGC\'s own delivery charges as supplier wording', () => {

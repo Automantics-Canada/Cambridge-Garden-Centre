@@ -76,9 +76,9 @@ export type FulfilmentCheck =
    */
   | 'SUPPLIER_DELIVERY_NOTED'
   /**
-   * A CGC delivery with no date that no Deliveries report has listed. The
-   * client (Oct 2026): such an order, with a delivery charge, is a delivery
-   * that was most likely done already, on an earlier day's report.
+   * A CGC delivery with no date that no Deliveries report has listed, a
+   * delivery only because a line charges for one. The client (Oct 2026): such
+   * an order was most likely done already, on an earlier day's report.
    */
   | 'NOT_ON_DELIVERIES_REPORT'
   | 'PICKUP_AND_DIRECT_BOTH_NOTED';
@@ -383,9 +383,11 @@ export function classifyFulfilment(order: FulfilmentInput): Fulfilment {
       noted.push('SUPPLIER_DELIVERY_NOTED');
       if (!order.sourceReports.includes('ORDER_SUMMARY')) noted.push('NOT_IN_ORDER_REPORT');
     }
-    // Undated and on no Deliveries report: most likely delivered already, on
-    // a day before the app saw its report (client, Oct 2026).
-    if (!order.deliveryDate && !scheduled) noted.push('NOT_ON_DELIVERIES_REPORT');
+    // Undated, on no Deliveries report, and a delivery only because a line
+    // charges for one: most likely delivered already, on a day before the app
+    // saw its report (client, Oct 2026). Unscheduled, so `cgcDelivers` here
+    // means a CGC charge; supplier wording alone says nothing of the kind.
+    if (cgcDelivers && !order.deliveryDate && !scheduled) noted.push('NOT_ON_DELIVERIES_REPORT');
 
     // H2: dispatch named where to load. Explicit, so it wins over the PO's vendor.
     if (order.pit) {

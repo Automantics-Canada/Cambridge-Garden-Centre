@@ -265,7 +265,8 @@ export default function OrderEditor({ orderRef, onClose, onSaved, readOnly = fal
             <Button onClick={onClose}>Close</Button>
           ) : (
             <>
-              {order && canMarkDoneOutside({ wholeOrder: true }, order.delivery?.status ?? null) && (
+              {/* The customer collects a pickup: there is no delivery to mark done, as on the board. */}
+              {order && !order.isPickup && canMarkDoneOutside({ wholeOrder: true }, order.delivery?.status ?? null) && (
                 <Button className="mr-auto" onClick={markDoneOutside} disabled={!order || saving}>
                   Done outside the app
                 </Button>
