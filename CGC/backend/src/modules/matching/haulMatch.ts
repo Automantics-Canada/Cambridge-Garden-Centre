@@ -206,6 +206,12 @@ function claimedElsewhere(candidate: HaulCandidate, lineId: string): CandidateLo
   );
 }
 
+/** "721001 load 2 on invoice H-1 line 3", for a paid load. */
+function paidText(load: CandidateLoad): string {
+  const where = load.claim ? `on invoice ${load.claim.invoiceNumber} line ${load.claim.lineNumber}` : 'on another invoice';
+  return `${load.documentNumber} load ${load.sequence} ${where}`;
+}
+
 /** The billed quantity is the haul's expected one, in a unit that compares. */
 function quantityFits(line: HaulLineSubject, candidate: HaulCandidate): boolean {
   return (
@@ -554,6 +560,20 @@ export function matchHaulLine(
         found: pool.length,
       },
     ];
+    // Every haul that fits was paid by another line: a repeat bill reads as
+    // already paid, not as a choice, or a person picking one would pay it twice.
+    const paid = pool.map((candidate) => claimedElsewhere(candidate, line.id));
+    if (paid.every((loads) => loads.length > 0)) {
+      checks.push({
+        name: 'loadReuse',
+        passed: false,
+        code: 'LOAD_ALREADY_CLAIMED',
+        detail:
+          `Every load that fits this line was already paid: ${paid.map((loads) => paidText(loads[0]!)).join('; ')}. ` +
+          'Paying this line would pay for a haul twice',
+        found: pool.length,
+      });
+    }
     return {
       status: 'CONFLICT',
       orderId: null,

@@ -504,6 +504,28 @@ describe('a load is paid once', () => {
     assert.equal(check(decision, 'loadReuse')!.code, 'LOAD_ALREADY_CLAIMED');
   });
 
+  test('a repeat bill that fits two hauls, both paid, reads as paid rather than a choice', () => {
+    const paid = (sequence: number, lineNumber: number) =>
+      load({
+        documentNumber: '910500', sequence, poNumbers: ['2608-400001'],
+        claimedByLineItemId: `paid-${lineNumber}`, claim: { invoiceNumber: 'HAUL-0003', lineNumber },
+      });
+    const decision = matchHaulLine(line({ poNumber: '400001' }), [paid(1, 1), paid(2, 2)], { tolerances });
+    assert.equal(decision.status, 'CONFLICT');
+    const reuse = check(decision, 'loadReuse')!;
+    assert.equal(reuse.passed, false);
+    assert.equal(reuse.code, 'LOAD_ALREADY_CLAIMED');
+    assert.match(reuse.detail, /910500 load 1 on invoice HAUL-0003 line 1; 910500 load 2 on invoice HAUL-0003 line 2/);
+  });
+
+  test('two hauls that fit, only one of them paid, are still a choice', () => {
+    const paid = load({ poNumbers: ['2608-400001'], claimedByLineItemId: 'paid-1' });
+    const free = load({ poNumbers: ['2608-400001'] });
+    const decision = matchHaulLine(line({ poNumber: '400001' }), [paid, free], { tolerances });
+    assert.equal(decision.status, 'CONFLICT');
+    assert.equal(check(decision, 'loadReuse'), undefined);
+  });
+
   test('the date fallback prefers an unpaid load to one already paid', () => {
     const paid = load({ claimedByLineItemId: 'other-line' });
     const free = load();
