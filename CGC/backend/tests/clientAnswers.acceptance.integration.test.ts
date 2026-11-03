@@ -1186,8 +1186,10 @@ describe('client answers of Oct 2026: one day at the yard (PostgreSQL)', { skip:
       assert.equal(invoice.supplierId, suppliers.pavers);
       assert.equal(invoice.emailFrom, PAVERS_BILLING, 'the supplier, never the AP mailbox');
       assert.deepEqual(event.createdInvoiceIds, [invoice.id]);
-      // The PDF was stored, and its reading queued.
-      assert.ok([...stored.keys()].some(key => key.includes(invoice.id) || key.endsWith('.pdf')));
+      // The PDF itself was stored where the invoice points, and its reading queued.
+      const marker = `/object/public/${env.supabaseStorageBucket}/`;
+      const key = decodeURIComponent(new URL(invoice.fileUrl).pathname.split(marker)[1] ?? '');
+      assert.equal(stored.get(key)?.subarray(0, 4).toString('ascii'), '%PDF');
       assert.equal(queuedOcr.length, 1);
 
       // A15: the ticket pages became the supplier's copies, under the supplier.
