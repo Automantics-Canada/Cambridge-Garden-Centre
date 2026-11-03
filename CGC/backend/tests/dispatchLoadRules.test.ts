@@ -164,10 +164,19 @@ describe('billableHauls', () => {
 
   it('bills each load on its own, and never CGC\'s own trucks', () => {
     const hauls = billableHauls([load('a'), load('b', { quantity: '2' }), load('fleet', { carrierSupplierId: null })]);
+    // A load by the load with no quantity entered is one load, not "unknown":
+    // otherwise a line billing four loads for it would never be compared.
     assert.deepEqual(hauls.map(haul => [haul.loadIds, haul.rate, haul.quantity]), [
-      [['a'], '95', null],
+      [['a'], '95', '1'],
       [['b'], '95', '2'],
     ]);
+  });
+
+  it('leaves blank hours and tonnes on a single load unknown', () => {
+    const hauls = billableHauls([load('h', { rateUnit: 'HOUR' }), load('t', { rateUnit: 'TONNE' })]);
+    assert.deepEqual(hauls.map(haul => haul.quantity), [null, null]);
+    assert.equal(tripLoadHaul({ ...load('l', { tripRef: 'T-4' }), carrierSupplierId: CARRIER }).quantity, '1');
+    assert.equal(tripLoadHaul({ ...load('u', { tripRef: 'T-4', rateUnit: 'TONNE' }), carrierSupplierId: CARRIER }).quantity, null);
   });
 
   it('bills a brokered trip over several orders as one haul of its loads, at the rate per load', () => {

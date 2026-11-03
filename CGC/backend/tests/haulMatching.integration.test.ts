@@ -475,14 +475,31 @@ describe('trucking invoices against dispatch loads (PostgreSQL)', { skip: !runna
   });
 
   it('a rate above the dispatcher rate is RATE_MISMATCH, approved at the dispatcher rate', async () => {
-    const { lineIds } = await haulInvoice([{ ticketNumber: 'TK-7001', unitRate: 190, quantity: 2 }]);
+    // One load billed as one load: only the rate is wrong. (Billing two loads
+    // for it would also be a quantity discrepancy: a load is one load.)
+    const { lineIds } = await haulInvoice([{ ticketNumber: 'TK-7001', unitRate: 190, quantity: 1 }]);
     const verdict = await verdictOf(lineIds[0]!);
     assert.equal(verdict.status, 'PARTIAL');
     const line = await prisma.invoiceLineItem.findUniqueOrThrow({ where: { id: lineIds[0]! } });
     assert.equal(line.flag, 'RATE_MISMATCH');
     assert.equal(Number(line.negotiatedRate), 185);
     assert.equal(Number(line.rateDiscrepancy), 5);
-    assert.equal(Number(line.approvedTotal), 370);
+    assert.equal(Number(line.approvedTotal), 185);
+  });
+
+  it('a single load billed as four is held at Verify, not paid for four', async () => {
+    // Dispatch left the optional expected quantity blank: the load is still one load.
+    const { invoiceId, lineIds } = await haulInvoice([{ ticketNumber: 'TK-7001', quantity: 4 }]);
+    const verdict = await verdictOf(lineIds[0]!);
+    assert.equal(verdict.status, 'PARTIAL', verdict.reason);
+    const quantity = (verdict.evidence as Array<{ name: string; passed: boolean; expected?: number }>).find(
+      (check) => check.name === 'haulQuantity'
+    );
+    assert.equal(quantity?.passed, false);
+    assert.equal(quantity?.expected, 1);
+    await assert.rejects(() => InvoiceService.verifyInvoice(invoiceId, USER_ID), /unresolved finding/);
+    assert.equal((await loadRow(loads.A)).claimedByLineItemId, null, 'Verify must not pay a line billing more loads than dispatch sent');
+    assert.equal((await verdictOf(lineIds[0]!)).resolution, null);
   });
 
   it('an override to the other order claims that order\'s load', async () => {

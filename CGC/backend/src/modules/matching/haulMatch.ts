@@ -461,6 +461,9 @@ function rateCheck(
  * The quantity check, where dispatch recorded an expected quantity. Expected
  * hours and tonnes are an estimate, so a small difference is reported, not
  * held against the line; only one past `haulQuantityReviewPct` stops it.
+ * Loads are counted, not estimated: any load more (or fewer) than dispatch
+ * sent stops the line, or a carrier billing five loads for four is paid for
+ * five.
  */
 function quantityCheck(
   line: HaulLineSubject,
@@ -490,14 +493,17 @@ function quantityCheck(
       found: line.quantity,
     };
   }
-  const passed = withinTolerance(difference, tolerances.haulQuantityReviewPct);
+  const estimate = haul.rateUnit !== 'LOAD';
+  const passed = estimate && withinTolerance(difference, tolerances.haulQuantityReviewPct);
   if (!passed) totals.quantityDiscrepancy = delta;
   return {
     name: 'haulQuantity',
     passed,
     detail: passed
       ? `Billed ${line.quantity} ${noun} where dispatch expected ${expected}. Noted only: the expected quantity is an estimate`
-      : `Billed ${line.quantity} ${noun} where dispatch expected ${expected}${tripNote}, more than ${tolerances.haulQuantityReviewPct}% off`,
+      : estimate
+        ? `Billed ${line.quantity} ${noun} where dispatch expected ${expected}${tripNote}, more than ${tolerances.haulQuantityReviewPct}% off`
+        : `Billed ${line.quantity} ${noun} where dispatch sent ${expected}${tripNote}`,
     expected,
     found: line.quantity,
     delta,

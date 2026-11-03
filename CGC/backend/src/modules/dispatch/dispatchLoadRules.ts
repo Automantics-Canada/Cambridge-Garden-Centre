@@ -237,8 +237,9 @@ export interface BillableHaul {
   /**
    * The expected quantity in `rateUnit`: a single load's own; for a trip by
    * the load the number of its loads, and by the tonne the tonnes of all its
-   * loads. Null when unknown, and for a trip by the hour (not yet known how
-   * the client records the hours of a shared trip).
+   * loads. A load by the load with no quantity entered is one load: dispatch
+   * records a row per load. Null when unknown, and for a trip by the hour
+   * (not yet known how the client records the hours of a shared trip).
    */
   quantity: string | null;
   /** Every load of it is already paid by an invoice line. */
@@ -247,6 +248,16 @@ export interface BillableHaul {
 
 const decimalSum = (values: string[]) =>
   (Math.round(values.reduce((sum, value) => sum + Number(value) * 10_000, 0)) / 10_000).toString();
+
+/**
+ * One load's expected quantity in `unit`. The quantity box is optional, and a
+ * load billed by the load left blank is still one load: without this a single
+ * load with no quantity had no quantity check at all, and a line billing four
+ * loads for it passed and was paid for four. Hours and tonnes left blank are
+ * unknown.
+ */
+const loadQuantity = (load: HaulLoad, unit: HaulRateUnitValue | null) =>
+  load.quantity ?? (unit === 'LOAD' ? '1' : null);
 
 /** A load's rate and unit as one comparable value. */
 const rateKey = (load: HaulLoad) => (load.rate === null ? 'none' : `${Number(load.rate)}|${load.rateUnit}`);
@@ -283,7 +294,7 @@ export function billableHauls(loads: HaulLoad[]): BillableHaul[] {
     const unit = priced ? first.rateUnit : null;
 
     let quantity: string | null = null;
-    if (!trip) quantity = first.quantity;
+    if (!trip) quantity = loadQuantity(first, unit);
     // Each load counts as the loads dispatch expected on it, one unless it says otherwise.
     else if (unit === 'LOAD') quantity = decimalSum(group.map(load => load.quantity ?? '1'));
     else if (unit === 'TONNE' && group.every(load => load.quantity !== null)) {
@@ -312,15 +323,16 @@ export function billableHauls(loads: HaulLoad[]): BillableHaul[] {
  * Only for a load with a carrier: CGC's own trucks bill nobody.
  */
 export function tripLoadHaul(load: HaulLoad & { carrierSupplierId: string }): BillableHaul {
+  const unit = load.rate === null ? null : load.rateUnit;
   return {
     carrierSupplierId: load.carrierSupplierId,
     tripRef: load.tripRef ? normaliseTripRef(load.tripRef) : null,
     loadIds: [load.id],
     documentIds: [load.documentId],
     rate: load.rate,
-    rateUnit: load.rate === null ? null : load.rateUnit,
+    rateUnit: unit,
     rateConflict: false,
-    quantity: load.quantity,
+    quantity: loadQuantity(load, unit),
     claimed: load.claimedByLineItemId !== null,
   };
 }
