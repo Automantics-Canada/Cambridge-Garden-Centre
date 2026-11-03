@@ -81,6 +81,17 @@ describe("dispatch's own choices: how the order reaches the customer, and where 
     expect(pitOptions(suppliers, { pickupSupplier: { id: 's-2', name: 'Retired Pit' } }).map((option) => option.label))
       .toEqual(['None chosen', 'Example Pit', 'Retired Pit']);
   });
+
+  it('never offers a trucking company as the pit, but still names one already chosen', () => {
+    const mixed = [
+      { id: 's-1', name: 'Example Pit', type: 'SUPPLIER' },
+      { id: 't-1', name: 'Example Haulage', type: 'TRUCKING_COMPANY' },
+      { id: 's-3', name: 'Untyped Pit' },
+    ];
+    expect(pitOptions(mixed, order).map((option) => option.label)).toEqual(['None chosen', 'Example Pit', 'Untyped Pit']);
+    expect(pitOptions(mixed, { pickupSupplier: { id: 't-1', name: 'Example Haulage' } }).map((option) => option.value))
+      .toEqual(['', 's-1', 's-3', 't-1']);
+  });
 });
 
 describe('corrections beside Spruce', () => {
