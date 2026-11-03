@@ -960,7 +960,7 @@ describe('client answers of Oct 2026: one day at the yard (PostgreSQL)', { skip:
       const quoteLine = await prisma.order.findFirstOrThrow({ where: { document: { documentNumber: D.quote } } });
       const invoice = await prisma.invoice.create({
         data: {
-          invoiceNumber: 'ACC-Q-1', senderType: 'SUPPLIER', supplierId: suppliers.pavers, invoiceDate: new Date(`${today}T00:00:00Z`),
+          invoiceNumber: 'ACC-Q-1', senderType: 'SUPPLIER', supplierId: suppliers.pit, invoiceDate: new Date(`${today}T00:00:00Z`),
           totalAmount: 1, currency: 'CAD', fileUrl: '/uploads/none.pdf', emailFrom: PAVERS_BILLING, emailSubject: 'x', gmailMessageId: 'acc-q-1',
           lineItems: { create: { lineNumber: 1, description: 'Garden Soil Bulk', quantity: 6, unit: 'CY', unitRate: 1, lineTotal: 6, flag: 'OK' } },
         },
@@ -980,10 +980,23 @@ describe('client answers of Oct 2026: one day at the yard (PostgreSQL)', { skip:
           ticketDate: new Date(`${today}T00:00:00Z`), imageUrl: '/uploads/none.png', ocrRawText: '', ocrConfidence: 0.9, status: 'UNLINKED',
         },
       });
-      const { matchTicketById } = await import('../src/modules/matching/matching.service.js');
+      const { matchTicketById, matchInvoiceLineById } = await import('../src/modules/matching/matching.service.js');
       const verdict = await matchTicketById(ticket.id);
       assert.equal(verdict?.orderId, null);
       assert.ok(!verdict?.candidateOrderIds.includes(quoteLine.id));
+      // Nor for that supplier's invoice line, by the same supplier-and-date route.
+      const lineVerdict = await matchInvoiceLineById(invoice.lineItems[0]!.id);
+      assert.equal(lineVerdict?.orderId, null);
+      assert.ok(!lineVerdict?.candidateOrderIds.includes(quoteLine.id));
+
+      // And the desk cannot point the line's verdict at it by override either.
+      const result = await prisma.matchResult.findUniqueOrThrow({ where: { invoiceLineId: invoice.lineItems[0]!.id } });
+      const overridden = await api('POST', `/api/matching/results/${result.id}/resolve`, {
+        resolution: 'OVERRIDDEN', orderId: quoteLine.id, note: 'This is the soil order',
+      });
+      assert.equal(overridden.status, 409, JSON.stringify(overridden.body));
+      assert.match(overridden.body.error, /quotation/);
+      assert.equal((await prisma.matchResult.findUniqueOrThrow({ where: { id: result.id } })).resolution, null);
       await prisma.order.update({ where: { id: quoteLine.id }, data: { supplierId: null } });
       await prisma.ticket.delete({ where: { id: ticket.id } });
       await prisma.invoiceLineItem.deleteMany({ where: { invoiceId: invoice.id } });

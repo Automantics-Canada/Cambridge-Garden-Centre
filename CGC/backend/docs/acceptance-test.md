@@ -66,8 +66,9 @@ the Orders page.
 report's range are flagged QUOTE and named in the import summary instead of
 counted. None is on today's board, the upcoming days' counts or the undated
 list; assigning one is refused (409); the link pickers do not offer it, a hand
-link from an invoice line is refused, and the engine never offers its lines as
-candidates. The Orders page shows them only under Quotations (`quotes=only`).
+link from an invoice line is refused, an override of a verdict onto it is
+refused (409), and the engine never offers its lines as candidates for a
+ticket or an invoice line. The Orders page shows them only under Quotations (`quotes=only`).
 
 **A4, a PO means CGC collects at the supplier.** The driver's "Pick up
 first" names the supplier, its yard, the address on file and the PO; no

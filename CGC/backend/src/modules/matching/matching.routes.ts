@@ -111,6 +111,8 @@ export function explain(outcome: ResolveFailure): { status: number; error: strin
       return { status: 400, error: 'Say why, so the decision can be understood later' };
     case 'ORDER_NOT_FOUND':
       return { status: 400, error: 'That order does not exist' };
+    case 'ORDER_IS_QUOTATION':
+      return { status: 409, error: outcome.detail };
     default:
       return { status: 400, error: 'That resolution could not be applied' };
   }

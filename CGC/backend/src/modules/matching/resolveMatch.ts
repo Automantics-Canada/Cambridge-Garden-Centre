@@ -8,6 +8,7 @@ import {
   type Prisma,
 } from '@prisma/client';
 import { haulCandidates } from './haulMatch.js';
+import { QUOTE_FLAG } from '../orders/quotations.js';
 
 /**
  * A person settling a match verdict.
@@ -67,7 +68,8 @@ export type ResolveFailure =
   | { ok: false; code: 'ALREADY_RESOLVED'; resolvedAt: Date | null }
   | { ok: false; code: 'ORDER_REQUIRED' }
   | { ok: false; code: 'NOTE_REQUIRED' }
-  | { ok: false; code: 'ORDER_NOT_FOUND' };
+  | { ok: false; code: 'ORDER_NOT_FOUND' }
+  | { ok: false; code: 'ORDER_IS_QUOTATION'; detail: string };
 
 export type ResolveResult = { ok: true; matchResultId: string } | ResolveFailure;
 
@@ -241,9 +243,20 @@ export async function resolveMatchResult(params: {
   if (targetOrderId) {
     const order = await prisma.order.findUnique({
       where: { id: targetOrderId },
-      select: { id: true },
+      select: { id: true, document: { select: { documentNumber: true, flags: true } } },
     });
     if (!order) return { ok: false, code: 'ORDER_NOT_FOUND' };
+    // A quotation is a price given to a customer, not an order: nothing is
+    // delivered or billed against it (client, Oct 2026, Q3). The desk's order
+    // picker leaves quotations out; this refuses one named from a screen
+    // opened before, as linking by hand already does (quotations.ts).
+    if (resolution === 'OVERRIDDEN' && order.document?.flags.includes(QUOTE_FLAG)) {
+      return {
+        ok: false,
+        code: 'ORDER_IS_QUOTATION',
+        detail: `${order.document.documentNumber} is a quotation in Spruce, not an order, so nothing can be matched to it.`,
+      };
+    }
   }
 
   // The dispatch loads a trucking line's decision pays (Q14). Claimed on
