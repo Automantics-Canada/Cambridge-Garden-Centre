@@ -92,8 +92,23 @@ export function bySeverity(a, b) {
   return rank(a) - rank(b);
 }
 
+/**
+ * What a failed trucking-invoice check found, in plain words (client, Oct
+ * 2026, Q14: each haul is checked against the load and rate dispatch set).
+ * The code says more than the check's name, so it wins when present.
+ */
+export const HAUL_CHECK_LABELS = {
+  RATE_MISMATCH: 'Haul rate differs from dispatch',
+  NO_RATE_SET: 'No haul rate set by dispatch',
+  TRIP_RATES_DIFFER: 'Trip loads have different rates',
+  UNIT_MISMATCH: 'Haul rate is per a different unit',
+  LOAD_ALREADY_CLAIMED: 'Load already paid on another invoice',
+  NO_LOAD_FOUND: 'No dispatched load found',
+};
+
 /** Names a check in words a person reading an invoice would use. */
-export function checkTitle(name) {
+export function checkTitle(name, code) {
+  if (code && HAUL_CHECK_LABELS[code]) return HAUL_CHECK_LABELS[code];
   switch (name) {
     case 'po':
       return 'Purchase order';
@@ -118,6 +133,15 @@ export function checkTitle(name) {
       return 'Two copies of a ticket';
     case 'billerTicketsOnly':
       return "Only the supplier's tickets";
+    // A trucking invoice line against the dispatch load it bills.
+    case 'haulLoad':
+      return 'Dispatched load';
+    case 'haulRate':
+      return 'Haul rate';
+    case 'haulQuantity':
+      return 'Hauled quantity';
+    case 'loadReuse':
+      return 'Load already paid';
     default:
       return name;
   }

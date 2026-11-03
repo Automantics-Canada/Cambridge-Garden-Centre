@@ -26,6 +26,7 @@ import {
 } from '../../components/ui';
 import { cn } from '../../lib/cn';
 import { summariseInvoiceApproval } from '../../lib/invoiceTotals';
+import { haulLoadRows, isHaulLine, missingRateText } from '../../lib/invoiceHaul';
 
 const FLAG_ICONS = {
   OK: <CheckCircle className="w-3 h-3" />,
@@ -272,7 +273,7 @@ export default function InvoiceDetailPage() {
                           'p-1.5 rounded-control',
                           item.rateDiscrepancy > 0 ? 'bg-clay/14 text-ink border border-clay/30' : 'bg-ink/[0.03]'
                         )}>
-                          <p className="text-muted text-[12.5px]">Negotiated</p>
+                          <p className="text-muted text-[12.5px]">Agreed rate</p>
                           <p className="tabular font-medium text-ink">{item.negotiatedRate ? `$${Number(item.negotiatedRate).toFixed(2)}` : 'Unknown'}</p>
                         </div>
                       </div>
@@ -281,7 +282,7 @@ export default function InvoiceDetailPage() {
                         <div className="mt-2 pt-2 border-t border-line space-y-1">
                            {item.flag === 'RATE_MISMATCH' && (
                              <p className="text-[12.5px] text-clay font-medium flex items-center gap-1">
-                               <AlertCircle className="w-3 h-3" /> Billed rate exceeds negotiated rate by ${Number(item.rateDiscrepancy).toFixed(2)}
+                               <AlertCircle className="w-3 h-3" /> Billed rate differs from the agreed rate by ${Number(item.rateDiscrepancy).toFixed(2)}
                              </p>
                            )}
                            {item.flag === 'QTY_MISMATCH' && (
@@ -301,7 +302,7 @@ export default function InvoiceDetailPage() {
                            )}
                            {item.flag === 'RATE_UNKNOWN' && (
                              <p className="text-[12.5px] text-ink font-medium flex items-center gap-1">
-                               <Info className="w-3 h-3 text-ochre" /> No negotiated rate on file for this product.
+                               <Info className="w-3 h-3 text-ochre" /> {missingRateText(item)}
                              </p>
                            )}
                            {item.flag === 'MULTIPLE_FLAGS' && (
@@ -309,6 +310,28 @@ export default function InvoiceDetailPage() {
                                <AlertCircle className="w-3 h-3" /> Multiple discrepancies detected. Review carefully.
                              </p>
                            )}
+                        </div>
+                      )}
+
+                      {isHaulLine(item) && (
+                        // The dispatch load(s) this trucking line was checked
+                        // against, with the rate dispatch set (Q14).
+                        <div className="mt-2 pt-2 border-t border-line">
+                          <p className="text-[12.5px] font-medium text-muted mb-1">
+                            {item.haulLoads.length === 1 ? 'Dispatched load' : `Dispatched loads (${item.haulLoads.length})`}
+                          </p>
+                          <ul className="space-y-1">
+                            {haulLoadRows(item).map((row) => (
+                              <li key={row.id} className="text-[12.5px] text-ink flex flex-wrap gap-x-2 gap-y-0.5">
+                                <span className="font-medium">{row.order}</span>
+                                <span>{row.load}</span>
+                                <span className="text-muted">{row.carrier}</span>
+                                <span className="tabular">{row.rate}</span>
+                                {row.trip && <span className="text-muted">{row.trip}</span>}
+                                {row.ticket && <span className="text-muted">{row.ticket}</span>}
+                              </li>
+                            ))}
+                          </ul>
                         </div>
                       )}
 
