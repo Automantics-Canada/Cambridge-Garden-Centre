@@ -62,8 +62,14 @@ import { onSamePo, poKey } from './poKey.js';
  * 8: a brokered trip may be billed load by load: a line whose ticket is the
  * one dispatch wrote on one load of the trip bills (and claims) that load
  * alone, and a whole-trip line by the load expects one load per trip load.
+ * 9: a haul line that fits several hauls, every one of them already paid, says
+ * it is already paid instead of asking a person to choose one. A load by the
+ * load with no quantity entered is one load, and a line billed by the load
+ * must bill exactly the loads dispatch sent (no estimate tolerance). A load
+ * whose quantity only the supplier's emailed copy shows is never passed
+ * automatically.
  */
-export const ENGINE_VERSION = 8;
+export const ENGINE_VERSION = 9;
 
 /**
  * `matchMethod` recorded for a link the engine made.
@@ -110,8 +116,8 @@ function poNumberConditions(poNumber: string): Array<{ poNumber: string | { cont
   return conditions;
 }
 
-async function loadMatchSettings() {
-  return prisma.systemSetting.findMany({
+async function loadMatchSettings(db: Pick<Prisma.TransactionClient, 'systemSetting'> = prisma) {
+  return db.systemSetting.findMany({
     where: { key: { startsWith: 'match.' } },
     select: { key: true, value: true },
   });
@@ -121,8 +127,10 @@ async function loadTolerances(): Promise<Tolerances> {
   return resolveTolerances(await loadMatchSettings());
 }
 
-async function loadHaulTolerances(): Promise<HaulTolerances> {
-  return resolveHaulTolerances(await loadMatchSettings());
+export async function loadHaulTolerances(
+  db: Pick<Prisma.TransactionClient, 'systemSetting'> = prisma
+): Promise<HaulTolerances> {
+  return resolveHaulTolerances(await loadMatchSettings(db));
 }
 
 async function loadAliases(supplierId: string | null): Promise<ProductAlias[]> {

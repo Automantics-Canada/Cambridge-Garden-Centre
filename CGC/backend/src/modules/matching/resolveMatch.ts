@@ -100,14 +100,16 @@ class LoadClaimConflict extends Error {}
  * chosen order's own unpaid load. A verdict's haul on that order that was
  * paid meanwhile, with no unpaid load of it left, is returned as it is so the
  * claim fails and the override is refused. Null when the order had more than
- * one such haul and nothing says which.
+ * one such haul and nothing says which. `{ paid }` when every haul this
+ * carrier made for the order was paid by another line: nothing is left for
+ * this line to pay, and passing it with no load claimed would pay a haul twice.
  */
 async function overrideLoadIds(
   orderId: string,
   carrierSupplierId: string,
   verdictLoadIds: string[],
   invoiceLineId: string
-): Promise<string[] | null> {
+): Promise<string[] | null | { paid: string }> {
   const order = await prisma.order.findUnique({ where: { id: orderId }, select: { documentId: true } });
   if (!order?.documentId) return [];
   const documentId = order.documentId;
@@ -159,7 +161,23 @@ async function overrideLoadIds(
   if (choices.length === 1) return choices[0]!;
   // Every load of the verdict's trip on this order is paid: claiming the
   // verdict's loads fails, and the override is refused as already paid.
-  if (choices.length === 0) return verdictOnOrder ? verdictLoadIds : [];
+  if (choices.length === 0) {
+    if (verdictOnOrder) return verdictLoadIds;
+    // The carrier hauled for this order and every haul is paid. A CONFLICT or
+    // an unmatched line has no loads of its own to fail the claim with, so
+    // this is refused here; [] would pass the line paying nothing claimed.
+    const paid = loads.find(
+      (load) => load.documentId === documentId && load.claimedByLineItemId !== null && !free(load)
+    );
+    const where = paid?.claim
+      ? `${paid.documentNumber} load ${paid.sequence} was paid on invoice ${paid.claim.invoiceNumber} line ${paid.claim.lineNumber}`
+      : 'they were paid on another invoice';
+    return {
+      paid:
+        `Every load this carrier hauled for that order has already been paid (${where}). ` +
+        'Paying this line would pay for a haul twice.',
+    };
+  }
   return null;
 }
 
@@ -318,6 +336,7 @@ export async function resolveMatchResult(params: {
             'Put the ticket number on the right load on the dispatch board, then re-run the check.',
         };
       }
+      if (!Array.isArray(chosen)) return { ok: false, code: 'LOAD_ALREADY_CLAIMED', detail: chosen.paid };
       loadIds = chosen;
     }
   }

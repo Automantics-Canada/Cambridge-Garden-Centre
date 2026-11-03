@@ -103,7 +103,8 @@ export interface HaulTolerances {
   /**
    * A billed quantity this many percent away from the load's expected
    * quantity stops the line; nearer than that it is noted only. Expected
-   * hours and tonnes are the dispatcher's estimate, not a measurement.
+   * hours and tonnes are the dispatcher's estimate, not a measurement. Loads
+   * are counted, so a line billed by the load must match exactly.
    */
   haulQuantityReviewPct: number;
 }

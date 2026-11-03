@@ -421,8 +421,10 @@ export function planPriceList(
       case 'CORRECT':
         row.action = 'CORRECT';
         row.corrects = { rateId: decision.corrects.id, changes: decision.changes };
-        row.message = `Corrects the rate from ${value.effectiveFrom}: ${decision.changes.map(describeChange).join('; ')}.`;
-        Object.assign(decision.corrects, asRate(), { id: decision.corrects.id });
+        // The corrected rate keeps its own start: a same-price row with a
+        // newer date only adds codes or notes to the rate already running.
+        row.message = `Corrects the rate from ${decision.corrects.effectiveFrom}: ${decision.changes.map(describeChange).join('; ')}.`;
+        Object.assign(decision.corrects, asRate(), { id: decision.corrects.id, effectiveFrom: decision.corrects.effectiveFrom });
         break;
       case 'UNCHANGED':
         row.action = 'UNCHANGED';

@@ -218,6 +218,30 @@ describe('agreed rates (PostgreSQL)', { skip: !runnable }, () => {
       assert.deepEqual((await rates()).map((r) => r.unit).sort(), ['skid', 'tonne']);
     });
 
+    it('re-adding the running price with a newer date and empty boxes keeps its notes and codes', async () => {
+      // The Add rate form always sends notes, '' when the box is left empty.
+      const first = await api('POST', `/api/suppliers/${supplierId}/rates`, {
+        productName: PRODUCT, rate: 18, unit: 'tonne', effectiveFrom: '2026-01-01', notes: 'Yard price', spruceItemCode: 'GRVL19',
+      });
+      assert.equal(first.status, 201);
+      const kept = async () =>
+        prisma.negotiatedRate.findUniqueOrThrow({ where: { id: first.body.rate.id }, select: { notes: true, spruceItemCode: true, effectiveFrom: true } });
+
+      const again = await api('POST', `/api/suppliers/${supplierId}/rates`, {
+        productName: PRODUCT, rate: 18, unit: 'tonne', effectiveFrom: '2026-11-01', effectiveTo: '', notes: '',
+      });
+      assert.equal(again.body.action, 'UNCHANGED', JSON.stringify(again.body));
+      assert.deepEqual(await kept(), { notes: 'Yard price', spruceItemCode: 'GRVL19', effectiveFrom: new Date('2026-01-01') });
+
+      // A note that is given is saved; a code sent blank is still not cleared.
+      const noted = await api('POST', `/api/suppliers/${supplierId}/rates`, {
+        productName: PRODUCT, rate: 18, unit: 'tonne', effectiveFrom: '2026-11-01', notes: 'Price held for 2027', spruceItemCode: null,
+      });
+      assert.equal(noted.body.action, 'CORRECT', JSON.stringify(noted.body));
+      assert.deepEqual(await kept(), { notes: 'Price held for 2027', spruceItemCode: 'GRVL19', effectiveFrom: new Date('2026-01-01') });
+      assert.equal((await rates()).length, 1);
+    });
+
     it('refuses a start that would overlap a later rate', async () => {
       await api('POST', `/api/suppliers/${supplierId}/rates`, { productName: PRODUCT, rate: 18, unit: 'tonne', effectiveFrom: '2026-06-01' });
       const early = await api('POST', `/api/suppliers/${supplierId}/rates`, { productName: PRODUCT, rate: 17, unit: 'tonne', effectiveFrom: '2026-01-01' });
@@ -357,6 +381,20 @@ describe('agreed rates (PostgreSQL)', { skip: !runnable }, () => {
       const imported = await prisma.auditLog.findMany({ where: { entityType: 'RATE' }, orderBy: { createdAt: 'asc' } });
       const fromFile = imported.filter((row) => (row.details as { source?: string }).source === 'price-list');
       assert.deepEqual(fromFile.map((row) => row.actionType).sort(), ['RATE_CREATED', 'RATE_CREATED', 'RATE_EXPIRED']);
+    });
+
+    it('saves the item codes of a same-price row with a newer date on the rate already running', async () => {
+      await api('POST', `/api/suppliers/${supplierId}/rates`, { productName: PRODUCT, rate: 18, unit: 'tonne', effectiveFrom: '2026-01-01' });
+      const sameprice = csv([`${PRODUCT},GRVL19,MA-100,tonne,18,2026-11-01,,`]);
+      const preview = await upload(`/api/suppliers/${supplierId}/rates/import/preview`, sameprice, 'prices.csv');
+      assert.equal(preview.body.plan.rows[0].action, 'CORRECT', JSON.stringify(preview.body.plan.rows[0]));
+      assert.equal(preview.body.plan.canCommit, true);
+
+      const saved = await upload(`/api/suppliers/${supplierId}/rates/import`, sameprice, 'prices.csv', { token: preview.body.token });
+      assert.equal(saved.status, 200, JSON.stringify(saved.body));
+      assert.deepEqual((await rates()).map((r) => [r.rate, r.from, r.to, r.spruceItemCode, r.supplierItemCode]), [
+        [18, '2026-01-01', null, 'GRVL19', 'MA-100'],
+      ]);
     });
 
     it('saves nothing when one row is wrong', async () => {

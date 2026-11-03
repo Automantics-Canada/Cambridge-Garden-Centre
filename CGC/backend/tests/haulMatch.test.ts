@@ -469,9 +469,55 @@ describe('the expected quantity', () => {
     assert.equal(check(decision, 'haulQuantity')!.passed, false);
   });
 
-  test('no expected quantity, no quantity check', () => {
-    const decision = matchHaulLine(line({ ticketNumber: 'T-101' }), [load({ ticketNumber: 'T-101' })], { tolerances });
+  test('no expected hours, no quantity check', () => {
+    const decision = matchHaulLine(
+      line({ ticketNumber: 'T-101', unit: 'hours', unitRate: 120, quantity: 4 }),
+      [load({ ticketNumber: 'T-101', rate: '120', rateUnit: 'HOUR' })],
+      { tolerances }
+    );
     assert.equal(check(decision, 'haulQuantity'), undefined);
+  });
+
+  test('a load with no expected quantity is one load: billing four for it is held', () => {
+    // Dispatch records one row per load (Q14), so a load is one load whether
+    // or not the optional quantity was filled in.
+    const single = load({ ticketNumber: 'T-101', rate: '150', rateUnit: 'LOAD' });
+    const one = matchHaulLine(line({ ticketNumber: 'T-101', unitRate: 150, quantity: 1 }), [single], { tolerances });
+    assert.equal(one.status, 'MATCHED', one.reason);
+    assert.equal(check(one, 'haulQuantity')!.expected, 1);
+
+    const four = matchHaulLine(line({ ticketNumber: 'T-101', unitRate: 150, quantity: 4 }), [single], { tolerances });
+    assert.equal(four.status, 'PARTIAL');
+    const quantity = check(four, 'haulQuantity')!;
+    assert.equal(quantity.passed, false);
+    assert.equal(quantity.expected, 1);
+    assert.equal(four.totals?.quantityDiscrepancy, 3);
+  });
+
+  test('loads are counted, not estimated: one more than dispatch expected stops the line', () => {
+    const decision = matchHaulLine(
+      line({ ticketNumber: 'T-101', unitRate: 150, quantity: 5 }),
+      [load({ ticketNumber: 'T-101', rate: '150', rateUnit: 'LOAD', quantity: '4' })],
+      { tolerances }
+    );
+    assert.equal(decision.status, 'PARTIAL');
+    const quantity = check(decision, 'haulQuantity')!;
+    assert.equal(quantity.passed, false);
+    assert.doesNotMatch(quantity.detail, /Noted only/);
+    assert.equal(decision.totals?.quantityDiscrepancy, 1);
+  });
+
+  test('one load of a trip billed on its own line with no expected quantity is one load', () => {
+    const loads = [
+      load({ tripRef: 'T-31', ticketNumber: 'DX-2101', rate: '140', rateUnit: 'LOAD' }),
+      load({ tripRef: 'T-31', ticketNumber: 'DX-2102', rate: '140', rateUnit: 'LOAD' }),
+    ];
+    const decision = matchHaulLine(line({ ticketNumber: 'DX-2102', unitRate: 140, quantity: 2 }), loads, { tolerances });
+    // Two loads billed against the ticket of one: the whole trip, by quantity.
+    assert.equal(decision.loadIds.length, 2);
+    const single = matchHaulLine(line({ ticketNumber: 'DX-2102', unitRate: 140, quantity: 3 }), loads, { tolerances });
+    assert.equal(single.status, 'PARTIAL');
+    assert.equal(check(single, 'haulQuantity')!.passed, false);
   });
 });
 
@@ -502,6 +548,28 @@ describe('a load is paid once', () => {
     ];
     const decision = matchHaulLine(line({ poNumber: '300002' }), loads, { tolerances });
     assert.equal(check(decision, 'loadReuse')!.code, 'LOAD_ALREADY_CLAIMED');
+  });
+
+  test('a repeat bill that fits two hauls, both paid, reads as paid rather than a choice', () => {
+    const paid = (sequence: number, lineNumber: number) =>
+      load({
+        documentNumber: '910500', sequence, poNumbers: ['2608-400001'],
+        claimedByLineItemId: `paid-${lineNumber}`, claim: { invoiceNumber: 'HAUL-0003', lineNumber },
+      });
+    const decision = matchHaulLine(line({ poNumber: '400001' }), [paid(1, 1), paid(2, 2)], { tolerances });
+    assert.equal(decision.status, 'CONFLICT');
+    const reuse = check(decision, 'loadReuse')!;
+    assert.equal(reuse.passed, false);
+    assert.equal(reuse.code, 'LOAD_ALREADY_CLAIMED');
+    assert.match(reuse.detail, /910500 load 1 on invoice HAUL-0003 line 1; 910500 load 2 on invoice HAUL-0003 line 2/);
+  });
+
+  test('two hauls that fit, only one of them paid, are still a choice', () => {
+    const paid = load({ poNumbers: ['2608-400001'], claimedByLineItemId: 'paid-1' });
+    const free = load({ poNumbers: ['2608-400001'] });
+    const decision = matchHaulLine(line({ poNumber: '400001' }), [paid, free], { tolerances });
+    assert.equal(decision.status, 'CONFLICT');
+    assert.equal(check(decision, 'loadReuse'), undefined);
   });
 
   test('the date fallback prefers an unpaid load to one already paid', () => {

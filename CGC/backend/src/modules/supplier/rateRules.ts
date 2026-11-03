@@ -219,7 +219,8 @@ function correctionChanges(stored: PeriodRate, next: RateCandidate): RateFieldCh
  *     unchanged when nothing differs.
  *   - A later start than an open (or still running) rate: that rate is closed
  *     the day before, and `next` starts a new period. If the price is the same
- *     and both are open-ended, nothing needs to change.
+ *     and both are open-ended, the running rate stays: unchanged, or corrected
+ *     with the item codes or notes `next` adds.
  *   - Anything that would overlap another period is refused with a reason, as
  *     is a bounded rate inside a longer one (closing the longer one would leave
  *     no price after the new one ends).
@@ -290,8 +291,22 @@ export function planRateChange(next: RateCandidate, sameKey: PeriodRate[]): Rate
   }
 
   // The same price, still open, re-sent with a newer date: it already applies.
+  // Item codes or notes it brings are still saved on the running rate (its
+  // start date kept): dropped, the rate is never found by the order line's
+  // Spruce item code and differently worded lines read "No agreed rate".
+  // Only values it gives count: the Add rate form sends an empty notes box as
+  // null, and re-adding the running price must not wipe what that rate holds.
   if (prior.effectiveTo === null && next.effectiveTo === null && prior.rate === next.rate) {
-    return { action: 'UNCHANGED', rate: prior };
+    const given = <T>(value: T | null | undefined) => (value === null ? undefined : value);
+    const changes = correctionChanges(prior, {
+      ...next,
+      productName: prior.productName,
+      unit: prior.unit,
+      notes: given(next.notes),
+      spruceItemCode: given(next.spruceItemCode),
+      supplierItemCode: given(next.supplierItemCode),
+    });
+    return changes.length === 0 ? { action: 'UNCHANGED', rate: prior } : { action: 'CORRECT', corrects: prior, changes };
   }
 
   if (next.effectiveTo !== null && (prior.effectiveTo === null || prior.effectiveTo > next.effectiveTo)) {

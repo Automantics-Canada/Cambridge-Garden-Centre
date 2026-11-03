@@ -135,7 +135,17 @@ export function haulTicketKey(value: string | null | undefined): string | null {
  * both. The window is days either side of the anchor, counted in whole days.
  */
 function inWindow(load: CandidateLoad, anchor: Date | null, windowDays: number): boolean {
-  return anchor === null || Math.abs(dayStart(load.haulDate) - dayStart(anchor)) <= windowDays * DAY_MS;
+  return anchor === null || withinHaulWindow(load.haulDate, anchor, windowDays);
+}
+
+/**
+ * Two haul days at most `windowDays` whole days apart. The window inside
+ * which loads with one trip reference may be one trip; outside it the
+ * reference was used again. The dispatch board scopes a trip with this too
+ * (dispatchLoads.service.ts), so the board and the matcher read one trip alike.
+ */
+export function withinHaulWindow(haulDate: Date, anchor: Date, windowDays: number): boolean {
+  return Math.abs(dayStart(haulDate) - dayStart(anchor)) <= windowDays * DAY_MS;
 }
 
 export function haulCandidates(
@@ -204,6 +214,12 @@ function claimedElsewhere(candidate: HaulCandidate, lineId: string): CandidateLo
   return candidate.loads.filter(
     (load) => load.claimedByLineItemId !== null && load.claimedByLineItemId !== lineId
   );
+}
+
+/** "721001 load 2 on invoice H-1 line 3", for a paid load. */
+function paidText(load: CandidateLoad): string {
+  const where = load.claim ? `on invoice ${load.claim.invoiceNumber} line ${load.claim.lineNumber}` : 'on another invoice';
+  return `${load.documentNumber} load ${load.sequence} ${where}`;
 }
 
 /** The billed quantity is the haul's expected one, in a unit that compares. */
@@ -455,6 +471,9 @@ function rateCheck(
  * The quantity check, where dispatch recorded an expected quantity. Expected
  * hours and tonnes are an estimate, so a small difference is reported, not
  * held against the line; only one past `haulQuantityReviewPct` stops it.
+ * Loads are counted, not estimated: any load more (or fewer) than dispatch
+ * sent stops the line, or a carrier billing five loads for four is paid for
+ * five.
  */
 function quantityCheck(
   line: HaulLineSubject,
@@ -484,14 +503,17 @@ function quantityCheck(
       found: line.quantity,
     };
   }
-  const passed = withinTolerance(difference, tolerances.haulQuantityReviewPct);
+  const estimate = haul.rateUnit !== 'LOAD';
+  const passed = estimate && withinTolerance(difference, tolerances.haulQuantityReviewPct);
   if (!passed) totals.quantityDiscrepancy = delta;
   return {
     name: 'haulQuantity',
     passed,
     detail: passed
       ? `Billed ${line.quantity} ${noun} where dispatch expected ${expected}. Noted only: the expected quantity is an estimate`
-      : `Billed ${line.quantity} ${noun} where dispatch expected ${expected}${tripNote}, more than ${tolerances.haulQuantityReviewPct}% off`,
+      : estimate
+        ? `Billed ${line.quantity} ${noun} where dispatch expected ${expected}${tripNote}, more than ${tolerances.haulQuantityReviewPct}% off`
+        : `Billed ${line.quantity} ${noun} where dispatch sent ${expected}${tripNote}`,
     expected,
     found: line.quantity,
     delta,
@@ -554,6 +576,20 @@ export function matchHaulLine(
         found: pool.length,
       },
     ];
+    // Every haul that fits was paid by another line: a repeat bill reads as
+    // already paid, not as a choice, or a person picking one would pay it twice.
+    const paid = pool.map((candidate) => claimedElsewhere(candidate, line.id));
+    if (paid.every((loads) => loads.length > 0)) {
+      checks.push({
+        name: 'loadReuse',
+        passed: false,
+        code: 'LOAD_ALREADY_CLAIMED',
+        detail:
+          `Every load that fits this line was already paid: ${paid.map((loads) => paidText(loads[0]!)).join('; ')}. ` +
+          'Paying this line would pay for a haul twice',
+        found: pool.length,
+      });
+    }
     return {
       status: 'CONFLICT',
       orderId: null,

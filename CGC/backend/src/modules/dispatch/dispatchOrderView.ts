@@ -716,7 +716,7 @@ function withoutDirectShips<T extends BoardLike | unknown[]>(board: T): T {
  * a haul costs is office business.
  */
 export async function withHaulLoads<T extends BoardLike | unknown[]>(
-  db: Pick<Prisma.TransactionClient, 'dispatchLoad'>,
+  db: Pick<Prisma.TransactionClient, 'dispatchLoad' | 'systemSetting'>,
   board: T
 ): Promise<T> {
   const orders = wholeOrdersIn(board);

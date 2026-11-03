@@ -418,15 +418,88 @@ describe('trucking invoices against dispatch loads (PostgreSQL)', { skip: !runna
     assert.equal((await loadRow(loads.B)).claimedByLineItemId, null);
   });
 
+  it('a repeat bill for an order whose hauls are all paid reads as paid and cannot be overridden onto it', async () => {
+    // Order A had two loads by this carrier, both paid on the first invoice.
+    const document = await prisma.order.findUniqueOrThrow({ where: { id: orderLines.A }, select: { documentId: true } });
+    const second = await prisma.dispatchLoad.create({
+      data: {
+        documentId: document.documentId!, sequence: 2, carrierSupplierId: CARRIER_ID, rate: '185', rateUnit: 'LOAD',
+        ticketNumber: 'TK-7011', setById: USER_ID,
+      },
+    });
+    const first = await haulInvoice([{ ticketNumber: 'TK-7001' }, { ticketNumber: 'TK-7011' }]);
+    await InvoiceService.verifyInvoice(first.invoiceId, USER_ID);
+    assert.equal((await loadRow(second.id)).claimedByLineItemId, first.lineIds[1]);
+
+    // The carrier bills the PO again. Both of the order's hauls fit, and both are paid.
+    const repeat = await haulInvoice([{ poNumber: '700001' }]);
+    const verdict = await verdictOf(repeat.lineIds[0]!);
+    const reuse = (verdict.evidence as Array<{ name: string; passed: boolean; code?: string }>).find(
+      (check) => check.name === 'loadReuse'
+    );
+    assert.equal(reuse?.passed, false, 'a re-billed paid haul must say so, not ask which load');
+    assert.equal(reuse?.code, 'LOAD_ALREADY_CLAIMED');
+
+    // Even with a verdict stored before the hauls were paid, picking the order
+    // by hand must not pay the line with no load claimed.
+    await prisma.matchResult.update({ where: { id: verdict.id }, data: { evidence: [{ name: 'haulLoad', passed: false, detail: 'Choose' }] } });
+    const refused = await resolveMatchResult({
+      matchResultId: verdict.id, resolution: 'OVERRIDDEN', orderId: orderLines.A, note: 'Carrier says it is this order.', userId: USER_ID,
+    });
+    assert.equal(!refused.ok && refused.code, 'LOAD_ALREADY_CLAIMED', JSON.stringify(refused));
+    assert.equal((await verdictOf(repeat.lineIds[0]!)).resolution, null);
+  });
+
+  it('an unmatched line overridden onto an order whose haul is paid is refused', async () => {
+    const first = await haulInvoice([{ ticketNumber: 'TK-7001' }]);
+    await InvoiceService.verifyInvoice(first.invoiceId, USER_ID);
+    // A PO typo on a line billed in a unit that is not a haul: nothing found.
+    const stray = await haulInvoice([{ poNumber: '799999', unit: 'each' }]);
+    const verdict = await verdictOf(stray.lineIds[0]!);
+    assert.equal(verdict.status, 'UNMATCHED', verdict.reason);
+
+    const refused = await resolveMatchResult({
+      matchResultId: verdict.id, resolution: 'OVERRIDDEN', orderId: orderLines.A, note: 'Typo in the PO.', userId: USER_ID,
+    });
+    assert.equal(!refused.ok && refused.code, 'LOAD_ALREADY_CLAIMED', JSON.stringify(refused));
+    assert.match(!refused.ok && 'detail' in refused ? refused.detail : '', /990101 load 1 .*HAUL-0+\d+ line 1/);
+    assert.equal((await verdictOf(stray.lineIds[0]!)).resolution, null);
+    assert.equal((await loadRow(loads.A)).claimedByLineItemId, first.lineIds[0]);
+
+    // An order this carrier hauled nothing for is still the clerk's call.
+    const elsewhere = await resolveMatchResult({
+      matchResultId: verdict.id, resolution: 'OVERRIDDEN', orderId: orderLines.B, note: 'Typo in the PO.', userId: USER_ID,
+    });
+    assert.equal(elsewhere.ok, true, JSON.stringify(elsewhere));
+    assert.equal((await loadRow(loads.B)).claimedByLineItemId, stray.lineIds[0]);
+  });
+
   it('a rate above the dispatcher rate is RATE_MISMATCH, approved at the dispatcher rate', async () => {
-    const { lineIds } = await haulInvoice([{ ticketNumber: 'TK-7001', unitRate: 190, quantity: 2 }]);
+    // One load billed as one load: only the rate is wrong. (Billing two loads
+    // for it would also be a quantity discrepancy: a load is one load.)
+    const { lineIds } = await haulInvoice([{ ticketNumber: 'TK-7001', unitRate: 190, quantity: 1 }]);
     const verdict = await verdictOf(lineIds[0]!);
     assert.equal(verdict.status, 'PARTIAL');
     const line = await prisma.invoiceLineItem.findUniqueOrThrow({ where: { id: lineIds[0]! } });
     assert.equal(line.flag, 'RATE_MISMATCH');
     assert.equal(Number(line.negotiatedRate), 185);
     assert.equal(Number(line.rateDiscrepancy), 5);
-    assert.equal(Number(line.approvedTotal), 370);
+    assert.equal(Number(line.approvedTotal), 185);
+  });
+
+  it('a single load billed as four is held at Verify, not paid for four', async () => {
+    // Dispatch left the optional expected quantity blank: the load is still one load.
+    const { invoiceId, lineIds } = await haulInvoice([{ ticketNumber: 'TK-7001', quantity: 4 }]);
+    const verdict = await verdictOf(lineIds[0]!);
+    assert.equal(verdict.status, 'PARTIAL', verdict.reason);
+    const quantity = (verdict.evidence as Array<{ name: string; passed: boolean; expected?: number }>).find(
+      (check) => check.name === 'haulQuantity'
+    );
+    assert.equal(quantity?.passed, false);
+    assert.equal(quantity?.expected, 1);
+    await assert.rejects(() => InvoiceService.verifyInvoice(invoiceId, USER_ID), /unresolved finding/);
+    assert.equal((await loadRow(loads.A)).claimedByLineItemId, null, 'Verify must not pay a line billing more loads than dispatch sent');
+    assert.equal((await verdictOf(lineIds[0]!)).resolution, null);
   });
 
   it('an override to the other order claims that order\'s load', async () => {
