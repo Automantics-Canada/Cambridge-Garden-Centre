@@ -5,6 +5,7 @@ import toast from 'react-hot-toast';
 import { createSupplier, updateSupplier, clearError } from '../store/supplierSlice';
 import { Button, Field, Input, Select, Textarea } from './ui';
 import { cn } from '../lib/cn';
+import { joinSenderEntries, senderEntriesError, splitSenderEntries } from '../lib/emailSenders';
 
 const SUPPLIER_TYPES = ['SUPPLIER', 'TRUCKING_COMPANY'];
 
@@ -20,7 +21,9 @@ export default function SupplierForm({ supplier = null, onClose }) {
   const [formData, setFormData] = useState({
     name: supplier?.name || '',
     type: SUPPLIER_TYPES.includes(supplier?.type) ? supplier.type : 'SUPPLIER',
-    emailDomains: supplier?.emailDomains?.join(', ') || '',
+    // One box for both: a domain admits everyone at it, a full address only
+    // that person. Split into the two lists on save.
+    emailSenders: joinSenderEntries(supplier),
     keywords: supplier?.keywords?.join(', ') || '',
     contactName: supplier?.contactName || '',
     contactEmail: supplier?.contactEmail || '',
@@ -49,12 +52,9 @@ export default function SupplierForm({ supplier = null, onClose }) {
       errors.type = 'Supplier type is required';
     }
 
-    if (formData.emailDomains.trim()) {
-      const domains = formData.emailDomains.split(',').map(d => d.trim()).filter(Boolean);
-      const invalidDomains = domains.filter(d => !isValidDomain(d));
-      if (invalidDomains.length > 0) {
-        errors.emailDomains = 'Invalid domain format. Use domains (e.g., gmail.com), not emails.';
-      }
+    const sendersError = senderEntriesError(formData.emailSenders);
+    if (sendersError) {
+      errors.emailSenders = sendersError;
     }
 
     if (formData.contactEmail && !isValidEmail(formData.contactEmail)) {
@@ -75,10 +75,6 @@ export default function SupplierForm({ supplier = null, onClose }) {
 
   const isValidPhone = (phone) => {
     return /^[\d\s\-+()]+$/.test(phone) && phone.replace(/\D/g, '').length === 10;
-  };
-
-  const isValidDomain = (domain) => {
-    return /^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/.test(domain);
   };
 
   const handleChange = (e) => {
@@ -111,9 +107,12 @@ export default function SupplierForm({ supplier = null, onClose }) {
       return;
     }
 
+    const { emailSenders, ...rest } = formData;
+    const { emailDomains, emailAddresses } = splitSenderEntries(emailSenders);
     const submitData = {
-      ...formData,
-      emailDomains: formData.emailDomains.trim() ? formData.emailDomains.split(',').map(d => d.trim()).filter(Boolean) : [],
+      ...rest,
+      emailDomains,
+      emailAddresses,
       keywords: formData.keywords.trim() ? formData.keywords.split(',').map(k => k.trim()).filter(Boolean) : [],
     };
 
@@ -186,19 +185,19 @@ export default function SupplierForm({ supplier = null, onClose }) {
 
       <Motion.div variants={itemVariants}>
         <Field
-          label="Email domains"
-          hint="Comma separated"
-          htmlFor="supplier-email-domains"
-          error={validationErrors.emailDomains}
+          label="Invoice email senders"
+          hint="Domains or full addresses, comma separated. Use the full address for Gmail, Outlook and other shared mail."
+          htmlFor="supplier-email-senders"
+          error={validationErrors.emailSenders}
         >
           <Input
-            id="supplier-email-domains"
+            id="supplier-email-senders"
             type="text"
-            name="emailDomains"
-            value={formData.emailDomains}
+            name="emailSenders"
+            value={formData.emailSenders}
             onChange={handleChange}
-            placeholder="example.com, supplier.example.com"
-            className={cn(validationErrors.emailDomains && 'border-clay')}
+            placeholder="supplier.example, billing@supplier.example"
+            className={cn(validationErrors.emailSenders && 'border-clay')}
           />
         </Field>
       </Motion.div>

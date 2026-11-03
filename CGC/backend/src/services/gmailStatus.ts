@@ -35,12 +35,16 @@ export interface GmailPollCounts {
   duplicates: number;
   /** Messages the previous poller had already ingested under its old key. */
   legacySkipped: number;
-  /** Messages whose original sender is not on the allowlist. */
+  /** Messages from a sender no supplier record knows; sent to review. */
   rejectedSender: number;
-  /** Messages from a trusted forwarder whose original sender was not found. */
+  /** Messages from a trusted forwarder whose original sender was not found; sent to review. */
   unresolvedSender: number;
-  /** Messages with no PDF or image attachment. */
+  /** Messages with no attachment the app reads, not even an unsupported one; sent to review. */
   noAttachments: number;
+  /** Messages from a known sender carrying a spreadsheet or only unsupported files; sent to review. */
+  needsReview: number;
+  /** Messages read again because their sender was approved. */
+  requeued: number;
   /** Messages that failed and will be tried again. */
   failed: number;
 }
@@ -48,7 +52,8 @@ export interface GmailPollCounts {
 export function emptyCounts(): GmailPollCounts {
   return {
     listed: 0, processed: 0, invoicesCreated: 0, observed: 0, duplicates: 0,
-    legacySkipped: 0, rejectedSender: 0, unresolvedSender: 0, noAttachments: 0, failed: 0,
+    legacySkipped: 0, rejectedSender: 0, unresolvedSender: 0, noAttachments: 0, needsReview: 0,
+    requeued: 0, failed: 0,
   };
 }
 
@@ -61,6 +66,7 @@ export interface GmailPollStatus {
   invoiceLabelFound: boolean | null;
   processedLabel: string;
   observedLabel: string;
+  reviewLabel: string;
   pollAfter: string | null;
   /** True while no GMAIL_POLL_AFTER is set and the query still needs is:unread. */
   unreadOnly: boolean;
@@ -154,6 +160,7 @@ export function deriveGmailHealth(value: unknown, now: Date = new Date()): Gmail
     invoiceLabelFound: BOOL_OR_NULL(record?.invoiceLabelFound),
     processedLabel: STRING_OR_NULL(record?.processedLabel),
     observedLabel: STRING_OR_NULL(record?.observedLabel),
+    reviewLabel: STRING_OR_NULL(record?.reviewLabel),
     pollAfter: STRING_OR_NULL(record?.pollAfter),
     unreadOnly: BOOL_OR_NULL(record?.unreadOnly),
     trustedForwarders: NUM_OR_NULL(record?.trustedForwarders),

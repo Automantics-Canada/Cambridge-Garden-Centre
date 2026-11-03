@@ -14,6 +14,7 @@ import driverRoutes from './modules/drivers/driver.routes.js';
 import dispatchRoutes from './modules/dispatch/dispatch.routes.js';
 import deliveriesRoutes from './modules/deliveries/deliveries.routes.js';
 import internalRoutes from './modules/internal/internal.routes.js';
+import emailEventRoutes from './modules/emailEvents/emailEvents.routes.js';
 import { buildInfo } from './config/buildInfo.js';
 import { deriveGmailHealth, readGmailStatus } from './services/gmailStatus.js';
 import {
@@ -135,6 +136,7 @@ app.use('/api/drivers', driverRoutes);
 app.use('/api/dispatch', dispatchRoutes);
 app.use('/api/deliveries', deliveriesRoutes);
 app.use('/api/internal', internalRoutes);
+app.use('/api/email-events', emailEventRoutes);
 
 
 app.use(errorHandler);

@@ -2,6 +2,7 @@
 import { saveTicketImage } from '../../services/fileStorage.js';
 import { extractTicketFromUrl } from '../../services/extraction/extraction.service.js';
 import { triggerOcrProcessing } from '../../services/ocrJobProcessor.js';
+import { findSupplierForSender } from '../../services/knownSenders.js';
 import {
   TicketSource,
   TicketStatus,
@@ -23,21 +24,15 @@ async function findDriverIdByPhone(phone: string | undefined | null) {
   return driver?.id ?? null;
 }
 
-async function findSupplierIdByEmail(fromEmail: string | undefined | null) {
-  if (!fromEmail) return null;
-  const match = fromEmail.trim().toLowerCase().match(/@(.+)$/);
-  if (!match) return null;
-  const domain = match[1] as string;
-
-  const supplier = await prisma.supplier.findFirst({
-    where: {
-      emailDomains: {
-        has: domain,
-      },
-    },
-  });
-
-  return supplier?.id ?? null;
+/**
+ * The supplier an emailed ticket came from, by the same lookup the invoice
+ * inbox uses: an exact address, then the domain, never a free-mail domain.
+ * This used to take everything after the first `@` of the raw value, so
+ * `Stone <billing@stone.example>` looked up the domain `stone.example>` and
+ * found nothing, and a gmail.com domain on a supplier claimed every Gmail user.
+ */
+export async function findSupplierIdByEmail(fromEmail: string | undefined | null) {
+  return (await findSupplierForSender(fromEmail))?.id ?? null;
 }
 
 

@@ -27,6 +27,7 @@ import authRouter from '../src/modules/auth/auth.routes.js';
 import supplierRouter from '../src/modules/supplier/supplier.routes.js';
 import productRouter from '../src/modules/products/product.routes.js';
 import spruceVendorRouter from '../src/modules/supplier/spruceVendors.routes.js';
+import emailEventRouter from '../src/modules/emailEvents/emailEvents.routes.js';
 
 const OPERATIONS: UserRole[] = ['AP_USER', 'OWNER', 'ADMIN'];
 
@@ -314,6 +315,25 @@ describe('Spruce vendor code routes', () => {
     assert.ok(index('get', '/unmapped') >= 0);
     assert.ok(index('get', '/unmapped') < index('delete', '/:code'));
   });
+});
+
+describe('email review queue routes', () => {
+  // Supplier mail is office business. Approving a sender edits a supplier and
+  // decides whose invoices are read automatically, so it and ignoring are for
+  // OWNER/ADMIN; AP_USER may look. Drivers get none of it.
+  it('GET / is office-only', () => {
+    assertGuarded(emailEventRouter, 'get', '/', OPERATIONS);
+    assert.equal(admittedRoles(effectiveChain(emailEventRouter, 'get', '/'))?.includes('DRIVER'), false);
+  });
+
+  for (const path of ['/:id/approve', '/:id/ignore']) {
+    it(`POST ${path} is OWNER/ADMIN only`, () => {
+      assertGuarded(emailEventRouter, 'post', path, ['OWNER', 'ADMIN']);
+      const roles = admittedRoles(effectiveChain(emailEventRouter, 'post', path));
+      assert.equal(roles?.includes('AP_USER'), false);
+      assert.equal(roles?.includes('DRIVER'), false);
+    });
+  }
 });
 
 describe('literal routes stay reachable', () => {

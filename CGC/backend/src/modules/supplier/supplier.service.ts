@@ -3,9 +3,10 @@ import { SupplierType } from '@prisma/client';
 import { compareTwoStrings } from 'string-similarity';
 import { normalizeProductName } from '../../lib/productName.js';
 import { ratesInUse } from './rates.service.js';
+import { invalidateKnownSenders } from '../../services/knownSenders.js';
 
 export const SupplierService = {
-  async findOrCreateSupplier(name: string | null): Promise<{ id: string; name: string } | null> {
+  async findOrCreateSupplier(name: string | null): Promise<{ id: string; name: string; type: SupplierType } | null> {
     if (!name) return null;
     const trimmedName = name.trim();
     if (!trimmedName) return null;
@@ -157,23 +158,30 @@ export const SupplierService = {
     }));
   },
 
+  // A supplier's domains, addresses and contact email decide whose invoices
+  // the inbox reads automatically (services/knownSenders.ts), so every change
+  // here drops the cached list.
   async create(data: {
     name: string;
     type: SupplierType;
     emailDomains: string[];
+    emailAddresses?: string[];
     keywords: string[];
     contactName?: string;
     contactEmail?: string;
     phone?: string;
     address?: string;
   }) {
-    return prisma.supplier.create({ data });
+    const created = await prisma.supplier.create({ data });
+    invalidateKnownSenders();
+    return created;
   },
 
   async update(id: string, data: Partial<{
     name: string;
     type: SupplierType;
     emailDomains: string[];
+    emailAddresses: string[];
     keywords: string[];
     contactName?: string;
     contactEmail?: string;
@@ -181,16 +189,20 @@ export const SupplierService = {
     address?: string;
     active?: boolean;
   }>) {
-    return prisma.supplier.update({
+    const updated = await prisma.supplier.update({
       where: { id },
       data,
     });
+    invalidateKnownSenders();
+    return updated;
   },
 
   async remove(id: string) {
-    return prisma.supplier.update({
+    const removed = await prisma.supplier.update({
       where: { id },
       data: { active: false },
     });
+    invalidateKnownSenders();
+    return removed;
   },
 };

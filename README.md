@@ -22,9 +22,13 @@ The CGC AP Verification System automates the ingestion, matching, and verificati
    `ap@cambridgegardencentre.ca` (Microsoft 365). M365 forwards them to a Gmail
    inbox, where a filter applies the invoice label. The worker polls that label
    every minute (`src/services/gmail.service.ts`), works out the original sender
-   even through a forward, checks it against the sender allowlist and turns each
-   PDF or image attachment into a `PENDING_REVIEW` invoice, then labels the email
-   processed. Setup and go-live: `CGC/backend/docs/gmail-mailbox-switch.md`.
+   even through a forward, and looks it up in the supplier records (email domains
+   and exact addresses; `src/services/knownSenders.ts`). A known sender's PDF or
+   image attachments become `PENDING_REVIEW` invoices and the email is labelled
+   processed. Mail from an unknown sender, or carrying only a spreadsheet or
+   another file the app cannot read, waits under "Unrecognised senders" on the
+   Invoices page, where an owner or admin approves the sender or ignores the
+   email. Setup and go-live: `CGC/backend/docs/gmail-mailbox-switch.md`.
 5. **Matching.** OCR reads the invoice lines; the matching engine links invoice →
    ticket → order and checks quantities and agreed rates, flagging each line.
 6. **AP review.** On the Invoices page AP staff review the flagged lines next to the

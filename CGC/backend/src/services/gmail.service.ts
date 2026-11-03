@@ -11,11 +11,22 @@ import { prisma } from '../db/prisma.js';
 import { triggerOcrProcessing } from './ocrJobProcessor.js';
 import {
   headerValues,
-  matchesSenderList,
   parseAddress,
   resolveSender,
   type ResolvedSender,
 } from './emailSender.js';
+import { invalidateKnownSenders, knownSenders, lookupSender, type SenderLookup } from './knownSenders.js';
+import {
+  ATTACHMENT_REASONS,
+  attachmentReviewReason,
+  classifyDownloaded,
+  heldRecords,
+  storedFileName,
+  triageAttachments,
+  type AttachmentRecord,
+  type ReviewReason,
+} from './emailAttachments.js';
+import { EmailIngestionStatus, SenderTypeResolved, type Prisma } from '@prisma/client';
 import {
   describeError,
   emptyCounts,
@@ -35,28 +46,18 @@ export const OAUTH_REDIRECT_URI = 'https://developers.google.com/oauthplayground
 export const PAGE_SIZE = 25;
 export const MAX_PAGES = 4;
 
-/** File types the poller turns into invoices, by extension as before. */
-const INVOICE_EXTENSIONS = ['pdf', 'jpg', 'jpeg', 'png'];
-
 type Part = gmail_v1.Schema$MessagePart;
+
+/** The label ids a poll applies: `done` (processed or observed) and `review`. */
+interface PollLabels {
+  done: string;
+  review: string;
+}
 
 /** Every part of a message, depth first. */
 function allParts(payload: Part | undefined): Part[] {
   if (!payload) return [];
   return [payload, ...(payload.parts ?? []).flatMap(allParts)];
-}
-
-/** Parts that are attachments: a filename and a body stored by reference. */
-function attachmentParts(payload: Part | undefined): Part[] {
-  return allParts(payload).filter(part => part.filename && part.body?.attachmentId);
-}
-
-/** The PDF and image attachments, the only kinds read as invoices today. */
-export function invoiceAttachments(payload: Part | undefined): Part[] {
-  return attachmentParts(payload).filter(part => {
-    const ext = part.filename!.split('.').pop()?.toLowerCase() ?? '';
-    return INVOICE_EXTENSIONS.includes(ext);
-  });
 }
 
 /** The first plain-text and HTML bodies, decoded, for reading a forwarded header block. */
@@ -96,26 +97,72 @@ export function attachmentKey(messageId: string, part: Part, bytes?: Buffer): st
 }
 
 /**
- * One line describing a message for the observe-mode census. Stored in
- * `EmailIngestionEvent.errorMessage`, the only free-text column the mailbox
- * log has until the review queue adds proper ones.
+ * One line describing a message for the observe-mode census, stored in
+ * `EmailIngestionEvent.note`. The same facts have their own columns; the line
+ * keeps the census readable in one SQL query.
  */
-export function censusNote(sender: ResolvedSender, allowlisted: boolean, attachments: Part[]): string {
+export function censusNote(sender: ResolvedSender, known: boolean, attachments: readonly AttachmentRecord[]): string {
   const files = attachments.length === 0
     ? 'none'
-    : attachments.map(part => `${part.filename} (${part.mimeType ?? 'unknown type'})`).join(', ');
+    : attachments.map(a => `${a.name || '(no name)'} (${a.mimeType ?? 'unknown type'})`).join(', ');
   return [
     'observe',
     `mode=${sender.mode}`,
     `forwardedBy=${sender.forwardedBy ?? '-'}`,
-    `allowlisted=${allowlisted ? 'yes' : 'no'}`,
+    `known=${known ? 'yes' : 'no'}`,
     `reason=${sender.reason}`,
     `attachments: ${files}`,
   ].join('; ').slice(0, 2000);
 }
 
 /** What happened to a message, as one of the per-message counters. */
-type Outcome = Exclude<keyof GmailPollCounts, 'listed' | 'invoicesCreated' | 'duplicates'>;
+type Outcome = Exclude<keyof GmailPollCounts, 'listed' | 'invoicesCreated' | 'duplicates' | 'requeued'>;
+
+/** What the mailbox log row for a message says. */
+interface EventFields {
+  status: EmailIngestionStatus;
+  reviewReason: ReviewReason | null;
+  subject: string;
+  fromAddress: string;
+  toAddress: string;
+  originalFrom: string | null;
+  forwardedBy: string | null;
+  senderMode: string;
+  supplierId: string | null;
+  senderTypeResolved: SenderTypeResolved;
+  attachments: AttachmentRecord[];
+  createdInvoiceIds: string[];
+  note: string | null;
+}
+
+type ExistingEvent = { status: EmailIngestionStatus; createdInvoiceIds: string[]; requeuedAt: Date | null } | null;
+
+/** The facts about one fetched message that every path below needs. */
+interface MessageFacts {
+  messageId: string;
+  payload: Part | undefined;
+  subject: string;
+  rawFrom: string;
+  toAddress: string;
+  receivedAt: Date;
+  sender: ResolvedSender;
+  lookup: SenderLookup;
+  existing: ExistingEvent;
+}
+
+function senderTypeResolved(lookup: SenderLookup): SenderTypeResolved {
+  if (!lookup.supplier) return SenderTypeResolved.UNKNOWN;
+  return lookup.supplier.type === 'TRUCKING_COMPANY' ? SenderTypeResolved.TRUCKING_COMPANY : SenderTypeResolved.SUPPLIER;
+}
+
+/** The lookup for a message whose sender could not be established. */
+const NOBODY: SenderLookup = { known: false, supplier: null, matchedBy: null, ambiguous: false };
+
+/** Gmail's 404 for a message that is no longer in the mailbox. */
+function isNotFound(error: unknown): boolean {
+  const e = error as { code?: unknown; status?: unknown; response?: { status?: unknown } } | null;
+  return e?.code === 404 || e?.status === 404 || e?.response?.status === 404;
+}
 
 /** A Prisma unique-constraint violation. */
 function isUniqueViolation(error: unknown): boolean {
@@ -161,12 +208,6 @@ export class GmailService {
   /** The token's mailbox, read once per process. */
   private static profileAddress: string | null = null;
   private static lastSuccessAt: string | null = null;
-  /**
-   * Messages refused this process (sender not allowed, or not resolvable).
-   * The allowlist only changes with a redeploy, which starts a new process,
-   * so they are not fetched again until then.
-   */
-  private static refused = new Set<string>();
   /** Log lines already written, so a 60s poll does not repeat itself. */
   private static warned = new Set<string>();
 
@@ -176,7 +217,6 @@ export class GmailService {
     this.labelIds.clear();
     this.profileAddress = null;
     this.lastSuccessAt = null;
-    this.refused.clear();
     this.warned.clear();
   }
 
@@ -192,7 +232,10 @@ export class GmailService {
    * Scope is deliberately narrow. The original query was `is:unread
    * has:attachment` with no sender check, which made every unread message
    * carrying a PDF or image into an `Invoice` row. Polling requires a label,
-   * and in ingest mode a sender allowlist, and does nothing without them.
+   * and only a sender the supplier records (or the env allowlist) know has
+   * invoices created. Everything else waits in the review queue: an
+   * `EmailIngestionEvent` marked NEEDS_REVIEW, and the review label on the
+   * message so it is not fetched again every minute.
    *
    * A message is done when it carries the processed label, not when it is
    * read: a person opening it in Gmail must not hide it from the poller. It
@@ -213,6 +256,7 @@ export class GmailService {
       invoiceLabelFound: null,
       processedLabel: config.processedLabel,
       observedLabel: config.observedLabel,
+      reviewLabel: config.reviewLabel,
       pollAfter: config.pollAfter,
       unreadOnly: !config.pollAfter,
       trustedForwarders: config.trustedForwarders.length,
@@ -271,9 +315,34 @@ export class GmailService {
       // a search term for a label the mailbox does not have is not something
       // to rely on.
       const processedLabelId = await this.ensureLabel(config.processedLabel);
-      const doneLabelId = config.ingestMode === 'observe'
-        ? await this.ensureLabel(config.observedLabel)
-        : processedLabelId;
+      const pollLabels: PollLabels = {
+        done: config.ingestMode === 'observe' ? await this.ensureLabel(config.observedLabel) : processedLabelId,
+        review: await this.ensureLabel(config.reviewLabel),
+      };
+
+      // Mail whose sender was approved since the last poll comes first. It
+      // carries the review label, so the query below no longer finds it.
+      // Observe mode creates nothing, so it leaves these for ingest mode.
+      const handled = new Set<string>();
+      if (config.ingestMode === 'ingest') {
+        const requeued = await prisma.emailIngestionEvent.findMany({
+          where: { status: EmailIngestionStatus.NEEDS_REVIEW, requeuedAt: { not: null } },
+          orderBy: { requeuedAt: 'asc' },
+          take: PAGE_SIZE,
+          select: { gmailMessageId: true },
+        });
+        // The approval was saved by the API, usually another process, whose
+        // cache clear does not reach this one. Read the supplier records
+        // afresh, or a list cached before the approval would send the email
+        // straight back to the queue with its re-queue used up.
+        if (requeued.length > 0) invalidateKnownSenders();
+        for (const { gmailMessageId } of requeued) {
+          handled.add(gmailMessageId);
+          const outcome = await this.processMessage(gmailMessageId, config, pollLabels, counts, true);
+          counts[outcome] += 1;
+          counts.requeued += 1;
+        }
+      }
 
       const query = buildInboxQuery(config);
       const ids = await this.listMessageIds(query, status);
@@ -281,7 +350,8 @@ export class GmailService {
       if (ids.length > 0) console.log(`📬 ${ids.length} message(s) to check in Gmail label "${config.invoiceLabel}".`);
 
       for (const id of ids) {
-        const outcome = await this.processMessage(id, config, doneLabelId, counts);
+        if (handled.has(id)) continue;
+        const outcome = await this.processMessage(id, config, pollLabels, counts, false);
         counts[outcome] += 1;
       }
 
@@ -366,76 +436,116 @@ export class GmailService {
     return [...new Set(ids)];
   }
 
-  /** Handles one message and says what happened to it. Never throws. */
+  /**
+   * Handles one message and says what happened to it. Never throws.
+   *
+   * `requeued` is mail whose sender was approved: it is fetched by id rather
+   * than found by the query, because it carries the review label.
+   */
   private static async processMessage(
     messageId: string,
     config: GmailInboxConfig,
-    doneLabelId: string,
-    counts: GmailPollCounts
+    labels: PollLabels,
+    counts: GmailPollCounts,
+    requeued: boolean
   ): Promise<Outcome> {
-    if (this.refused.has(messageId)) return 'rejectedSender';
-
     try {
       const res = await this.inbox.users.messages.get({ userId: 'me', id: messageId });
       const payload = res.data.payload ?? undefined;
       const headers = payload?.headers ?? [];
-      const rawFrom = headerValues(headers, 'From')[0] ?? 'Unknown';
-      const subject = headerValues(headers, 'Subject')[0] ?? 'No Subject';
       const sender = resolveSender(headers, messageBody(payload), { trustedForwarders: config.trustedForwarders });
-      const allowlisted = sender.mode !== 'unknown' && matchesSenderList(sender.originalSender, config.senderAllowlist);
+      const internal = Number(res.data.internalDate);
+      const facts: MessageFacts = {
+        messageId,
+        payload,
+        subject: headerValues(headers, 'Subject')[0] ?? 'No Subject',
+        rawFrom: headerValues(headers, 'From')[0] ?? 'Unknown',
+        toAddress: (headerValues(headers, 'To')[0] ?? '').slice(0, 1000),
+        receivedAt: Number.isFinite(internal) && internal > 0 ? new Date(internal) : new Date(),
+        sender,
+        lookup: sender.mode === 'unknown'
+          ? NOBODY
+          : lookupSender(await knownSenders(), sender.originalSender, config.senderAllowlist),
+        existing: await prisma.emailIngestionEvent.findUnique({
+          where: { gmailMessageId: messageId },
+          select: { status: true, createdInvoiceIds: true, requeuedAt: true },
+        }),
+      };
 
       if (config.ingestMode === 'observe') {
-        return await this.observeMessage(messageId, payload, headers, rawFrom, subject, sender, allowlisted, doneLabelId);
+        return await this.observeMessage(facts, labels);
+      }
+
+      // Somebody decided this email is not one to read. If it comes back to
+      // the query (its review label removed by hand), it is put back.
+      if (facts.existing?.status === EmailIngestionStatus.IGNORED) {
+        await this.markReview(messageId, labels);
+        return 'needsReview';
       }
 
       // A message from the forwarder whose real sender cannot be established is
-      // not a supplier's, however it is labelled. Left in place for a person.
+      // not a supplier's, however it is labelled. It waits for a person.
       if (sender.mode === 'unknown') {
-        this.refused.add(messageId);
-        console.warn(`Skipping labelled message ${messageId}: ${sender.reason} "${subject}"`);
+        console.warn(`Labelled message ${messageId} sent to review: ${sender.reason} "${facts.subject}"`);
+        await this.queueForReview(facts, labels, 'UNRESOLVED_SENDER',
+          heldRecords(triageAttachments(payload), ATTACHMENT_REASONS.held));
         return 'unresolvedSender';
       }
 
-      // The label scopes the query, but a mislabelled message must not become an
-      // invoice on the strength of the label alone. Left in place so a person
-      // still sees it, and not fetched again until the next deploy.
-      if (!allowlisted) {
-        this.refused.add(messageId);
-        console.warn(`Skipping labelled message from non-allowlisted sender ${sender.originalSender}: "${subject}"`);
+      // The label scopes the query, but a mislabelled message must not become
+      // an invoice on the strength of the label alone. A sender no supplier
+      // record knows waits for the office to approve or ignore it; nothing is
+      // downloaded meanwhile.
+      if (!facts.lookup.known) {
+        console.warn(`Labelled message from unrecognised sender ${sender.originalSender} sent to review: "${facts.subject}"`);
+        await this.queueForReview(facts, labels, 'UNKNOWN_SENDER',
+          heldRecords(triageAttachments(payload), ATTACHMENT_REASONS.held));
         return 'rejectedSender';
       }
 
       const via = sender.forwardedBy ? ` (${sender.mode} via ${sender.forwardedBy})` : '';
-      console.log(`Processing email from ${sender.originalSender}${via}: "${subject}"`);
-
-      const attachments = invoiceAttachments(payload);
-      if (attachments.length === 0) {
-        console.log('No valid attachments found in this email.');
-        await this.markDone(messageId, doneLabelId, true);
-        return 'noAttachments';
-      }
+      console.log(`Processing email from ${sender.originalSender}${via}: "${facts.subject}"`);
 
       const existing = await prisma.invoice.findMany({
         where: { gmailMessageId: { startsWith: `${messageId}:` } },
-        select: { gmailMessageId: true },
+        select: { id: true, gmailMessageId: true },
       });
-      const keys = new Set(existing.map(row => row.gmailMessageId));
+      const invoiceByKey = new Map(existing.map(row => [row.gmailMessageId, row.id]));
 
       // The previous poller keyed invoices by attachmentId and only marked a
       // message read once every attachment was in. A row under that key means
       // this message was handled before the upgrade: ingesting it again under
       // the new key would bill it twice.
-      const legacy = [...keys].some(key => !isCurrentKeySuffix(key.slice(messageId.length + 1)));
+      const legacy = [...invoiceByKey.keys()].some(key => !isCurrentKeySuffix(key.slice(messageId.length + 1)));
       if (legacy) {
         console.log(`Email ${messageId} was ingested before the upgrade. Skipping.`);
-        await this.markDone(messageId, doneLabelId, true);
+        await this.recordEvent(facts, {
+          ...this.eventBase(facts),
+          status: EmailIngestionStatus.PROCESSED,
+          reviewReason: null,
+          attachments: [],
+          createdInvoiceIds: [...invoiceByKey.values()],
+          note: 'Read by the poller before the upgrade; not read again.',
+        });
+        await this.markDone(messageId, labels, true);
         return 'legacySkipped';
       }
 
-      for (const part of attachments) {
+      const records: AttachmentRecord[] = [];
+      const createdInvoiceIds: string[] = [];
+      for (const candidate of triageAttachments(payload)) {
+        const { part } = candidate;
+        if (!candidate.needsBytes) {
+          records.push(candidate.record);
+          continue;
+        }
+
         let key = attachmentKey(messageId, part);
-        if (key && keys.has(key)) {
+        const known = key ? invoiceByKey.get(key) : undefined;
+        if (key && known) {
           counts.duplicates += 1;
+          createdInvoiceIds.push(known);
+          records.push({ ...candidate.record, action: 'read', reason: ATTACHMENT_REASONS.duplicate, invoiceId: known });
           continue;
         }
 
@@ -445,69 +555,169 @@ export class GmailService {
           id: part.body!.attachmentId!,
         });
         const buffer = Buffer.from(attachRes.data.data ?? '', 'base64url');
-        key ??= attachmentKey(messageId, part, buffer)!;
-        if (keys.has(key)) {
-          counts.duplicates += 1;
+        const record = classifyDownloaded(candidate.record, buffer);
+        if (record.action !== 'read') {
+          records.push(record);
           continue;
         }
 
-        console.log(`Ingesting attachment: ${part.filename}`);
+        key ??= attachmentKey(messageId, part, buffer)!;
+        const hashed = invoiceByKey.get(key);
+        if (hashed) {
+          counts.duplicates += 1;
+          createdInvoiceIds.push(hashed);
+          records.push({ ...record, reason: ATTACHMENT_REASONS.duplicate, invoiceId: hashed });
+          continue;
+        }
+
+        console.log(`Ingesting attachment: ${part.filename || '(no name)'}`);
         try {
           const result = await InvoiceService.ingestEmailInvoice({
             buffer,
-            originalName: part.filename || 'invoice.pdf',
+            originalName: storedFileName(part.filename ?? '', buffer),
             // The supplier, not the AP mailbox that forwarded it: supplier
             // attribution and Invoice.emailFrom both read this.
             fromEmail: sender.originalSender!,
-            subject,
+            subject: facts.subject,
             gmailMessageId: key,
           });
-          keys.add(key);
+          invoiceByKey.set(key, result.invoice.id);
+          createdInvoiceIds.push(result.invoice.id);
+          records.push({ ...record, invoiceId: result.invoice.id });
           counts.invoicesCreated += 1;
           if (result.ocrJob.id) this.triggerOcr(result.ocrJob.id);
         } catch (error) {
           // The API and the worker both poll during a rollout; whichever loses
           // the race on the unique key has nothing left to do.
           if (!isUniqueViolation(error)) throw error;
-          keys.add(key);
           counts.duplicates += 1;
+          records.push({ ...record, reason: ATTACHMENT_REASONS.duplicate });
         }
       }
 
-      await this.markDone(messageId, doneLabelId, true);
+      const review = attachmentReviewReason(records);
+      if (review) {
+        // Nothing here was dropped: what was read is read, and the rest is on
+        // the event with its reason, waiting for a person.
+        await this.queueForReview(facts, labels, review, records, createdInvoiceIds);
+        return review === 'NO_INVOICE_ATTACHMENT' ? 'noAttachments' : 'needsReview';
+      }
+
+      await this.recordEvent(facts, {
+        ...this.eventBase(facts),
+        status: EmailIngestionStatus.PROCESSED,
+        reviewReason: null,
+        attachments: records,
+        createdInvoiceIds,
+        note: null,
+      });
+      await this.markDone(messageId, labels, true);
       console.log(`Successfully processed email ${messageId}`);
       return 'processed';
     } catch (error) {
+      if (requeued && isNotFound(error)) {
+        // Approved, but the email has since been deleted from Gmail. Say so
+        // instead of trying again every minute.
+        await prisma.emailIngestionEvent.update({
+          where: { gmailMessageId: messageId },
+          data: {
+            status: EmailIngestionStatus.FAILED,
+            requeuedAt: null,
+            errorMessage: 'The email is no longer in the Gmail inbox, so it could not be read.',
+          },
+        }).catch(() => undefined);
+      }
       console.error(`Error processing message ${messageId}:`, error);
       return 'failed';
     }
   }
 
+  /** The columns every event for this message shares. */
+  private static eventBase(facts: MessageFacts) {
+    const { sender, lookup } = facts;
+    return {
+      subject: facts.subject.slice(0, 500),
+      fromAddress: sender.originalSender ?? parseAddress(facts.rawFrom) ?? facts.rawFrom.slice(0, 320),
+      toAddress: facts.toAddress,
+      originalFrom: sender.originalSender,
+      forwardedBy: sender.forwardedBy,
+      senderMode: sender.mode,
+      supplierId: lookup.supplier?.id ?? null,
+      senderTypeResolved: senderTypeResolved(lookup),
+    };
+  }
+
+  /**
+   * Writes the message's row in the mailbox log, creating or replacing it.
+   * Invoices the email produced on an earlier poll stay listed. Writing it
+   * clears a pending re-queue, so an approved email is read once.
+   */
+  private static async recordEvent(facts: MessageFacts, fields: EventFields) {
+    const createdInvoiceIds = [...new Set([...(facts.existing?.createdInvoiceIds ?? []), ...fields.createdInvoiceIds])];
+    const data = {
+      ...fields,
+      attachments: fields.attachments as unknown as Prisma.InputJsonValue,
+      createdInvoiceIds,
+      errorMessage: null,
+      requeuedAt: null,
+    };
+    const where = { gmailMessageId: facts.messageId };
+    try {
+      await prisma.emailIngestionEvent.upsert({
+        where,
+        create: { ...where, ...data, receivedAt: facts.receivedAt },
+        update: data,
+      });
+    } catch (error) {
+      // Both pollers created it at once; the row exists now, so update it.
+      if (!isUniqueViolation(error)) throw error;
+      await prisma.emailIngestionEvent.update({ where, data });
+    }
+  }
+
+  /** Puts the message on the review queue: an event, and the review label. */
+  private static async queueForReview(
+    facts: MessageFacts,
+    labels: PollLabels,
+    reason: ReviewReason,
+    attachments: AttachmentRecord[],
+    createdInvoiceIds: string[] = []
+  ) {
+    await this.recordEvent(facts, {
+      ...this.eventBase(facts),
+      status: EmailIngestionStatus.NEEDS_REVIEW,
+      reviewReason: reason,
+      attachments,
+      createdInvoiceIds,
+      note: facts.sender.mode === 'unknown' ? facts.sender.reason : null,
+    });
+    await this.markReview(facts.messageId, labels);
+  }
+
   /**
    * Observe mode: write down who sent the message and what it carried, and
    * create nothing. One `EmailIngestionEvent` per message, keyed by the bare
-   * message id; the observed label keeps it out of the next poll.
+   * message id; the observed label keeps it out of the next poll. A sender
+   * no supplier record knows is recorded as NEEDS_REVIEW, so the census shows
+   * on the Invoices page and the office can map senders to suppliers there.
    */
-  private static async observeMessage(
-    messageId: string,
-    payload: Part | undefined,
-    headers: gmail_v1.Schema$MessagePartHeader[],
-    rawFrom: string,
-    subject: string,
-    sender: ResolvedSender,
-    allowlisted: boolean,
-    doneLabelId: string
-  ): Promise<Outcome> {
-    const existing = await prisma.emailIngestionEvent.findUnique({ where: { gmailMessageId: messageId } });
-    if (!existing) {
+  private static async observeMessage(facts: MessageFacts, labels: PollLabels): Promise<Outcome> {
+    if (!facts.existing) {
+      const triaged = triageAttachments(facts.payload);
+      const attachments = heldRecords(triaged, ATTACHMENT_REASONS.observed);
+      const known = facts.lookup.known;
       try {
         await prisma.emailIngestionEvent.create({
           data: {
-            gmailMessageId: messageId,
-            subject: subject.slice(0, 500),
-            fromAddress: sender.originalSender ?? parseAddress(rawFrom) ?? rawFrom.slice(0, 320),
-            toAddress: (headerValues(headers, 'To')[0] ?? '').slice(0, 1000),
-            errorMessage: censusNote(sender, allowlisted, attachmentParts(payload)),
+            gmailMessageId: facts.messageId,
+            ...this.eventBase(facts),
+            status: known ? EmailIngestionStatus.PROCESSED : EmailIngestionStatus.NEEDS_REVIEW,
+            reviewReason: known ? null : facts.sender.mode === 'unknown' ? 'UNRESOLVED_SENDER' : 'UNKNOWN_SENDER',
+            attachments: attachments as unknown as Prisma.InputJsonValue,
+            // Every file, inline logos included, so the census shows what
+            // suppliers really send.
+            note: censusNote(facts.sender, known, triaged.map(c => c.record)),
+            receivedAt: facts.receivedAt,
           },
         });
       } catch (error) {
@@ -516,18 +726,32 @@ export class GmailService {
     }
     // Observing is not ingesting: the message stays unread, and keeps no
     // processed label, so switching to ingest later still reads it.
-    await this.markDone(messageId, doneLabelId, false);
+    await this.inbox.users.messages.modify({
+      userId: 'me',
+      id: facts.messageId,
+      requestBody: { addLabelIds: [labels.done] },
+    });
     return 'observed';
   }
 
-  private static async markDone(messageId: string, labelId: string, markRead: boolean) {
+  /** Done: the processed label, read, and off the review queue. */
+  private static async markDone(messageId: string, labels: PollLabels, markRead: boolean) {
     await this.inbox.users.messages.modify({
       userId: 'me',
       id: messageId,
       requestBody: {
-        addLabelIds: [labelId],
-        ...(markRead ? { removeLabelIds: ['UNREAD'] } : {}),
+        addLabelIds: [labels.done],
+        removeLabelIds: [labels.review, ...(markRead ? ['UNREAD'] : [])],
       },
+    });
+  }
+
+  /** Waiting for a person: the review label, left unread so AP still sees it. */
+  private static async markReview(messageId: string, labels: PollLabels) {
+    await this.inbox.users.messages.modify({
+      userId: 'me',
+      id: messageId,
+      requestBody: { addLabelIds: [labels.review] },
     });
   }
 
