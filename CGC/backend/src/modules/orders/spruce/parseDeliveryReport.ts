@@ -285,6 +285,7 @@ export function parseDeliveryReport(pages: PdfTextPage[]): ParsedSpruceReport {
             page: pageNumber,
             row: rowNumber,
             reason: `could not read the description for document ${order.documentNumber}`,
+            documentNumber: order.documentNumber,
           });
           continue;
         }

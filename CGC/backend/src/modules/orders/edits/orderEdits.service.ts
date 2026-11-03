@@ -3,12 +3,14 @@ import type { Prisma } from '@prisma/client';
 import { prisma } from '../../../db/prisma.js';
 import {
   combineFlags,
-  isPickupOrder,
+  derivePickup,
+  derivedStateFlags,
   normalizeAddress,
-  stateFlags,
+  type DeriveInput,
   type OrderFlag,
 } from '../import/mergeOrderFacts.js';
 import { NO_UPDATES, updatesForDay } from '../import/orderChanges.js';
+import { NOT_A_QUOTE_FLAG, QUOTE_FLAG } from '../quotations.js';
 import { awaitingSupplierByOrder, fulfilmentByDocument, pickupFromByDocument } from '../../dispatch/dispatchOrderView.js';
 import {
   EditValidationError,
@@ -78,6 +80,9 @@ async function recomputeDerived(db: Db, documentId: string): Promise<void> {
       sourceReports: true,
       shippingAddress: true,
       deliveryInstructions: true,
+      orderNotes: true,
+      deliveryFlag: true,
+      fulfilmentOverride: true,
       flags: true,
       lines: { select: { spruceItemNumber: true, product: true, poNumber: true } },
       overrides: { select: { field: true, spruceChanged: true } },
@@ -92,9 +97,23 @@ async function recomputeDerived(db: Db, documentId: string): Promise<void> {
     phone: document.phone,
     orderDate: document.orderDate,
     inItemTracking: document.sourceReports.includes('ITEM_TRACKING'),
+    inDeliveryReport: document.sourceReports.includes('DELIVERY'),
   };
-  const isPickup = document.flags.includes('NOT_OPEN') ? false : isPickupOrder(state);
-  const fresh = stateFlags(state, isPickup);
+  // The same rule the import applies, from the same flags and the same
+  // fulfilment facts, so an edit never turns an order the import closed back
+  // into a pickup, or the other way.
+  const derive: DeriveInput = {
+    state,
+    flags: { stored: document.flags },
+    fulfilment: {
+      orderNotes: document.orderNotes,
+      deliveryFlag: document.deliveryFlag,
+      sourceReports: document.sourceReports,
+      override: document.fulfilmentOverride,
+    },
+  };
+  const isPickup = derivePickup(derive);
+  const fresh = derivedStateFlags(derive, isPickup);
   if (document.overrides.some(override => override.spruceChanged)) fresh.push(CHANGED);
 
   await db.orderDocument.update({
@@ -113,6 +132,72 @@ async function recomputeDerived(db: Db, documentId: string): Promise<void> {
       data: { customerName: document.customerName, deliveryDate: document.deliveryDate },
     });
   }
+}
+
+/**
+ * Takes QUOTE off an order, adding `also` (the office's NOT_A_QUOTE), and
+ * puts back what a quotation goes without: whether it is a pickup, and the
+ * flags read off its state (no address, no phone, ...). Returns false,
+ * having written nothing, for an order that is not flagged a quotation.
+ */
+export async function dropQuoteFlag(db: Db, documentId: string, also: OrderFlag[] = []): Promise<boolean> {
+  const { flags } = await db.orderDocument.findUniqueOrThrow({ where: { id: documentId }, select: { flags: true } });
+  if (!flags.includes(QUOTE_FLAG)) return false;
+  // Conditional on the flags read, so an import writing this order at the
+  // same moment is not overwritten with what it has just replaced.
+  const written = await db.orderDocument.updateMany({
+    where: { id: documentId, flags: { equals: flags } },
+    data: { flags: combineFlags(flags, [QUOTE_FLAG as OrderFlag], also) },
+  });
+  if (written.count === 0) throw new OrderEditError(409, 'This order changed just now. Refresh and try again.');
+  await recomputeDerived(db, documentId);
+  return true;
+}
+
+/**
+ * The office's "Not a quotation": the order the import took for a quotation
+ * is a real one.
+ *
+ * The import calls a document a quotation when Item Tracking lists it inside
+ * the Order report's range, the Order report leaves it out, and nothing has
+ * happened to it in the app. A real order can look the same: entered,
+ * delivered and closed in Spruce between two uploads, so no upload ever saw
+ * it open. Nothing would ever take the flag off such an order, and while it
+ * stood, its tickets and invoice lines could not be linked to it.
+ *
+ * QUOTE comes off and NOT_A_QUOTE goes on, which every later upload keeps,
+ * so the import never calls the order a quotation again (left off a later
+ * Order report, it reads as closed instead, as any order would). The order
+ * is not marked closed here: the office knows it is an order, not whether it
+ * is done, and "Done outside the app" says that. Audited. Marking an order
+ * that is not flagged a quotation changes nothing.
+ */
+export async function markNotQuotation(documentId: string, userId: string): Promise<{ changed: boolean }> {
+  return prisma.$transaction(async (tx) => {
+    const document = await tx.orderDocument.findUnique({
+      where: { id: documentId },
+      select: { documentNumber: true, flags: true },
+    });
+    if (!document) throw new OrderEditError(404, 'That order no longer exists.');
+
+    const changed = await dropQuoteFlag(tx, documentId, [NOT_A_QUOTE_FLAG as OrderFlag]);
+    if (!changed) return { changed: false };
+
+    await tx.auditLog.create({
+      data: {
+        entityType: 'ORDER',
+        entityId: documentId,
+        actionType: 'ORDER_EDITED',
+        performedById: userId,
+        details: {
+          documentNumber: document.documentNumber,
+          action: 'NOT_A_QUOTATION',
+          changes: [{ field: 'flags', lineId: null, from: QUOTE_FLAG, to: NOT_A_QUOTE_FLAG }],
+        } as Prisma.InputJsonValue,
+      },
+    });
+    return { changed: true };
+  });
 }
 
 /**
@@ -196,6 +281,48 @@ async function correct(
   return { field: target.field, lineId: target.lineId, from: target.current, to: target.value };
 }
 
+type FulfilmentColumns = {
+  id: string;
+  fulfilmentOverride: string | null;
+  pickupSupplierId: string | null;
+  pickupLocation: string | null;
+};
+
+/** Writes the dispatcher's fulfilment choices that changed, and says which. */
+async function applyFulfilmentEdits(db: Db, row: FulfilmentColumns, edits: ParsedEdits) {
+  const changes: Array<{ field: string; lineId: null; from: string | null; to: string | null }> = [];
+  const data: Prisma.OrderDocumentUncheckedUpdateInput = {};
+
+  if (edits.fulfilmentOverride !== undefined && edits.fulfilmentOverride !== row.fulfilmentOverride) {
+    data.fulfilmentOverride = edits.fulfilmentOverride;
+    changes.push({ field: 'fulfilmentOverride', lineId: null, from: row.fulfilmentOverride, to: edits.fulfilmentOverride });
+  }
+
+  let location = edits.pickupLocation;
+  if (edits.pickupSupplierId !== undefined && edits.pickupSupplierId !== row.pickupSupplierId) {
+    if (edits.pickupSupplierId !== null) {
+      const supplier = await db.supplier.findUnique({ where: { id: edits.pickupSupplierId }, select: { active: true } });
+      if (!supplier?.active) throw new EditValidationError('That supplier is not on the active list.');
+    } else {
+      // A yard of no supplier means nothing.
+      location = null;
+    }
+    data.pickupSupplierId = edits.pickupSupplierId;
+    changes.push({ field: 'pickupSupplierId', lineId: null, from: row.pickupSupplierId, to: edits.pickupSupplierId });
+  }
+  // Nor can a yard be named on its own: with no supplier chosen, it stays empty.
+  const supplierId = edits.pickupSupplierId !== undefined ? edits.pickupSupplierId : row.pickupSupplierId;
+  if (supplierId === null && location !== undefined) location = null;
+
+  if (location !== undefined && location !== row.pickupLocation) {
+    data.pickupLocation = location;
+    changes.push({ field: 'pickupLocation', lineId: null, from: row.pickupLocation, to: location });
+  }
+
+  if (changes.length > 0) await db.orderDocument.update({ where: { id: row.id }, data });
+  return changes;
+}
+
 export async function applyOrderEdits(documentId: string, edits: ParsedEdits, userId: string) {
   return prisma.$transaction(async (tx) => {
     const document = await tx.orderDocument.findUnique({
@@ -229,6 +356,12 @@ export async function applyOrderEdits(documentId: string, edits: ParsedEdits, us
       await tx.orderDocument.update({ where: { id: documentId }, data: { dispatcherNotes: edits.dispatcherNotes } });
       changes.push({ field: 'dispatcherNotes', lineId: null, from: row.dispatcherNotes, to: edits.dispatcherNotes });
     }
+
+    // How the order reaches the customer, and where it is loaded: dispatch's
+    // own decisions, like the note. No report writes them, so there is no
+    // Spruce value to keep beside them and no override row; the audit log
+    // records each change.
+    changes.push(...await applyFulfilmentEdits(tx, row, edits));
 
     if (changes.length > 0) {
       await recomputeDerived(tx, documentId);
@@ -292,7 +425,9 @@ export async function resetOrderEdit(documentId: string, field: string, lineId: 
  *
  * `awaitingSupplier` names who the order waits on and under which PO, for
  * the "Awaiting supplier" flag; `pickupFrom` where the driver collects the
- * material (empty: CGC's own yard). The screen is office-only.
+ * material (empty: CGC's own yard). `fulfilmentOverride` and the pit
+ * (`pickupSupplier`, `pickupLocation`) are what dispatch set on the order.
+ * The screen is office-only.
  *
  * @param today 'YYYY-MM-DD' in the yard's timezone; for tests.
  */
@@ -313,6 +448,12 @@ export async function getOrderForEditing(idOrNumber: string, today?: string) {
       deliveryType: true,
       deliveryDate: true,
       dispatcherNotes: true,
+      fulfilmentOverride: true,
+      pickupSupplierId: true,
+      pickupLocation: true,
+      pickupSupplier: { select: { id: true, name: true } },
+      // Whether the stop is finished or on a truck, for "Done outside the app".
+      delivery: { select: { status: true } },
       isPickup: true,
       flags: true,
       lines: {
@@ -334,13 +475,13 @@ export async function getOrderForEditing(idOrNumber: string, today?: string) {
   });
   if (!document) throw new OrderEditError(404, 'That order is not in the system.');
 
-  const [suggestion, changed, awaiting, pickup, fulfilment] = await Promise.all([
+  const [suggestion, changed, awaiting, fulfilment] = await Promise.all([
     addressSuggestion(document),
     updatesForDay(prisma, [document.id], today),
     awaitingSupplierByOrder(prisma, [document]),
-    pickupFromByDocument(prisma, [document.id]),
     fulfilmentByDocument(prisma, [document.id]),
   ]);
+  const pickup = await pickupFromByDocument(prisma, [document.id], fulfilment);
   const { updatedFields, updates } = changed.get(document.id) ?? NO_UPDATES;
   return {
     ...document,

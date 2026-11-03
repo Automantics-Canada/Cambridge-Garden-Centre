@@ -917,6 +917,193 @@ describe('choosing between agreed rates', () => {
 });
 
 /**
+ * Finding the agreed rate by the order line's Spruce item code.
+ *
+ * Suppliers word their invoices their own way ("Triple Mix Bulk") and Spruce
+ * words the order line its own way ("SOIL GARDEN MIX"), so a rate entered
+ * against either wording misses the other. A price list can carry the Spruce
+ * code, and the order line always does, so the code is the fallback. Wording
+ * still comes first: it is what somebody entered the rate against.
+ */
+describe('agreed rate by Spruce item code', () => {
+  const load = (): DeliveredTicket => ({
+    id: 'ticket-1',
+    ticketNumber: '88213',
+    poNumber: '482913',
+    quantity: 24.6,
+    unit: 'tonnes',
+    material: 'Triple Mix Bulk',
+    supplierId: SUPPLIER,
+    claim: null,
+  });
+
+  const soilOrder = (overrides: Partial<CandidateOrder> = {}) =>
+    order({ product: 'SOIL GARDEN MIX', spruceItemNumber: 'SOILGRDNA', ...overrides });
+
+  const soilLine = (overrides: Partial<InvoiceLineSubject> = {}) =>
+    invoiceLine({ description: 'Triple Mix Bulk', unitRate: 18, ...overrides });
+
+  const lineInputs = (overrides: Partial<Parameters<typeof matchInvoiceLine>[1]> = {}) => ({
+    ...inputs({ orders: [soilOrder()] }),
+    agreedRates: [
+      { productName: 'Garden Soil', rate: 18, unit: 'tonnes', spruceItemCode: 'SOILGRDNA' },
+    ],
+    tickets: [load()],
+    competingLines: [],
+    ...overrides,
+  });
+
+  test('a rate no wording finds is found by the order line item code, and says so', () => {
+    const decision = matchInvoiceLine(soilLine(), lineInputs());
+    const rate = check(decision, 'rate');
+    assert.equal(rate?.passed, true);
+    assert.match(rate?.detail ?? '', /found by item code SOILGRDNA/);
+    assert.equal(decision.totals?.agreedRate, 18);
+  });
+
+  test('a rate found by item code still catches being billed above it', () => {
+    const decision = matchInvoiceLine(soilLine({ unitRate: 21.4 }), lineInputs());
+    const rate = check(decision, 'rate');
+    assert.equal(rate?.passed, false);
+    assert.match(rate?.detail ?? '', /18\.9%/);
+    assert.match(rate?.detail ?? '', /found by item code SOILGRDNA/);
+    assert.equal(decision.totals?.rateDiscrepancy, 3.4);
+  });
+
+  test('item codes are compared without regard to case or spacing', () => {
+    const decision = matchInvoiceLine(
+      soilLine(),
+      lineInputs({ orders: [soilOrder({ spruceItemNumber: ' soilgrdna ' })] })
+    );
+    assert.equal(decision.totals?.agreedRate, 18);
+  });
+
+  test('with no rate on the code either, the price is not checked', () => {
+    const decision = matchInvoiceLine(
+      soilLine(),
+      lineInputs({
+        agreedRates: [{ productName: 'Garden Soil', rate: 18, unit: 'tonnes', spruceItemCode: 'SOILTOPA' }],
+      })
+    );
+    assert.equal(check(decision, 'rate')?.passed, false);
+    assert.match(check(decision, 'rate')?.detail ?? '', /No agreed rate/);
+    assert.equal(decision.totals?.agreedRate, null);
+  });
+
+  test('a catch-all MISC code is never used to find a rate', () => {
+    // MISC carries unrelated items under one code; a price agreed for one of
+    // them says nothing about another.
+    const decision = matchInvoiceLine(
+      soilLine(),
+      lineInputs({
+        orders: [soilOrder({ spruceItemNumber: 'MISC' })],
+        agreedRates: [{ productName: 'Quikrete Type S', rate: 18, unit: 'tonnes', spruceItemCode: 'MISC' }],
+      })
+    );
+    assert.equal(check(decision, 'rate')?.passed, false);
+    assert.match(check(decision, 'rate')?.detail ?? '', /MISC is a catch-all/);
+    assert.equal(decision.totals?.agreedRate, null);
+  });
+
+  test('a MISCDEL delivery code is a catch-all too', () => {
+    const decision = matchInvoiceLine(
+      soilLine(),
+      lineInputs({
+        orders: [soilOrder({ spruceItemNumber: 'MISCDELD' })],
+        agreedRates: [{ productName: 'Flatbed', rate: 18, unit: 'tonnes', spruceItemCode: 'MISCDELD' }],
+      })
+    );
+    assert.equal(decision.totals?.agreedRate, null);
+  });
+
+  test('a matching wording is preferred over the item code', () => {
+    const decision = matchInvoiceLine(
+      soilLine(),
+      lineInputs({
+        agreedRates: [
+          { productName: 'Garden Soil', rate: 25, unit: 'tonnes', spruceItemCode: 'SOILGRDNA' },
+          { productName: 'Triple Mix Bulk', rate: 18, unit: 'tonnes' },
+        ],
+      })
+    );
+    assert.equal(decision.totals?.agreedRate, 18);
+    assert.doesNotMatch(check(decision, 'rate')?.detail ?? '', /item code/);
+  });
+
+  test("an order line from another supplier never borrows this supplier's rate", () => {
+    // Found by PO, but the PO was raised on someone else.
+    const decision = matchInvoiceLine(
+      soilLine(),
+      lineInputs({ orders: [soilOrder({ supplierId: OTHER_SUPPLIER })] })
+    );
+    assert.equal(decision.totals?.agreedRate, null);
+  });
+
+  test('with no single matched order there is no item code to go by', () => {
+    const decision = matchInvoiceLine(
+      soilLine({ quantity: null }),
+      lineInputs({ orders: [soilOrder({ id: 'order-1' }), soilOrder({ id: 'order-2' })] })
+    );
+    assert.equal(decision.status, 'CONFLICT');
+    assert.equal(decision.totals?.agreedRate, null);
+  });
+
+  test("the supplier's own code, when both sides give it, must agree", () => {
+    const rates = [
+      {
+        productName: 'Garden Soil',
+        rate: 18,
+        unit: 'tonnes',
+        spruceItemCode: 'SOILGRDNA',
+        supplierItemCode: 'GS-100',
+      },
+    ];
+    const agreeing = matchInvoiceLine(soilLine({ supplierItemCode: 'gs-100' }), lineInputs({ agreedRates: rates }));
+    assert.equal(agreeing.totals?.agreedRate, 18);
+
+    const differing = matchInvoiceLine(soilLine({ supplierItemCode: 'GS-200' }), lineInputs({ agreedRates: rates }));
+    assert.equal(differing.totals?.agreedRate, null);
+  });
+
+  test('two products sharing one code at different prices are not guessed between', () => {
+    const decision = matchInvoiceLine(
+      soilLine(),
+      lineInputs({
+        agreedRates: [
+          { productName: 'Garden Soil', rate: 18, unit: 'tonnes', spruceItemCode: 'SOILGRDNA' },
+          { productName: 'Garden Soil Premium', rate: 24, unit: 'tonnes', spruceItemCode: 'SOILGRDNA' },
+        ],
+      })
+    );
+    assert.equal(check(decision, 'rate')?.passed, false);
+    assert.match(check(decision, 'rate')?.detail ?? '', /share item code SOILGRDNA at different prices/);
+    assert.equal(decision.totals?.agreedRate, null);
+  });
+
+  test('with no billed rate read, the evidence still says how the agreed rate was found', () => {
+    const decision = matchInvoiceLine(soilLine({ unitRate: null }), lineInputs());
+    const rate = check(decision, 'rate');
+    assert.equal(rate?.passed, false);
+    assert.equal(rate?.expected, 18);
+    assert.equal(
+      rate?.detail,
+      'No rate could be read from the invoice line (the agreed rate was found by item code SOILGRDNA)'
+    );
+  });
+
+  test('a code rate in an incomparable unit is named, and not applied', () => {
+    const decision = matchInvoiceLine(
+      soilLine(),
+      lineInputs({
+        agreedRates: [{ productName: 'Garden Soil', rate: 260, unit: 'skid', spruceItemCode: 'SOILGRDNA' }],
+      })
+    );
+    assert.match(check(decision, 'rate')?.detail ?? '', /found by item code SOILGRDNA\) is per skid/);
+    assert.equal(decision.totals?.rateUnitMismatch, true);
+  });
+});
+
+/**
  * The numbers the invoice screens store on the line itself.
  *
  * They used to be computed a second time, by a looser comparison, so the line
@@ -1139,5 +1326,174 @@ describe('Spruce POs', () => {
     const decision = matchTicket(ticket(), inputs());
     assert.equal(decision.status, 'MATCHED');
     assert.equal(check(decision, 'po')?.detail, 'PO 482913 matches 1 order line');
+  });
+});
+
+describe('two copies of one load: the driver photo and the supplier emailed ticket (A15)', () => {
+  const rates = [{ productName: 'A Gravel 19mm', rate: 18, unit: 'tonnes' }];
+  const day = new Date('2026-08-13T00:00:00Z');
+  const driverCopy = (overrides: Partial<DeliveredTicket> = {}): DeliveredTicket => ({
+    id: 'driver-copy',
+    ticketNumber: 'T-501',
+    poNumber: '482913',
+    quantity: 24.6,
+    unit: 'tonnes',
+    material: 'A Gravel 19mm',
+    supplierId: SUPPLIER,
+    claim: null,
+    duplicateOfTicketId: null,
+    emailedBySupplier: false,
+    ticketDate: day,
+    ...overrides,
+  });
+  const emailedCopy = (overrides: Partial<DeliveredTicket> = {}): DeliveredTicket =>
+    driverCopy({ id: 'emailed-copy', duplicateOfTicketId: 'driver-copy', emailedBySupplier: true, ...overrides });
+  const claim = (overrides: Record<string, unknown> = {}) => ({
+    invoiceLineId: 'other-line',
+    invoiceNumber: 'INV-1001',
+    lineNumber: 2,
+    claimedByName: 'Jane Doe',
+    claimedAt: new Date('2026-09-03T00:00:00Z'),
+    ...overrides,
+  });
+  const decide = (tickets: DeliveredTicket[], line: Partial<InvoiceLineSubject> = {}) =>
+    matchInvoiceLine(invoiceLine(line), { ...inputs(), agreedRates: rates, tickets, competingLines: [] });
+
+  test('the load counts once, the driver copy is the one counted, and agreeing copies pass', () => {
+    const decision = decide([emailedCopy(), driverCopy()]);
+    assert.equal(check(decision, 'ticketCoverage')?.found, 24.6, 'not 49.2');
+    assert.equal(check(decision, 'ticketCoverage')?.passed, true);
+    assert.match(check(decision, 'ticketCoverage')?.detail ?? '', /1 second copy of a load already counted was not counted again/);
+    assert.deepEqual(decision.ticketIds, ['driver-copy']);
+    assert.equal(check(decision, 'copiesAgree')?.passed, true);
+    assert.match(check(decision, 'copiesAgree')?.detail ?? '', /T-501 arrived twice/);
+    assert.equal(check(decision, 'billerTicketsOnly'), undefined);
+    assert.equal(decision.status, 'MATCHED');
+  });
+
+  test('billing the load twice is caught: two copies do not cover two loads', () => {
+    const decision = decide([driverCopy(), emailedCopy()], { quantity: 49.2 });
+    assert.equal(check(decision, 'ticketCoverage')?.passed, false);
+    assert.equal(check(decision, 'ticketCoverage')?.found, 24.6);
+  });
+
+  test('copies that disagree are flagged with both readings, and the driver copy counts', () => {
+    const decision = decide([
+      driverCopy(),
+      emailedCopy({ quantity: 30, ticketDate: new Date('2026-08-14T00:00:00Z'), poNumber: '482914' }),
+    ]);
+    const copies = check(decision, 'copiesAgree');
+    assert.equal(copies?.passed, false);
+    assert.match(copies?.detail ?? '', /quantity 30 tonnes on the supplier's emailed copy against 24\.6 tonnes on the driver's copy/);
+    assert.match(copies?.detail ?? '', /dated 2026-08-14 on the supplier's emailed copy against 2026-08-13/);
+    assert.match(copies?.detail ?? '', /PO 482914 on the supplier's emailed copy against 482913/);
+    assert.match(copies?.detail ?? '', /The driver's copy was counted/);
+    assert.equal(check(decision, 'ticketCoverage')?.found, 24.6);
+    assert.equal(decision.status, 'PARTIAL');
+  });
+
+  test('a supplier copy on this PO whose driver copy names another PO is still flagged here', () => {
+    const decision = decide([driverCopy({ poNumber: '777777' }), emailedCopy()]);
+    assert.equal(check(decision, 'copiesAgree')?.passed, false);
+    assert.equal(check(decision, 'ticketCoverage')?.passed, false, 'the driver copy is on another PO, so nothing covers this line');
+  });
+
+  test('a line backed only by the supplier emailed tickets is never passed automatically', () => {
+    const decision = decide([emailedCopy({ duplicateOfTicketId: null })]);
+    assert.equal(check(decision, 'ticketCoverage')?.passed, true);
+    const biller = check(decision, 'billerTicketsOnly');
+    assert.equal(biller?.passed, false);
+    assert.match(biller?.detail ?? '', /emailed by the supplier/);
+    assert.equal(decision.status, 'PARTIAL');
+  });
+
+  test('one driver photo among supplier copies is enough independent evidence', () => {
+    const decision = decide(
+      [driverCopy(), emailedCopy({ id: 'other-load', ticketNumber: 'T-502', duplicateOfTicketId: null })],
+      { quantity: 49.2 }
+    );
+    assert.equal(check(decision, 'ticketCoverage')?.passed, true);
+    assert.equal(check(decision, 'billerTicketsOnly'), undefined);
+  });
+
+  test('a claim on the supplier copy spends the load: the driver copy cannot pay a second invoice', () => {
+    const decision = decide([driverCopy(), emailedCopy({ claim: claim() })]);
+    assert.equal(check(decision, 'ticketReuse')?.passed, false);
+    assert.match(check(decision, 'ticketReuse')?.detail ?? '', /INV-1001/);
+    assert.deepEqual(decision.ticketIds, []);
+  });
+
+  test('and a claim on the driver copy spends it the other way round', () => {
+    const decision = decide([driverCopy({ claim: claim() }), emailedCopy()]);
+    assert.equal(check(decision, 'ticketReuse')?.passed, false);
+    assert.deepEqual(decision.ticketIds, []);
+  });
+
+  test("this line's own claim on either copy is its own history, not a conflict", () => {
+    const decision = decide([driverCopy(), emailedCopy({ claim: claim({ invoiceLineId: 'line-1' }) })]);
+    assert.equal(check(decision, 'ticketReuse')?.passed, true);
+    assert.deepEqual(decision.ticketIds, ['driver-copy']);
+  });
+
+  test('a driver photo whose PO could not be read still counts, on the PO its supplier copy shows', () => {
+    // Before, the counted driver copy (no PO) fell off this line: coverage read
+    // "no delivery ticket" and copiesAgree claimed the load had been counted.
+    const decision = decide([driverCopy({ poNumber: null }), emailedCopy()]);
+    assert.equal(check(decision, 'ticketCoverage')?.passed, true);
+    assert.equal(check(decision, 'ticketCoverage')?.found, 24.6);
+    assert.deepEqual(decision.ticketIds, ['driver-copy']);
+    const copies = check(decision, 'copiesAgree');
+    assert.equal(copies?.passed, true);
+    assert.match(copies?.detail ?? '', /the driver's copy did not show its PO, so the other copy's was used/);
+    assert.equal(check(decision, 'billerTicketsOnly'), undefined);
+    assert.equal(decision.status, 'MATCHED');
+  });
+
+  test('a quantity the driver photo does not show is taken, with its unit, from the other copy', () => {
+    const decision = decide([driverCopy({ quantity: null, unit: null }), emailedCopy()]);
+    assert.equal(check(decision, 'ticketCoverage')?.found, 24.6);
+    assert.match(check(decision, 'copiesAgree')?.detail ?? '', /did not show its quantity/);
+  });
+
+  test("a quantity only the supplier's emailed copy shows is never passed automatically", () => {
+    // The load is real (the driver photographed it), but the quantity paid
+    // for would be the biller's own figure, which nobody has checked.
+    const decision = decide([driverCopy({ quantity: null, unit: null }), emailedCopy({ quantity: 30 })], { quantity: 30 });
+    assert.equal(check(decision, 'ticketCoverage')?.passed, true, 'the load still counts');
+    const biller = check(decision, 'billerTicketsOnly');
+    assert.equal(biller?.passed, false);
+    assert.match(biller?.detail ?? '', /T-501.*only on the supplier's emailed copy/);
+    assert.equal(decision.status, 'PARTIAL');
+  });
+
+  test("a PO or date borrowed from the supplier copy, with the driver's own quantity, still passes", () => {
+    const decision = decide([driverCopy({ poNumber: null, ticketDate: null }), emailedCopy()]);
+    assert.equal(check(decision, 'billerTicketsOnly'), undefined);
+    assert.equal(decision.status, 'MATCHED');
+  });
+
+  test("a quantity borrowed from another driver copy is the yard's evidence, not the biller's", () => {
+    const decision = decide([
+      driverCopy({ quantity: null, unit: null }),
+      driverCopy({ id: 'driver-copy-2', duplicateOfTicketId: 'driver-copy' }),
+      emailedCopy(),
+    ]);
+    assert.equal(check(decision, 'ticketCoverage')?.passed, true);
+    assert.equal(check(decision, 'billerTicketsOnly'), undefined);
+  });
+
+  test('a value the driver copy does show is never replaced by the supplier copy', () => {
+    const decision = decide([driverCopy({ quantity: 20 }), emailedCopy()], { quantity: 20 });
+    assert.equal(check(decision, 'ticketCoverage')?.found, 20);
+    assert.equal(check(decision, 'copiesAgree')?.passed, false);
+  });
+
+  test('the driver copy counts even when the supplier copy happens to be the one pointed at', () => {
+    const decision = decide([
+      driverCopy({ duplicateOfTicketId: 'emailed-copy' }),
+      emailedCopy({ duplicateOfTicketId: null }),
+    ]);
+    assert.deepEqual(decision.ticketIds, ['driver-copy']);
+    assert.equal(check(decision, 'billerTicketsOnly'), undefined);
   });
 });

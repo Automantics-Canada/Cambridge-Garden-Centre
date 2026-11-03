@@ -80,15 +80,31 @@ model OrderDocument {
   delivery        Delivery?
   /// A dispatcher's note for the driver. Ours, not Spruce's: no report writes it.
   dispatcherNotes String?
+  /// How the order reaches the customer when dispatch says otherwise than the
+  /// reports: yard_pickup, yard_delivery, supplier_haul_delivery,
+  /// external_pickup or supplier_direct_ship. Ours, like dispatcherNotes; null
+  /// means "as the reports say". Office screens only, never a driver's.
+  fulfilmentOverride String?
+  /// The pit or supplier dispatch chose to load at, where the order names none
+  /// (a "PitBlk" order with no PO). Office screens only; the driver is told
+  /// its name and address as the place to pick up, and nothing else of it.
+  pickupSupplierId String?   @db.Uuid
+  pickupSupplier   Supplier? @relation("OrderPickupSupplier", fields: [pickupSupplierId], references: [id], onDelete: SetNull)
+  /// Which of that supplier's yards or pits, where it has several: "Ayr".
+  pickupLocation   String?
   /// Fields a dispatcher has corrected. The columns above hold the corrected
   /// value; each override keeps what Spruce says.
   overrides       OrderOverride[]
   /// What Spruce changed on this order when its reports were uploaded again.
   changes         OrderChange[]
+  /// The trucks dispatch sent for this order, each with the haul rate agreed
+  /// for it. Office screens only, never a driver's.
+  dispatchLoads   DispatchLoad[]
 
   @@index([orderDate])
   @@index([deliveryDate])
   @@index([poNumber])
+  @@index([pickupSupplierId])
 }
 
 model Order {
@@ -193,6 +209,18 @@ model Ticket {
   driverId                String?            @db.Uuid
   deliveryStatus          DriverTaskStatus   @default(NOT_STARTED)
   spruceMatched           Boolean            @default(false)
+  /// Set on a second copy of a load already on file: the supplier's emailed
+  /// copy of a ticket the driver also photographed (A15), or the same ticket
+  /// sent twice. Points at the copy that counts (the driver's when there is
+  /// one), so matching counts the load once and a claim on either copy is a
+  /// claim on the load. Same supplier and same ticket number decide it
+  /// (modules/tickets/ticketCopies.ts).
+  duplicateOfTicketId     String?            @db.Uuid
+  /// For a ticket cut from an emailed attachment: `messageId:partId#page`, so
+  /// a mailbox poll that is retried never files the same page twice.
+  emailSourceKey          String?            @unique
+  duplicateOf             Ticket?            @relation("TicketCopies", fields: [duplicateOfTicketId], references: [id], onDelete: SetNull)
+  copies                  Ticket[]           @relation("TicketCopies")
   ocrJobs                 OcrJob[]           @relation("TicketOcrJobs")
   matchResult             MatchResult?
   claim                   TicketClaim?
@@ -212,6 +240,7 @@ model Ticket {
   // unverified — no EXPLAIN ANALYZE was captured.
   @@index([status, receivedAt(sort: Desc)])
   @@index([supplierId, receivedAt(sort: Desc)])
+  @@index([duplicateOfTicketId])
 }
 
 
@@ -256,6 +285,7 @@ model Invoice {
   verifiedBy     User?                @relation(fields: [verifiedById], references: [id])
   lineItems      InvoiceLineItem[]
   ocrJobs        OcrJob[]             @relation("InvoiceOcrJobs")
+  supportingFiles InvoiceSupportingFile[]
 
   @@index([status])
   @@index([supplierId])
@@ -263,6 +293,26 @@ model Invoice {
   // Same filter+sort shape as Ticket: the invoice list filters on status and
   // orders by receivedAt desc.
   @@index([status, receivedAt(sort: Desc)])
+}
+
+/// A file that came with an invoice but is not one: the Excel load breakdown a
+/// supplier attaches beside the PDF invoice (A12). Kept with its real content
+/// type so the office can download it from the invoice; never read as a second
+/// invoice, which would bill the same loads twice.
+model InvoiceSupportingFile {
+  id           String   @id @default(uuid()) @db.Uuid
+  invoiceId    String   @db.Uuid
+  fileUrl      String
+  originalName String
+  contentType  String
+  size         Int
+  /// `messageId:partId` of the email attachment it came from, so a retried
+  /// poll does not attach it twice.
+  gmailKey     String?  @unique
+  createdAt    DateTime @default(now())
+  invoice      Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@index([invoiceId])
 }
 
 
@@ -284,30 +334,55 @@ model InvoiceLineItem {
   flag            LineItemFlag
   isOverridden    Boolean      @default(false)
   overrideNote    String?
+  /// The ticket or load number a trucking invoice prints on this line, as
+  /// read. Matched on its letters and digits (`numberSearchKey`), the same
+  /// reduction ticket search uses. Null on most material invoices.
+  ticketNumber    String?
+  /// The day the line's load or trip was hauled, where the invoice prints one
+  /// per line. Anchors the date window for finding the dispatch load.
+  serviceDate     DateTime?    @db.Date
   invoice         Invoice      @relation(fields: [invoiceId], references: [id])
   matchedOrder    Order?       @relation(fields: [matchedOrderId], references: [id])
   matchedTickets  Ticket[]     @relation("InvoiceLineItemToTicket")
   matchResult     MatchResult?
   ticketClaims    TicketClaim[]
+  /// The dispatch loads this line pays for (a trucking invoice's haul line).
+  claimedLoads    DispatchLoad[]
 
   @@index([invoiceId])
   @@index([poNumber])
 }
 
 
+/// One agreed price for one product, in one unit, over one period.
+///
+/// A rate is identified by supplier, product, canonical unit and its effective
+/// period. A new price does not overwrite the old one: the old period is closed
+/// the day before the new one starts, so an invoice dated earlier is still
+/// checked against the price that applied then.
 model NegotiatedRate {
-  id            String    @id @default(uuid()) @db.Uuid
-  supplierId    String    @db.Uuid
-  productName   String
-  rate          Decimal   @db.Decimal
-  unit          String
-  effectiveFrom DateTime  @db.Date
-  effectiveTo   DateTime? @db.Date
-  notes         String?
-  createdById   String    @db.Uuid
-  createdAt     DateTime  @default(now())
-  createdBy     User      @relation(fields: [createdById], references: [id])
-  supplier      Supplier  @relation(fields: [supplierId], references: [id])
+  id               String    @id @default(uuid()) @db.Uuid
+  supplierId       String    @db.Uuid
+  productName      String
+  rate             Decimal   @db.Decimal
+  unit             String
+  effectiveFrom    DateTime  @db.Date
+  effectiveTo      DateTime? @db.Date
+  notes            String?
+  /// The Spruce item number for this product (`Order.spruceItemNumber`), when
+  /// the price list gives one. Lets a later lookup find the rate by code.
+  spruceItemCode   String?
+  /// The supplier's own code for the product, as printed on their paperwork.
+  supplierItemCode String?
+  createdById      String    @db.Uuid
+  createdAt        DateTime  @default(now())
+  /// Null on rows written before this column existed.
+  updatedAt        DateTime? @updatedAt
+  createdBy        User      @relation(fields: [createdById], references: [id])
+  supplier         Supplier  @relation(fields: [supplierId], references: [id])
+
+  @@index([supplierId, effectiveFrom])
+  @@index([supplierId, spruceItemCode])
 }
 
 model Supplier {
@@ -315,6 +390,10 @@ model Supplier {
   name            String
   type            SupplierType
   emailDomains    String[]
+  /// Exact sender addresses this supplier emails from, e.g.
+  /// `billing@stone.example`. Needed for senders on shared mail services
+  /// (gmail.com, outlook.com…), whose domain must never identify anyone.
+  emailAddresses  String[]              @default([])
   contactName     String?
   contactEmail    String?
   phone           String?
@@ -330,6 +409,12 @@ model Supplier {
   invoices        Invoice[]
   negotiatedRates NegotiatedRate[]
   orders          Order[]
+  /// Orders dispatch chose this supplier's yard or pit to load at.
+  pickupOrders    OrderDocument[] @relation("OrderPickupSupplier")
+  /// Loads this trucking company hauled for CGC.
+  haulLoads       DispatchLoad[]  @relation("DispatchLoadCarrier")
+  /// Loads collected at this supplier's yard or pit.
+  sourcedLoads    DispatchLoad[]  @relation("DispatchLoadSource")
   productAliases  SupplierProductAlias[]
   tickets         Ticket[]
 }
@@ -395,6 +480,8 @@ model User {
   resolvedMatches  MatchResult[]
   ticketClaims     TicketClaim[]
   linkedTickets    Ticket[]
+  reviewedEmailEvents EmailIngestionEvent[] @relation("EmailEventReviewer")
+  dispatchLoads    DispatchLoad[]
   driver           Driver?
 }
 
@@ -413,6 +500,7 @@ model Driver {
   orders          Order[]
   tickets         Ticket[]
   messages        WhatsAppMessage[]
+  dispatchLoads   DispatchLoad[]
   userId          String?           @db.Uuid @unique
   user            User?             @relation(fields: [userId], references: [id])
 }
@@ -441,6 +529,84 @@ model Delivery {
   driver           Driver?           @relation(fields: [driverId], references: [id])
   order            Order             @relation(fields: [orderId], references: [id])
   history          DeliveryHistory[]
+  /// The loads dispatch recorded for this stop. Never selected for a driver.
+  dispatchLoads    DispatchLoad[]
+}
+
+/// How a haul rate is charged.
+enum HaulRateUnit {
+  LOAD
+  HOUR
+  TONNE
+}
+
+/// One truck load dispatch sent for an order, and the haul rate agreed for it.
+///
+/// The client (Oct 2026): "a spot for a rate on every single dispatch load. The
+/// dispatcher sets the rate for each load dispatched and it is matched up when
+/// the invoice comes in." So the rate is recorded per load from day one, before
+/// any trucking invoice is read; matching those invoices against it is a later
+/// change, which is why `claimedByLineItemId` is here already.
+///
+/// An order can need several loads (several trucks, or one truck several
+/// times), each from its own pit. The rate is kept off Delivery on purpose:
+/// stops reach drivers through several selects and the realtime feed, and a
+/// driver must never see what a haul costs.
+///
+/// A brokered truck that collects several orders' POs in one trip (client,
+/// A4) is one load per order sharing a `tripRef`. The rate on each of them is
+/// the trip's rate, the same on every load of the trip, not a share of it: the
+/// trip is billed once, so the matcher compares one billed line with that rate
+/// and claims every load of the trip together (see `billableHauls`).
+model DispatchLoad {
+  id                  String           @id @default(uuid()) @db.Uuid
+  documentId          String           @db.Uuid
+  document            OrderDocument    @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  /// The order's stop, once it has one. Cleared, not cascaded, if the stop goes.
+  deliveryId          String?          @db.Uuid
+  delivery            Delivery?        @relation(fields: [deliveryId], references: [id], onDelete: SetNull)
+  /// 1, 2, 3… within the order. A number is not reused while its load exists,
+  /// so "load 2" written on paper keeps meaning the same truck.
+  sequence            Int
+  /// The trucking company that hauled it (a TRUCKING_COMPANY supplier); null
+  /// for CGC's own trucks, which are recorded but never billed to CGC.
+  /// Suppliers are only ever deactivated, and the key is not cleared on a
+  /// delete either: a paid haul must keep its carrier.
+  carrierSupplierId   String?          @db.Uuid
+  carrierSupplier     Supplier?        @relation("DispatchLoadCarrier", fields: [carrierSupplierId], references: [id], onDelete: Restrict)
+  /// The truck, for a brokered or independent driver on the board.
+  driverId            String?          @db.Uuid
+  driver              Driver?          @relation(fields: [driverId], references: [id], onDelete: SetNull)
+  /// The haul rate agreed for this load, before tax. Null until dispatch sets it.
+  rate                Decimal?         @db.Decimal(12, 4)
+  /// Per load, per hour or per tonne. Required whenever `rate` is set.
+  rateUnit            HaulRateUnit?
+  /// Expected loads, hours or tonnes, in `rateUnit`.
+  quantity            Decimal?         @db.Decimal(12, 4)
+  /// The pit or supplier yard this load is collected at. Defaults to the
+  /// order's pit (`OrderDocument.pickupSupplierId`) when the load is made.
+  sourceSupplierId    String?          @db.Uuid
+  sourceSupplier      Supplier?        @relation("DispatchLoadSource", fields: [sourceSupplierId], references: [id], onDelete: SetNull)
+  /// Groups the loads of one brokered trip that served several orders.
+  tripRef             String?
+  /// The scale or delivery ticket for this load, once known.
+  ticketNumber        String?
+  notes               String?
+  setById             String           @db.Uuid
+  setBy               User             @relation(fields: [setById], references: [id])
+  createdAt           DateTime         @default(now())
+  updatedAt           DateTime         @updatedAt
+  /// The trucking invoice line that paid this load. Set by matching; once set,
+  /// the load's figures are locked so a paid haul cannot be re-priced.
+  claimedByLineItemId String?          @db.Uuid
+  claimedByLineItem   InvoiceLineItem? @relation(fields: [claimedByLineItemId], references: [id], onDelete: SetNull)
+  claimedAt           DateTime?
+
+  @@unique([documentId, sequence])
+  @@index([carrierSupplierId, createdAt])
+  @@index([tripRef])
+  @@index([claimedByLineItemId])
+  @@index([deliveryId])
 }
 
 model AuditLog {
@@ -624,6 +790,12 @@ model OcrJob {
   @@index([status, nextAttemptAt])
 }
 
+/// One row per email the invoice inbox poller has looked at: the mailbox log.
+///
+/// It is also the review queue. Mail from a sender no supplier record knows,
+/// or carrying nothing the app can read, is kept here as NEEDS_REVIEW instead
+/// of being skipped without a trace, and the office approves the sender or
+/// ignores the email from the Invoices page.
 model EmailIngestionEvent {
   id                 String               @id @default(uuid()) @db.Uuid
   gmailMessageId     String               @unique
@@ -637,8 +809,36 @@ model EmailIngestionEvent {
   status             EmailIngestionStatus @default(PROCESSED)
   errorMessage       String?
   receivedAt         DateTime             @default(now())
+  /// Who really sent it, after undoing the AP mailbox's forward; null when
+  /// that could not be established (services/emailSender.ts).
+  originalFrom       String?
+  /// The trusted forwarder that relayed it, e.g. the AP mailbox.
+  forwardedBy        String?
+  /// direct | redirect | forward | unknown, as resolveSender decided.
+  senderMode         String?
+  /// Every attachment and what happened to it:
+  /// [{ name, mimeType, size, partId, kind, action, reason, invoiceId }].
+  /// Nothing is skipped without a line here saying why.
+  attachments        Json?
+  /// Every invoice this email produced. One email can carry several, which
+  /// the single unique `createdInvoiceId` cannot hold.
+  createdInvoiceIds  String[]             @default([])
+  /// Why a NEEDS_REVIEW email waits for a person: UNKNOWN_SENDER,
+  /// UNRESOLVED_SENDER, SPREADSHEET (one the app cannot read, e.g. .xls),
+  /// CREDIT_MEMO, UNSUPPORTED_ATTACHMENTS or NO_INVOICE_ATTACHMENT.
+  reviewReason       String?
+  /// A plain note about the email, e.g. the observe-mode census line.
+  note               String?
+  /// Set when the sender is approved: the poller reads the email again.
+  requeuedAt         DateTime?
+  reviewedById       String?              @db.Uuid
+  reviewedAt         DateTime?
   createdInvoice     Invoice?             @relation(fields: [createdInvoiceId], references: [id])
   supplier           Supplier?            @relation(fields: [supplierId], references: [id])
+  reviewedBy         User?                @relation("EmailEventReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+
+  /// The review queue on the Invoices page, newest first.
+  @@index([status, receivedAt])
 }
 
 model WhatsAppMessage {
@@ -782,6 +982,11 @@ enum AuditActionType {
   TICKET_REVIEWED
   RATE_CREATED
   RATE_UPDATED
+  /// A rate's period was ended (its effectiveTo set) instead of deleting it.
+  RATE_EXPIRED
+  /// A Spruce vendor code was mapped to a supplier, or retired.
+  SPRUCE_VENDOR_MAPPED
+  SPRUCE_VENDOR_RETIRED
   EMAIL_INGESTION_ERROR
   WHATSAPP_WEBHOOK_ERROR
   OCR_RETRY
@@ -791,6 +996,12 @@ enum AuditActionType {
   MATCH_REOPENED
   ORDER_EDITED
   ORDER_EDIT_RESET
+  /// A dispatch load was recorded, changed or removed; LOAD_RATE_SET when the
+  /// change was to its haul rate or unit.
+  LOAD_CREATED
+  LOAD_UPDATED
+  LOAD_RATE_SET
+  LOAD_DELETED
 }
 
 enum ImportStatus {
@@ -805,6 +1016,10 @@ enum ImportStatus {
 enum EmailIngestionStatus {
   PROCESSED
   FAILED
+  /// Waiting for a person: unknown sender or nothing the app can read.
+  NEEDS_REVIEW
+  /// A person decided the email is not an invoice to read.
+  IGNORED
 }
 
 enum SenderTypeResolved {
@@ -872,6 +1087,10 @@ model MatchResult {
   candidateOrderIds String[]
   /// Tickets this verdict actually counted — what a resolution will claim.
   ticketIds     String[]          @default([])
+  /// Dispatch loads a trucking invoice line's verdict counted: one load, or
+  /// every load of one brokered trip. What a resolution claims on
+  /// DispatchLoad.claimedByLineItemId; empty for material lines.
+  loadIds       String[]          @default([])
   /// Bumped when the cascade changes, so old verdicts can be told apart.
   engineVersion Int               @default(1)
   computedAt    DateTime          @default(now())

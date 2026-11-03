@@ -30,6 +30,9 @@ export const ORDER_FLAG_INFO = {
   SMALL_TRUCK: { label: 'Small truck', tone: 'neutral' },
   CUSTOMER_ON_SITE: { label: 'Customer on site', tone: 'neutral' },
   NOT_OPEN: { label: 'No longer open', tone: 'neutral' },
+  QUOTE: { label: 'Quotation', tone: 'neutral' },
+  // The office said the import was wrong to take it for a quotation.
+  NOT_A_QUOTE: { label: 'Not a quotation (office)', tone: 'neutral' },
   SPRUCE_VALUE_CHANGED: { label: 'Spruce changed an edit', tone: 'warn' },
 };
 
@@ -134,7 +137,7 @@ export function processState(previews) {
 }
 
 const MISSING_EFFECT = {
-  ORDER_SUMMARY: 'prices, totals and the scheduled-delivery flag will not be refreshed.',
+  ORDER_SUMMARY: 'prices, totals and the scheduled-delivery flag will not be refreshed, and quotations will not be recognised.',
   ITEM_TRACKING: 'addresses, delivery instructions and supplier POs will not be refreshed.',
 };
 
@@ -145,16 +148,41 @@ const MISSING_EFFECT = {
  * read "0 deliveries" over a morning whose orders were all dated earlier.
  *
  * The updated count — orders already imported that Spruce has changed since —
- * is only said when there are some. A summary from before `onBoard` existed
- * keeps its old wording.
+ * is only said when there are some, and so are quotations, which are counted
+ * nowhere else. A summary from before `onBoard` existed keeps its old wording.
  */
 export function summaryLine(summary) {
   const pickups = `${summary.pickups} ${summary.pickups === 1 ? 'pickup' : 'pickups'}`;
   const updated = summary.updated > 0 ? `, ${summary.updated} updated` : '';
+  const quotes = summary.quotes > 0
+    ? `, ${summary.quotes} ${summary.quotes === 1 ? 'quotation' : 'quotations'} left off`
+    : '';
   if (typeof summary.onBoard === 'number') {
     const onBoard = `${summary.onBoard} ${summary.onBoard === 1 ? 'delivery' : 'deliveries'}`;
-    return `${onBoard} on the dispatch board, ${pickups}${updated}.`;
+    return `${onBoard} on the dispatch board, ${pickups}${updated}${quotes}.`;
   }
   const deliveries = `${summary.deliveries} ${summary.deliveries === 1 ? 'delivery' : 'deliveries'}`;
-  return `${deliveries} for ${shortDay(summary.dispatchDate)}, ${summary.upcoming} upcoming, ${pickups}${updated}.`;
+  return `${deliveries} for ${shortDay(summary.dispatchDate)}, ${summary.upcoming} upcoming, ${pickups}${updated}${quotes}.`;
+}
+
+/** The most quotation numbers named in one line; the rest are counted. */
+const MAX_QUOTES_NAMED = 10;
+
+/**
+ * Plain lines under the summary: how much of a rolling Item Tracking export
+ * was used, and which documents were quotations. Empty for older summaries.
+ */
+export function scopeNotes(summary) {
+  const notes = [];
+  const tracking = summary?.itemTracking;
+  if (tracking && typeof tracking.documentsRead === 'number') {
+    notes.push(`Item Tracking: ${tracking.documentsRead} read, ${tracking.documentsUsed} used.`);
+  }
+  const numbers = summary?.quoteNumbers ?? [];
+  if (numbers.length > 0) {
+    const named = numbers.slice(0, MAX_QUOTES_NAMED).join(', ');
+    const more = numbers.length > MAX_QUOTES_NAMED ? ` and ${numbers.length - MAX_QUOTES_NAMED} more` : '';
+    notes.push(`${numbers.length === 1 ? 'Quotation' : 'Quotations'}, not on the board: ${named}${more}.`);
+  }
+  return notes;
 }

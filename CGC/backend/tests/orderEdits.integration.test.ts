@@ -185,3 +185,199 @@ describe('correcting an order (PostgreSQL)', { skip: !disposableConfirmed }, () 
     assert.equal(after.overrides.length, 0);
   });
 });
+
+describe('an edit and an import decide a pickup the same way (PostgreSQL)', { skip: !disposableConfirmed }, () => {
+  let userId: string;
+  const run = (dispatchDate: string, stamp: string, reports: Partial<Record<SpruceReportType, ParsedSpruceReport>>) =>
+    runImportBatch(prisma, {
+      dispatchDate,
+      createdById: userId,
+      files: (Object.keys(reports) as SpruceReportType[]).map(reportType => ({
+        reportType,
+        fileName: `${reportType}.pdf`,
+        buffer: Buffer.from(`${stamp}-${reportType}`),
+        report: reports[reportType]!,
+      })),
+    });
+  const as = (from: string, to: string, rows: ParsedSpruceReport['rows'], extra: Partial<ParsedSpruceReport['rows'][number]> = {}) =>
+    rows.filter(row => row.documentNumber === from).map(row => ({ ...row, documentNumber: to, ...extra }));
+  const edit = async (documentNumber: string, address: string) =>
+    applyOrderEdits((await order(documentNumber)).id, parseEditRequest({ fields: { shippingAddress: address } }), userId);
+
+  beforeEach(async () => {
+    await prisma.$executeRawUnsafe(
+      'TRUNCATE TABLE "ImportBatch", "OrderDocument", "Order", "User", "Delivery", "Driver", "AuditLog" RESTART IDENTITY CASCADE'
+    );
+    userId = (await prisma.user.create({
+      data: { name: 'Dispatcher', email: 'dispatcher@example.test', passwordHash: 'x', role: 'ADMIN' },
+    })).id;
+  });
+
+  after(async () => {
+    await prisma.$disconnect();
+  });
+
+  it('keeps a quotation and a closed order out of the pickups after an edit, and follows a converted quotation back', async () => {
+    // Both undated with nothing charged for delivery, so either would be a
+    // pickup if it were open. 700009 is a quotation; 700008 has a PO, so it
+    // was an order, closed since.
+    const tracking = (extra: ParsedSpruceReport['rows']) => ({
+      ...parsed.ITEM_TRACKING,
+      rows: [
+        ...parsed.ITEM_TRACKING.rows,
+        ...as('2608-700001', '2608-700009', parsed.ITEM_TRACKING.rows, { orderDateRaw: '9/2/2026' }),
+        ...as('2608-700001', '2608-700008', parsed.ITEM_TRACKING.rows, { orderDateRaw: '9/2/2026', poNumber: '2608-300008' }),
+        ...extra,
+      ],
+    });
+    const summary = { ...parsed.ORDER_SUMMARY, dateRange: { fromRaw: '09/02/26', toRaw: '09/02/26' } };
+    await run('2026-09-02', 'morning', { ORDER_SUMMARY: summary, DELIVERY: parsed.DELIVERY, ITEM_TRACKING: tracking([]) });
+
+    for (const [documentNumber, flag] of [['2608-700009', 'QUOTE'], ['2608-700008', 'NOT_OPEN']] as const) {
+      const imported = await order(documentNumber);
+      assert.ok(imported.flags.includes(flag), `${documentNumber} is ${flag}`);
+      assert.equal(imported.isPickup, false, `${documentNumber}: the import says not a pickup`);
+
+      await edit(documentNumber, '5 Example Lane, Cambridge');
+      const edited = await order(documentNumber);
+      assert.equal(edited.isPickup, false, `${documentNumber}: and so does an edit`);
+      assert.ok(edited.flags.includes(flag), `${documentNumber}: the edit keeps ${flag}`);
+    }
+
+    // The quotation was converted: the Order Report lists it, open, as a pickup.
+    await run('2026-09-03', 'next', {
+      ORDER_SUMMARY: {
+        ...parsed.ORDER_SUMMARY,
+        dateRange: { fromRaw: '09/03/26', toRaw: '09/03/26' },
+        rows: [...parsed.ORDER_SUMMARY.rows, ...as('2608-700001', '2608-700009', parsed.ORDER_SUMMARY.rows)],
+      },
+      DELIVERY: parsed.DELIVERY,
+      ITEM_TRACKING: tracking([]),
+    });
+    const converted = await order('2608-700009');
+    assert.ok(!converted.flags.includes('QUOTE'));
+    assert.equal(converted.isPickup, true, 'the import: a pickup now');
+    await edit('2608-700009', '6 Example Lane, Cambridge');
+    assert.equal((await order('2608-700009')).isPickup, true, 'and the edit agrees');
+  });
+});
+
+/**
+ * How an order reaches the customer, and where it is loaded, as dispatch sets
+ * them (client answers, Oct 2026): written like the driver's note, audited,
+ * followed by isPickup, and kept through the reports being run again.
+ */
+describe('dispatch sets how an order reaches the customer (PostgreSQL)', { skip: !disposableConfirmed }, () => {
+  let userId: string;
+  const importDay = (stamp: string) =>
+    runImportBatch(prisma, { dispatchDate: '2026-09-02', createdById: userId, files: files(stamp) });
+  const pooled = async (documentNumber: string) =>
+    (await DispatchService.getDispatchBoard('2026-09-02', '2026-09-02')).unassignedOrders.some(
+      row => row.spruceOrderId === documentNumber
+    );
+  const edited = async () =>
+    (await prisma.auditLog.findMany({ where: { actionType: 'ORDER_EDITED' }, orderBy: { createdAt: 'asc' } }))
+      .flatMap(row => (row.details as { changes: Array<{ field: string; to: string | null }> }).changes);
+
+  beforeEach(async () => {
+    await prisma.$executeRawUnsafe(
+      'TRUNCATE TABLE "ImportBatch", "OrderDocument", "Order", "User", "Delivery", "Driver", "AuditLog", "Supplier" RESTART IDENTITY CASCADE'
+    );
+    userId = (await prisma.user.create({
+      data: { name: 'Dispatcher', email: 'dispatcher@example.test', passwordHash: 'x', role: 'ADMIN' },
+    })).id;
+  });
+
+  after(async () => {
+    await prisma.$disconnect();
+  });
+
+  it('sets the type, takes the order off the pool, keeps it through a re-import, and clears it again', async () => {
+    await importDay('morning');
+    const id = (await order('2608-700001')).id;
+    assert.equal((await order('2608-700001')).isPickup, false);
+    assert.equal(await pooled('2608-700001'), true);
+
+    await applyOrderEdits(id, parseEditRequest({ fulfilmentOverride: 'external_pickup' }), userId);
+    let after = await order('2608-700001');
+    assert.equal(after.fulfilmentOverride, 'external_pickup');
+    assert.equal(after.isPickup, true, 'the customer collects now');
+    assert.equal(after.overrides.length, 0, 'ours, not a Spruce correction');
+    assert.equal(await pooled('2608-700001'), false, 'so it is off the pool');
+    assert.deepEqual(await edited(), [{ field: 'fulfilmentOverride', lineId: null, from: null, to: 'external_pickup' }]);
+
+    // The reports run again: the import never writes the type, and its own
+    // pickup rule follows it.
+    await importDay('noon');
+    after = await order('2608-700001');
+    assert.equal(after.fulfilmentOverride, 'external_pickup');
+    assert.equal(after.isPickup, true, 'the re-import kept it a pickup');
+    const editor = await getOrderForEditing(id);
+    assert.equal(editor.fulfilment?.type, 'external_pickup');
+    assert.deepEqual(editor.fulfilment?.signal, { id: 'STAFF', text: 'Set by dispatch' });
+
+    await applyOrderEdits(id, parseEditRequest({ fulfilmentOverride: '' }), userId);
+    after = await order('2608-700001');
+    assert.equal(after.fulfilmentOverride, null);
+    assert.equal(after.isPickup, false, 'as the reports say again');
+    assert.equal(await pooled('2608-700001'), true);
+  });
+
+  it('names the pit to load at, audited; refuses an inactive supplier; clearing it clears the yard', async () => {
+    await importDay('morning');
+    const id = (await order('2608-700001')).id;
+    const pit = await prisma.supplier.create({
+      data: { name: 'Example Pit', type: 'SUPPLIER', address: '1 Pit Rd, Exampleville', emailDomains: [] },
+    });
+    const retired = await prisma.supplier.create({
+      data: { name: 'Retired Pit', type: 'SUPPLIER', emailDomains: [], active: false },
+    });
+
+    await applyOrderEdits(id, parseEditRequest({ pickupSupplierId: pit.id, pickupLocation: 'Exampleville' }), userId);
+    const editor = await getOrderForEditing(id);
+    assert.equal(editor.pickupSupplier?.name, 'Example Pit');
+    assert.equal(editor.pickupLocation, 'Exampleville');
+    assert.equal(editor.fulfilment?.type, 'supplier_haul_delivery');
+    assert.equal(editor.fulfilment?.signal?.id, 'H2');
+    assert.deepEqual(editor.pickupFrom, [{ name: 'Example Pit', location: 'Exampleville', address: '1 Pit Rd, Exampleville', po: null }]);
+    assert.equal((await order('2608-700001')).isPickup, false, 'still a CGC delivery');
+
+    await assert.rejects(
+      applyOrderEdits(id, parseEditRequest({ pickupSupplierId: retired.id }), userId),
+      /not on the active list/
+    );
+    assert.equal((await order('2608-700001')).pickupSupplierId, pit.id, 'nothing changed');
+
+    // Survives the reports being run again.
+    await importDay('noon');
+    assert.equal((await order('2608-700001')).pickupSupplierId, pit.id);
+
+    await applyOrderEdits(id, parseEditRequest({ pickupSupplierId: null }), userId);
+    const cleared = await order('2608-700001');
+    assert.equal(cleared.pickupSupplierId, null);
+    assert.equal(cleared.pickupLocation, null);
+    assert.deepEqual((await edited()).map(change => [change.field, change.to]), [
+      ['pickupSupplierId', pit.id],
+      ['pickupLocation', 'Exampleville'],
+      ['pickupSupplierId', null],
+      ['pickupLocation', null],
+    ]);
+
+    // A yard of no supplier is not stored: the request changes nothing.
+    assert.deepEqual(await applyOrderEdits(id, parseEditRequest({ pickupLocation: 'Nowhere' }), userId), []);
+    assert.equal((await order('2608-700001')).pickupLocation, null);
+
+    // A deleted supplier leaves the order, without its pit.
+    await applyOrderEdits(id, parseEditRequest({ pickupSupplierId: pit.id }), userId);
+    await prisma.supplier.delete({ where: { id: pit.id } });
+    assert.equal((await order('2608-700001')).pickupSupplierId, null);
+  });
+
+  it('refuses a type outside the five, at the database too', async () => {
+    await importDay('morning');
+    await assert.rejects(
+      prisma.$executeRawUnsafe(`UPDATE "OrderDocument" SET "fulfilmentOverride" = 'teleport' WHERE "documentNumber" = '2608-700001'`),
+      /OrderDocument_fulfilmentOverride_check/
+    );
+  });
+});

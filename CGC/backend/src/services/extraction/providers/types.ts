@@ -18,6 +18,13 @@ export interface ExtractionDocument {
   mimeType: string;
   /** Used by providers that require a filename alongside file bytes. */
   filename: string;
+  /**
+   * The document as plain text, when it has no pages to look at: a supplier's
+   * Excel or CSV invoice, already turned into bounded rows by
+   * lib/spreadsheet.ts. When set, providers send this text instead of the file
+   * (`bytes` stays the original, for logging and size checks).
+   */
+  text?: string;
 }
 
 /** Per-call overrides, for a caller whose documents differ from invoices. */

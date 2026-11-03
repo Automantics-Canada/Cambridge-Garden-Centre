@@ -331,10 +331,13 @@ export function parseOrderSummaryReport(pages: PdfTextPage[]): ParsedSpruceRepor
       if (quantity === null) missing.push('quantity');
 
       if (!description || quantity === null) {
+        // Named, so the import counts the document as on this report: an open
+        // order with one misread line must not be taken for a quotation.
         unreadable.push({
           page: pageNumber,
           row: rowNumber,
           reason: `could not read the ${missing.join(', ')} for document ${order.documentNumber}`,
+          documentNumber: order.documentNumber,
         });
         continue;
       }

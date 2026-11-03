@@ -5,12 +5,15 @@ import { classifyLine, deliveryTypeOf } from '../src/modules/orders/import/lineC
 import {
   batchFlags,
   combineFlags,
+  derivePickup,
+  derivedStateFlags,
   isPickupOrder,
   looksIncomplete,
   mergeOrderFacts,
   normalizeAddress,
   stateFlags,
   withFlag,
+  type FulfilmentFacts,
   type ReportRows,
 } from '../src/modules/orders/import/mergeOrderFacts.js';
 import type { ParsedSpruceRow } from '../src/modules/orders/spruce/spruceReportTypes.js';
@@ -126,6 +129,16 @@ describe('line classification', () => {
     assert.equal(deliveryTypeOf([{ itemCode: 'MISCDEL' }]), 'GENERAL');
     assert.equal(deliveryTypeOf([{ itemCode: 'AGG01' }]), null, 'no charge line says nothing about how');
   });
+
+  it('reads an unlisted delivery charge by its description: 721442\'s MISCDELE slinger, a tri-axle', () => {
+    assert.equal(deliveryTypeOf([{ itemCode: 'MISCDELE', description: 'Slinger Delivery Standard' }]), 'SLINGER');
+    for (const description of ['Tri-Axle Delivery', 'Triaxle delivery 1-3', 'TRI AXLE Load']) {
+      assert.equal(deliveryTypeOf([{ itemCode: 'MISCDELT', description }]), 'DUMP', description);
+    }
+    assert.equal(deliveryTypeOf([{ itemCode: 'MISCDELX', description: 'Delivery Charge' }]), 'GENERAL', 'still a delivery');
+    // A listed code still says it, whatever its description.
+    assert.equal(deliveryTypeOf([{ itemCode: 'MISCDELD', description: 'Slinger? no, flatbed' }]), 'FLATBED');
+  });
 });
 
 describe('addresses', () => {
@@ -152,16 +165,30 @@ describe('pickups', () => {
   });
 
   it('is a pickup when the address, a comment or the absence of any delivery charge says so', () => {
-    assert.equal(isPickupOrder({ ...base, shippingAddress: 'Pickup @ Yard,', lines: lines('MISCDEL') }), true);
+    assert.equal(isPickupOrder({ ...base, shippingAddress: 'Pickup @ Yard,', lines: lines('SOILGRDNA') }), true);
     assert.equal(
-      isPickupOrder({ ...base, lines: [{ itemCode: 'COMMENT', description: '**Pickup direct pricing**' }, { itemCode: 'MISCDEL' }] }),
+      isPickupOrder({ ...base, lines: [{ itemCode: 'COMMENT', description: '**Pickup direct pricing**' }, { itemCode: 'SOILGRDNA' }] }),
       true
     );
     assert.equal(isPickupOrder({ ...base, lines: lines('SOILGRDNA') }), true);
   });
 
-  it('keeps an undated order with a delivery charge as a delivery still to be scheduled', () => {
+  // The client (Oct 2026): "any order with a delivery charge on the line items
+  // can be treated as a delivery." Before, an unlisted code (721442's MISCDELE,
+  // 721493's tri-axle) left the order a pickup, and pickup wording beside a
+  // charge made it one; both asked staff to confirm instead.
+  it('is a delivery whenever CGC charges for one, whatever the code or the address says', () => {
     assert.equal(isPickupOrder({ ...base, lines: lines('SOILGRDNA', 'SOILYELG1-5') }), false);
+    assert.equal(isPickupOrder({ ...base, lines: [{ itemCode: 'MISCDELE', description: 'Slinger Delivery Standard' }] }), false);
+    assert.equal(isPickupOrder({ ...base, lines: [{ itemCode: 'MISCDELT', description: 'Tri-axle Delivery' }] }), false);
+    assert.equal(isPickupOrder({ ...base, shippingAddress: 'Pickup @ Yard,', lines: lines('MISCDEL') }), false);
+  });
+
+  it('does not count a supplier\'s "Direct Delivery" line as CGC\'s charge', () => {
+    assert.equal(
+      isPickupOrder({ ...base, shippingAddress: 'Pickup at Unilock,', lines: [{ itemCode: 'MISCDELX', description: 'Unilock Direct Delivery' }] }),
+      true
+    );
   });
 });
 
@@ -274,5 +301,155 @@ describe('flags', () => {
       'SMALL_TRUCK',
       'NOT_IN_LATEST_REPORT',
     ]);
+  });
+});
+
+describe('quotations and orders no longer open (Q3, Q7)', () => {
+  const reports = new Set(['ORDER_SUMMARY', 'DELIVERY', 'ITEM_TRACKING'] as const);
+  const range = { from: day('2026-09-02'), to: day('2026-09-02') };
+  const context = { reports, orderSummaryRange: range };
+  const itemOnly = (overrides: Partial<ParsedSpruceRow> = {}) => ({
+    ITEM_TRACKING: [row({ documentNumber: '9900-000009', orderDateRaw: '9/2/2026', ...overrides })],
+  });
+  const fresh = { sourceReports: [], hasPo: false, hasActivity: false };
+
+  it('takes a document only Item Tracking lists, entered in range, with no history, for a quotation', () => {
+    const result = batchFlags(itemOnly(), context, fresh);
+    assert.deepEqual(result.flags, ['QUOTE']);
+    assert.ok(result.decided.includes('QUOTE') && result.decided.includes('NOT_OPEN'));
+  });
+
+  it('takes it for an order closed since once anything says it was an order', () => {
+    assert.deepEqual(batchFlags(itemOnly(), context, { ...fresh, sourceReports: ['ITEM_TRACKING', 'ORDER_SUMMARY'] }).flags, ['NOT_OPEN']);
+    assert.deepEqual(batchFlags(itemOnly(), context, { ...fresh, sourceReports: ['DELIVERY'] }).flags, ['NOT_OPEN']);
+    assert.deepEqual(batchFlags(itemOnly(), context, { ...fresh, hasPo: true }).flags, ['NOT_OPEN']);
+    assert.deepEqual(batchFlags(itemOnly({ poNumber: '9900-300001' }), context, fresh).flags, ['NOT_OPEN'], 'a PO in this upload');
+    assert.deepEqual(batchFlags(itemOnly(), context, { ...fresh, hasActivity: true }).flags, ['NOT_OPEN'], 'a stop, driver, invoice or ticket');
+    assert.deepEqual(batchFlags(itemOnly(), context).flags, ['NOT_OPEN'], 'no history known: never a guess at a quotation');
+  });
+
+  it('decides nothing for a document entered before the range, so an earlier conclusion stands', () => {
+    const earlier = batchFlags(itemOnly({ orderDateRaw: '8/20/2026' }), context, fresh);
+    assert.deepEqual(earlier, { flags: [], decided: [] });
+    assert.deepEqual(combineFlags(['QUOTE'], earlier.decided, earlier.flags), ['QUOTE']);
+    assert.deepEqual(combineFlags(['NOT_OPEN'], earlier.decided, earlier.flags), ['NOT_OPEN']);
+  });
+
+  it('clears both on a document the order summary or delivery report lists: a quotation converted comes back', () => {
+    for (const rows of [
+      { ...itemOnly(), ORDER_SUMMARY: [row({ documentNumber: '9900-000009' })] },
+      { ...itemOnly(), DELIVERY: [row({ documentNumber: '9900-000009' })] },
+    ]) {
+      const result = batchFlags(rows, context, fresh);
+      assert.ok(!result.flags.includes('QUOTE') && !result.flags.includes('NOT_OPEN'));
+      const after = combineFlags(['QUOTE', 'NOT_OPEN'], result.decided, result.flags);
+      assert.ok(!after.includes('QUOTE') && !after.includes('NOT_OPEN'));
+    }
+    // The delivery report alone is enough: a scheduled order is open.
+    const deliveryOnly = batchFlags({ DELIVERY: [row()] }, { reports: new Set(['DELIVERY'] as const) }, fresh);
+    assert.deepEqual(combineFlags(['NOT_OPEN'], deliveryOnly.decided, deliveryOnly.flags), []);
+  });
+
+  it('counts a document named on an unreadable order summary line as on the report', () => {
+    const result = batchFlags(itemOnly(), { ...context, mentioned: new Set(['9900-000009']) }, fresh);
+    assert.deepEqual(result.flags, []);
+    assert.ok(result.decided.includes('QUOTE'));
+  });
+
+  it('decides nothing about a document only Item Tracking lists when the order summary is missing or undated', () => {
+    assert.deepEqual(batchFlags(itemOnly(), { reports: new Set(['DELIVERY', 'ITEM_TRACKING'] as const) }, fresh).decided, []);
+    assert.deepEqual(batchFlags(itemOnly(), { reports }, fresh).decided, []);
+  });
+
+  it('never takes an order the office marked "Not a quotation" for one again: off the Order report, it is closed', () => {
+    const result = batchFlags(itemOnly(), context, { ...fresh, confirmedOrder: true });
+    assert.deepEqual(result.flags, ['NOT_OPEN']);
+    // The office's word is never decided by an upload, so it stays.
+    assert.deepEqual(combineFlags(['NOT_A_QUOTE'], result.decided, result.flags), ['NOT_OPEN', 'NOT_A_QUOTE']);
+  });
+
+  it('clears QUOTE once anything shows the document is an order, whatever its entry date', () => {
+    // Entered before the Order report's range: NOT_OPEN cannot be judged,
+    // but a PO, a stop or the office's word still says it is no quotation.
+    const before = { orderDateRaw: '8/20/2026' };
+    for (const [rows, history] of [
+      [itemOnly({ ...before, poNumber: '9900-300001' }), fresh],
+      [itemOnly(before), { ...fresh, hasPo: true }],
+      [itemOnly(before), { ...fresh, hasActivity: true }],
+      [itemOnly(before), { ...fresh, confirmedOrder: true }],
+    ] as const) {
+      const result = batchFlags(rows, context, history);
+      assert.deepEqual(result.flags, []);
+      assert.ok(result.decided.includes('QUOTE') && !result.decided.includes('NOT_OPEN'));
+      assert.deepEqual(combineFlags(['QUOTE'], result.decided, result.flags), []);
+      assert.deepEqual(combineFlags(['NOT_OPEN'], result.decided, result.flags), ['NOT_OPEN'], 'closed stays a question for the Order report');
+    }
+    // And without an Order report at all.
+    const noSummary = batchFlags(itemOnly({ poNumber: '9900-300001' }), { reports: new Set(['DELIVERY', 'ITEM_TRACKING'] as const) }, fresh);
+    assert.deepEqual(combineFlags(['QUOTE'], noSummary.decided, noSummary.flags), []);
+  });
+
+  it('falls back on the stored entry date when Item Tracking prints none', () => {
+    const result = batchFlags(itemOnly({ orderDateRaw: undefined }), context, { ...fresh, orderDate: day('2026-09-02') });
+    assert.deepEqual(result.flags, ['QUOTE']);
+  });
+});
+
+describe('derivePickup: one rule for the import and for edits', () => {
+  // Undated, nothing charged for delivery: a pickup unless closed.
+  const collect = { deliveryDate: null, shippingAddress: null, deliveryInstructions: null, lines: [{ itemCode: 'SOILGRDNA', description: 'Garden Soil Bulk' }] };
+
+  it('is a pickup when nothing closes the order', () => {
+    assert.equal(derivePickup({ state: collect, flags: { stored: [] } }), true);
+  });
+
+  it('is never a pickup while the order is closed or a quotation, whether stored or just decided', () => {
+    assert.equal(derivePickup({ state: collect, flags: { stored: ['NOT_OPEN'] } }), false);
+    assert.equal(derivePickup({ state: collect, flags: { stored: ['QUOTE'] } }), false);
+    assert.equal(derivePickup({ state: collect, flags: { stored: [], decided: ['QUOTE', 'NOT_OPEN'], fresh: ['QUOTE'] } }), false);
+    // An upload that could not judge keeps what an earlier one decided.
+    assert.equal(derivePickup({ state: collect, flags: { stored: ['NOT_OPEN'], decided: ['TOTAL_MISMATCH'], fresh: [] } }), false);
+  });
+
+  it('follows the order again once an upload clears the flag', () => {
+    assert.equal(derivePickup({ state: collect, flags: { stored: ['QUOTE'], decided: ['QUOTE', 'NOT_OPEN'], fresh: [] } }), true);
+  });
+
+  const facts = (fields: Partial<FulfilmentFacts> = {}): FulfilmentFacts => ({
+    orderNotes: null, deliveryFlag: null, sourceReports: ['ITEM_TRACKING', 'ORDER_SUMMARY'], override: null, ...fields,
+  });
+  const fobLines = [{ itemCode: 'BHS6CSR', description: 'Example Paver 60mm' }, { itemCode: 'COMMENT', description: 'FOB UNILOCK AYR' }];
+
+  // The client (Oct 2026): FOB + supplier = the customer collects there.
+  it('is a pickup for an FOB order, even dated or charged for delivery, so it stays off the pools', () => {
+    const fob = { ...collect, lines: fobLines };
+    assert.equal(derivePickup({ state: fob, flags: { stored: [] }, fulfilment: facts() }), true);
+    const dated = { ...fob, deliveryDate: day('2026-09-05') };
+    assert.equal(derivePickup({ state: dated, flags: { stored: [] }, fulfilment: facts({ sourceReports: ['DELIVERY'] }) }), true);
+    const charged = { ...fob, lines: [...fobLines, { itemCode: 'MISCDELD', description: 'Flatbed Curbside Delivery' }] };
+    assert.equal(derivePickup({ state: charged, flags: { stored: [] }, fulfilment: facts() }), true);
+    // Without the fulfilment facts, as before: the date decides.
+    assert.equal(derivePickup({ state: dated, flags: { stored: [] } }), false);
+  });
+
+  it('is a delivery when CGC charges for one, an unlisted code included (721442)', () => {
+    const charged = { ...collect, lines: [...collect.lines, { itemCode: 'MISCDELE', description: 'Slinger Delivery Standard' }] };
+    assert.equal(derivePickup({ state: charged, flags: { stored: [] }, fulfilment: facts() }), false);
+  });
+
+  it('follows the type dispatch set, either way, but never reopens a closed order', () => {
+    const fob = { ...collect, lines: fobLines };
+    assert.equal(derivePickup({ state: fob, flags: { stored: [] }, fulfilment: facts({ override: 'supplier_haul_delivery' }) }), false);
+    assert.equal(derivePickup({ state: fob, flags: { stored: [] }, fulfilment: facts({ override: 'yard_delivery' }) }), false);
+    const charged = { ...collect, lines: [{ itemCode: 'MISCDEL', description: 'Delivery' }] };
+    assert.equal(derivePickup({ state: charged, flags: { stored: [] }, fulfilment: facts({ override: 'yard_pickup' }) }), true);
+    assert.equal(derivePickup({ state: charged, flags: { stored: [] }, fulfilment: facts({ override: 'external_pickup' }) }), true);
+    assert.equal(derivePickup({ state: collect, flags: { stored: ['QUOTE'] }, fulfilment: facts({ override: 'yard_pickup' }) }), false);
+  });
+
+  it('raises no delivery checks on a quotation', () => {
+    const dated = { ...collect, deliveryDate: day('2026-09-05'), phone: null, inDeliveryReport: true };
+    assert.deepEqual(derivedStateFlags({ state: dated, flags: { stored: ['QUOTE'] } }, false), []);
+    assert.deepEqual(derivedStateFlags({ state: dated, flags: { stored: [] } }, false), ['NO_ADDRESS', 'NO_PHONE']);
   });
 });

@@ -1,6 +1,17 @@
 import { describe, expect, it } from 'vitest';
 
-import { editRequest, formFromOrder, lineUpdateFor, overrideFor, spruceText, updateFor, updateNote } from './orderEditor';
+import {
+  canMarkNotQuotation,
+  editRequest,
+  formFromOrder,
+  lineUpdateFor,
+  notQuotationConfirm,
+  overrideFor,
+  pitOptions,
+  spruceText,
+  updateFor,
+  updateNote,
+} from './orderEditor';
 
 const order = {
   id: 'doc-1',
@@ -48,6 +59,52 @@ describe('the edit form', () => {
   });
 });
 
+describe("dispatch's own choices: how the order reaches the customer, and where it is loaded", () => {
+  const pitId = '0b9a3c1e-1111-4222-8333-944455556666';
+
+  it('starts from what is set, "as the reports say" and no pit when nothing is', () => {
+    const form = formFromOrder(order);
+    expect([form.fulfilmentOverride, form.pickupSupplierId, form.pickupLocation]).toEqual(['', '', '']);
+    const set = formFromOrder({ ...order, fulfilmentOverride: 'supplier_haul_delivery', pickupSupplierId: pitId, pickupLocation: 'North' });
+    expect([set.fulfilmentOverride, set.pickupSupplierId, set.pickupLocation]).toEqual(['supplier_haul_delivery', pitId, 'North']);
+  });
+
+  it('sends only what changed, and clears the yard with the supplier', () => {
+    const form = formFromOrder(order);
+    form.fulfilmentOverride = 'external_pickup';
+    form.pickupSupplierId = pitId;
+    form.pickupLocation = 'North';
+    expect(editRequest(order, form)).toEqual({ fulfilmentOverride: 'external_pickup', pickupSupplierId: pitId, pickupLocation: 'North' });
+
+    const chosen = { ...order, pickupSupplierId: pitId, pickupLocation: 'North' };
+    const cleared = formFromOrder(chosen);
+    cleared.pickupSupplierId = '';
+    expect(editRequest(chosen, cleared)).toEqual({ pickupSupplierId: '', pickupLocation: '' });
+
+    const back = formFromOrder({ ...order, fulfilmentOverride: 'yard_pickup' });
+    back.fulfilmentOverride = '';
+    expect(editRequest({ ...order, fulfilmentOverride: 'yard_pickup' }, back)).toEqual({ fulfilmentOverride: '' });
+  });
+
+  it('offers the active suppliers, and keeps the one chosen if it has left the list', () => {
+    const suppliers = [{ id: 's-1', name: 'Example Pit' }];
+    expect(pitOptions(suppliers, order)).toEqual([{ value: '', label: 'None chosen' }, { value: 's-1', label: 'Example Pit' }]);
+    expect(pitOptions(suppliers, { pickupSupplier: { id: 's-2', name: 'Retired Pit' } }).map((option) => option.label))
+      .toEqual(['None chosen', 'Example Pit', 'Retired Pit']);
+  });
+
+  it('never offers a trucking company as the pit, but still names one already chosen', () => {
+    const mixed = [
+      { id: 's-1', name: 'Example Pit', type: 'SUPPLIER' },
+      { id: 't-1', name: 'Example Haulage', type: 'TRUCKING_COMPANY' },
+      { id: 's-3', name: 'Untyped Pit' },
+    ];
+    expect(pitOptions(mixed, order).map((option) => option.label)).toEqual(['None chosen', 'Example Pit', 'Untyped Pit']);
+    expect(pitOptions(mixed, { pickupSupplier: { id: 't-1', name: 'Example Haulage' } }).map((option) => option.value))
+      .toEqual(['', 's-1', 's-3', 't-1']);
+  });
+});
+
 describe('corrections beside Spruce', () => {
   it('finds a field\'s correction and says what Spruce has', () => {
     const override = overrideFor(order, 'phone');
@@ -86,5 +143,20 @@ describe("what today's upload changed", () => {
     expect(updateFor(updated, 'quantity')).toBeNull();
     expect(updateNote(null, 'phone')).toBeNull();
     expect(updateFor(order, 'shippingAddress')).toBeNull();
+  });
+});
+
+describe('"Not a quotation"', () => {
+  it('is offered only on an order flagged a quotation, and not on a past day', () => {
+    expect(canMarkNotQuotation({ flags: ['QUOTE'] })).toBe(true);
+    expect(canMarkNotQuotation({ flags: ['QUOTE'] }, true)).toBe(false);
+    expect(canMarkNotQuotation({ flags: ['NOT_OPEN', 'NOT_A_QUOTE'] })).toBe(false);
+    expect(canMarkNotQuotation({})).toBe(false);
+  });
+
+  it('asks before it, naming the order and what happens', () => {
+    const question = notQuotationConfirm({ documentNumber: '9900-000101' });
+    expect(question).toMatch(/^Mark 9900-000101 as a real order, not a quotation\?/);
+    expect(question).toMatch(/will not call it a quotation again/);
   });
 });

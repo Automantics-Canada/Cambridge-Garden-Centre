@@ -1,5 +1,5 @@
 import { prisma } from '../../db/prisma.js';
-import { MatchSubjectType, TicketStatus, type Prisma } from '@prisma/client';
+import { MatchSubjectType, TicketSource, TicketStatus, type Prisma } from '@prisma/client';
 import {
   matchInvoiceLine,
   matchTicket,
@@ -12,8 +12,10 @@ import {
   type MatchDecision,
   type ProductAlias,
 } from './matchEngine.js';
-import { resolveTolerances, type Tolerances } from './tolerances.js';
+import { resolveHaulTolerances, resolveTolerances, type HaulTolerances, type Tolerances } from './tolerances.js';
+import { matchHaulLine, type CandidateLoad } from './haulMatch.js';
 import { deriveLineItemFlag } from '../../lib/lineItemFlag.js';
+import { businessDayOf } from '../../lib/businessDay.js';
 import { onSamePo, poKey } from './poKey.js';
 
 /**
@@ -46,8 +48,28 @@ import { onSamePo, poKey } from './poKey.js';
  * the second.
  */
 
-/** Bump when the cascade changes, so old verdicts can be told apart. */
-export const ENGINE_VERSION = 4;
+/**
+ * Bump when the cascade changes, so old verdicts can be told apart.
+ *
+ * 5: an agreed rate can be found by the order line's Spruce item code, and
+ * quotations are never candidates.
+ * 6: two copies of one load (the driver's and the supplier's emailed ticket)
+ * count once, must agree, share a claim, and a line backed only by the
+ * supplier's own copies is never passed automatically.
+ * 7: a trucking company's invoice lines are checked against the dispatch
+ * loads they bill and the rate dispatch set (haulMatch.ts), not against
+ * order lines and scale tickets.
+ * 8: a brokered trip may be billed load by load: a line whose ticket is the
+ * one dispatch wrote on one load of the trip bills (and claims) that load
+ * alone, and a whole-trip line by the load expects one load per trip load.
+ * 9: a haul line that fits several hauls, every one of them already paid, says
+ * it is already paid instead of asking a person to choose one. A load by the
+ * load with no quantity entered is one load, and a line billed by the load
+ * must bill exactly the loads dispatch sent (no estimate tolerance). A load
+ * whose quantity only the supplier's emailed copy shows is never passed
+ * automatically.
+ */
+export const ENGINE_VERSION = 9;
 
 /**
  * `matchMethod` recorded for a link the engine made.
@@ -94,12 +116,21 @@ function poNumberConditions(poNumber: string): Array<{ poNumber: string | { cont
   return conditions;
 }
 
-async function loadTolerances(): Promise<Tolerances> {
-  const settings = await prisma.systemSetting.findMany({
+async function loadMatchSettings(db: Pick<Prisma.TransactionClient, 'systemSetting'> = prisma) {
+  return db.systemSetting.findMany({
     where: { key: { startsWith: 'match.' } },
     select: { key: true, value: true },
   });
-  return resolveTolerances(settings);
+}
+
+async function loadTolerances(): Promise<Tolerances> {
+  return resolveTolerances(await loadMatchSettings());
+}
+
+export async function loadHaulTolerances(
+  db: Pick<Prisma.TransactionClient, 'systemSetting'> = prisma
+): Promise<HaulTolerances> {
+  return resolveHaulTolerances(await loadMatchSettings(db));
 }
 
 async function loadAliases(supplierId: string | null): Promise<ProductAlias[]> {
@@ -109,6 +140,38 @@ async function loadAliases(supplierId: string | null): Promise<ProductAlias[]> {
     select: { supplierId: true, aliasText: true, productName: true },
   });
   return rows;
+}
+
+/**
+ * Order lines that can never back a ticket or an invoice: those on a document
+ * the import recognised as a quotation (QUOTE). A quote is a price someone was
+ * given, not material anyone ordered. Its lines carry the same supplier and
+ * dates as real orders, so without this a quote could be offered as a match,
+ * or stand beside the real order as a second candidate and turn a good invoice
+ * line into CONFLICT.
+ *
+ * NOT_OPEN is deliberately not excluded, although the dispatch board leaves it
+ * out as well. The board shows work still to do, and a NOT_OPEN order has none:
+ * it was invoiced, closed or voided in Spruce since. Matching looks backwards.
+ * The supplier's invoice and the late tickets for an order arrive after the
+ * order was delivered and invoiced, which is exactly when it leaves the Order
+ * report and is flagged NOT_OPEN. Excluding it here would leave every finished
+ * order's supplier invoice unmatched.
+ *
+ * A line with no document (rows from the legacy import) is kept: nothing says
+ * it is a quote.
+ */
+export const NOT_ON_A_QUOTATION: Prisma.OrderWhereInput = {
+  NOT: { document: { is: { flags: { has: 'QUOTE' } } } },
+};
+
+/** Whether this order line is on a quotation, for the automatic ticket link. */
+async function isOnQuotation(tx: Prisma.TransactionClient, orderId: string): Promise<boolean> {
+  const row = await tx.order.findUnique({
+    where: { id: orderId },
+    select: { document: { select: { flags: true } } },
+  });
+  return row?.document?.flags.includes('QUOTE') ?? false;
 }
 
 /**
@@ -141,7 +204,9 @@ async function loadCandidateOrders(
   if (where.length === 0) return [];
 
   const rows = await prisma.order.findMany({
-    where: { OR: where },
+    // Both routes, the PO and the supplier within the window, leave quotations
+    // out; see NOT_ON_A_QUOTATION.
+    where: { AND: [{ OR: where }, NOT_ON_A_QUOTATION] },
     select: {
       id: true,
       poNumber: true,
@@ -151,6 +216,7 @@ async function loadCandidateOrders(
       supplierId: true,
       orderDate: true,
       deliveryDate: true,
+      spruceItemNumber: true,
     },
     // A subject that somehow matches hundreds of orders is a data problem, not
     // a match; the engine will call it a CONFLICT either way, and this stops
@@ -167,6 +233,7 @@ async function loadCandidateOrders(
     supplierId: row.supplierId,
     orderDate: row.orderDate,
     deliveryDate: row.deliveryDate,
+    spruceItemNumber: row.spruceItemNumber,
   }));
 }
 
@@ -265,6 +332,9 @@ async function persist(
       // Stored so a resolution claims exactly what this verdict counted, rather
       // than whatever tickets happen to exist when somebody clicks Confirm.
       ticketIds: decision.ticketIds,
+      // The same for a trucking line's dispatch loads. Written on every
+      // verdict, so a line that stops being a haul line holds none.
+      loadIds: decision.loadIds ?? [],
       engineVersion: ENGINE_VERSION,
       computedAt: new Date(),
     };
@@ -322,7 +392,14 @@ async function applyAutomaticTicketLink(
   // worth overriding that with.
   if (ticket.linkMethod === MANUAL_LINK || ticket.status === TicketStatus.REVIEWED) return;
 
-  const orderId = shouldAutoLink(decision);
+  // The candidates never include a quotation's lines, so the engine cannot
+  // name one. Checked here as well because this writes the link: a ticket must
+  // never be attached to a quote, and one attached before the document was
+  // recognised as a quote has its automatic link taken away below.
+  const proposed = shouldAutoLink(decision);
+  const orderId = proposed && !(await isOnQuotation(tx, proposed)) ? proposed : null;
+  const linkedToQuotation =
+    ticket.linkedOrderId !== null && (await isOnQuotation(tx, ticket.linkedOrderId));
 
   if (orderId) {
     // Writing the identical row again changes nothing but wakes every realtime
@@ -367,7 +444,9 @@ async function applyAutomaticTicketLink(
   // by the supplier/date/product fallback is left exactly as it was for a
   // person to settle. And only an automatic link: a ticket carrying no link
   // method has nothing here to undo, and MANUAL was returned from above.
-  if (!shouldRemoveAutoLink(decision)) return;
+  // The one exception is an automatic link to a quotation, which is never
+  // right whatever the verdict now says.
+  if (!shouldRemoveAutoLink(decision) && !linkedToQuotation) return;
   if (ticket.linkMethod !== AUTO_LINK) return;
 
   await tx.ticketOrderMatch.deleteMany({
@@ -450,6 +529,9 @@ async function applyLineItemColumns(
 ): Promise<void> {
   const totals = decision.totals;
   const agreedRate = totals?.agreedRate ?? null;
+  // A haul line is backed by the dispatch load it bills, not by an order line
+  // and its scale tickets: the load stands for both in the flag.
+  const haulLoads = decision.loadIds?.length ?? null;
   const rateDiscrepancy = totals?.rateDiscrepancy ?? null;
   const quantityDiscrepancy = totals?.quantityDiscrepancy ?? null;
 
@@ -469,8 +551,8 @@ async function applyLineItemColumns(
       approvedTotal:
         agreedRate === null || billedQuantity === null ? null : billedQuantity * agreedRate,
       flag: deriveLineItemFlag({
-        hasOrder: decision.orderId !== null,
-        ticketCount: decision.ticketIds.length,
+        hasOrder: haulLoads === null ? decision.orderId !== null : haulLoads > 0,
+        ticketCount: haulLoads ?? decision.ticketIds.length,
         hasQuantityDiscrepancy: quantityDiscrepancy !== null,
         hasRateDiscrepancy: rateDiscrepancy !== null,
         hasAgreedRate: agreedRate !== null,
@@ -478,6 +560,267 @@ async function applyLineItemColumns(
       }),
     },
   });
+}
+
+/** What the engine needs of each ticket that might cover an invoice line. */
+const DELIVERED_TICKET_SELECT = {
+  id: true,
+  ticketNumber: true,
+  poNumber: true,
+  quantity: true,
+  unit: true,
+  // Which product the load was, and who brought it — both needed so one line
+  // on a two-product PO does not count the other's tickets.
+  material: true,
+  supplierId: true,
+  // Which copy of a load this is, and whether the supplier emailed it.
+  source: true,
+  duplicateOfTicketId: true,
+  ticketDate: true,
+  // Whether somebody has already paid a line against this load.
+  claim: {
+    select: {
+      invoiceLineId: true,
+      claimedAt: true,
+      claimedBy: { select: { name: true } },
+      invoiceLine: {
+        select: { lineNumber: true, invoice: { select: { invoiceNumber: true } } },
+      },
+    },
+  },
+} as const satisfies Prisma.TicketSelect;
+
+type DeliveredTicketRow = Prisma.TicketGetPayload<{ select: typeof DELIVERED_TICKET_SELECT }>;
+
+function toDeliveredTicket(ticket: DeliveredTicketRow): DeliveredTicket {
+  return {
+    id: ticket.id,
+    ticketNumber: ticket.ticketNumber,
+    poNumber: ticket.poNumber,
+    quantity: toNumber(ticket.quantity),
+    unit: ticket.unit,
+    material: ticket.material,
+    supplierId: ticket.supplierId,
+    duplicateOfTicketId: ticket.duplicateOfTicketId,
+    emailedBySupplier: ticket.source === TicketSource.EMAIL,
+    ticketDate: ticket.ticketDate,
+    claim: ticket.claim
+      ? {
+          invoiceLineId: ticket.claim.invoiceLineId,
+          invoiceNumber: ticket.claim.invoiceLine.invoice.invoiceNumber,
+          lineNumber: ticket.claim.invoiceLine.lineNumber,
+          claimedByName: ticket.claim.claimedBy?.name ?? null,
+          claimedAt: ticket.claim.claimedAt,
+        }
+      : null,
+  };
+}
+
+/** What the haul matcher needs of each dispatch load. Office-side only. */
+const CANDIDATE_LOAD_SELECT = {
+  id: true,
+  documentId: true,
+  sequence: true,
+  carrierSupplierId: true,
+  tripRef: true,
+  rate: true,
+  rateUnit: true,
+  quantity: true,
+  ticketNumber: true,
+  claimedByLineItemId: true,
+  createdAt: true,
+  claimedByLineItem: { select: { lineNumber: true, invoice: { select: { invoiceNumber: true } } } },
+  delivery: { select: { completedAt: true } },
+  document: {
+    select: {
+      documentNumber: true,
+      poNumber: true,
+      deliveryDate: true,
+      lines: {
+        select: {
+          id: true,
+          poNumber: true,
+          tickets: { select: { ticketNumber: true }, where: { ticketNumber: { not: null } }, take: 50 },
+        },
+        orderBy: [{ lineNumber: 'asc' }, { createdAt: 'asc' }],
+        take: 50,
+      },
+    },
+  },
+} as const satisfies Prisma.DispatchLoadSelect;
+
+type CandidateLoadRow = Prisma.DispatchLoadGetPayload<{ select: typeof CANDIDATE_LOAD_SELECT }>;
+
+/**
+ * The day a load was hauled. DispatchLoad has no date of its own: the
+ * order's delivery date is the day Spruce scheduled it, the stop's completion
+ * the day it was done, and the day dispatch recorded the load the last resort.
+ *
+ * The matcher compares calendar days (`YYYY-MM-DD`, at UTC midnight), which a
+ * delivery date already is. The other two are instants, so they are turned
+ * into the yard's day first: a load finished at 9 pm in Cambridge is already
+ * the next day in UTC, and would otherwise miss a line dated the day it ran.
+ */
+export function haulDateOf(row: {
+  document: { deliveryDate: Date | null };
+  delivery: { completedAt: Date | null } | null;
+  createdAt: Date;
+}): Date {
+  if (row.document.deliveryDate) return row.document.deliveryDate;
+  const instant = row.delivery?.completedAt ?? row.createdAt;
+  return new Date(`${businessDayOf(instant)}T00:00:00.000Z`);
+}
+
+function toCandidateLoad(row: CandidateLoadRow): CandidateLoad {
+  return {
+    id: row.id,
+    documentId: row.documentId,
+    sequence: row.sequence,
+    carrierSupplierId: row.carrierSupplierId,
+    tripRef: row.tripRef,
+    rate: row.rate === null ? null : row.rate.toString(),
+    rateUnit: row.rateUnit,
+    quantity: row.quantity === null ? null : row.quantity.toString(),
+    claimedByLineItemId: row.claimedByLineItemId,
+    documentNumber: row.document.documentNumber,
+    haulDate: haulDateOf(row),
+    ticketNumber: row.ticketNumber,
+    poNumbers: [
+      ...new Set(
+        [row.document.poNumber, ...row.document.lines.map((orderLine) => orderLine.poNumber)].filter(
+          (po): po is string => Boolean(po)
+        )
+      ),
+    ],
+    orderTicketNumbers: row.document.lines.flatMap((orderLine) =>
+      orderLine.tickets.flatMap((ticket) => (ticket.ticketNumber ? [ticket.ticketNumber] : []))
+    ),
+    orderLineId: row.document.lines[0]?.id ?? null,
+    claim: row.claimedByLineItem
+      ? {
+          invoiceNumber: row.claimedByLineItem.invoice.invoiceNumber,
+          lineNumber: row.claimedByLineItem.lineNumber,
+        }
+      : null,
+  };
+}
+
+/** Dispatch loads as the haul matcher reads them, for any filter. */
+export async function loadCandidateLoads(
+  where: Prisma.DispatchLoadWhereInput,
+  db: Pick<Prisma.TransactionClient, 'dispatchLoad'> = prisma
+): Promise<CandidateLoad[]> {
+  const rows = await db.dispatchLoad.findMany({
+    where,
+    select: CANDIDATE_LOAD_SELECT,
+    // Newest first, so that if the bound below is ever reached it drops the
+    // oldest loads rather than the ones an invoice is most likely billing.
+    orderBy: [{ createdAt: 'desc' }],
+    // A carrier with hundreds of loads in a fortnight is a data problem; the
+    // matcher would call the line a CONFLICT either way.
+    take: 500,
+  });
+  // Back in the order dispatch recorded them, which is the order they are listed in.
+  return rows.reverse().map(toCandidateLoad);
+}
+
+/**
+ * A carrier's dispatch loads that could be dated inside the window. Asked a
+ * day wider on each side than the matcher's window, by each of the three
+ * dates a load's haul day can come from; the matcher applies the exact
+ * window. CGC's own trucks (no carrier) are never read.
+ */
+export async function loadHaulCandidates(
+  carrierSupplierId: string,
+  anchor: Date,
+  windowDays: number,
+  db: Pick<Prisma.TransactionClient, 'dispatchLoad'> = prisma
+): Promise<CandidateLoad[]> {
+  const from = new Date(anchor.getTime() - (windowDays + 1) * 86_400_000);
+  const to = new Date(anchor.getTime() + (windowDays + 1) * 86_400_000);
+  return loadCandidateLoads(
+    {
+      carrierSupplierId,
+      OR: [
+        { document: { deliveryDate: { gte: from, lte: to } } },
+        { delivery: { completedAt: { gte: from, lte: to } } },
+        { createdAt: { gte: from, lte: to } },
+      ],
+    },
+    db
+  );
+}
+
+/**
+ * A trucking company's invoice line, against the dispatch loads it bills
+ * (client, Oct 2026, Q14). Material lines never come here.
+ */
+async function matchHaulLineById(line: {
+  id: string;
+  poNumber: string | null;
+  ticketNumber: string | null;
+  serviceDate: Date | null;
+  quantity: Prisma.Decimal;
+  unit: string;
+  unitRate: Prisma.Decimal;
+  invoice: { supplierId: string; invoiceDate: Date };
+}): Promise<MatchDecision> {
+  const tolerances = await loadHaulTolerances();
+  const anchor = line.serviceDate ?? line.invoice.invoiceDate;
+  const loads = await loadHaulCandidates(line.invoice.supplierId, anchor, tolerances.haulDateWindowDays);
+
+  // Other unsettled lines whose verdicts count any of these loads.
+  const candidateIds = loads.map((load) => load.id);
+  const competing =
+    candidateIds.length === 0
+      ? []
+      : await prisma.matchResult.findMany({
+          where: { invoiceLineId: { not: line.id }, resolution: null, loadIds: { hasSome: candidateIds } },
+          select: {
+            invoiceLineId: true,
+            loadIds: true,
+            invoiceLine: { select: { lineNumber: true, invoice: { select: { invoiceNumber: true } } } },
+          },
+          take: 50,
+        });
+
+  const decision = matchHaulLine(
+    {
+      id: line.id,
+      poNumber: line.poNumber,
+      ticketNumber: line.ticketNumber,
+      serviceDate: line.serviceDate,
+      quantity: toNumber(line.quantity),
+      unit: line.unit,
+      unitRate: toNumber(line.unitRate),
+      supplierId: line.invoice.supplierId,
+      invoiceDate: line.invoice.invoiceDate,
+    },
+    loads,
+    {
+      tolerances,
+      competingLines: competing.flatMap((other) =>
+        other.invoiceLineId && other.invoiceLine
+          ? [
+              {
+                invoiceLineId: other.invoiceLineId,
+                invoiceNumber: other.invoiceLine.invoice.invoiceNumber,
+                lineNumber: other.invoiceLine.lineNumber,
+                loadIds: other.loadIds,
+              },
+            ]
+          : []
+      ),
+    }
+  );
+
+  const outcome = await persist(MatchSubjectType.INVOICE_LINE, line.id, decision, (tx) =>
+    applyLineItemColumns(tx, line.id, toNumber(line.quantity), decision)
+  );
+  console.log(
+    `[Matching] Haul line ${line.id}: ${decision.status}${outcome.stored ? '' : ` (not stored — ${outcome.reason})`}`
+  );
+  return decision;
 }
 
 /** Decides and records whether one invoice line is safe to pay. */
@@ -491,10 +834,18 @@ export async function matchInvoiceLineById(lineId: string): Promise<MatchDecisio
       quantity: true,
       unit: true,
       unitRate: true,
-      invoice: { select: { supplierId: true, invoiceDate: true } },
+      ticketNumber: true,
+      serviceDate: true,
+      invoice: { select: { supplierId: true, invoiceDate: true, supplier: { select: { type: true } } } },
     },
   });
   if (!line) return null;
+
+  // A trucking company bills hauls, which are checked against what dispatch
+  // recorded for each load. Everything else keeps the order-and-ticket path.
+  if (line.invoice.supplier.type === 'TRUCKING_COMPANY') {
+    return matchHaulLineById(line);
+  }
 
   const supplierId = line.invoice?.supplierId ?? null;
   const invoiceDate = line.invoice?.invoiceDate ?? null;
@@ -517,28 +868,7 @@ export async function matchInvoiceLineById(lineId: string): Promise<MatchDecisio
               ...(supplierId ? [{ OR: [{ supplierId }, { supplierId: null }] }] : []),
             ],
           },
-          select: {
-            id: true,
-            ticketNumber: true,
-            poNumber: true,
-            quantity: true,
-            unit: true,
-            // Which product the load was, and who brought it — both needed so
-            // one line on a two-product PO does not count the other's tickets.
-            material: true,
-            supplierId: true,
-            // Whether somebody has already paid a line against this load.
-            claim: {
-              select: {
-                invoiceLineId: true,
-                claimedAt: true,
-                claimedBy: { select: { name: true } },
-                invoiceLine: {
-                  select: { lineNumber: true, invoice: { select: { invoiceNumber: true } } },
-                },
-              },
-            },
-          },
+          select: DELIVERED_TICKET_SELECT,
           take: 100,
         })
       : Promise.resolve([]),
@@ -549,35 +879,50 @@ export async function matchInvoiceLineById(lineId: string): Promise<MatchDecisio
             effectiveFrom: { lte: invoiceDate ?? new Date() },
             OR: [{ effectiveTo: null }, { effectiveTo: { gte: invoiceDate ?? new Date() } }],
           },
-          select: { productName: true, rate: true, unit: true },
+          select: {
+            productName: true,
+            rate: true,
+            unit: true,
+            spruceItemCode: true,
+            supplierItemCode: true,
+          },
         })
       : Promise.resolve([]),
   ]);
 
-  const deliveredTickets: DeliveredTicket[] = tickets.map((ticket) => ({
-    id: ticket.id,
-    ticketNumber: ticket.ticketNumber,
-    poNumber: ticket.poNumber,
-    quantity: toNumber(ticket.quantity),
-    unit: ticket.unit,
-    material: ticket.material,
-    supplierId: ticket.supplierId,
-    claim: ticket.claim
-      ? {
-          invoiceLineId: ticket.claim.invoiceLineId,
-          invoiceNumber: ticket.claim.invoiceLine.invoice.invoiceNumber,
-          lineNumber: ticket.claim.invoiceLine.lineNumber,
-          claimedByName: ticket.claim.claimedBy?.name ?? null,
-          claimedAt: ticket.claim.claimedAt,
-        }
-      : null,
-  }));
+  // The other copies of these loads, wherever their PO points: the engine
+  // counts each load once and compares its copies, so it needs all of them.
+  const loaded = new Set(tickets.map((ticket) => ticket.id));
+  const roots = [...new Set(tickets.map((ticket) => ticket.duplicateOfTicketId ?? ticket.id))];
+  const twins =
+    tickets.length === 0
+      ? []
+      : await prisma.ticket.findMany({
+          where: {
+            id: { notIn: [...loaded] },
+            OR: [{ id: { in: roots } }, { duplicateOfTicketId: { in: roots } }],
+          },
+          select: DELIVERED_TICKET_SELECT,
+          take: 100,
+        });
+
+  const deliveredTickets: DeliveredTicket[] = [...tickets, ...twins].map(toDeliveredTicket);
 
   const competingLines = await loadCompetingLines(line.poNumber, supplierId, line.id);
 
   const agreedRates: AgreedRate[] = rates.flatMap((rate) => {
     const value = toNumber(rate.rate);
-    return value === null ? [] : [{ productName: rate.productName, rate: value, unit: rate.unit }];
+    return value === null
+      ? []
+      : [
+          {
+            productName: rate.productName,
+            rate: value,
+            unit: rate.unit,
+            spruceItemCode: rate.spruceItemCode,
+            supplierItemCode: rate.supplierItemCode,
+          },
+        ];
   });
 
   const decision = matchInvoiceLine(
@@ -770,4 +1115,46 @@ export async function recomputeInvoiceLinesSafely(
   } catch (error) {
     console.error(`[Matching] ${context}: invoice line recompute failed:`, error);
   }
+}
+
+/**
+ * Re-runs one supplier's unresolved invoice lines, after its rates changed.
+ *
+ * Until price lists are loaded, every line reads "no agreed rate". Once a
+ * rate is added, nothing else would look at those lines again: the invoice
+ * would keep saying the rate is missing until someone re-ran it by hand. This
+ * is what re-runs them.
+ *
+ * Only invoices still being worked on (not VERIFIED or PAID) are touched, and
+ * `persist` leaves alone any verdict a person has resolved. Bounded, so one
+ * supplier with a long backlog cannot pull the whole ledger into a single
+ * pass. Newest invoice first: those are the ones a new price list is about,
+ * and the lines still unresolved after a pass are picked again by the next
+ * one, so starting from the oldest would re-check the same old lines every
+ * time and never reach this week's invoices. Lines beyond the limit wait for
+ * a manual re-run of their invoice.
+ */
+export const RECOMPUTE_SUPPLIER_LINE_LIMIT = 500;
+
+export async function recomputeInvoiceLinesForSupplier(
+  supplierId: string,
+  limit = RECOMPUTE_SUPPLIER_LINE_LIMIT
+): Promise<{ lines: number; invoiceIds: string[]; capped: boolean }> {
+  const lines = await prisma.invoiceLineItem.findMany({
+    where: {
+      invoice: { supplierId, status: { in: ['PENDING_REVIEW', 'DISPUTED'] } },
+      OR: [{ matchResult: null }, { matchResult: { resolution: null } }],
+    },
+    select: { id: true, invoiceId: true },
+    orderBy: [{ invoice: { invoiceDate: 'desc' } }, { invoiceId: 'asc' }, { lineNumber: 'asc' }],
+    take: limit + 1,
+  });
+
+  const capped = lines.length > limit;
+  const batch = lines.slice(0, limit);
+  for (const line of batch) {
+    await matchInvoiceLineById(line.id);
+  }
+
+  return { lines: batch.length, invoiceIds: [...new Set(batch.map((line) => line.invoiceId))], capped };
 }

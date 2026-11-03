@@ -17,9 +17,12 @@
     "bootstrap:admin": "tsx src/scripts/bootstrapAdmin.ts",
     "test": "node scripts/run-tests.mjs unit",
     "spruce:dryrun": "tsx src/scripts/spruceDryRun.ts",
+    "samples:dry-run": "tsx src/scripts/invoiceSampleDryRun.ts",
     "backfill:thumbnails": "tsx src/scripts/backfillTicketThumbnails.ts",
     "backfill:order-documents": "tsx src/scripts/backfillOrderDocuments.ts",
     "backfill:ticket-claims": "tsx src/scripts/backfillTicketClaims.ts",
+    "quotes:flag": "tsx src/scripts/flagQuotes.ts",
+    "seed:demo": "tsx src/scripts/seedDemo.ts",
     "extraction:eval": "node scripts/run-eval.mjs",
     "vendors:list": "tsx src/scripts/manageSpruceVendors.ts list",
     "vendors:add": "tsx src/scripts/manageSpruceVendors.ts add",
@@ -59,6 +62,7 @@
     "csv-parse": "^7.0.2",
     "dotenv": "^17.3.1",
     "esbuild": "^0.28.1",
+    "exceljs": "^4.4.0",
     "express": "^5.2.1",
     "form-data": "^4.0.0",
     "google-auth-library": "^10.6.2",
@@ -79,6 +83,9 @@
     "zod": "^4.5.4"
   },
   "overrides": {
-    "deepmerge-ts": "^8.0.2"
+    "deepmerge-ts": "^8.0.2",
+    "exceljs": {
+      "uuid": "^11.1.1"
+    }
   }
 }

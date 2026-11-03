@@ -3,6 +3,7 @@ import type { Request, Response } from 'express';
 import { prisma } from '../../db/prisma.js';
 import { authMiddleware, requireRole, type AuthRequest } from '../../middleware/authMiddleware.js';
 import { matchInvoiceById, matchTicketById } from './matching.service.js';
+import { refreshInvoiceTotalCheck } from '../invoices/invoice.service.js';
 import {
   reopenMatchResult,
   resolveMatchResult,
@@ -66,6 +67,8 @@ router.post('/recompute/ticket/:id', async (req: Request, res: Response) => {
 router.post('/recompute/invoice/:id', async (req: Request, res: Response) => {
   try {
     const decisions = await matchInvoiceById(req.params.id as string);
+    // The lines' agreed rates may have changed, so the total check follows.
+    await refreshInvoiceTotalCheck(req.params.id as string);
     return res.json({ lines: decisions.length, decisions });
   } catch (error) {
     console.error('[Matching] invoice recompute failed:', error);
@@ -90,6 +93,11 @@ export function explain(outcome: ResolveFailure): { status: number; error: strin
       return { status: 404, error: 'That verdict no longer exists' };
     case 'TICKETS_ALREADY_CLAIMED':
       return { status: 409, error: outcome.detail };
+    // A trucking line whose haul another invoice already paid (Q14).
+    case 'LOAD_ALREADY_CLAIMED':
+      return { status: 409, error: outcome.detail };
+    case 'LOAD_CHOICE_REQUIRED':
+      return { status: 400, error: outcome.detail };
     case 'NOTE_REQUIRED_DUPLICATE':
       return {
         status: 400,
@@ -103,6 +111,8 @@ export function explain(outcome: ResolveFailure): { status: number; error: strin
       return { status: 400, error: 'Say why, so the decision can be understood later' };
     case 'ORDER_NOT_FOUND':
       return { status: 400, error: 'That order does not exist' };
+    case 'ORDER_IS_QUOTATION':
+      return { status: 409, error: outcome.detail };
     default:
       return { status: 400, error: 'That resolution could not be applied' };
   }

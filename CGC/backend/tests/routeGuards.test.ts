@@ -26,6 +26,8 @@ import orderRouter from '../src/modules/orders/order.routes.js';
 import authRouter from '../src/modules/auth/auth.routes.js';
 import supplierRouter from '../src/modules/supplier/supplier.routes.js';
 import productRouter from '../src/modules/products/product.routes.js';
+import spruceVendorRouter from '../src/modules/supplier/spruceVendors.routes.js';
+import emailEventRouter from '../src/modules/emailEvents/emailEvents.routes.js';
 
 const OPERATIONS: UserRole[] = ['AP_USER', 'OWNER', 'ADMIN'];
 
@@ -108,6 +110,12 @@ describe('dispatch routes', () => {
     ['post', '/assign'],
     ['post', '/unassign'],
     ['post', '/reorder'],
+    ['post', '/orders/:documentId/done-outside-app'],
+    ['get', '/orders/:documentId/loads'],
+    ['post', '/orders/:documentId/loads'],
+    ['patch', '/loads/:loadId'],
+    ['delete', '/loads/:loadId'],
+    ['post', '/loads/:loadId/copy-rate-to-trip'],
   ];
 
   for (const [method, path] of routes) {
@@ -115,6 +123,23 @@ describe('dispatch routes', () => {
       assertGuarded(dispatchRouter, method, path, OPERATIONS);
     });
   }
+
+  it('keeps DRIVER from marking an order done outside the app', () => {
+    const roles = admittedRoles(effectiveChain(dispatchRouter, 'post', '/orders/:documentId/done-outside-app'));
+    assert.equal(roles?.includes('DRIVER'), false);
+  });
+
+  it('keeps DRIVER away from dispatch loads and their haul rates', () => {
+    for (const [method, path] of [
+      ['get', '/orders/:documentId/loads'],
+      ['post', '/orders/:documentId/loads'],
+      ['patch', '/loads/:loadId'],
+      ['delete', '/loads/:loadId'],
+      ['post', '/loads/:loadId/copy-rate-to-trip'],
+    ] as const) {
+      assert.equal(admittedRoles(effectiveChain(dispatchRouter, method, path))?.includes('DRIVER'), false, `${method} ${path}`);
+    }
+  });
 });
 
 describe('invoice routes', () => {
@@ -237,6 +262,17 @@ describe('order routes', () => {
     assertGuarded(orderRouter, 'get', '/import/jobs/:jobId', OPERATIONS);
     assert.equal(admittedRoles(effectiveChain(orderRouter, 'get', '/'))?.includes('DRIVER'), false);
   });
+
+  it('only the office edits an order or says it is not a quotation', () => {
+    for (const [method, path] of [
+      ['patch', '/documents/:id'],
+      ['post', '/documents/:id/reset'],
+      ['post', '/documents/:id/not-a-quotation'],
+    ] as const) {
+      assertGuarded(orderRouter, method, path, OPERATIONS);
+      assert.equal(admittedRoles(effectiveChain(orderRouter, method, path))?.includes('DRIVER'), false, `${method} ${path}`);
+    }
+  });
 });
 
 describe('supplier routes', () => {
@@ -257,6 +293,91 @@ describe('supplier routes', () => {
       false
     );
   });
+});
+
+describe('supplier sender fields (decision G5)', () => {
+  // A supplier's email domains, addresses and contact email decide whose
+  // invoices the inbox reads automatically, as approving a sender does, and
+  // that is OWNER/ADMIN only. Editing a supplier is guarded by the route;
+  // creating one stays open to AP_USER, whose handler refuses those fields
+  // (tests/emailReviewQueue.integration.test.ts).
+  it('editing a supplier is owner/admin only', () => {
+    assert.deepEqual(admittedRoles(effectiveChain(supplierRouter, 'put', '/:id'))?.sort(), ['ADMIN', 'OWNER']);
+  });
+
+  it('creating one is office work, and the handler is the sender-field guard', () => {
+    assertGuarded(supplierRouter, 'post', '/', OPERATIONS);
+    assert.ok(effectiveChain(supplierRouter, 'post', '/').names.includes('createSupplier'));
+  });
+});
+
+describe('rate and price-list routes', () => {
+  // These decide what an invoice is checked against, so they are office work
+  // and a DRIVER must never reach them.
+  const routes: Array<[string, string]> = [
+    ['post', '/:id/rates'],
+    ['patch', '/:id/rates/:rateId'],
+    ['post', '/:id/rates/:rateId/expire'],
+    ['delete', '/:id/rates/:rateId'],
+    ['post', '/:id/rates/import/preview'],
+    ['post', '/:id/rates/import'],
+  ];
+
+  for (const [method, path] of routes) {
+    it(`${method.toUpperCase()} ${path} is office-only`, () => {
+      assertGuarded(supplierRouter, method, path, OPERATIONS);
+      assert.equal(admittedRoles(effectiveChain(supplierRouter, method, path))?.includes('DRIVER'), false);
+    });
+  }
+
+  it('the price-list upload is bounded by multer before the handler runs', () => {
+    for (const path of ['/:id/rates/import/preview', '/:id/rates/import']) {
+      const chain = effectiveChain(supplierRouter, 'post', path);
+      assert.ok(chain.names.includes('multerMiddleware'), `${path} must bound the upload`);
+    }
+  });
+});
+
+describe('Spruce vendor code routes', () => {
+  const routes: Array<[string, string]> = [
+    ['get', '/'],
+    ['get', '/unmapped'],
+    ['post', '/'],
+    ['delete', '/:code'],
+  ];
+
+  for (const [method, path] of routes) {
+    it(`${method.toUpperCase()} ${path} is office-only`, () => {
+      assertGuarded(spruceVendorRouter, method, path, OPERATIONS);
+      assert.equal(admittedRoles(effectiveChain(spruceVendorRouter, method, path))?.includes('DRIVER'), false);
+    });
+  }
+
+  it('GET /unmapped is registered before anything that could swallow it', () => {
+    const index = (method: string, path: string) =>
+      spruceVendorRouter.stack.findIndex((layer: any) => layer.route?.path === path && layer.route?.methods?.[method]);
+    assert.ok(index('get', '/unmapped') >= 0);
+    assert.ok(index('get', '/unmapped') < index('delete', '/:code'));
+  });
+});
+
+describe('email review queue routes', () => {
+  // Supplier mail is office business. Approving a sender edits a supplier and
+  // decides whose invoices are read automatically, so it and ignoring are for
+  // OWNER/ADMIN; AP_USER may look. Drivers get none of it.
+  it('GET / is office-only', () => {
+    assertGuarded(emailEventRouter, 'get', '/', OPERATIONS);
+    assert.equal(admittedRoles(effectiveChain(emailEventRouter, 'get', '/'))?.includes('DRIVER'), false);
+  });
+
+  for (const path of ['/:id/approve', '/:id/ignore']) {
+    it(`POST ${path} is OWNER/ADMIN only`, () => {
+      assertGuarded(emailEventRouter, 'post', path, ['OWNER', 'ADMIN']);
+      const roles = admittedRoles(effectiveChain(emailEventRouter, 'post', path));
+      assert.equal(roles?.includes('AP_USER'), false);
+      assert.equal(roles?.includes('DRIVER'), false);
+    });
+  }
 });
 
 describe('literal routes stay reachable', () => {
@@ -316,6 +437,8 @@ describe('GET routes that operations staff use', () => {
     [orderRouter, 'get', '/import/stream', OPERATIONS],
     [orderRouter, 'get', '/import/jobs/:jobId', OPERATIONS],
     [supplierRouter, 'get', '/', OPERATIONS],
+    // The carrier picker on the dispatch board reads it.
+    [supplierRouter, 'get', '/options', OPERATIONS],
     [productRouter, 'get', '/', OPERATIONS],
     [productRouter, 'get', '/units', OPERATIONS],
     [deliveriesRouter, 'get', '/', null],

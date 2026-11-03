@@ -73,6 +73,19 @@ async function seed() {
       lines: { create: { spruceOrderId: 'L-PICKUP-1', customerName: 'Walk-in Pickup', product: 'Bagged Mulch' } },
     },
   });
+  // A quotation in today's upload, with a pickup and a delivery line: a
+  // price, not an order, so the linking pickers never offer either.
+  await prisma.orderDocument.create({
+    data: {
+      documentNumber: 'L-QUOTE', customerName: 'Quoted Landscaping', flags: ['QUOTE'], lastBatchId: TODAY_BATCH,
+      lines: {
+        create: [
+          { spruceOrderId: 'L-QUOTE-1', customerName: 'Quoted Landscaping', product: 'Garden Soil' },
+          { spruceOrderId: 'L-QUOTE-2', customerName: 'Quoted Landscaping', product: 'Bagged Mulch' },
+        ],
+      },
+    },
+  });
   // A CSV line from before orders were grouped: no document at all.
   await prisma.order.create({
     data: { spruceOrderId: 'L-LOOSE-1', customerName: 'Loose Line Co', product: 'Sand' },
@@ -120,6 +133,15 @@ describe('Orders list filters', { skip: !runnable && 'needs CGC_TEST_CONFIRM_DIS
     const document = await prisma.orderDocument.findUnique({ where: { documentNumber: 'L-PICKUP' } });
     assert.equal(pickup?.documentId, document?.id);
     assert.equal(pickup?.document?.isPickup, true);
+  });
+
+  it('never offers a quotation\'s lines to link a ticket or an invoice to', async () => {
+    assert.deepEqual(await ids({ search: 'L-QUOTE' }), []);
+    assert.deepEqual(await ids({ search: 'quoted' }), []);
+    // A search the quotation shares still finds the real orders.
+    assert.deepEqual(await ids({ search: 'garden soil' }), ['L-REFRESHED-1', 'L-STALE-1']);
+    const result = await OrderService.getOrders({});
+    assert.equal(result.pagination.total, 4, 'not counted either');
   });
 
   it('rejects an unknown fulfilment rather than listing everything', async () => {

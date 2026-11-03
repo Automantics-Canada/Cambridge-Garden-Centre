@@ -17,7 +17,7 @@ describe('GET /api/health', () => {
     assert.equal(shortCommit('not-a-commit-or-secret'), 'unknown');
   });
 
-  it('is unauthenticated and exposes only status, commit, build time and the worker block', async () => {
+  it('is unauthenticated and exposes only status, commit, build time, the worker block and the gmail block', async () => {
     process.env.DATABASE_URL = 'postgresql://test:test@127.0.0.1:5432/test';
     process.env.JWT_SECRET = 'health-test-secret';
     process.env.SUPABASE_URL = 'https://health-test.supabase.co';
@@ -37,7 +37,7 @@ describe('GET /api/health', () => {
 
       assert.equal(response.status, 200);
       assert.equal(response.headers.get('cache-control'), 'no-store');
-      assert.deepEqual(Object.keys(payload).sort(), ['builtAt', 'commit', 'status', 'worker']);
+      assert.deepEqual(Object.keys(payload).sort(), ['builtAt', 'commit', 'gmail', 'status', 'worker']);
       assert.equal(payload.status, 'ok');
       assert.match(String(payload.commit), /^(?:unknown|[0-9a-f]{7})$/);
       assert.ok(Number.isFinite(Date.parse(String(payload.builtAt))));
@@ -57,6 +57,21 @@ describe('GET /api/health', () => {
       assert.equal(worker.stale, true);
       assert.equal(worker.matchesApi, false);
       assert.equal(worker.commit, null);
+
+      // The Gmail poll status is read the same best-effort way. With nothing
+      // readable it says so (not reported, stale) instead of failing the check,
+      // and the shape is fixed so a dashboard can rely on it.
+      const gmail = payload.gmail as Record<string, unknown>;
+      assert.deepEqual(Object.keys(gmail).sort(), [
+        'allowlistEntries', 'counts', 'disabledReason', 'enabled', 'invoiceLabel', 'invoiceLabelFound',
+        'lastError', 'lastPollAt', 'lastResult', 'lastSuccessAt', 'mailbox', 'mailboxMatchesConfig', 'mode',
+        'observedLabel', 'pollAfter', 'processedLabel', 'reported', 'reviewLabel', 'stale', 'truncated',
+        'trustedForwarders',
+        'unreadOnly',
+      ]);
+      assert.equal(gmail.reported, false);
+      assert.equal(gmail.stale, true);
+      assert.equal(gmail.lastPollAt, null);
     } finally {
       await new Promise<void>((resolve, reject) => {
         server.close(error => error ? reject(error) : resolve());

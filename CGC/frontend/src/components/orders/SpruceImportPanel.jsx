@@ -13,6 +13,7 @@ import {
   dateWarning,
   flagInfo,
   processState,
+  scopeNotes,
   shortDay,
   slotFor,
   slotStatus,
@@ -248,6 +249,10 @@ function ImportResult({ result, onShowOrder }) {
           : <Badge tone="good">Nothing needs attention</Badge>}
         {aiCheckBadge(result) && <Badge tone={aiCheckBadge(result).tone}>{aiCheckBadge(result).label}</Badge>}
       </div>
+
+      {scopeNotes(result).map((note) => (
+        <p key={note} className="text-[13px] text-muted">{note}</p>
+      ))}
 
       {result.issues?.length > 0 && (
         <ul className="divide-y divide-line rounded-control border border-line max-h-72 overflow-y-auto">

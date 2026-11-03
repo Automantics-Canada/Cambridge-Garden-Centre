@@ -2,9 +2,11 @@ import { prisma } from '../../db/prisma.js';
 import { SupplierType } from '@prisma/client';
 import { compareTwoStrings } from 'string-similarity';
 import { normalizeProductName } from '../../lib/productName.js';
+import { ratesInUse } from './rates.service.js';
+import { invalidateKnownSenders } from '../../services/knownSenders.js';
 
 export const SupplierService = {
-  async findOrCreateSupplier(name: string | null): Promise<{ id: string; name: string } | null> {
+  async findOrCreateSupplier(name: string | null): Promise<{ id: string; name: string; type: SupplierType } | null> {
     if (!name) return null;
     const trimmedName = name.trim();
     if (!trimmedName) return null;
@@ -125,42 +127,64 @@ export const SupplierService = {
    * The full list() includes negotiated rates and every supplier column. The
    * tickets screen was pulling all of that just to render <option> elements,
    * which measured ~2.7s in production.
+   *
+   * `type` narrows it, so the dispatch board's carrier picker lists trucking
+   * companies only.
    */
-  async listOptions() {
+  async listOptions(type?: SupplierType) {
     return prisma.supplier.findMany({
-      where: { active: true },
-      select: { id: true, name: true },
+      where: { active: true, ...(type ? { type } : {}) },
+      select: { id: true, name: true, type: true },
       orderBy: { name: 'asc' },
     });
   },
 
+  /**
+   * Active suppliers with their rates, newest period first.
+   *
+   * Each rate carries `inUse`: whether it has already priced an invoice line.
+   * The pages offer Expire instead of Delete for those, because deleting one
+   * would leave its invoices pointing at a price nobody can see.
+   */
   async list() {
-    return prisma.supplier.findMany({
+    const suppliers = await prisma.supplier.findMany({
       where: { active: true },
       orderBy: { name: 'asc' },
       include: {
-        negotiatedRates: true
-      }
+        negotiatedRates: { orderBy: [{ productName: 'asc' }, { effectiveFrom: 'desc' }] },
+      },
     });
+    const inUse = await ratesInUse(prisma);
+    return suppliers.map((supplier) => ({
+      ...supplier,
+      negotiatedRates: supplier.negotiatedRates.map((rate) => ({ ...rate, inUse: inUse.has(rate.id) })),
+    }));
   },
 
+  // A supplier's domains, addresses and contact email decide whose invoices
+  // the inbox reads automatically (services/knownSenders.ts), so every change
+  // here drops the cached list.
   async create(data: {
     name: string;
     type: SupplierType;
     emailDomains: string[];
+    emailAddresses?: string[];
     keywords: string[];
     contactName?: string;
     contactEmail?: string;
     phone?: string;
     address?: string;
   }) {
-    return prisma.supplier.create({ data });
+    const created = await prisma.supplier.create({ data });
+    invalidateKnownSenders();
+    return created;
   },
 
   async update(id: string, data: Partial<{
     name: string;
     type: SupplierType;
     emailDomains: string[];
+    emailAddresses: string[];
     keywords: string[];
     contactName?: string;
     contactEmail?: string;
@@ -168,83 +192,20 @@ export const SupplierService = {
     address?: string;
     active?: boolean;
   }>) {
-    return prisma.supplier.update({
+    const updated = await prisma.supplier.update({
       where: { id },
       data,
     });
+    invalidateKnownSenders();
+    return updated;
   },
 
   async remove(id: string) {
-    return prisma.supplier.update({
+    const removed = await prisma.supplier.update({
       where: { id },
       data: { active: false },
     });
+    invalidateKnownSenders();
+    return removed;
   },
-
-  async addNegotiatedRate(supplierId: string, data: {
-    productName: string;
-    rate: number;
-    unit: string;
-    effectiveFrom: Date;
-    effectiveTo?: Date;
-    notes?: string;
-    createdById: string;
-  }) {
-    const trimmedProduct = data.productName.trim();
-    const existingRate = await prisma.negotiatedRate.findFirst({
-      where: {
-        supplierId,
-        productName: {
-          equals: trimmedProduct,
-          mode: 'insensitive'
-        }
-      }
-    });
-
-    if (existingRate) {
-      return prisma.negotiatedRate.update({
-        where: { id: existingRate.id },
-        data: {
-          productName: trimmedProduct,
-          rate: data.rate,
-          unit: data.unit,
-          effectiveFrom: data.effectiveFrom,
-          ...(data.effectiveTo !== undefined ? { effectiveTo: data.effectiveTo } : {}),
-          ...(data.notes !== undefined ? { notes: data.notes } : {}),
-        }
-      });
-    }
-
-    return prisma.negotiatedRate.create({
-      data: {
-        ...data,
-        productName: trimmedProduct,
-        supplierId,
-      }
-    });
-  },
-
-  async removeNegotiatedRate(rateId: string) {
-    return prisma.negotiatedRate.delete({
-      where: { id: rateId }
-    });
-  },
-
-  async updateNegotiatedRate(rateId: string, data: Partial<{
-    productName: string;
-    rate: number;
-    unit: string;
-    effectiveFrom: Date;
-    effectiveTo?: Date;
-    notes?: string;
-  }>) {
-    return prisma.negotiatedRate.update({
-      where: { id: rateId },
-      data: {
-        ...data,
-        ...(data.effectiveFrom !== undefined && { effectiveFrom: new Date(data.effectiveFrom) }),
-        ...(data.effectiveTo !== undefined && { effectiveTo: new Date(data.effectiveTo) }),
-      }
-    });
-  }
 };

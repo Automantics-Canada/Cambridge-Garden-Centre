@@ -37,6 +37,7 @@ function stored(
     lineNumber?: number;
     poNumber?: string;
     hasOperationalLinks?: boolean;
+    dispatchOnly?: boolean;
   } = {}
 ): ExistingLine {
   return {
@@ -48,6 +49,7 @@ function stored(
     lineNumber: options.lineNumber ?? null,
     poNumber: options.poNumber ?? null,
     hasOperationalLinks: options.hasOperationalLinks ?? false,
+    ...(options.dispatchOnly !== undefined ? { dispatchOnly: options.dispatchOnly } : {}),
   };
 }
 
@@ -287,5 +289,64 @@ describe('reconcileDocumentLines', () => {
     assert.deepEqual(plan.createIndices, []);
     assert.equal(plan.paired[0]!.kind, 'unchanged');
     assert.equal(plan.paired[0]!.id, 'c1');
+  });
+});
+
+describe('identical lines on an order given to a driver (WP15)', () => {
+  // Giving the whole order to a driver stamps the driver on every line and
+  // hangs the order's stop on one of them: dispatch-only links.
+  const load = (id: string, lineNumber: number, options: { dispatchOnly?: boolean; poNumber?: string; quantity?: number } = {}) =>
+    stored(id, 'Agg "B" Type 1 PitBlk (MT)', options.quantity ?? 40, {
+      spruceItemNumber: 'AGG01',
+      unit: 'MT',
+      lineNumber,
+      hasOperationalLinks: true,
+      dispatchOnly: options.dispatchOnly ?? true,
+      ...(options.poNumber ? { poNumber: options.poNumber } : {}),
+    });
+
+  it('pairs identical dispatched loads in line order instead of refusing the document', () => {
+    const existing = [load('third', 3), load('first', 1), load('second', 2)];
+    const incoming = [row('AGG01', 'Agg "B" Type 1 PitBlk (MT)', 40, 'MT'), row('AGG01', 'Agg "B" Type 1 PitBlk (MT)', 40, 'MT'), row('AGG01', 'Agg "B" Type 1 PitBlk (MT)', 40, 'MT')];
+
+    const plan = reconcileDocumentLines(incoming, existing);
+
+    assert.deepEqual(plan.conflicts, []);
+    assert.deepEqual(plan.paired.map(pair => pair.id), ['first', 'second', 'third']);
+    assert.deepEqual(plan.createIndices, []);
+  });
+
+  it('pairs them when a report abbreviates the description, by quantity', () => {
+    const existing = [load('first', 1), load('second', 2)];
+    const incoming = [row('AGG01', 'Agg B Type1 PitBlk', 40), row('AGG01', 'Agg B Type1 PitBlk', 40)];
+
+    const plan = reconcileDocumentLines(incoming, existing);
+
+    assert.deepEqual(plan.conflicts, []);
+    assert.deepEqual(plan.paired.map(pair => pair.id), ['first', 'second']);
+  });
+
+  it('pairs one changed quantity onto one of two identical loads, line order deciding', () => {
+    const existing = [load('first', 1), load('second', 2)];
+    const plan = reconcileDocumentLines([row('AGG01', 'Agg "B" Type 1 PitBlk (MT)', 38, 'MT'), row('AGG01', 'Agg "B" Type 1 PitBlk (MT)', 38, 'MT')], existing);
+
+    assert.deepEqual(plan.conflicts, []);
+    assert.deepEqual(plan.paired.map(pair => pair.id), ['first', 'second']);
+  });
+
+  it('still refuses when one of them carries an invoice, a ticket or a stop of its own', () => {
+    const existing = [load('invoiced', 1, { dispatchOnly: false }), load('second', 2)];
+    const plan = reconcileDocumentLines([row('AGG01', 'Agg "B" Type 1 PitBlk (MT)', 40, 'MT')], existing);
+
+    assert.equal(plan.paired.length, 0);
+    assert.equal(plan.conflicts.length, 1);
+  });
+
+  it('still refuses dispatched lines that are not identical to each other', () => {
+    const existing = [load('po-a', 1, { poNumber: 'PO-A' }), load('po-b', 2, { poNumber: 'PO-B' })];
+    const plan = reconcileDocumentLines([row('AGG01', 'Agg "B" Type 1 PitBlk (MT)', 40, 'MT')], existing);
+
+    assert.equal(plan.paired.length, 0);
+    assert.equal(plan.conflicts.length, 1);
   });
 });

@@ -1,0 +1,27 @@
+{
+  "notes": "Invented example. Copy to .samples/manifest.json and replace every value with what the client sent. One entry per sample file.",
+  "samples": [
+    {
+      "file": "example-aggregates-INV-55001.pdf",
+      "supplier": "Example Aggregates Ltd.",
+      "supplierType": "SUPPLIER",
+      "spruceOrderNumbers": ["990101", "990102"],
+      "poNumbers": ["2610-900101", "2610-900102"],
+      "invoiceNumber": "INV-55001",
+      "expectedTotal": 1491.84,
+      "alreadyPaid": true,
+      "notes": "Two products on two POs; page 3 is the supplier's copy of a ticket."
+    },
+    {
+      "file": "sample-haulage-weekly.xlsx",
+      "supplier": "Sample Haulage Inc.",
+      "supplierType": "TRUCKING_COMPANY",
+      "spruceOrderNumbers": ["990103"],
+      "poNumbers": ["2610-900103"],
+      "invoiceNumber": "SH-2026-118",
+      "expectedTotal": 1712.0,
+      "alreadyPaid": false,
+      "notes": "Trucking: the dispatcher's rate for these loads was $225 per load."
+    }
+  ]
+}

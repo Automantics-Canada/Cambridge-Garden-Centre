@@ -173,3 +173,123 @@ describe('a driver\'s current stop (PostgreSQL)', { skip: !disposableConfirmed }
     assert.doesNotMatch(JSON.stringify(profile), /9900-00000|Customer|Example St/);
   });
 });
+
+/**
+ * Where the phone says to load, from how the order reaches the customer: the
+ * same places the office board shows (client answers, Oct 2026).
+ */
+describe('where a driver loads first (PostgreSQL)', { skip: !disposableConfirmed }, () => {
+  let driverId: string;
+
+  beforeEach(async () => {
+    await prisma.$executeRawUnsafe(
+      'TRUNCATE TABLE "OrderDocument", "Order", "Driver", "User", "Delivery", "Supplier", "SupplierSpruceVendor" RESTART IDENTITY CASCADE'
+    );
+    const userId = (await prisma.user.create({
+      data: { name: 'Driver', email: 'driver-load@example.test', passwordHash: 'x', role: 'DRIVER' },
+    })).id;
+    driverId = (await prisma.driver.create({ data: { name: 'Driver', phone: '519-555-0301', userId } })).id;
+  });
+
+  after(async () => {
+    await prisma.$disconnect();
+  });
+
+  /** An order with `lines`, given to the driver. */
+  async function stop(documentNumber: string, lines: Array<Record<string, unknown>>, document: Record<string, unknown> = {}) {
+    const created = await prisma.orderDocument.create({
+      data: {
+        documentNumber,
+        customerName: 'Example Customer',
+        deliveryDate: new Date('2026-09-02'),
+        shippingAddress: '1 Example St, Cambridge',
+        ...document,
+      },
+    });
+    for (const [index, line] of lines.entries()) {
+      await prisma.order.create({
+        data: {
+          spruceOrderId: `${documentNumber}-L${index + 1}`,
+          documentId: created.id,
+          lineNumber: index + 1,
+          customerName: 'Example Customer',
+          product: 'Example Product',
+          quantity: '1',
+          unitPrice: '35.91',
+          unitCost: '16.50',
+          poValue: '120.00',
+          ...line,
+        },
+      });
+    }
+    await DispatchService.assignOrder(created.id, driverId);
+    return created;
+  }
+
+  const current = async () => (await DeliveriesService.getCurrentStop(driverId, '2026-09-02')).data[0]!;
+
+  it('a delivery with a supplier PO: collect at that supplier first, quoting the PO (Q4)', async () => {
+    await stop('9900-000901', [
+      { spruceItemNumber: 'AGG06', product: 'Example Asphalt (MT)', lineClass: 'PRODUCT', poNumber: '9900-100901', vendorCode: 'EXAMPLEV09', vendorLocation: 'North' },
+    ]);
+    const now = await current();
+    // An unmapped vendor is named by its code, as printed.
+    assert.deepEqual(now.pickupFrom, [{ name: 'EXAMPLEV09', location: 'North', address: null, po: '9900-100901' }]);
+    assert.equal(now.pickupAtPit, false);
+  });
+
+  it('a PO on a skid deposit alone does not send a yard delivery to the supplier', async () => {
+    await stop('9900-000902', [
+      { spruceItemNumber: 'SOILGRDNA', product: 'Garden Soil Bulk', lineClass: 'PRODUCT' },
+      { spruceItemNumber: 'USKID', product: 'Example Skid Deposit', lineClass: 'DEPOSIT', poNumber: '9900-100902', vendorCode: 'EXAMPLEV09' },
+    ]);
+    const now = await current();
+    assert.deepEqual(now.pickupFrom, []);
+    assert.equal(now.pickupAtPit, false);
+  });
+
+  it('a PitBlk order with the pit dispatch chose: that pit and its address, no PO to quote (Q5)', async () => {
+    const pit = await prisma.supplier.create({
+      data: { name: 'Example Pit', type: 'SUPPLIER', address: '1 Pit Rd, Exampleville', emailDomains: [] },
+    });
+    const order = await stop('9900-000903', [{ spruceItemNumber: 'AGGAGRAVELC', product: 'A-Gravel PitBlk (MT)', lineClass: 'PRODUCT' }]);
+
+    let now = await current();
+    assert.deepEqual(now.pickupFrom, [], 'no pit named yet');
+    assert.equal(now.pickupAtPit, true, 'so the driver asks dispatch');
+
+    await prisma.orderDocument.update({ where: { id: order.id }, data: { pickupSupplierId: pit.id } });
+    now = await current();
+    assert.deepEqual(now.pickupFrom, [{ name: 'Example Pit', location: null, address: '1 Pit Rd, Exampleville', po: null }]);
+    assert.equal(now.pickupAtPit, false);
+    assert.equal(MONEY.test(JSON.stringify(now)), false);
+  });
+
+  it('an FOB order dispatch sent a CGC truck for: the FOB yard and its PO, not the report\'s vendor yard (Q1)', async () => {
+    const vendor = { poNumber: '9900-100904', vendorCode: 'UNILOCKL01', vendorLocation: 'Georgetown' };
+    const order = await stop('9900-000904', [
+      { spruceItemNumber: 'BHS6CSR', product: 'Example Paver 60mm', lineClass: 'PRODUCT', ...vendor },
+      { spruceItemNumber: 'COMMENT', product: 'FOB UNILOCK AYR', lineClass: 'COMMENT', ...vendor },
+    ], { fulfilmentOverride: 'supplier_haul_delivery' });
+    assert.ok(order);
+
+    const now = await current();
+    assert.deepEqual(now.pickupFrom, [{ name: 'Unilock', location: 'Ayr', address: null, po: '9900-100904' }]);
+    assert.equal(JSON.stringify(now).includes('fulfilmentOverride'), false, 'the office\'s choice stays in the office');
+  });
+
+  // Given to a driver before FOB orders counted as the customer's, or before
+  // dispatch set the type: the truck still collects at the FOB yard, never at
+  // CGC's yard, where the goods are not.
+  it('an FOB order already on a truck with no type set: the FOB yard, not CGC\'s yard', async () => {
+    const vendor = { poNumber: '9900-100905', vendorCode: 'UNILOCKL01', vendorLocation: 'Georgetown' };
+    await stop('9900-000905', [
+      { spruceItemNumber: 'BHS6CSR', product: 'Example Paver 60mm', lineClass: 'PRODUCT', ...vendor },
+      { spruceItemNumber: 'COMMENT', product: 'FOB UNILOCK AYR', lineClass: 'COMMENT', ...vendor },
+    ]);
+
+    const now = await current();
+    assert.deepEqual(now.pickupFrom, [{ name: 'Unilock', location: 'Ayr', address: null, po: '9900-100905' }]);
+    assert.equal(now.pickupAtPit, false);
+  });
+});

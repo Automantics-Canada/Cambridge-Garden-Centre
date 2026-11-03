@@ -6,6 +6,7 @@ import authRoutes from './modules/auth/auth.routes.js';
 import orderRoutes from './modules/orders/order.routes.js';
 import ticketRoutes from './modules/tickets/ticket.routes.js';
 import SupplierRoutes from './modules/supplier/supplier.routes.js';
+import spruceVendorRoutes from './modules/supplier/spruceVendors.routes.js';
 import invoiceRoutes from './modules/invoices/invoice.routes.js';
 import matchingRoutes from './modules/matching/matching.routes.js';
 import productRoutes from './modules/products/product.routes.js';
@@ -13,7 +14,9 @@ import driverRoutes from './modules/drivers/driver.routes.js';
 import dispatchRoutes from './modules/dispatch/dispatch.routes.js';
 import deliveriesRoutes from './modules/deliveries/deliveries.routes.js';
 import internalRoutes from './modules/internal/internal.routes.js';
+import emailEventRoutes from './modules/emailEvents/emailEvents.routes.js';
 import { buildInfo } from './config/buildInfo.js';
+import { deriveGmailHealth, readGmailStatus } from './services/gmailStatus.js';
 import {
   deriveWorkerHealth,
   readWorkerHeartbeat,
@@ -80,8 +83,13 @@ app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
  *   - **It stays fast.** The read is raced against a short deadline for the
  *     same reason — an unreachable database must not hold a health check open.
  *
+ * The `gmail` block is the invoice inbox poller's last report (see
+ * services/gmailStatus.ts): its mode, labels, whether it is enabled and why
+ * not, and what the last poll found. It is read the same best-effort way.
+ *
  * Still unauthenticated, and still discloses nothing an attacker gains from: a
- * short commit, a build time, and whether two of our own processes agree.
+ * short commit, a build time, whether two of our own processes agree, and
+ * label names and counts. No secret and no full email address.
  */
 const WORKER_HEARTBEAT_READ_TIMEOUT_MS = 1_500;
 
@@ -95,17 +103,24 @@ app.get('/api/health', async (_req, res) => {
     return null;
   });
 
-  const heartbeat: WorkerHeartbeat | null = await Promise.race([
-    read,
-    new Promise<null>((resolve) =>
-      setTimeout(() => resolve(null), WORKER_HEARTBEAT_READ_TIMEOUT_MS).unref?.()
-    ),
-  ]);
+  const gmailRead = readGmailStatus().catch((error: unknown) => {
+    console.error('[Health] Could not read the Gmail poll status:', error);
+    return null;
+  });
+
+  // One deadline for both reads, so the endpoint never waits longer than it
+  // did with the heartbeat alone.
+  const deadline = new Promise<null>((resolve) =>
+    setTimeout(() => resolve(null), WORKER_HEARTBEAT_READ_TIMEOUT_MS).unref?.()
+  );
+  const heartbeat: WorkerHeartbeat | null = await Promise.race([read, deadline]);
+  const gmailStatus = await Promise.race([gmailRead, deadline]);
 
   res.set('Cache-Control', 'no-store').json({
     status: 'ok',
     ...buildInfo,
     worker: deriveWorkerHealth(heartbeat, buildInfo.commit),
+    gmail: deriveGmailHealth(gmailStatus),
   });
 });
 
@@ -113,6 +128,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/orders', orderRoutes);
 app.use('/api/tickets', ticketRoutes);
 app.use('/api/suppliers', SupplierRoutes);
+app.use('/api/spruce-vendors', spruceVendorRoutes);
 app.use('/api/invoices', invoiceRoutes);
 app.use('/api/matching', matchingRoutes);
 app.use('/api/products', productRoutes);
@@ -120,6 +136,7 @@ app.use('/api/drivers', driverRoutes);
 app.use('/api/dispatch', dispatchRoutes);
 app.use('/api/deliveries', deliveriesRoutes);
 app.use('/api/internal', internalRoutes);
+app.use('/api/email-events', emailEventRoutes);
 
 
 app.use(errorHandler);

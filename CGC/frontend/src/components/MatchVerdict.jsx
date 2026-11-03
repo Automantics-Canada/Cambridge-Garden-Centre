@@ -49,7 +49,7 @@ function CheckRow({ check }) {
         )}
         <div className="min-w-0">
           <p className={cn('text-[12.5px] font-semibold', failed ? 'text-clay' : 'text-ink')}>
-            {checkTitle(check.name)}
+            {checkTitle(check.name, check.code)}
             <span className="sr-only">{failed ? ' failed' : ' passed'}</span>
           </p>
           <p className="text-[12.5px] text-muted mt-0.5">{check.detail}</p>

@@ -1,12 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { motion as Motion, AnimatePresence } from 'framer-motion';
-import { Plus, Edit, Trash2, AlertCircle, ChevronDown, Check, FileText, PlusCircle, Search } from 'lucide-react';
+import { Plus, Edit, Trash2, AlertCircle, ChevronDown, Check, FileText, PlusCircle, Search, X } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { fetchSuppliers, deleteSupplier, deleteSupplierRate, clearSuccess, clearError } from '../../store/supplierSlice';
+import { fetchSuppliers, deleteSupplier, deleteSupplierRate, expireSupplierRate, clearSuccess, clearError } from '../../store/supplierSlice';
 import Modal from '../../components/Modal';
 import SupplierForm from '../../components/SupplierForm';
 import RateForm from '../../components/RateForm';
+import SpruceVendorCodes from '../../components/suppliers/SpruceVendorCodes';
 import { Skeleton } from '../../components/Skeleton';
 import {
   Badge,
@@ -18,7 +19,8 @@ import {
   Select,
 } from '../../components/ui';
 import { cn } from '../../lib/cn';
-import { formatDate } from '../../lib/date';
+import { businessDayOf, formatCalendarDate } from '../../lib/date';
+import { rateStatus, rateUnitLabel } from '../../lib/priceList';
 
 const formatTypeLabel = (str) => {
   if (!str) return '';
@@ -308,7 +310,10 @@ export default function SupplierPage() {
                                       <div key={rate.id} className="bg-surface border border-line rounded-control p-3 flex justify-between items-center group hover:shadow-lift transition-shadow">
                                         <div>
                                           <p className="text-sm font-semibold text-ink">{rate.productName}</p>
-                                          <p className="tabular text-[12.5px] text-muted">{rate.unit} · Effective {formatDate(rate.effectiveFrom)}</p>
+                                          <p className="tabular text-[12.5px] text-muted">
+                                            {rateUnitLabel(rate.unit)} · {formatCalendarDate(rate.effectiveFrom)} to {rate.effectiveTo ? formatCalendarDate(rate.effectiveTo) : 'present'}
+                                            {rateStatus(rate, businessDayOf()) === 'ended' && <Badge tone="bad" className="ml-2">Ended</Badge>}
+                                          </p>
                                         </div>
                                         <div className="flex items-center gap-4">
                                           <div className="text-right">
@@ -327,16 +332,33 @@ export default function SupplierPage() {
                                             >
                                               <Edit size={14} />
                                             </button>
-                                            <button
-                                              onClick={(e) => {
-                                                e.stopPropagation();
-                                                setRateDeleteConfirm({ supplierId: supplier.id, rateId: rate.id, productName: rate.productName });
-                                              }}
-                                              className="p-1.5 text-clay hover:bg-clay/10 rounded-control transition-colors"
-                                              title="Delete Rate"
-                                            >
-                                              <Trash2 size={14} />
-                                            </button>
+                                            {/* A rate that priced an invoice is ended, never deleted, so the
+                                                invoices it priced keep their price. */}
+                                            {rate.inUse ? (
+                                              rateStatus(rate, businessDayOf()) !== 'ended' && (
+                                                <button
+                                                  onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    setRateDeleteConfirm({ mode: 'expire', supplierId: supplier.id, rateId: rate.id, productName: rate.productName });
+                                                  }}
+                                                  className="p-1.5 text-ochre hover:bg-ochre/10 rounded-control transition-colors"
+                                                  title="End this rate today"
+                                                >
+                                                  <X size={14} />
+                                                </button>
+                                              )
+                                            ) : (
+                                              <button
+                                                onClick={(e) => {
+                                                  e.stopPropagation();
+                                                  setRateDeleteConfirm({ mode: 'delete', supplierId: supplier.id, rateId: rate.id, productName: rate.productName });
+                                                }}
+                                                className="p-1.5 text-clay hover:bg-clay/10 rounded-control transition-colors"
+                                                title="Delete rate (not used by any invoice yet)"
+                                              >
+                                                <Trash2 size={14} />
+                                              </button>
+                                            )}
                                           </div>
                                         </div>
                                       </div>
@@ -345,6 +367,8 @@ export default function SupplierPage() {
                                 ) : (
                                   <p className="text-sm text-muted">No negotiated rates defined for this supplier.</p>
                                 )}
+
+                                <SpruceVendorCodes supplierId={supplier.id} />
                               </div>
                             </td>
                           </Motion.tr>
@@ -434,9 +458,13 @@ export default function SupplierPage() {
                   <AlertCircle className="w-6 h-6 text-clay" />
                 </div>
                 <div>
-                  <h3 className="text-lg font-bold text-ink">Delete rate?</h3>
+                  <h3 className="text-lg font-bold text-ink">{rateDeleteConfirm.mode === 'expire' ? 'End rate today?' : 'Delete rate?'}</h3>
                   <p className="text-muted text-sm mt-1">
-                    Are you sure you want to delete the rate for <span className="font-semibold text-ink">{rateDeleteConfirm.productName}</span>?
+                    {rateDeleteConfirm.mode === 'expire' ? (
+                      <>The rate for <span className="font-semibold text-ink">{rateDeleteConfirm.productName}</span> ends today. It stays on record for the invoices it already priced.</>
+                    ) : (
+                      <>Delete the rate for <span className="font-semibold text-ink">{rateDeleteConfirm.productName}</span>? It has not priced any invoice yet.</>
+                    )}
                   </p>
                 </div>
               </div>
@@ -447,9 +475,20 @@ export default function SupplierPage() {
                 <Button
                   variant="danger"
                   onClick={async () => {
-                    await dispatch(deleteSupplierRate({ supplierId: rateDeleteConfirm.supplierId, rateId: rateDeleteConfirm.rateId })).unwrap();
+                    const { mode, supplierId, rateId } = rateDeleteConfirm;
+                    try {
+                      if (mode === 'expire') {
+                        await dispatch(expireSupplierRate({ supplierId, rateId, effectiveTo: businessDayOf() })).unwrap();
+                        toast.success('Rate ended today');
+                      } else {
+                        await dispatch(deleteSupplierRate({ supplierId, rateId })).unwrap();
+                        toast.success('Rate deleted');
+                      }
+                      dispatch(fetchSuppliers());
+                    } catch {
+                      // The slice's error toast already says why.
+                    }
                     setRateDeleteConfirm(null);
-                    toast.success('Rate deleted successfully');
                   }}
                   disabled={loading}
                   className="flex-1"
@@ -457,7 +496,7 @@ export default function SupplierPage() {
                   {loading && (
                     <div className="w-4 h-4 border-2 border-on-clay border-t-transparent rounded-pill animate-spin" />
                   )}
-                  Delete
+                  {rateDeleteConfirm.mode === 'expire' ? 'End today' : 'Delete'}
                 </Button>
               </div>
             </Motion.div>

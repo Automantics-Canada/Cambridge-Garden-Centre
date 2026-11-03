@@ -30,6 +30,7 @@ import { Button, EmptyState, Input, PageHeader, Select, StatusBadge } from '../.
 import { formatDate } from '../../lib/date';
 import { decideReviewCommit, reviewValuesFromTicket } from '../../lib/ticketReviewForm';
 import { narrowingTicketFilters, ticketsEmptyState } from '../../lib/ticketSearchEmptyState';
+import { TICKET_COPY_HINT, ticketCopyLabel } from '../../lib/ticketCopies';
 import {
   getCachedSupplierOptions,
   getCachedTicketPage,
@@ -821,6 +822,9 @@ export default function TicketsPage() {
                         )}
                       </div>
                       <div className="text-[12.5px] text-muted">{formatDate(ticket.receivedAt)}</div>
+                      {ticketCopyLabel(ticket) && (
+                        <div className="text-[12.5px] text-muted" title={TICKET_COPY_HINT}>{ticketCopyLabel(ticket)}</div>
+                      )}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-ink">
                       {ticket.supplier?.name || ticket.supplierName || '-'}
@@ -922,6 +926,11 @@ export default function TicketsPage() {
                   {selectedTicket.driver?.name && (
                     <span className="bg-ink/[0.05] border border-line text-brand px-2.5 py-0.5 rounded-full text-[12.5px] font-semibold" title="Uploaded by Driver">
                       Driver: {selectedTicket.driver.name}
+                    </span>
+                  )}
+                  {ticketCopyLabel(selectedTicket) && (
+                    <span className="bg-ink/[0.05] border border-line text-muted px-2.5 py-0.5 rounded-full text-[12.5px] font-semibold" title={TICKET_COPY_HINT}>
+                      {ticketCopyLabel(selectedTicket)}
                     </span>
                   )}
                 </div>

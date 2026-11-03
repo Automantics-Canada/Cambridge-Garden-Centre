@@ -43,7 +43,17 @@ function getClient(): OpenAI {
 }
 
 /** How the document is attached to the request, by type. */
-function toContentPart(document: ExtractionDocument) {
+export function toContentPart(document: ExtractionDocument) {
+  // A spreadsheet arrives as its text. Sent as text, not as a file: the model
+  // reads rows of tab-separated cells far more reliably than it reads a
+  // workbook, and nothing in a workbook (formulas, macros) is ever run.
+  if (typeof document.text === 'string') {
+    return {
+      type: 'input_text' as const,
+      text: `The document "${document.filename}" follows as text, one row per line, cells separated by tabs.\n\n${document.text}`,
+    };
+  }
+
   const base64 = document.bytes.toString('base64');
   const mimeType = document.mimeType.toLowerCase();
 

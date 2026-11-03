@@ -78,6 +78,18 @@ describe('stopView', () => {
     expect(view.pickupAtYard).toBe(false);
   });
 
+  it('names the pit dispatch chose with its address, and no PO where none was raised', () => {
+    const view = stopView({
+      order: { spruceOrderId: '9900-000903-L1' },
+      document: { documentNumber: '9900-000903', customerName: 'Example Customer', lines: [] },
+      pickupFrom: [{ name: 'Example Pit', location: null, address: '1 Pit Rd, Exampleville', po: null }],
+      pickupAtPit: false,
+    });
+    expect(view.pickups).toEqual([{ name: 'Example Pit', location: null, address: '1 Pit Rd, Exampleville', po: null }]);
+    expect(view.pickupAtPit).toBe(false);
+    expect(view.pickupAtYard).toBe(false);
+  });
+
   it('keeps two products under one catch-all code apart (2608-712621)', () => {
     const view = stopView({
       order: {},

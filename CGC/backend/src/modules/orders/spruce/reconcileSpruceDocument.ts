@@ -46,6 +46,15 @@ export interface ExistingLine {
    * matches against such a row become conflicts instead of guesses.
    */
   hasOperationalLinks?: boolean;
+  /**
+   * True when the row's only links are the ones giving the whole order to a
+   * driver puts on it: the driver stamped on every line, and the order's own
+   * stop, which hangs on one line only because a stop needs one. Neither says
+   * anything about this line rather than its identical twin, so identical
+   * rows linked only this way may be paired in line order. An invoice, a
+   * ticket, or a stop of the line's own still refuses.
+   */
+  dispatchOnly?: boolean;
 }
 
 /** Field-level changes for one existing row. Only differing fields appear. */
@@ -80,6 +89,29 @@ export interface ReconciliationPlan {
   absentIds: string[];
   /** Incoming rows that could not be placed without guessing. */
   conflicts: ReconciliationConflict[];
+}
+
+/**
+ * Whether stored rows the report cannot tell apart may be paired in line
+ * order: none of them carries anything a wrong pairing would re-point, or
+ * they are identical and carry only the order's dispatch.
+ *
+ * The second case is the order with repeated identical loads (six 40 MT
+ * loads of one aggregate, say). Once it was given to a driver, every later
+ * report refused the whole document, so a noon re-upload or the morning's
+ * rolling Item Tracking export could never refresh it again.
+ */
+function interchangeable(lines: ExistingLine[]): boolean {
+  if (lines.every(line => !line.hasOperationalLinks)) return true;
+  if (!lines.every(line => !line.hasOperationalLinks || line.dispatchOnly)) return false;
+  const shape = (line: ExistingLine) => [
+    normaliseCode(line.spruceItemNumber ?? ''),
+    normaliseDescription(line.product),
+    normaliseUnit(line.unit),
+    toNumber(line.quantity),
+    (line.poNumber ?? '').trim().toUpperCase(),
+  ].join('\u0000');
+  return new Set(lines.map(shape)).size === 1;
 }
 
 function normaliseCode(text: string): string {
@@ -168,7 +200,7 @@ export function reconcileDocumentLines(
           plan.paired.push(pairFor(index, row, poMatch));
           continue;
         }
-        if (exact.every(line => !line.hasOperationalLinks)) {
+        if (interchangeable(exact)) {
           take(exact[0]!);
           plan.paired.push(pairFor(index, row, exact[0]!));
           continue;
@@ -194,7 +226,7 @@ export function reconcileDocumentLines(
         // Same code, description and unit; only the quantities differ. With
         // identical quantities the rows are interchangeable and either will
         // do; otherwise choosing is a guess that could move an invoiced line.
-        if (sameContent.every(line => !line.hasOperationalLinks)) {
+        if (interchangeable(sameContent)) {
           take(sameContent[0]!);
           plan.paired.push(pairFor(index, row, sameContent[0]!));
           continue;
@@ -224,7 +256,7 @@ export function reconcileDocumentLines(
           plan.paired.push(pairFor(index, row, poMatch));
           continue;
         }
-        if (sameAmount.every(line => !line.hasOperationalLinks)) {
+        if (interchangeable(sameAmount)) {
           take(sameAmount[0]!);
           plan.paired.push(pairFor(index, row, sameAmount[0]!));
           continue;
@@ -345,7 +377,7 @@ function matchWithoutCode(pool: ExistingLine[], row: ParsedSpruceRow): UncodedOu
     const line = exact.length === 1
       ? exact[0]!
       : matchByIncomingPo(exact, row) ??
-        (exact.every(candidate => !candidate.hasOperationalLinks) ? exact[0]! : undefined);
+        (interchangeable(exact) ? exact[0]! : undefined);
     if (!line) {
       return {
         kind: 'conflict',

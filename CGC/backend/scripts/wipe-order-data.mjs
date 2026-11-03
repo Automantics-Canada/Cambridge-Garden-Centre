@@ -16,7 +16,8 @@ import process from 'node:process';
  *       command copied from one environment cannot run against another.
  *
  *   --include-tickets-invoices
- *       Also empties tickets, invoices, their lines and their OCR jobs.
+ *       Also empties tickets, invoices, their lines, their supporting files
+ *       and their OCR jobs.
  *
  * DATABASE_URL must be set in the environment: this script does not read
  * .env, so it cannot pick up a database nobody named. Behind a transaction
@@ -25,7 +26,8 @@ import process from 'node:process';
  * What it empties (order side, always):
  *   OrderDocument, Order, OrderChange, OrderOverride, Delivery,
  *   DeliveryHistory, ImportBatch, ImportBatchFile, SpruceImportJob,
- *   SpruceImportRowError, TicketOrderMatch, MatchResult, TicketClaim.
+ *   SpruceImportRowError, TicketOrderMatch, MatchResult, TicketClaim,
+ *   DispatchLoad (the loads and haul rates recorded for those orders).
  *   A table that does not exist yet is skipped and reported.
  *
  *   MatchResult holds verdicts reached against orders, and every TicketClaim is
@@ -73,9 +75,12 @@ const ORDER_TABLES = [
   'TicketOrderMatch',
   'MatchResult',
   'TicketClaim',
+  // Loads hang off orders and their stops; they go with them.
+  'DispatchLoad',
 ];
 
-const TICKET_INVOICE_TABLES = ['Ticket', 'Invoice', 'InvoiceLineItem', '_InvoiceLineItemToTicket', 'OcrJob'];
+// InvoiceSupportingFile: the Excel files kept beside an invoice; they go with it.
+const TICKET_INVOICE_TABLES = ['Ticket', 'Invoice', 'InvoiceLineItem', 'InvoiceSupportingFile', '_InvoiceLineItemToTicket', 'OcrJob'];
 
 /**
  * Foreign keys from a kept table into an emptied one, and how each is cleared.

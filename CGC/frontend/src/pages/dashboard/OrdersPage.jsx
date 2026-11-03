@@ -22,6 +22,9 @@ import { FULFILMENT_LABELS, fulfilmentType, isCollected, routeLine, undatedText 
 import { formatDeliveryDay } from '../../lib/dispatchDays';
 import {
   DELIVERY_STATUS_OPTIONS,
+  MISSING_OPTIONS,
+  QUOTE_OPTIONS,
+  countNoun,
   deliveryStatusView,
   deliveryTypeDetail,
   emptyTitle,
@@ -58,6 +61,8 @@ export default function OrdersPage() {
   const [hasLinkedTickets, setHasLinkedTickets] = useState('');
   const [fulfilment, setFulfilment] = useState(''); // '' | 'delivery' | 'pickup'
   const [deliveryStatus, setDeliveryStatus] = useState('');
+  const [quotes, setQuotes] = useState(''); // '' (orders) | 'only' (quotations)
+  const [missing, setMissing] = useState(''); // '' | 'phone'
   const [uploadFilter, setUploadFilter] = useState('today'); // 'today' | 'yesterday' | 'all' | 'range'
   const [rangeFrom, setRangeFrom] = useState(''); // 'YYYY-MM-DD'
   const [rangeTo, setRangeTo] = useState('');
@@ -90,6 +95,8 @@ export default function OrdersPage() {
           search: search || undefined,
           fulfilment: fulfilment || undefined,
           deliveryStatus: deliveryStatus || undefined,
+          quotes: quotes || undefined,
+          missing: missing || undefined,
           buyerType: buyerType || undefined,
           driverId: driverId || undefined,
           hasInvoice: hasInvoice === 'yes' ? 'true' : hasInvoice === 'no' ? 'false' : undefined,
@@ -108,7 +115,7 @@ export default function OrdersPage() {
     } finally {
       setLoading(false);
     }
-  }, [awaitingDateChoice, rangeKey, search, fulfilment, deliveryStatus, buyerType, driverId, hasInvoice, hasLinkedTickets, page]);
+  }, [awaitingDateChoice, rangeKey, search, fulfilment, deliveryStatus, quotes, missing, buyerType, driverId, hasInvoice, hasLinkedTickets, page]);
 
   const handleFileUpload = async (event) => {
     const file = event.target.files?.[0];
@@ -143,7 +150,7 @@ export default function OrdersPage() {
 
   useEffect(() => {
     setPage(1);
-  }, [rangeKey, search, fulfilment, deliveryStatus, buyerType, driverId, hasInvoice, hasLinkedTickets]);
+  }, [rangeKey, search, fulfilment, deliveryStatus, quotes, missing, buyerType, driverId, hasInvoice, hasLinkedTickets]);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -153,8 +160,8 @@ export default function OrdersPage() {
     return () => clearTimeout(timer);
   }, [fetchOrders]);
 
-  const filtered = Boolean(search || fulfilment || deliveryStatus || buyerType || hasInvoice || hasLinkedTickets);
-  const listEmptyTitle = emptyTitle({ filter: uploadFilter, from: rangeFrom, to: rangeTo, filtered });
+  const filtered = Boolean(search || fulfilment || deliveryStatus || missing || buyerType || hasInvoice || hasLinkedTickets);
+  const listEmptyTitle = emptyTitle({ filter: uploadFilter, from: rangeFrom, to: rangeTo, filtered, quotations: quotes === 'only' });
   const listEmptyMessage = awaitingDateChoice
     ? 'Choose a day, or a first and last day, to see the orders uploaded then.'
     : filtered
@@ -295,6 +302,24 @@ export default function OrdersPage() {
             </div>
 
             <div>
+              <label className="block text-[12.5px] font-medium text-muted mb-1.5">Show</label>
+              <Select value={quotes} onChange={(e) => setQuotes(e.target.value)}>
+                {QUOTE_OPTIONS.map(({ value, label }) => (
+                  <option key={value} value={value}>{label}</option>
+                ))}
+              </Select>
+            </div>
+
+            <div>
+              <label className="block text-[12.5px] font-medium text-muted mb-1.5">Missing</label>
+              <Select value={missing} onChange={(e) => setMissing(e.target.value)}>
+                {MISSING_OPTIONS.map(({ value, label }) => (
+                  <option key={value} value={value}>{label}</option>
+                ))}
+              </Select>
+            </div>
+
+            <div>
               <label className="block text-[12.5px] font-medium text-muted mb-1.5">Delivery or pickup</label>
               <Select value={fulfilment} onChange={(e) => setFulfilment(e.target.value)}>
                 <option value="">Both</option>
@@ -381,7 +406,7 @@ export default function OrdersPage() {
           </div>
           <div className="hidden sm:flex sm:flex-1 sm:items-center sm:justify-between">
             <p className="tabular text-sm text-muted">
-              <span className="font-medium text-ink">{total}</span> order{total === 1 ? '' : 's'} · page <span className="font-medium text-ink">{page}</span> of <span className="font-medium text-ink">{totalPages}</span>
+              <span className="font-medium text-ink">{total}</span> {countNoun(total, { quotations: quotes === 'only' })} · page <span className="font-medium text-ink">{page}</span> of <span className="font-medium text-ink">{totalPages}</span>
             </p>
             <div className="flex gap-2">
               <Button size="sm" onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1}>

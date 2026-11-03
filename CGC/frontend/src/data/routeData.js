@@ -19,7 +19,8 @@ import { loadRouteData, readRouteDataCache, readStaleRouteDataCache } from '../l
 
 const DASHBOARD_KEY = 'dashboard';
 const TICKET_STATS_KEY = 'ticket-stats';
-const SUPPLIER_OPTIONS_KEY = 'supplier-options';
+// v2: entries carry the supplier's type, so an older cached list is not reused.
+const SUPPLIER_OPTIONS_KEY = 'supplier-options-v2';
 const DEFAULT_TICKET_QUERY = { page: 1, limit: 25 };
 const DEFAULT_INVOICE_QUERY = { page: 1, limit: 25 };
 
@@ -189,7 +190,8 @@ async function requestSupplierOptions() {
   const data = await get('the supplier list', '/api/suppliers/options', { timeout: 10_000 });
   const suppliers = Array.isArray(data) ? data : data?.data;
   if (!Array.isArray(suppliers)) throw new RouteDataError('the supplier list', null);
-  return suppliers.map(({ id, name }) => ({ id, name }));
+  // The type lets a picker leave out trucking companies (a pit is never one).
+  return suppliers.map(({ id, name, type }) => ({ id, name, type: type ?? null }));
 }
 
 export function getCachedSupplierOptions(userId) {

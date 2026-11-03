@@ -105,6 +105,8 @@ describe('the board across days (PostgreSQL)', { skip: !disposableConfirmed }, (
     // Invoiced, closed or voided in Spruce since: never carried over.
     await seedOrder('9900-000011', '2026-08-14', { flags: ['NOT_OPEN'] });
     const closedTakenBack = await seedOrder('9900-000012', '2026-08-13', { flags: ['NO_ADDRESS', 'NOT_OPEN'] });
+    // A quotation was never an order: nothing to carry either.
+    await seedOrder('9900-000013', '2026-08-14', { flags: ['QUOTE'] });
 
     await DispatchService.assignOrder(onRun.id, driver.id);
     await finish(delivered.id, driver.id, 'DELIVERED', new Date('2026-08-14T16:00:00Z'));
@@ -151,6 +153,8 @@ describe('the board across days (PostgreSQL)', { skip: !disposableConfirmed }, (
     await seedOrder('9900-000006', '2026-08-19', { createdAt: lastNight });
     await seedOrder('9900-000007', null, { createdAt: thisMorning, isPickup: true });
     await seedOrder('9900-000008', '2026-08-19', { createdAt: thisMorning, flags: ['NOT_OPEN'] });
+    // A quotation in this morning's upload is not work for the board.
+    await seedOrder('9900-000011', null, { createdAt: thisMorning, flags: ['QUOTE'] });
     const given = await seedOrder('9900-000009', '2026-08-19', { createdAt: thisMorning });
     await seedOrder('9900-000010', TODAY); // due today, uploaded another day
     await DispatchService.assignOrder(given.id, driver.id);
@@ -231,6 +235,7 @@ describe('the board across days (PostgreSQL)', { skip: !disposableConfirmed }, (
     await seedOrder('9900-000003', null); // a delivery with no date yet
     const closed = await seedOrder('9900-000006', null); // invoiced or voided in Spruce since
     await prisma.orderDocument.update({ where: { id: closed.id }, data: { flags: ['NOT_OPEN'] } });
+    await seedOrder('9900-000009', null, { customerName: 'Pat Quoted', flags: ['QUOTE'] }); // a quotation
     await seedOrder('9900-000004', TODAY);
     await seedOrder('9900-000005', '2026-08-17');
 
@@ -248,6 +253,117 @@ describe('the board across days (PostgreSQL)', { skip: !disposableConfirmed }, (
     // A search does not bring a closed pickup back.
     assert.deepEqual(await DispatchService.getUndatedOrders('Pat Closed'), []);
     assert.deepEqual(await DispatchService.getUndatedOrders('9900-000007'), []);
+    assert.deepEqual(await DispatchService.getUndatedOrders('Pat Quoted'), []);
+  });
+
+  it('keeps a quotation off every part of the board, whatever its date, and never gives it to a driver', async () => {
+    await prisma.$executeRawUnsafe('TRUNCATE TABLE "ImportBatch", "User" RESTART IDENTITY CASCADE');
+    const user = await prisma.user.create({
+      data: { name: 'Test Admin', email: 'quote-admin@example.test', passwordHash: 'x', role: 'ADMIN' },
+    });
+    const thisMorning = new Date('2026-08-15T13:00:00Z');
+    const todaysBatch = await prisma.importBatch.create({
+      data: { dispatchDate: day(TODAY), status: 'DONE', createdById: user.id, createdAt: thisMorning },
+    });
+    const driver = await seedDriver('Driver');
+    const quote = { flags: ['QUOTE'] };
+
+    // Real orders, so every list below is shown to hold something.
+    await seedOrder('9900-000001', TODAY);
+    await seedOrder('9900-000002', '2026-08-19');
+    await seedOrder('9900-000003', '2026-08-13');
+    await seedOrder('9900-000004', null);
+    // Quotations: due today by Item Tracking's date, in this morning's upload
+    // and due later, due on a day gone by, and undated.
+    const dueToday = await seedOrder('9900-000011', TODAY, quote);
+    await seedOrder('9900-000012', '2026-08-19', { ...quote, createdAt: thisMorning });
+    await seedOrder('9900-000013', '2026-08-19', { ...quote, lastBatchId: todaysBatch.id });
+    await seedOrder('9900-000014', '2026-08-13', quote);
+    await seedOrder('9900-000015', null, { ...quote, customerName: 'Pat Quoted' });
+
+    const today = await DispatchService.getDispatchBoard(TODAY, TODAY);
+    assert.deepEqual(numbers(today.unassignedOrders), ['9900-000001']);
+    assert.deepEqual(numbers(today.carriedOver), ['9900-000003']);
+    // The counts are SQL, apart from the board: they leave quotations out too.
+    assert.deepEqual(await DispatchService.getUpcoming(TODAY), [{ date: '2026-08-19', count: 1, unassigned: 1 }]);
+    assert.deepEqual(numbers((await DispatchService.getDispatchBoard('2026-08-19', TODAY)).unassignedOrders), ['9900-000002']);
+    // A day gone by is a record, and a quotation was never part of one.
+    const past = await DispatchService.getDispatchBoard('2026-08-13', TODAY);
+    assert.equal(past.readOnly, true);
+    assert.deepEqual(numbers(past.unassignedOrders), ['9900-000003']);
+    assert.deepEqual(numbers(await DispatchService.getUndatedOrders()), ['9900-000004']);
+    assert.deepEqual(await DispatchService.getUndatedOrders('Pat Quoted'), []);
+
+    await assert.rejects(DispatchService.assignOrder(dueToday.id, driver.id), (err: any) =>
+      err.status === 409 && err.message === '9900-000011 is a quotation in Spruce, not an order, so it cannot go to a driver.');
+    assert.equal(await prisma.delivery.count(), 0, 'no stop made');
+  });
+
+  it("never brings a finished stop back into a pool, even when today's upload describes the order again", async () => {
+    await prisma.$executeRawUnsafe('TRUNCATE TABLE "ImportBatch", "User" RESTART IDENTITY CASCADE');
+    const user = await prisma.user.create({
+      data: { name: 'Test Admin', email: 'finished-admin@example.test', passwordHash: 'x', role: 'ADMIN' },
+    });
+    const todaysBatch = await prisma.importBatch.create({
+      data: { dispatchDate: day(TODAY), status: 'DONE', createdById: user.id, createdAt: new Date('2026-08-15T13:00:00Z') },
+    });
+    const driver = await seedDriver('Driver');
+    const again = { lastBatchId: todaysBatch.id };
+
+    // Each was finished, and then lost its driver (removed from the app, say).
+    // Today's upload, a rolling Item Tracking export, describes them all again.
+    const deliveredEarlier = await seedOrder('9900-000001', '2026-08-13', again);
+    const cancelledToday = await seedOrder('9900-000002', TODAY, again);
+    const deliveredLater = await seedOrder('9900-000003', '2026-08-19', again);
+    const deliveredUndated = await seedOrder('9900-000004', null, again);
+    // Still waiting, for comparison: taken back off a driver, and never sent.
+    const takenBack = await seedOrder('9900-000005', '2026-08-19', again);
+    await seedOrder('9900-000006', null);
+
+    const finishedThenDriverless = async (documentId: string, status: 'DELIVERED' | 'CANCELLED') => {
+      const stop = await finish(documentId, driver.id, status, new Date('2026-08-14T16:00:00Z'));
+      await prisma.delivery.update({ where: { id: stop.id }, data: { driverId: null } });
+    };
+    await finishedThenDriverless(deliveredEarlier.id, 'DELIVERED');
+    await finishedThenDriverless(cancelledToday.id, 'CANCELLED');
+    await finishedThenDriverless(deliveredLater.id, 'DELIVERED');
+    await finishedThenDriverless(deliveredUndated.id, 'DELIVERED');
+    await DispatchService.assignOrder(takenBack.id, driver.id);
+    await DispatchService.unassignOrder(takenBack.id);
+    // A stop made before orders were dispatched whole names no order at all;
+    // it must not hide the orders that have none.
+    const looseLine = await prisma.order.create({
+      data: { spruceOrderId: 'LOOSE-1', customerName: 'Loose Line Co', product: 'Sand' },
+    });
+    await prisma.delivery.create({ data: { orderId: looseLine.id, status: 'DELIVERED' } });
+
+    const today = await DispatchService.getDispatchBoard(TODAY, TODAY);
+    assert.deepEqual(numbers(today.unassignedOrders), ['9900-000005']);
+    assert.deepEqual(numbers(today.carriedOver), []);
+    assert.deepEqual(numbers((await DispatchService.getDispatchBoard('2026-08-19', TODAY)).unassignedOrders), ['9900-000005']);
+    // Both still count on their day; only the one taken back needs a driver.
+    assert.deepEqual(await DispatchService.getUpcoming(TODAY), [{ date: '2026-08-19', count: 2, unassigned: 1 }]);
+    assert.deepEqual(numbers(await DispatchService.getUndatedOrders()), ['9900-000006']);
+  });
+
+  it('keeps an undated order or pickup whose stop was cancelled on the undated list; only a delivered one leaves it', async () => {
+    const driver = await seedDriver('Driver');
+    // Cancelled on the board (customer not ready), then Spruce made it a
+    // customer pickup: no pool takes a pickup, so this list is its only place.
+    const nowPickup = await seedOrder('9900-000001', '2026-08-14', { customerName: 'Pat Cancelled' });
+    // Cancelled, and waiting for Spruce to give it a new date.
+    const awaitingDate = await seedOrder('9900-000002', '2026-08-14');
+    // Delivered, or done outside the app: finished.
+    const delivered = await seedOrder('9900-000003', '2026-08-14');
+    for (const [document, status] of [[nowPickup, 'CANCELLED'], [awaitingDate, 'CANCELLED'], [delivered, 'DELIVERED']] as const) {
+      await finish(document.id, driver.id, status, new Date('2026-08-14T16:00:00Z'));
+    }
+    await prisma.orderDocument.update({ where: { id: nowPickup.id }, data: { deliveryDate: null, isPickup: true } });
+    await prisma.orderDocument.update({ where: { id: awaitingDate.id }, data: { deliveryDate: null } });
+    await prisma.orderDocument.update({ where: { id: delivered.id }, data: { deliveryDate: null } });
+
+    assert.deepEqual(numbers(await DispatchService.getUndatedOrders()), ['9900-000002', '9900-000001']);
+    assert.deepEqual(numbers(await DispatchService.getUndatedOrders('Pat Cancelled')), ['9900-000001']);
   });
 
   it('refuses to change a finished past order, and keeps an unfinished one assignable', async () => {

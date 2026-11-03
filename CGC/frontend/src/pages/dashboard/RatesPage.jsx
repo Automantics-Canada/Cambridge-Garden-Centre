@@ -21,13 +21,24 @@ import {
   Select,
   Textarea,
 } from '../../components/ui';
-import { businessDayOf, formatDate } from '../../lib/date';
+import { businessDayOf, formatCalendarDate } from '../../lib/date';
+import PriceListImport from '../../components/rates/PriceListImport';
+import {
+  DEFAULT_RATE_UNIT,
+  RATE_UNITS,
+  changedRateFields,
+  dayOf,
+  rateStatus,
+  rateUnitLabel,
+  rateUnitValue,
+  validateRateForm,
+} from '../../lib/priceList';
 
 const INITIAL_FORM = {
   supplierId: '',
   productName: '',
   rate: '',
-  unit: 'tonne',
+  unit: DEFAULT_RATE_UNIT,
   effectiveFrom: businessDayOf(),
   effectiveTo: '',
   notes: ''
@@ -85,9 +96,11 @@ export default function RatesPage() {
         supplierId: rate.supplierId,
         productName: rate.productName,
         rate: Number(rate.rate),
-        unit: rate.unit,
-        effectiveFrom: rate.effectiveFrom.split('T')[0],
-        effectiveTo: rate.effectiveTo ? rate.effectiveTo.split('T')[0] : '',
+        // A stored "ton" (or a unit the check cannot compare) comes up blank,
+        // so the person has to say which unit the price is really in.
+        unit: rateUnitValue(rate.unit),
+        effectiveFrom: dayOf(rate.effectiveFrom),
+        effectiveTo: dayOf(rate.effectiveTo),
         notes: rate.notes || ''
       });
     } else {
@@ -105,18 +118,44 @@ export default function RatesPage() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!formData.supplierId || !formData.productName || !formData.rate) {
-      toast.error('Please fill required fields');
+    if (!formData.supplierId) {
+      toast.error('Choose a supplier');
+      return;
+    }
+    const errors = validateRateForm(formData);
+    const firstError = Object.values(errors)[0];
+    if (firstError) {
+      toast.error(firstError);
       return;
     }
 
     try {
       if (editingRate) {
-        await api.patch(`/api/suppliers/${formData.supplierId}/rates/${editingRate.id}`, formData);
-        toast.success('Rate updated successfully');
+        // Only what changed is sent, so an untouched end date is not re-sent
+        // as '' and an untouched unit is not rewritten.
+        const changes = changedRateFields(editingRate, formData);
+        if (Object.keys(changes).length === 0) {
+          handleCloseModal();
+          return;
+        }
+        await api.patch(`/api/suppliers/${formData.supplierId}/rates/${editingRate.id}`, changes);
+        toast.success('Rate updated');
       } else {
-        await api.post(`/api/suppliers/${formData.supplierId}/rates`, formData);
-        toast.success('New rate added successfully');
+        const { data } = await api.post(`/api/suppliers/${formData.supplierId}/rates`, {
+          productName: formData.productName,
+          rate: formData.rate,
+          unit: formData.unit,
+          effectiveFrom: formData.effectiveFrom,
+          effectiveTo: formData.effectiveTo,
+          notes: formData.notes,
+        });
+        const messages = {
+          CREATE: 'Rate added',
+          SUPERSEDE: 'New price saved. The previous price stays on record for older invoices.',
+          CORRECT: 'The rate on record was updated',
+          UNCHANGED: 'This rate is already on record',
+        };
+        toast.success(messages[data?.action] || 'Rate saved');
       }
       fetchData();
       handleCloseModal();
@@ -125,26 +164,25 @@ export default function RatesPage() {
     }
   };
 
-  const handleDeactivate = async (rate) => {
-    if (!window.confirm(`Deactivate rate for "${rate.productName}"? This sets the expiration to today.`)) return;
+  const handleExpire = async (rate) => {
+    if (!window.confirm(`End the rate for "${rate.productName}" today? It stays on record for older invoices.`)) return;
     try {
-      const today = businessDayOf();
-      await api.patch(`/api/suppliers/${rate.supplierId}/rates/${rate.id}`, { effectiveTo: today });
-      toast.success('Rate deactivated');
+      await api.post(`/api/suppliers/${rate.supplierId}/rates/${rate.id}/expire`, { effectiveTo: businessDayOf() });
+      toast.success('Rate ended today');
       fetchData();
-    } catch {
-      toast.error('Failed to deactivate');
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Could not end the rate');
     }
   };
 
   const handleDelete = async (rate) => {
-    if (!window.confirm(`Are you sure you want to delete the rate for "${rate.productName}"?`)) return;
+    if (!window.confirm(`Delete the rate for "${rate.productName}"? It has not priced any invoice yet.`)) return;
     try {
       await api.delete(`/api/suppliers/${rate.supplierId}/rates/${rate.id}`);
       toast.success('Rate deleted');
       fetchData();
-    } catch {
-      toast.error('Failed to delete rate');
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed to delete rate');
     }
   };
 
@@ -182,6 +220,8 @@ export default function RatesPage() {
         </div>
       </div>
 
+      <PriceListImport suppliers={suppliers} onSaved={fetchData} />
+
       <Card className="flex-1 overflow-hidden flex flex-col">
         <div className="overflow-x-auto">
           <table className="min-w-full divide-y divide-line">
@@ -209,25 +249,32 @@ export default function RatesPage() {
                 </tr>
               ) : (
                 filteredRates.map((rate) => {
-                  const isActive = !rate.effectiveTo || new Date(rate.effectiveTo) >= new Date();
+                  const status = rateStatus(rate, businessDayOf());
+                  const isActive = status !== 'ended';
                   return (
                     <tr key={rate.id} className="hover:bg-brand/[0.04] transition-colors">
                       <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-ink">{rate.supplierName}</td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-muted">{rate.productName}</td>
                       <td className="tabular px-6 py-4 whitespace-nowrap text-sm font-bold text-ink">${Number(rate.rate).toFixed(2)}</td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-muted">{rate.unit}</td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-muted">
+                        {rateUnitLabel(rate.unit)}
+                        {!rateUnitValue(rate.unit) && <Badge tone="warn" className="ml-2">Check unit</Badge>}
+                      </td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         <div className="tabular text-[13px] text-ink">
-                          {formatDate(rate.effectiveFrom)} to {rate.effectiveTo ? formatDate(rate.effectiveTo) : 'Present'}
+                          {formatCalendarDate(rate.effectiveFrom)} to {rate.effectiveTo ? formatCalendarDate(rate.effectiveTo) : 'Present'}
                         </div>
-                        {!isActive && <Badge tone="bad" className="mt-1">Expired</Badge>}
+                        {status === 'ended' && <Badge tone="bad" className="mt-1">Ended</Badge>}
+                        {status === 'future' && <Badge tone="neutral" className="mt-1">Starts later</Badge>}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium space-x-2">
                         <button onClick={() => handleOpenModal(rate)} className="text-muted hover:text-ink transition-colors p-1" title="Edit"><Edit2 className="w-4 h-4" /></button>
-                        {isActive && (
-                          <button onClick={() => handleDeactivate(rate)} className="text-muted hover:text-ochre transition-colors p-1" title="Deactivate"><X className="w-4 h-4" /></button>
+                        {isActive && rate.inUse && (
+                          <button onClick={() => handleExpire(rate)} className="text-muted hover:text-ochre transition-colors p-1" title="End this rate today (it stays on record)"><X className="w-4 h-4" /></button>
                         )}
-                        <button onClick={() => handleDelete(rate)} className="text-muted hover:text-clay transition-colors p-1" title="Delete"><Trash2 className="w-4 h-4" /></button>
+                        {!rate.inUse && (
+                          <button onClick={() => handleDelete(rate)} className="text-muted hover:text-clay transition-colors p-1" title="Delete (not used by any invoice yet)"><Trash2 className="w-4 h-4" /></button>
+                        )}
                       </td>
                     </tr>
                   );
@@ -279,7 +326,7 @@ export default function RatesPage() {
               )}
 
               <div className="grid grid-cols-2 gap-4">
-                <Field label="Rate ($)" htmlFor="rate-value">
+                <Field label="Rate ($, before HST)" htmlFor="rate-value">
                   <Input
                     id="rate-value"
                     type="number"
@@ -291,13 +338,14 @@ export default function RatesPage() {
                   />
                 </Field>
                 <Field label="Unit" htmlFor="rate-unit">
-                  <Input
+                  <Select
                     id="rate-unit"
-                    type="text"
-                    placeholder="tonne, load, etc"
                     value={formData.unit}
                     onChange={e => setFormData({...formData, unit: e.target.value})}
-                  />
+                  >
+                    <option value="">Choose a unit</option>
+                    {RATE_UNITS.map(unit => <option key={unit.value} value={unit.value}>{unit.label}</option>)}
+                  </Select>
                 </Field>
               </div>
 

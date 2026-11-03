@@ -58,6 +58,33 @@ export const DELIVERY_STATUS_FILTERS = {
 
 export type DeliveryStatusFilter = keyof typeof DELIVERY_STATUS_FILTERS;
 
+/**
+ * Quotations in Spruce are prices given to customers, not orders. The client
+ * asked for them off the dashboard, so the list leaves them out unless the
+ * office asks for the Quotations view, which lists only them.
+ */
+export const QUOTE_FILTERS = {
+  exclude: { NOT: { flags: { has: 'QUOTE' } } },
+  only: { flags: { has: 'QUOTE' } },
+} satisfies Record<string, Prisma.OrderDocumentWhereInput>;
+
+/**
+ * What an order is missing, read off the order itself rather than its flags,
+ * so a flag left from an older upload does not matter.
+ *
+ * Phone: only the Deliveries report prints a customer's phone, so an order
+ * counts as missing one only once it has been on a Deliveries report. Pickups
+ * never are. An office edit stores a cleared phone as null, but older rows
+ * can hold an empty string, so both count.
+ */
+export const MISSING_FILTERS = {
+  phone: {
+    isPickup: false,
+    sourceReports: { has: 'DELIVERY' },
+    OR: [{ phone: null }, { phone: '' }],
+  },
+} satisfies Record<string, Prisma.OrderDocumentWhereInput>;
+
 /** The board's order shape, plus what the office reads and a driver never sees. */
 const LIST_SELECT = {
   ...DISPATCH_DOCUMENT_SELECT,
@@ -136,8 +163,17 @@ function toRow(
 const yes = (value: unknown) => value === 'true' || value === true;
 
 export function buildOrderListWhere(filters: Record<string, any>): Prisma.OrderDocumentWhereInput {
-  const { uploadStartDate, uploadEndDate, fulfilment, deliveryStatus, buyerType, hasInvoice, hasLinkedTickets, supplierId, driverId, search } = filters;
+  const { uploadStartDate, uploadEndDate, fulfilment, deliveryStatus, buyerType, hasInvoice, hasLinkedTickets, supplierId, driverId, search, quotes, missing } = filters;
   const and: Prisma.OrderDocumentWhereInput[] = [];
+
+  const quoteView = String(quotes || 'exclude');
+  if (!Object.hasOwn(QUOTE_FILTERS, quoteView)) throw badRequest(`Invalid quotes: ${quotes}`);
+  and.push(QUOTE_FILTERS[quoteView as keyof typeof QUOTE_FILTERS]);
+
+  if (missing) {
+    if (!Object.hasOwn(MISSING_FILTERS, String(missing))) throw badRequest(`Invalid missing: ${missing}`);
+    and.push(MISSING_FILTERS[missing as keyof typeof MISSING_FILTERS]);
+  }
 
   // Uploaded that day means first imported that day, or described again by
   // that day's reports: a re-upload updates the order and keeps `createdAt`.
@@ -201,7 +237,7 @@ export function buildOrderListWhere(filters: Record<string, any>): Prisma.OrderD
     });
   }
 
-  return and.length > 0 ? { AND: and } : {};
+  return { AND: and };
 }
 
 export async function listOrders(filters: Record<string, any>) {

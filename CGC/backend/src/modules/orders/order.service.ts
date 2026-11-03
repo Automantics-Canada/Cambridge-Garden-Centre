@@ -25,6 +25,12 @@ export const OrderService = {
     // Filters that are each an OR of their own, so they cannot share `where.OR`.
     const and: any[] = [];
 
+    // This list feeds the ticket and invoice linking pickers. A quotation is
+    // a price given to a customer, not an order, so nothing delivered or
+    // billed can belong to one. A line from before orders were grouped has no
+    // order to say, and stays.
+    and.push({ NOT: { document: { is: { flags: { has: 'QUOTE' } } } } });
+
     if (driverId) {
       where.driverId = driverId;
     }

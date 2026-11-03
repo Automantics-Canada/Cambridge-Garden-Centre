@@ -14,7 +14,9 @@ import {
   toDispatchOrder,
   type DispatchDocument,
 } from '../src/modules/dispatch/dispatchOrderView.js';
+import { trackingRowsInScope, type BatchFile } from '../src/modules/orders/import/importBatch.service.js';
 import { stateFlags } from '../src/modules/orders/import/mergeOrderFacts.js';
+import type { ParsedSpruceReport, ParsedSpruceRow, SpruceReportType } from '../src/modules/orders/spruce/spruceReportTypes.js';
 import { inferUnitFromDescription } from '../src/modules/orders/orderPdfImport.service.js';
 
 /**
@@ -185,11 +187,97 @@ describe('QA gaps: what the flags say', () => {
     assert.deepEqual(stateFlags(delivering, false), []);
   });
 
+  it('asks for a phone only once the order has been on a Delivery Report, the one report that prints it', () => {
+    // Dated by the Order Report or Item Tracking, or given to a driver
+    // before its Delivery Report came: nothing could have given it a phone yet.
+    assert.deepEqual(stateFlags({ ...delivering, phone: null, inDeliveryReport: false }, false), []);
+    assert.deepEqual(stateFlags({ ...delivering, phone: '', inDeliveryReport: true }, false), ['NO_PHONE']);
+    assert.deepEqual(stateFlags({ ...delivering, phone: null, inDeliveryReport: true }, false), ['NO_PHONE']);
+  });
+
   it('flags 2608-712595: delivery dated 17/08 on an order entered 13/10', () => {
     assert.deepEqual(
       stateFlags({ ...delivering, deliveryDate: day('2026-08-17'), orderDate: day('2026-10-13') }, false),
       ['DELIVERY_BEFORE_ENTRY']
     );
     assert.deepEqual(stateFlags({ ...delivering, orderDate: day('2026-10-13') }, false), []);
+  });
+});
+
+describe('Q7: a rolling Item Tracking export is used only for the day it is uploaded for', () => {
+  const line = (documentNumber: string, extra: Partial<ParsedSpruceRow> = {}): ParsedSpruceRow => ({
+    documentNumber,
+    customerName: 'Synthetic Customer',
+    product: 'Garden Soil Bulk',
+    itemNumber: 'SOILGRDNA',
+    quantity: 1,
+    source: { page: 1, row: 1 },
+    ...extra,
+  });
+  const report = (type: SpruceReportType, rows: ParsedSpruceRow[], extra: Partial<ParsedSpruceReport> = {}): BatchFile => ({
+    reportType: type,
+    fileName: `${type}.pdf`,
+    buffer: Buffer.from(type),
+    report: { type, rows, unreadable: [], ...extra },
+  });
+  const trackingOf = (files: BatchFile[]) => files.find(file => file.reportType === 'ITEM_TRACKING')!.report;
+
+  // 30 days of Item Tracking; the Order Report for 10/21 only.
+  const upload = () => [
+    report('ORDER_SUMMARY', [line('9900-000002')], {
+      dateRange: { fromRaw: '10/21/26', toRaw: '10/21/26' },
+      unreadable: [{ page: 1, row: 9, reason: 'could not read the quantity', documentNumber: '9900-000005' }],
+    }),
+    report('DELIVERY', [line('9900-000001')]),
+    report('ITEM_TRACKING', [
+      line('9900-000001', { orderDateRaw: '9/25/2026' }),  // today's delivery, entered weeks ago
+      line('9900-000002', { orderDateRaw: '10/21/2026' }), // on the Order Report
+      line('9900-000003', { orderDateRaw: '10/21/2026' }), // in range, on neither: a quotation or closed
+      line('9900-000004', { orderDateRaw: '10/02/2026' }), // an older order: left alone
+      line('9900-000004', { orderDateRaw: '10/02/2026', itemNumber: 'MISCDEL' }),
+      line('9900-000005', { orderDateRaw: '10/01/2026' }), // on an unreadable Order Report line
+    ], {
+      dateRange: { fromRaw: '9/22/2026', toRaw: '10/21/2026' },
+      unreadable: [
+        { page: 3, row: 4, reason: 'could not read the quantity for document 9900-000004', documentNumber: '9900-000004' },
+        { page: 3, row: 5, reason: 'could not read the document number' },
+      ],
+      aiCheck: {
+        status: 'differences',
+        compared: 6,
+        agreed: 4,
+        differences: [
+          { documentNumber: '9900-000004', detail: 'quantity' },
+          { documentNumber: '9900-000001', detail: 'address' },
+        ],
+      },
+    }),
+  ];
+
+  it('keeps the documents the other reports speak to, and those entered in the Order Report\'s range', () => {
+    const input = upload();
+    const { files, scope } = trackingRowsInScope(input);
+    const tracking = trackingOf(files);
+
+    assert.deepEqual([...new Set(tracking.rows.map(row => row.documentNumber))], ['9900-000001', '9900-000002', '9900-000003', '9900-000005']);
+    assert.deepEqual(scope, { documentsRead: 5, documentsUsed: 4, dateFrom: '2026-09-22', dateTo: '2026-10-21' });
+    // What it says about a left-out document is left out with it; a line it
+    // could not place in any document is still reported.
+    assert.deepEqual(tracking.unreadable.map(entry => entry.reason), ['could not read the document number']);
+    assert.deepEqual(tracking.aiCheck?.differences.map(difference => difference.documentNumber), ['9900-000001']);
+    // The other reports are passed on as they came.
+    assert.equal(files[0], input[0]);
+    assert.equal(files[1], input[1]);
+  });
+
+  it('uses Item Tracking only for the Delivery Report\'s orders when there is no Order Report', () => {
+    const { files, scope } = trackingRowsInScope(upload().filter(file => file.reportType !== 'ORDER_SUMMARY'));
+    assert.deepEqual([...new Set(trackingOf(files).rows.map(row => row.documentNumber))], ['9900-000001']);
+    assert.equal(scope?.documentsUsed, 1);
+  });
+
+  it('changes nothing without an Item Tracking Report', () => {
+    const files = upload().filter(file => file.reportType !== 'ITEM_TRACKING');
+    assert.deepEqual(trackingRowsInScope(files), { files, scope: null });
   });
 });

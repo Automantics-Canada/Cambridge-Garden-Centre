@@ -1,16 +1,20 @@
 ﻿import { prisma } from '../../db/prisma.js';
-import { saveInvoiceImage } from '../../services/fileStorage.js';
+import { saveInvoiceImage, saveInvoiceSupportingFile } from '../../services/fileStorage.js';
+import { getContentType } from '../../services/supabaseStorage.js';
 import { extractInvoiceFromUrl } from '../../services/extraction/extraction.service.js';
 import { deriveLineItemFlag } from '../../lib/lineItemFlag.js';
+import { findSupplierForSender } from '../../services/knownSenders.js';
 import {
   InvoiceStatus,
   SenderType,
+  SupplierType,
   OcrJobType,
   OcrProvider,
   OcrJobStatus,
   LineItemFlag,
   AuditEntityType,
   AuditActionType,
+  type Prisma,
 } from '@prisma/client';
 
 /**
@@ -198,6 +202,8 @@ export const INVOICE_DETAIL_INCLUDE = {
           evidence: true,
           orderId: true,
           candidateOrderIds: true,
+          // The dispatch loads a trucking line's verdict counted (Q14).
+          loadIds: true,
           computedAt: true,
           resolution: true,
           resolvedAt: true,
@@ -208,9 +214,43 @@ export const INVOICE_DETAIL_INCLUDE = {
   },
   verifiedBy: { select: VERIFIED_BY_PUBLIC_FIELDS },
   ocrJobs: { orderBy: { startedAt: 'desc' } },
+  // Files that came with the invoice but are not it, e.g. an Excel load
+  // breakdown beside the PDF (A12): offered for download on the invoice.
+  supportingFiles: {
+    select: { id: true, fileUrl: true, originalName: true, contentType: true, size: true, createdAt: true },
+    orderBy: { createdAt: 'asc' },
+  },
 } as const;
 
 
+/** A dispatch load as the invoice page shows it beside a trucking line. */
+export const HAUL_LOAD_DETAIL_SELECT = {
+  id: true,
+  sequence: true,
+  rate: true,
+  rateUnit: true,
+  quantity: true,
+  tripRef: true,
+  ticketNumber: true,
+  claimedByLineItemId: true,
+  carrierSupplier: { select: { name: true } },
+  document: { select: { documentNumber: true } },
+} as const satisfies Prisma.DispatchLoadSelect;
+
+export function toHaulLoadDetail(load: Prisma.DispatchLoadGetPayload<{ select: typeof HAUL_LOAD_DETAIL_SELECT }>) {
+  return {
+    id: load.id,
+    documentNumber: load.document.documentNumber,
+    sequence: load.sequence,
+    carrierName: load.carrierSupplier?.name ?? null,
+    rate: load.rate === null ? null : Number(load.rate),
+    rateUnit: load.rateUnit,
+    quantity: load.quantity === null ? null : Number(load.quantity),
+    tripRef: load.tripRef,
+    ticketNumber: load.ticketNumber,
+    claimedByLineItemId: load.claimedByLineItemId,
+  };
+}
 
 /**
  * Re-derives a line item's flag from what is currently recorded against it.
@@ -298,13 +338,18 @@ async function refuseOrReleaseSettledLines(
   const settled = await prisma.invoiceLineItem.findMany({
     where: {
       invoiceId,
-      OR: [{ matchResult: { resolution: { not: null } } }, { ticketClaims: { some: {} } }],
+      OR: [
+        { matchResult: { resolution: { not: null } } },
+        { ticketClaims: { some: {} } },
+        // A trucking line's paid dispatch loads (DispatchLoad.claimedByLineItemId).
+        { claimedLoads: { some: {} } },
+      ],
     },
     select: {
       id: true,
       lineNumber: true,
       matchResult: { select: { id: true, resolution: true } },
-      _count: { select: { ticketClaims: true } },
+      _count: { select: { ticketClaims: true, claimedLoads: true } },
     },
     orderBy: { lineNumber: 'asc' },
   });
@@ -317,6 +362,9 @@ async function refuseOrReleaseSettledLines(
         line.matchResult?.resolution ? line.matchResult.resolution.toLowerCase() : null,
         line._count.ticketClaims > 0
           ? `${line._count.ticketClaims} claimed ticket${line._count.ticketClaims === 1 ? '' : 's'}`
+          : null,
+        line._count.claimedLoads > 0
+          ? `${line._count.claimedLoads} paid dispatch load${line._count.claimedLoads === 1 ? '' : 's'}`
           : null,
       ].filter(Boolean);
       return `line ${line.lineNumber} (${parts.join(', ')})`;
@@ -353,15 +401,109 @@ async function refuseOrReleaseSettledLines(
 
   // A claim with no verdict behind it cannot be reopened, and deleting it
   // silently is the data loss this function exists to stop.
-  const stranded = await prisma.ticketClaim.count({
-    where: { invoiceLineId: { in: settled.map((line) => line.id) } },
-  });
-  if (stranded > 0) {
+  const settledIds = settled.map((line) => line.id);
+  const [stranded, strandedLoads] = await Promise.all([
+    prisma.ticketClaim.count({ where: { invoiceLineId: { in: settledIds } } }),
+    prisma.dispatchLoad.count({ where: { claimedByLineItemId: { in: settledIds } } }),
+  ]);
+  if (stranded > 0 || strandedLoads > 0) {
+    const what = [
+      stranded > 0 ? `${stranded} ticket claim(s)` : null,
+      strandedLoads > 0 ? `${strandedLoads} paid dispatch load(s)` : null,
+    ].filter(Boolean).join(' and ');
     throw new InvoiceLinesResolvedError(
-      `${stranded} ticket claim(s) on this invoice are not attached to a verdict that could be ` +
+      `${what} on this invoice are not attached to a verdict that could be ` +
         'reopened. Release them on the verification desk before re-reading the invoice.'
     );
   }
+}
+
+/**
+ * Compares the invoice total with what the agreed rates say it should be, and
+ * writes the outcome to `disputeNote`.
+ *
+ * Only lines with an applicable agreed rate can be totalled. Lines without one
+ * were previously counted at a rate of zero, so a single unpriced product
+ * dragged the expected total far below the billed total and stamped a "total
+ * amount mismatch" dispute on an invoice that was very likely correct. On a
+ * supplier who has just introduced a product, that fired on every invoice, and
+ * a dispute note that is usually wrong is one nobody reads. With unpriced lines
+ * present the totals are not comparable at all, so the check is skipped and the
+ * reason is recorded instead.
+ *
+ * Runs after OCR, after a recompute, and after the supplier's rates change.
+ * The note used to say "add the missing rates, then reopen to re-check", but
+ * reopening recomputed nothing; now adding the rate is enough.
+ *
+ * Only an invoice still PENDING_REVIEW is touched. On a disputed invoice the
+ * note is the person's own words about the dispute, and a verified or paid one
+ * is settled; neither is rewritten behind anyone's back.
+ */
+export async function refreshInvoiceTotalCheck(
+  invoiceId: string
+): Promise<'skipped' | 'unpriced' | 'mismatch' | 'ok' | 'no-lines'> {
+  const invoice = await prisma.invoice.findUnique({
+    where: { id: invoiceId },
+    select: { status: true, totalAmount: true },
+  });
+  if (!invoice || invoice.status !== InvoiceStatus.PENDING_REVIEW) return 'skipped';
+
+  const lineItems = await prisma.invoiceLineItem.findMany({
+    where: { invoiceId },
+    select: { description: true, quantity: true, negotiatedRate: true },
+    orderBy: { lineNumber: 'asc' },
+  });
+  if (lineItems.length === 0) return 'no-lines';
+
+  const pricedLines = lineItems.filter(item => item.negotiatedRate !== null);
+  const unpricedLines = lineItems.filter(item => item.negotiatedRate === null);
+  const billedTotal = Number(invoice.totalAmount);
+
+  if (unpricedLines.length > 0) {
+    await prisma.invoice.update({
+      where: { id: invoiceId },
+      data: {
+        disputeNote:
+          `Total not checked: ${unpricedLines.length} of ${lineItems.length} line(s) have no ` +
+          `applicable agreed rate (${unpricedLines.map(l => l.description).join('; ')}). ` +
+          `Billed: $${billedTotal.toFixed(2)}. It is checked again automatically once those rates are added.`,
+      },
+    });
+    return 'unpriced';
+  }
+
+  const totalApprovedSubtotal = pricedLines.reduce(
+    (sum, item) => sum + Number(item.quantity) * Number(item.negotiatedRate),
+    0
+  );
+
+  // HST is Ontario's 13%. Hard-coded because every supplier here is
+  // Ontario-registered; revisit if that stops being true.
+  const totalApprovedWithHst = totalApprovedSubtotal * 1.13;
+  const totalDiscrepancy = Math.abs(totalApprovedWithHst - billedTotal);
+  const mismatch = totalDiscrepancy > 0.05;
+
+  await prisma.invoice.update({
+    where: { id: invoiceId },
+    data: {
+      disputeNote: mismatch
+        ? `Total amount mismatch. Expected pay: $${totalApprovedWithHst.toFixed(2)} (Subtotal: $${totalApprovedSubtotal.toFixed(2)} + 13% HST). Billed: $${billedTotal.toFixed(2)}.`
+        : null,
+    },
+  });
+  return mismatch ? 'mismatch' : 'ok';
+}
+
+/**
+ * Who billed, as the invoice list's Supplier / Trucking filter reads it.
+ *
+ * Every invoice used to be stored as SUPPLIER, trucking companies included,
+ * so the Trucking filter never showed anything. The supplier record says
+ * which kind of company it is; an invoice nobody has attributed yet stays
+ * SUPPLIER until OCR finds its sender.
+ */
+export function senderTypeFor(supplierType: SupplierType | null | undefined): SenderType {
+  return supplierType === SupplierType.TRUCKING_COMPANY ? SenderType.TRUCKING_COMPANY : SenderType.SUPPLIER;
 }
 
 export const InvoiceService = {
@@ -374,16 +516,14 @@ export const InvoiceService = {
   }) {
     const fileUrl = await saveInvoiceImage(params.buffer, params.originalName);
 
-    // Find supplier by email domain or keywords
-    const match = params.fromEmail.match(/@(.+)$/);
-    const domain = (match?.[1]?.split('>')[0] ?? '').toLowerCase();
+    // The sender's own supplier record first: an exact address, then its
+    // domain (never a free-mail domain), the same lookup the inbox poller
+    // used to accept the email (services/knownSenders.ts). This used to cut
+    // the domain out of the raw From value, which a display name such as
+    // `"Stone <billing@stone.example>" <someone@gmail.com>` could steer.
+    let supplier: { id: string; type: SupplierType } | null = await findSupplierForSender(params.fromEmail);
 
-    const byDomain = domain
-      ? await prisma.supplier.findFirst({ where: { emailDomains: { hasSome: [domain] } } })
-      : null;
-
-    // Try fuzzy match on name in subject
-    let supplier: { id: string } | null = byDomain;
+    // Then a supplier named in the subject.
     if (!supplier) {
       const allSuppliers = await prisma.supplier.findMany();
       supplier = allSuppliers.find(s => params.subject.toLowerCase().includes(s.name.toLowerCase())) || null;
@@ -409,7 +549,7 @@ export const InvoiceService = {
     const invoice = await prisma.invoice.create({
       data: {
         invoiceNumber: `PENDING-${Date.now()}`,
-        senderType: SenderType.SUPPLIER,
+        senderType: senderTypeFor(supplier.type),
         supplierId: supplier.id,
         invoiceDate: new Date(),
         totalAmount: 0,
@@ -433,6 +573,35 @@ export const InvoiceService = {
     });
 
     return { invoice, ocrJob };
+  },
+
+  /**
+   * Keeps a file that came with an invoice as a supporting file of it: the
+   * Excel breakdown a supplier attaches beside the PDF invoice (A12). It is
+   * stored with its real content type and never read as a second invoice,
+   * which would bill the same loads twice. `gmailKey` makes a retried poll
+   * find the row it already wrote.
+   */
+  async attachSupportingFile(params: {
+    invoiceId: string;
+    buffer: Buffer;
+    originalName: string;
+    gmailKey: string;
+  }) {
+    const already = await prisma.invoiceSupportingFile.findUnique({ where: { gmailKey: params.gmailKey } });
+    if (already) return already;
+    const fileUrl = await saveInvoiceSupportingFile(params.buffer, params.invoiceId, params.originalName);
+    const extension = params.originalName.split('.').pop() ?? '';
+    return prisma.invoiceSupportingFile.create({
+      data: {
+        invoiceId: params.invoiceId,
+        fileUrl,
+        originalName: params.originalName.slice(0, 255),
+        contentType: getContentType(extension),
+        size: params.buffer.length,
+        gmailKey: params.gmailKey,
+      },
+    });
   },
 
   /**
@@ -469,16 +638,23 @@ export const InvoiceService = {
       const extracted = await extractInvoiceFromUrl(invoice.fileUrl);
 
       let updatedSupplierId = invoice.supplierId;
+      let updatedSenderType = invoice.senderType;
       if (extracted.supplierName) {
         const { SupplierService } = await import('../supplier/supplier.service.js');
         const found = await SupplierService.findOrCreateSupplier(extracted.supplierName);
-        if (found) updatedSupplierId = found.id;
+        if (found) {
+          updatedSupplierId = found.id;
+          // The sender type follows the supplier OCR settled on, so an invoice
+          // read as a trucking company's lands under Trucking.
+          updatedSenderType = senderTypeFor(found.type);
+        }
       }
 
       const updatedInvoice = await prisma.invoice.update({
         where: { id: invoiceId },
         data: {
           supplierId: updatedSupplierId,
+          senderType: updatedSenderType,
           invoiceNumber: extracted.invoiceNumber || invoice.invoiceNumber,
           invoiceDate: extracted.invoiceDate || invoice.invoiceDate,
           totalAmount: extracted.totalAmount || invoice.totalAmount,
@@ -524,6 +700,10 @@ export const InvoiceService = {
             lineNumber: i + 1,
             description,
             poNumber: linePo,
+            // A trucking invoice's ticket or load number and haul day: what
+            // finds the dispatch load the line bills. Null on material lines.
+            ticketNumber: item.ticketNumber ?? null,
+            serviceDate: item.serviceDate ?? null,
             quantity,
             unit,
             unitRate,
@@ -571,55 +751,10 @@ export const InvoiceService = {
         }
       }
 
-      // --- Total Discrepancy Match ---
-      //
-      // Only lines with an applicable agreed rate can be totalled. Lines
-      // without one were previously counted at a rate of zero, so a single
-      // unpriced product dragged the expected total far below the billed total
-      // and stamped a "total amount mismatch" dispute on an invoice that was
-      // very likely correct. On a supplier who has just introduced a product,
-      // that fired on every invoice â€” and a dispute note that is usually wrong
-      // is one nobody reads.
-      //
-      // With unpriced lines present the totals are not comparable at all, so
-      // the check is skipped and the reason is recorded instead.
-      const lineItems = await prisma.invoiceLineItem.findMany({ where: { invoiceId } });
-      const pricedLines = lineItems.filter(item => item.negotiatedRate !== null);
-      const unpricedLines = lineItems.filter(item => item.negotiatedRate === null);
-
-      const billedTotal = Number(updatedInvoice.totalAmount);
-
-      if (unpricedLines.length > 0) {
-        await prisma.invoice.update({
-          where: { id: invoiceId },
-          data: {
-            disputeNote:
-              `Total not checked: ${unpricedLines.length} of ${lineItems.length} line(s) have no ` +
-              `applicable agreed rate (${unpricedLines.map(l => l.description).join('; ')}). ` +
-              `Billed: $${billedTotal.toFixed(2)}. Add the missing rates, then reopen to re-check.`,
-          },
-        });
-      } else if (lineItems.length > 0) {
-        const totalApprovedSubtotal = pricedLines.reduce(
-          (sum, item) => sum + Number(item.quantity) * Number(item.negotiatedRate),
-          0
-        );
-
-        // HST is Ontario's 13%. Hard-coded because every supplier here is
-        // Ontario-registered; revisit if that stops being true.
-        const totalApprovedWithHst = totalApprovedSubtotal * 1.13;
-        const totalDiscrepancy = Math.abs(totalApprovedWithHst - billedTotal);
-
-        await prisma.invoice.update({
-          where: { id: invoiceId },
-          data: {
-            disputeNote:
-              totalDiscrepancy > 0.05
-                ? `Total amount mismatch. Expected pay: $${totalApprovedWithHst.toFixed(2)} (Subtotal: $${totalApprovedSubtotal.toFixed(2)} + 13% HST). Billed: $${billedTotal.toFixed(2)}.`
-                : null,
-          },
-        });
-      }
+      // The invoice total is checked against the agreed rates the lines now
+      // carry. The same check runs again whenever this supplier's rates
+      // change, so the note never tells anyone to reopen the invoice.
+      await refreshInvoiceTotalCheck(invoiceId);
 
       if (ocrJob) {
         await prisma.ocrJob.update({
@@ -714,10 +849,33 @@ export const InvoiceService = {
   },
 
   async getInvoiceById(id: string) {
-    return prisma.invoice.findUnique({
+    const invoice = await prisma.invoice.findUnique({
       where: { id },
       include: INVOICE_DETAIL_INCLUDE,
     });
+    if (!invoice) return invoice;
+
+    // A trucking line shows the dispatch loads its verdict counted, with the
+    // rate dispatch set: what the billed rate was checked against. Office
+    // screens only (this route admits AP_USER, OWNER and ADMIN).
+    const loadIds = [...new Set(invoice.lineItems.flatMap((item) => item.matchResult?.loadIds ?? []))];
+    const loads = loadIds.length === 0
+      ? []
+      : await prisma.dispatchLoad.findMany({
+          where: { id: { in: loadIds } },
+          select: HAUL_LOAD_DETAIL_SELECT,
+        });
+    const byId = new Map(loads.map((load) => [load.id, toHaulLoadDetail(load)]));
+    return {
+      ...invoice,
+      lineItems: invoice.lineItems.map((item) => ({
+        ...item,
+        haulLoads: (item.matchResult?.loadIds ?? []).flatMap((loadId) => {
+          const load = byId.get(loadId);
+          return load ? [load] : [];
+        }),
+      })),
+    };
   },
 
   /**
@@ -790,22 +948,40 @@ export const InvoiceService = {
     );
 
     if (toConfirm.length > 0) {
-      const { resolveMatchResult } = await import('../matching/resolveMatch.js');
-      for (const line of toConfirm) {
-        const outcome = await resolveMatchResult({
-          matchResultId: line.matchResult!.id,
-          resolution: 'CONFIRMED',
-          note: 'Confirmed as part of verifying this invoice.',
-          userId,
-        });
-        if (!outcome.ok) {
-          throw Object.assign(
-            new Error(
-              `Line ${line.lineNumber} could not be confirmed: ` +
-                ('detail' in outcome ? outcome.detail : outcome.code)
-            ),
-            { status: 409 }
-          );
+      const { resolveMatchResult, recomputeCarrierLinesSafely } = await import('../matching/resolveMatch.js');
+      // A trucking company's other open lines are re-checked once, after
+      // every load this invoice pays has been claimed, not once per line: a
+      // thirty-line haul invoice would otherwise re-check the carrier's open
+      // lines thirty times inside one request.
+      const invoice = await prisma.invoice.findUnique({
+        where: { id },
+        select: { supplierId: true, supplier: { select: { type: true } } },
+      });
+      const carrierSupplierId = invoice?.supplier.type === 'TRUCKING_COMPANY' ? invoice.supplierId : null;
+      try {
+        for (const line of toConfirm) {
+          const outcome = await resolveMatchResult({
+            matchResultId: line.matchResult!.id,
+            resolution: 'CONFIRMED',
+            note: 'Confirmed as part of verifying this invoice.',
+            userId,
+            recomputeCarrier: carrierSupplierId === null,
+          });
+          if (!outcome.ok) {
+            throw Object.assign(
+              new Error(
+                `Line ${line.lineNumber} could not be confirmed: ` +
+                  ('detail' in outcome ? outcome.detail : outcome.code)
+              ),
+              { status: 409 }
+            );
+          }
+        }
+      } finally {
+        // Also when a line was refused part-way: the lines before it are
+        // confirmed and their loads claimed, which the others must now see.
+        if (carrierSupplierId) {
+          await recomputeCarrierLinesSafely(carrierSupplierId, `verifying invoice ${id}`);
         }
       }
     }
@@ -880,6 +1056,13 @@ export const InvoiceService = {
   },
 
   async linkOrderToLineItem(lineItemId: string, orderId: string, userId: string) {
+    // A quotation is a price given to a customer, not an order: nothing is
+    // billed against it (client, Oct 2026, Q3). The order picker no longer
+    // offers one; this refuses it for a screen open from before, as linking a
+    // ticket by hand already does.
+    const { refuseQuotationLine } = await import('../orders/quotations.js');
+    await refuseQuotationLine(prisma, orderId, 'an invoice line');
+
     // Clearing NO_ORDER is all this link earns. It used to set the flag to OK
     // outright, which also wiped a live RATE_MISMATCH or QTY_MISMATCH â€” so
     // attaching an order silently dismissed a price warning nobody had looked

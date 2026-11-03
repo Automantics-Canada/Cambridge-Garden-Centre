@@ -61,6 +61,14 @@ export const InvoiceLineItemSchema = z.object({
   totalPrice: z.number().nullable(),
   /** Line-level PO. Present on most supplier invoices, and more reliable than the header one. */
   poNumber: z.string().nullable(),
+  /**
+   * The ticket or load number a trucking invoice prints for this line (one
+   * line per load or per trip). Null on a material invoice, which lists
+   * products rather than loads.
+   */
+  ticketNumber: z.string().nullable(),
+  /** ISO `YYYY-MM-DD`: the day this line's load or trip was hauled, where the line prints one. */
+  serviceDate: z.string().nullable(),
 });
 export type InvoiceLineItemExtraction = z.infer<typeof InvoiceLineItemSchema>;
 
@@ -75,3 +83,13 @@ export const InvoiceExtractionSchema = z.object({
   uncertainFields: z.array(z.string()),
 });
 export type InvoiceExtraction = z.infer<typeof InvoiceExtractionSchema>;
+
+/** What one page of an emailed attachment is. See TRIAGE_PROMPT. */
+export const DocumentKindSchema = z.enum(['invoice', 'delivery_ticket', 'statement', 'credit_memo', 'other']);
+export type DocumentKind = z.infer<typeof DocumentKindSchema>;
+
+/** The triage answer: one kind per page, numbered from 1. Deliberately small. */
+export const DocumentTriageSchema = z.object({
+  pages: z.array(z.object({ page: z.number(), kind: DocumentKindSchema })),
+});
+export type DocumentTriage = z.infer<typeof DocumentTriageSchema>;

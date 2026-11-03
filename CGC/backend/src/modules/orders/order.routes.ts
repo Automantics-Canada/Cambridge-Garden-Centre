@@ -9,7 +9,7 @@ import {
   uploadErrorHandler,
 } from '../../middleware/uploadValidation.js';
 import { importSpruceReports, previewSpruceReport, REPORT_SLOTS } from './import/importBatch.controller.js';
-import { editOrder, getOrderEditor, resetOrderField } from './edits/orderEdits.controller.js';
+import { editOrder, getOrderEditor, markOrderNotQuotation, resetOrderField } from './edits/orderEdits.controller.js';
 import { rateLimit, limitConcurrency } from '../../middleware/rateLimit.js';
 import { UserRole } from '@prisma/client';
 
@@ -88,6 +88,8 @@ router.get('/documents', listOrderDocuments);
 router.get('/documents/:id', getOrderEditor);
 router.patch('/documents/:id', editOrder);
 router.post('/documents/:id/reset', resetOrderField);
+// The office says an order the import took for a quotation is a real one.
+router.post('/documents/:id/not-a-quotation', markOrderNotQuotation);
 
 // Step two of the Spruce import: merge the PO report onto documents already
 // imported from the delivery report, joined on document number. Same rate and

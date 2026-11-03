@@ -26,10 +26,21 @@ export const dayOfDeliveryDate = (date: Date) => date.toISOString().slice(0, 10)
 export const isPastDay = (day: string, today: string) => day < today;
 
 /**
- * Orders Spruce no longer lists as open: invoiced, closed or voided since.
- * They are waiting for nothing, so Carried over and Pickups leave them out.
+ * Orders Spruce no longer lists as open: invoiced, closed or voided since,
+ * or quotations that were never orders. They are waiting for nothing, so
+ * Carried over and Pickups leave them out. A quotation used to be flagged
+ * NOT_OPEN; now that it has its own flag it must stay out just the same.
  */
-const CLOSED_IN_SPRUCE: Prisma.OrderDocumentWhereInput = { flags: { has: 'NOT_OPEN' } };
+const CLOSED_IN_SPRUCE: Prisma.OrderDocumentWhereInput = { flags: { hasSome: ['NOT_OPEN', 'QUOTE'] } };
+
+/**
+ * A quotation in Spruce: a price given to a customer, never an order. The
+ * client asked for quotes to come off the dashboard, so no part of the board
+ * lists one, whatever date Item Tracking gave it. A closed order still shows
+ * on its own day (it may have gone out that day); a quotation never went
+ * anywhere, so it is left out of the days too, not only of the uploads.
+ */
+export const QUOTATION: Prisma.OrderDocumentWhereInput = { flags: { has: 'QUOTE' } };
 
 /**
  * Orders an upload described on `day`: first imported that day, or described
@@ -45,9 +56,17 @@ export function uploadedOnWhere(day: string): Prisma.OrderDocumentWhereInput {
   return { OR: [{ createdAt: range }, { lastBatch: { is: { createdAt: range } } }] };
 }
 
-/** Never dispatched, or dispatched and taken back. */
-const WITHOUT_DRIVER: Prisma.OrderDocumentWhereInput = {
-  OR: [{ delivery: null }, { delivery: { driverId: null } }],
+/**
+ * Never dispatched, or dispatched and taken back.
+ *
+ * A finished stop is history even when it has no driver: one delivered or
+ * cancelled and whose driver was then removed, or one marked done outside
+ * the app. Without the status check such an order came back into the pool
+ * every time a morning's upload described it again, which a rolling Item
+ * Tracking export does every day.
+ */
+export const WITHOUT_DRIVER: Prisma.OrderDocumentWhereInput = {
+  OR: [{ delivery: null }, { delivery: { driverId: null, status: { notIn: FINISHED_STATUSES } } }],
 };
 
 /**
@@ -62,11 +81,13 @@ const WITHOUT_DRIVER: Prisma.OrderDocumentWhereInput = {
  * being found by its date.
  *
  * Orders Spruce no longer lists as open are left out of the uploads: nobody
- * will deliver them. Pickups never wait for a driver.
+ * will deliver them. A quotation is left out altogether, even one Item
+ * Tracking dated today. Pickups never wait for a driver.
  */
 export function todayPoolWhere(today: string): Prisma.OrderDocumentWhereInput {
   return {
     isPickup: false,
+    NOT: QUOTATION,
     AND: [
       WITHOUT_DRIVER,
       {
@@ -96,16 +117,33 @@ export function carriedOverWhere(today: string): Prisma.OrderDocumentWhereInput 
     deliveryDate: { lt: deliveryDayDate(today) },
     isPickup: false,
     NOT: [CLOSED_IN_SPRUCE, uploadedOnWhere(today)],
-    OR: [
-      { delivery: null },
-      { delivery: { driverId: null, status: { notIn: FINISHED_STATUSES } } },
-    ],
+    ...WITHOUT_DRIVER,
   };
 }
 
-/** Orders due out after today. Pickups have no date, so never count. */
+/**
+ * The pool on any day but today: what is due out that day and has no driver.
+ * Past days are read-only, but list the same way, so a record of a day never
+ * shows a quotation either.
+ *
+ * @param day 'YYYY-MM-DD' in the yard's timezone
+ */
+export function dayPoolWhere(day: string): Prisma.OrderDocumentWhereInput {
+  return { deliveryDate: deliveryDayDate(day), isPickup: false, NOT: QUOTATION, ...WITHOUT_DRIVER };
+}
+
+/**
+ * Orders due out after today. Pickups have no date, so never count, and
+ * quotations are not orders. These are SQL counts, so the exclusion has to
+ * be here: the board's own filtering never reaches them.
+ */
 export function upcomingWhere(today: string): Prisma.OrderDocumentWhereInput {
-  return { deliveryDate: { gt: deliveryDayDate(today) }, isPickup: false };
+  return { deliveryDate: { gt: deliveryDayDate(today) }, isPickup: false, NOT: QUOTATION };
+}
+
+/** Of the orders due out after today, the ones that still need a driver. */
+export function upcomingWithoutDriverWhere(today: string): Prisma.OrderDocumentWhereInput {
+  return { ...upcomingWhere(today), ...WITHOUT_DRIVER };
 }
 
 /**
@@ -115,10 +153,16 @@ export function upcomingWhere(today: string): Prisma.OrderDocumentWhereInput {
  * would leave those deliveries on no screen at all.
  *
  * An order Spruce no longer lists as open, pickup or not, has been invoiced,
- * closed or voided; it is waiting for nothing, so it is left out.
+ * closed or voided, or was only ever a quotation; it is waiting for nothing,
+ * so it is left out. So is one whose stop was delivered (or marked done
+ * outside the app): it is done, with or without a date from Spruce.
+ *
+ * A cancelled stop is not the order's end. The customer may now collect it
+ * (Spruce makes it a pickup) or it waits for a new date, and no pool lists a
+ * pickup or a finished stop, so this list is the only screen left to show it.
  */
 const UNDATED: Prisma.OrderDocumentWhereInput = {
-  NOT: CLOSED_IN_SPRUCE,
+  NOT: [CLOSED_IN_SPRUCE, { delivery: { status: 'DELIVERED' } }],
   OR: [{ isPickup: true }, { deliveryDate: null }],
 };
 

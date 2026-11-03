@@ -1,7 +1,9 @@
 ﻿import { prisma } from '../../db/prisma.js';
+import { numberSearchKey } from '../../lib/ticketNumber.js';
 import { saveTicketImage } from '../../services/fileStorage.js';
 import { extractTicketFromUrl } from '../../services/extraction/extraction.service.js';
 import { triggerOcrProcessing } from '../../services/ocrJobProcessor.js';
+import { findSupplierForSender } from '../../services/knownSenders.js';
 import {
   TicketSource,
   TicketStatus,
@@ -23,21 +25,15 @@ async function findDriverIdByPhone(phone: string | undefined | null) {
   return driver?.id ?? null;
 }
 
-async function findSupplierIdByEmail(fromEmail: string | undefined | null) {
-  if (!fromEmail) return null;
-  const match = fromEmail.trim().toLowerCase().match(/@(.+)$/);
-  if (!match) return null;
-  const domain = match[1] as string;
-
-  const supplier = await prisma.supplier.findFirst({
-    where: {
-      emailDomains: {
-        has: domain,
-      },
-    },
-  });
-
-  return supplier?.id ?? null;
+/**
+ * The supplier an emailed ticket came from, by the same lookup the invoice
+ * inbox uses: an exact address, then the domain, never a free-mail domain.
+ * This used to take everything after the first `@` of the raw value, so
+ * `Stone <billing@stone.example>` looked up the domain `stone.example>` and
+ * found nothing, and a gmail.com domain on a supplier claimed every Gmail user.
+ */
+export async function findSupplierIdByEmail(fromEmail: string | undefined | null) {
+  return (await findSupplierForSender(fromEmail))?.id ?? null;
 }
 
 
@@ -63,17 +59,8 @@ export function escapeLikePattern(term: string): string {
   return term.replace(/[\\%_]/g, '\\$&');
 }
 
-/**
- * A ticket or PO number reduced to lower-case letters and digits.
- *
- * People type a number the way the paper prints it and the extraction stores it
- * the way it read it, so "T88213", "#t 88213" and "T-88213" must all find the
- * same ticket. Mirrors the trigger that fills `Ticket.numberSearchKey` in
- * migration 20260915120000_ticket_number_search_key; change both or neither.
- */
-export function numberSearchKey(term: string): string {
-  return term.replace(/[^A-Za-z0-9]+/g, '').toLowerCase();
-}
+/** The ticket-number search key; see lib/ticketNumber.ts. */
+export { numberSearchKey };
 
 /**
  * Single source of truth for ticket filtering.
@@ -113,6 +100,13 @@ export function buildTicketWhere(filters?: TicketFilters) {
   return where;
 }
 
+/** Which ticket this one is a copy of, and which copies it has: number and source only. */
+const TICKET_COPY_SELECT = {
+  duplicateOfTicketId: true,
+  duplicateOf: { select: { id: true, ticketNumber: true, source: true } },
+  copies: { select: { id: true, ticketNumber: true, source: true }, orderBy: { receivedAt: 'asc' as const }, take: 5 },
+};
+
 /**
  * Columns the tickets table actually renders.
  *
@@ -140,6 +134,10 @@ const TICKET_LIST_SELECT = {
   status: true,
   receivedAt: true,
   supplier: { select: { id: true, name: true } },
+  // A15: the supplier's emailed copy of a driver's ticket is stored as a
+  // second copy of it. The list says so on both rows, so nobody takes the
+  // two for two loads.
+  ...TICKET_COPY_SELECT,
 } as const;
 
 export const TicketService = {
@@ -187,15 +185,23 @@ export const TicketService = {
 
   /**
    * Ticket arrives via email: save file, create Ticket, queue OCR.
+   *
+   * The invoice inbox files the ticket pages a supplier attaches to an invoice
+   * email (A15) through here. It passes the supplier it already resolved from
+   * the original sender (never the AP mailbox that forwarded the email), and
+   * `emailSourceKey`, which names the attachment page so a retried poll cannot
+   * file it twice.
    */
   async ingestEmailTicket(params: {
     buffer: Buffer;
     originalName: string;
     fromEmail: string;
+    supplierId?: string | null | undefined;
+    emailSourceKey?: string | null;
   }) {
     const { imageUrl, thumbnailUrl } = await saveTicketImage(params.buffer, params.originalName);
 
-    const supplierId = await findSupplierIdByEmail(params.fromEmail);
+    const supplierId = params.supplierId ?? (await findSupplierIdByEmail(params.fromEmail));
 
     const ticket = await prisma.ticket.create({
       data: {
@@ -207,6 +213,7 @@ export const TicketService = {
         status: TicketStatus.UNLINKED,
         receivedAt: new Date(),
         supplierId: supplierId ?? null,
+        emailSourceKey: params.emailSourceKey ?? null,
       },
     });
 
@@ -345,6 +352,12 @@ export const TicketService = {
       // records a verdict and its evidence for the desk — so a failure here
       // must not undo a successful extraction.
       try {
+        // The same load may already be on file as another copy: the driver's
+        // photo of a ticket the supplier has now emailed, or the other way
+        // round (A15). Linked before matching, so the load is counted once.
+        const { linkTicketCopies } = await import('./ticketCopies.js');
+        const copies = await linkTicketCopies(ticketId);
+
         const { matchTicketById, recomputeInvoiceLinesSafely } = await import(
           '../matching/matching.service.js'
         );
@@ -353,12 +366,11 @@ export const TicketService = {
         // A load that has just been read changes what the invoice lines on its
         // PO are covered by, and nothing else would ever look at them again: an
         // invoice that arrived before its tickets stayed "no delivery ticket
-        // accounts for this line" permanently.
-        if (updatedTicket.poNumber) {
-          await recomputeInvoiceLinesSafely(
-            [updatedTicket.poNumber],
-            `ticket ${ticketId} read`
-          );
+        // accounts for this line" permanently. The POs of its other copies
+        // change too: one of them may have just stopped counting.
+        const poNumbers = [...new Set([updatedTicket.poNumber, ...copies.poNumbers].filter((po): po is string => Boolean(po)))];
+        if (poNumbers.length > 0) {
+          await recomputeInvoiceLinesSafely(poNumbers, `ticket ${ticketId} read`);
         }
       } catch (matchError) {
         console.error(`[Matching] Could not evaluate ticket ${ticketId}:`, matchError);
@@ -437,7 +449,9 @@ export const TicketService = {
         linkedOrder: true,
         orderMatches: {
           include: { order: true }
-        }
+        },
+        duplicateOf: TICKET_COPY_SELECT.duplicateOf,
+        copies: TICKET_COPY_SELECT.copies,
       },
     });
   },
@@ -445,9 +459,15 @@ export const TicketService = {
   /**
    * Update a ticket
    */
-  async updateTicket(id: string, data: any) {
+  async updateTicket(id: string, input: any) {
+    // Which copy of a load counts, and which email page a ticket came from,
+    // are decided by the copy linker and the inbox, never by a form.
+    const { duplicateOfTicketId: _copyOf, emailSourceKey: _source, ...data } = input ?? {};
     // If we're updating linkedOrderId manually, set linkMethod and status
     if (data.linkedOrderId && data.linkedOrderId !== undefined) {
+      // A quotation is not an order: nothing was delivered against it.
+      const { refuseQuotationLine } = await import('../orders/quotations.js');
+      await refuseQuotationLine(prisma, String(data.linkedOrderId), 'a ticket');
       data.status = TicketStatus.LINKED;
       data.linkMethod = 'MANUAL';
     } else if (data.linkedOrderId === null) {
@@ -455,10 +475,28 @@ export const TicketService = {
       data.linkMethod = null;
     }
 
-    return prisma.ticket.update({
+    const updated = await prisma.ticket.update({
       where: { id },
       data,
     });
+
+    // A corrected ticket number or supplier can make this ticket a copy of
+    // another load, or stop it being one; so can the PO, where one of the two
+    // copies has no supplier (ticketCopies.sameLoadCopies).
+    if ('ticketNumber' in data || 'supplierId' in data || 'ticketDate' in data || 'poNumber' in data) {
+      try {
+        const { linkTicketCopies } = await import('./ticketCopies.js');
+        const copies = await linkTicketCopies(id);
+        if (copies.changed && copies.poNumbers.length > 0) {
+          const { recomputeInvoiceLinesSafely } = await import('../matching/matching.service.js');
+          await recomputeInvoiceLinesSafely(copies.poNumbers, `ticket ${id} edited`);
+        }
+      } catch (error) {
+        console.error(`[Tickets] Could not re-check copies of ticket ${id}:`, error);
+      }
+    }
+
+    return updated;
   },
 
   async unlinkTicketFromOrder(ticketId: string, orderId: string) {
@@ -500,6 +538,9 @@ export const TicketService = {
   },
 
   async linkTicketToOrder(ticketId: string, orderId: string, userId?: string) {
+    // A quotation is not an order: nothing was delivered against it.
+    const { refuseQuotationLine } = await import('../orders/quotations.js');
+    await refuseQuotationLine(prisma, orderId, 'a ticket');
     // Create junction record
     await prisma.ticketOrderMatch.upsert({
       where: {

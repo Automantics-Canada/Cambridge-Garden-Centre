@@ -1,7 +1,7 @@
 import { prisma } from '../../db/prisma.js';
 import { DeliveryStatus, type Prisma } from '@prisma/client';
 import supabaseStorage from '../../services/supabaseStorage.js';
-import { DISPATCH_DOCUMENT_SELECT, fulfilmentByDocument, pickupFromOf } from '../dispatch/dispatchOrderView.js';
+import { DISPATCH_DOCUMENT_SELECT, driverPickupsOf, fulfilmentByDocument, pickupFromOf } from '../dispatch/dispatchOrderView.js';
 import { deliveryDayDate } from '../dispatch/dispatchDays.js';
 import { businessDayOf } from '../../lib/businessDay.js';
 import { saveTicketImage } from '../../services/fileStorage.js';
@@ -183,15 +183,18 @@ export const DeliveriesService = {
       : null;
 
     const documentId = current?.document?.id ?? null;
-    const [pickupFrom, fulfilment] = current
-      ? await Promise.all([
-        pickupFromOf(prisma, { documentId, orderId: current.orderId }),
-        documentId ? fulfilmentByDocument(prisma, [documentId]) : Promise.resolve(new Map()),
-      ])
-      : [[], new Map()];
-    // A pit no supplier PO names (721420's "PitBlk"): the driver must not be
-    // told CGC's yard. Only that yes or no reaches the driver, never more.
-    const how = documentId ? fulfilment.get(documentId) : undefined;
+    // Where to load comes from how the order reaches the customer, so the
+    // driver goes where the office board says: the FOB yard of an order
+    // dispatch sent a truck for, the pit dispatch chose, the suppliers on
+    // the POs. A stop made before orders were dispatched whole has only its
+    // line to go on.
+    const how = documentId ? (await fulfilmentByDocument(prisma, [documentId])).get(documentId) : undefined;
+    const pickupFrom = !current ? []
+      : documentId ? driverPickupsOf(how)
+      : await pickupFromOf(prisma, { documentId: null, orderId: current.orderId });
+    // A pit nobody named (721420's "PitBlk", no PO, no pit set by dispatch):
+    // the driver must not be told CGC's yard. Only that yes or no reaches the
+    // driver, never more.
     const pickupAtPit = how?.type === 'supplier_haul_delivery' && pickupFrom.length === 0;
 
     return {

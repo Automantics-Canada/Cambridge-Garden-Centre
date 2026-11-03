@@ -44,6 +44,11 @@ export function formFromOrder(order) {
       { product: line.product ?? '', quantity: quantityText(line.quantity) },
     ])),
     dispatcherNotes: order.dispatcherNotes ?? '',
+    // Dispatch's own choices: how the order reaches the customer, and where
+    // it is loaded. Empty means "as the reports say" and "no pit chosen".
+    fulfilmentOverride: order.fulfilmentOverride ?? '',
+    pickupSupplierId: order.pickupSupplierId ?? '',
+    pickupLocation: order.pickupLocation ?? '',
   };
 }
 
@@ -76,7 +81,33 @@ export function editRequest(order, form) {
 
   if (!same(form.dispatcherNotes, original.dispatcherNotes)) request.dispatcherNotes = form.dispatcherNotes;
 
+  if (!same(form.fulfilmentOverride, original.fulfilmentOverride)) request.fulfilmentOverride = form.fulfilmentOverride;
+  if (!same(form.pickupSupplierId, original.pickupSupplierId)) request.pickupSupplierId = form.pickupSupplierId;
+  // A yard of no supplier means nothing: clearing the supplier clears it too.
+  const location = form.pickupSupplierId ? form.pickupLocation : '';
+  if (!same(location, original.pickupLocation)) request.pickupLocation = location;
+
   return Object.keys(request).length > 0 ? request : null;
+}
+
+/**
+ * The suppliers to offer as the pit to load at: the active list, plus the
+ * one already chosen if it has since left that list, so the form never shows
+ * a choice it cannot name.
+ *
+ * Trucking companies are left out (client, Q5: dispatch picks the pit the
+ * material comes from; the hauler is set on the load). One already chosen is
+ * still shown, so the form can name it and the office can change it.
+ */
+export function pitOptions(suppliers, order) {
+  const list = (suppliers ?? [])
+    .filter(({ type }) => type !== 'TRUCKING_COMPANY')
+    .map(({ id, name }) => ({ value: id, label: name }));
+  const chosen = order?.pickupSupplier;
+  if (chosen?.id && !list.some((option) => option.value === chosen.id)) {
+    list.push({ value: chosen.id, label: chosen.name });
+  }
+  return [{ value: '', label: 'None chosen' }, ...list];
 }
 
 /** The correction on a field, if it has one. `lineId` null for the order's own. */
@@ -114,3 +145,16 @@ export function updateNote(update, field) {
   if (update.field === 'lineRemoved') return "Not in today's upload: Spruce took this item off the order.";
   return `Updated by today's upload (was ${wasText(update, field)}).`;
 }
+
+/**
+ * Whether the order editor offers "Not a quotation": only on an order the
+ * import flagged a quotation, and never on a past day's read-only view.
+ */
+export const canMarkNotQuotation = (order, readOnly = false) =>
+  !readOnly && (order?.flags ?? []).includes('QUOTE');
+
+/** The question asked before saying an order is not a quotation. */
+export const notQuotationConfirm = (order) =>
+  `Mark ${order?.documentNumber ?? 'this order'} as a real order, not a quotation? ` +
+  'It goes back on the board and its lists, and later uploads will not call it a quotation again. ' +
+  'If it was already delivered, use "Done outside the app" too.';

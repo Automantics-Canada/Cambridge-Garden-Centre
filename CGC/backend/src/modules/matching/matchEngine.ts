@@ -42,8 +42,22 @@ export interface MatchCheck {
     | 'rate'
     | 'ticketCoverage'
     | 'ticketReuse'
-    | 'duplicateBilling';
+    | 'duplicateBilling'
+    | 'copiesAgree'
+    | 'billerTicketsOnly'
+    // A trucking invoice line against the dispatch load it bills (haulMatch.ts).
+    | 'haulLoad'
+    | 'haulRate'
+    | 'haulQuantity'
+    | 'haulTrip'
+    | 'loadReuse';
   passed: boolean;
+  /**
+   * Which problem a failed haul check found, for the desk's wording and for
+   * the gates that refuse a payment (resolveMatch.ts). Absent on the material
+   * checks, whose name already says it.
+   */
+  code?: HaulCheckCode;
   /** A sentence naming what was compared and what came back. */
   detail: string;
   expected?: string | number | null;
@@ -51,6 +65,16 @@ export interface MatchCheck {
   /** Signed difference where both sides were numbers and comparable. */
   delta?: number;
 }
+
+/** What a failed trucking-invoice check found. See haulMatch.ts. */
+export type HaulCheckCode =
+  | 'NO_LOAD_FOUND'
+  | 'RATE_MISMATCH'
+  | 'NO_RATE_SET'
+  | 'TRIP_RATES_DIFFER'
+  | 'TRIP_SPANS_DAYS'
+  | 'UNIT_MISMATCH'
+  | 'LOAD_ALREADY_CLAIMED';
 
 export interface MatchDecision {
   status: MatchStatus;
@@ -66,6 +90,11 @@ export interface MatchDecision {
   reason: string;
   /** Set for an invoice line, null for a ticket, which has no such columns. */
   totals: LineTotals | null;
+  /**
+   * The dispatch loads a trucking invoice line's verdict counted, which a
+   * resolution claims. Absent (no loads) for every other subject.
+   */
+  loadIds?: string[];
 }
 
 export interface CandidateOrder {
@@ -78,6 +107,11 @@ export interface CandidateOrder {
   /** Null for an order only the delivery report has seen; it prints no entry date. */
   orderDate: Date | null;
   deliveryDate?: Date | null;
+  /**
+   * Spruce's item code for the line, e.g. `SOILGRDNA`. Lets an agreed rate be
+   * found by code when the invoice words the product differently.
+   */
+  spruceItemNumber?: string | null;
 }
 
 /**
@@ -112,6 +146,12 @@ export interface InvoiceLineSubject {
   unitRate: number | null;
   supplierId: string | null;
   invoiceDate: Date | null;
+  /**
+   * The supplier's own code for the product, where the invoice prints one and
+   * it was read. Invoice extraction does not read it yet, so this is usually
+   * absent; when present it must agree with the rate's.
+   */
+  supplierItemCode?: string | null;
 }
 
 /**
@@ -153,6 +193,158 @@ export interface DeliveredTicket {
   supplierId: string | null;
   /** Set when somebody has already paid a line against this load. */
   claim: TicketClaimRef | null;
+  /**
+   * Set on a second copy of a load: the copy that counts instead
+   * (Ticket.duplicateOfTicketId). Absent or null on the copy that counts.
+   */
+  duplicateOfTicketId?: string | null;
+  /**
+   * True for a copy the supplier emailed with its invoice (A15). The supplier
+   * writes the invoice, so its own copy is not independent evidence the way
+   * the driver's photo is. Absent means false.
+   */
+  emailedBySupplier?: boolean;
+  /** The ticket's date, for comparing two copies of one load. */
+  ticketDate?: Date | null;
+}
+
+/** One load and every copy of its ticket on file. */
+interface Load {
+  /**
+   * The copy that is counted, carrying the claim of whichever copy has one,
+   * and any field it could not show taken from another copy (`filled`).
+   */
+  counted: DeliveredTicket;
+  /** Every copy as it was read, the counted one included. */
+  copies: DeliveredTicket[];
+  /** What the counted copy did not show and another copy supplied, e.g. "PO". */
+  filled: string[];
+  /**
+   * The quantity counted came from the supplier's emailed copy: the driver's
+   * photo did not show one. The load is real, but the figure it is paid on is
+   * the biller's own.
+   */
+  billerQuantity: boolean;
+}
+
+/**
+ * The counted copy with its gaps filled from the other copies, driver copies
+ * first. A driver's photo whose PO or quantity could not be read is still the
+ * same paper as the supplier's copy that shows it: left blank, the load fell
+ * off its PO, the line read "no delivery ticket", and the copies-agree check
+ * said the load had been counted when it had not. Only blanks are filled; a
+ * value the counted copy does show is never replaced (that is a disagreement,
+ * reported by copyDisagreements).
+ */
+function fillGaps(
+  counted: DeliveredTicket,
+  copies: readonly DeliveredTicket[]
+): { ticket: DeliveredTicket; filled: string[]; billerQuantity: boolean } {
+  const ticket = { ...counted };
+  const filled: string[] = [];
+  let billerQuantity = false;
+  const donors = copies
+    .filter((copy) => copy.id !== counted.id)
+    .sort((a, b) => Number(a.emailedBySupplier === true) - Number(b.emailedBySupplier === true));
+  for (const donor of donors) {
+    if (!ticket.poNumber && donor.poNumber) {
+      ticket.poNumber = donor.poNumber;
+      filled.push('PO');
+    }
+    if (ticket.quantity === null && donor.quantity !== null) {
+      // A quantity means nothing without its unit, so the two travel together.
+      ticket.quantity = donor.quantity;
+      ticket.unit = donor.unit;
+      filled.push('quantity');
+      billerQuantity = donor.emailedBySupplier === true;
+    }
+    if (!ticket.material && donor.material) {
+      ticket.material = donor.material;
+      filled.push('material');
+    }
+    if (!ticket.supplierId && donor.supplierId) {
+      ticket.supplierId = donor.supplierId;
+      filled.push('supplier');
+    }
+    if (!ticket.ticketDate && donor.ticketDate) {
+      ticket.ticketDate = donor.ticketDate;
+      filled.push('date');
+    }
+  }
+  return { ticket, filled, billerQuantity };
+}
+
+/**
+ * Groups the tickets into loads, so a load the driver photographed and the
+ * supplier also emailed is counted once.
+ *
+ * The copy counted is the driver's (any copy that did not come by email),
+ * else the one the others point at. A claim on any copy is the load's claim:
+ * a load paid through the supplier's copy is spent, and its driver's copy
+ * must not pay a second invoice. A claim by another line wins over this
+ * line's own, so the check below errs towards "already paid".
+ */
+export function groupLoads(tickets: ReadonlyArray<DeliveredTicket>, lineId: string): Load[] {
+  const byRoot = new Map<string, DeliveredTicket[]>();
+  for (const ticket of tickets) {
+    const root = ticket.duplicateOfTicketId ?? ticket.id;
+    byRoot.set(root, [...(byRoot.get(root) ?? []), ticket]);
+  }
+  return [...byRoot.entries()].map(([root, copies]) => {
+    const counted =
+      copies.find((copy) => copy.id === root && !copy.emailedBySupplier) ??
+      copies.find((copy) => !copy.emailedBySupplier) ??
+      copies.find((copy) => copy.id === root) ??
+      copies[0]!;
+    const claims = copies.map((copy) => copy.claim).filter((claim): claim is TicketClaimRef => claim != null);
+    const claim = claims.find((entry) => entry.invoiceLineId !== lineId) ?? claims[0] ?? null;
+    const { ticket, filled, billerQuantity } = fillGaps(counted, copies);
+    return { counted: { ...ticket, claim }, copies, filled, billerQuantity };
+  });
+}
+
+function copyName(ticket: DeliveredTicket): string {
+  return ticket.emailedBySupplier ? "the supplier's emailed copy" : "the driver's copy";
+}
+
+function isoDay(date: Date | null | undefined): string | null {
+  return date ? date.toISOString().slice(0, 10) : null;
+}
+
+/**
+ * Where the other copies of a load say something different from the copy
+ * that is counted: quantity, date or PO. Empty when they agree. Each entry is
+ * a phrase for a person.
+ */
+export function copyDisagreements(load: Load, tolerancePct: number): string[] {
+  // Compared as read: a field the counted copy borrowed is not a second opinion.
+  const base = load.copies.find((copy) => copy.id === load.counted.id) ?? load.counted;
+  const found: string[] = [];
+  for (const other of load.copies) {
+    if (other.id === base.id) continue;
+    if (base.quantity !== null && other.quantity !== null) {
+      const units = compareUnits(other.unit, base.unit);
+      if (units.comparable) {
+        if (!withinTolerance(percentDifference(base.quantity, other.quantity), tolerancePct)) {
+          found.push(
+            `quantity ${other.quantity} ${other.unit ?? ''} on ${copyName(other)} against ${base.quantity} ${base.unit ?? ''} on ${copyName(base)}`
+              .replace(/\s+/g, ' ')
+          );
+        }
+      } else if (units.reason === 'DIFFERENT') {
+        found.push(`unit ${other.unit} on ${copyName(other)} against ${base.unit} on ${copyName(base)}`);
+      }
+    }
+    const baseDay = isoDay(base.ticketDate);
+    const otherDay = isoDay(other.ticketDate);
+    if (baseDay && otherDay && baseDay !== otherDay) {
+      found.push(`dated ${otherDay} on ${copyName(other)} against ${baseDay} on ${copyName(base)}`);
+    }
+    if (base.poNumber && other.poNumber && !onSamePo(base.poNumber, other.poNumber)) {
+      found.push(`PO ${other.poNumber} on ${copyName(other)} against ${base.poNumber} on ${copyName(base)}`);
+    }
+  }
+  return found;
 }
 
 /**
@@ -203,6 +395,59 @@ export interface AgreedRate {
   productName: string;
   rate: number;
   unit: string;
+  /** The Spruce item code the price list gave for this product, if any. */
+  spruceItemCode?: string | null;
+  /** The supplier's own code for it, if any. */
+  supplierItemCode?: string | null;
+}
+
+/** Item codes compared the way Spruce prints them: case and spacing ignored. */
+function itemCodeKey(code: string | null | undefined): string | null {
+  const key = (code ?? '').replace(/\s+/g, '').toUpperCase();
+  return key || null;
+}
+
+/**
+ * Spruce's catch-all codes. MISC carries unrelated items under one code
+ * (Quikrete and grout on the same order, both MISC), and MISCDEL* are
+ * delivery charges, so a code like this says nothing about which product was
+ * bought and is never used to find a rate.
+ */
+function isCatchAllCode(key: string): boolean {
+  return key.startsWith('MISC');
+}
+
+/**
+ * Agreed rates for the matched order line's Spruce item code.
+ *
+ * The fallback for when the invoice words the product in a way no rate or
+ * alias recognises: supplier invoices rarely print Spruce's description, but a
+ * price list can carry the Spruce code, and the order line always does. Only
+ * the supplier's own rates are ever passed in (the caller loads them by the
+ * invoice's supplier), and the order line must be that supplier's too, so a
+ * code on another supplier's PO never borrows this supplier's price.
+ */
+function ratesByItemCode(
+  line: InvoiceLineSubject,
+  order: CandidateOrder | null,
+  agreedRates: ReadonlyArray<AgreedRate>
+): { code: string | null; catchAll: boolean; rates: AgreedRate[] } {
+  const code = itemCodeKey(order?.spruceItemNumber);
+  if (!order || !code) return { code: null, catchAll: false, rates: [] };
+  if (isCatchAllCode(code)) return { code, catchAll: true, rates: [] };
+  if (!line.supplierId || order.supplierId !== line.supplierId) {
+    return { code, catchAll: false, rates: [] };
+  }
+
+  const lineSupplierCode = itemCodeKey(line.supplierItemCode);
+  const rates = agreedRates.filter((rate) => {
+    if (itemCodeKey(rate.spruceItemCode) !== code) return false;
+    // Both sides name the supplier's own code and they differ: the price list
+    // is talking about another of the supplier's products under this code.
+    const rateSupplierCode = itemCodeKey(rate.supplierItemCode);
+    return !(lineSupplierCode && rateSupplierCode && lineSupplierCode !== rateSupplierCode);
+  });
+  return { code, catchAll: false, rates };
 }
 
 /** A confirmed mapping from a supplier's wording to a CGC product. */
@@ -253,7 +498,7 @@ function daysBetween(a: Date, b: Date): number {
  * broken system rather than as the data problem it actually is. Every caller
  * checks `Number.isFinite` and says what happened in words instead.
  */
-function percentDifference(expected: number, found: number): number {
+export function percentDifference(expected: number, found: number): number {
   if (expected === 0) return found === 0 ? 0 : Infinity;
   return Math.abs((found - expected) / expected) * 100;
 }
@@ -265,7 +510,7 @@ function percentDifference(expected: number, found: number): number {
  * evaluates to 2.0000000000000018 percent, and rejecting a load for the
  * eighteenth decimal place would be indefensible to the person reading it.
  */
-function withinTolerance(differencePct: number, tolerancePct: number): boolean {
+export function withinTolerance(differencePct: number, tolerancePct: number): boolean {
   return differencePct <= tolerancePct + 1e-9;
 }
 
@@ -663,13 +908,29 @@ export function matchInvoiceLine(
   // overcharge. The rate that can actually be compared is preferred; if none
   // can, the first is still reported, so the evidence names a real agreed
   // price rather than saying nothing is on file.
-  const forProduct = productName
+  //
+  // The product's wording, or a confirmed alias for it, is tried first: it is
+  // what a person entered the rate against. Only when that finds nothing is
+  // the matched order line's Spruce item code tried, and the evidence then
+  // says the rate was found by code so the desk can see why it applies.
+  const byWording = productName
     ? inputs.agreedRates.filter(
         (rate) => normalizeProductName(rate.productName) === productName
       )
     : [];
-  const agreed =
-    forProduct.find((rate) => compareUnits(line.unit, rate.unit).comparable) ?? forProduct[0];
+  const byCode =
+    byWording.length > 0
+      ? { code: null, catchAll: false, rates: [] as AgreedRate[] }
+      : ratesByItemCode(line, order, inputs.agreedRates);
+  const foundByCode = byWording.length === 0 && byCode.rates.length > 0;
+  const forProduct = foundByCode ? byCode.rates : byWording;
+  const comparableRates = forProduct.filter((rate) => compareUnits(line.unit, rate.unit).comparable);
+  // Two products on one price list given the same Spruce code, at different
+  // prices: picking one would be a guess about which price applies.
+  const codeAmbiguous =
+    foundByCode && new Set(comparableRates.map((rate) => rate.rate)).size > 1;
+  const agreed = codeAmbiguous ? undefined : comparableRates[0] ?? forProduct[0];
+  const via = foundByCode && byCode.code ? `, found by item code ${byCode.code}` : '';
 
   /** Filled in as the checks below run; see LineTotals for why it exists. */
   const totals: LineTotals = {
@@ -679,18 +940,29 @@ export function matchInvoiceLine(
     rateUnitMismatch: false,
   };
 
-  if (!agreed) {
+  if (codeAmbiguous) {
     checks.push({
       name: 'rate',
       passed: false,
-      detail: 'No agreed rate is on file for this product, so the price was not checked',
+      detail: `${comparableRates.length} agreed rates share item code ${byCode.code} at different prices, so the price was not checked`,
+      found: line.unitRate,
+    });
+  } else if (!agreed) {
+    checks.push({
+      name: 'rate',
+      passed: false,
+      detail: byCode.catchAll
+        ? `No agreed rate is on file for this product, so the price was not checked (item code ${byCode.code} is a catch-all and was not used)`
+        : 'No agreed rate is on file for this product, so the price was not checked',
       found: line.unitRate,
     });
   } else if (line.unitRate === null) {
     checks.push({
       name: 'rate',
       passed: false,
-      detail: 'No rate could be read from the invoice line',
+      // Said as the agreed rate's provenance: "the line, found by item code"
+      // would read as though the invoice line had been found that way.
+      detail: `No rate could be read from the invoice line${via ? ` (the agreed rate was ${via.slice(2)})` : ''}`,
       expected: agreed.rate,
     });
   } else {
@@ -702,7 +974,7 @@ export function matchInvoiceLine(
       checks.push({
         name: 'rate',
         passed: false,
-        detail: `The agreed rate is per ${agreed.unit} and the line is billed per ${line.unit ?? 'an unrecorded unit'}, so the price was not checked`,
+        detail: `The agreed rate${via ? ` (${via.slice(2)})` : ''} is per ${agreed.unit} and the line is billed per ${line.unit ?? 'an unrecorded unit'}, so the price was not checked`,
         expected: agreed.rate,
         found: line.unitRate,
       });
@@ -718,10 +990,10 @@ export function matchInvoiceLine(
         name: 'rate',
         passed,
         detail: passed
-          ? 'Billed rate matches the agreed rate'
+          ? `Billed rate matches the agreed rate${via}`
           : Number.isFinite(difference)
-            ? `Billed at ${line.unitRate} against an agreed ${agreed.rate} per ${agreed.unit}, ${difference.toFixed(1)}% above the ${inputs.tolerances.priceTolerancePct}% allowed`
-            : `Billed at ${line.unitRate} against an agreed rate of 0 per ${agreed.unit}, which cannot be expressed as a percentage`,
+            ? `Billed at ${line.unitRate} against an agreed ${agreed.rate} per ${agreed.unit}${via}, ${difference.toFixed(1)}% above the ${inputs.tolerances.priceTolerancePct}% allowed`
+            : `Billed at ${line.unitRate} against an agreed rate of 0 per ${agreed.unit}${via}, which cannot be expressed as a percentage`,
         expected: agreed.rate,
         found: line.unitRate,
         delta,
@@ -738,10 +1010,15 @@ export function matchInvoiceLine(
   // grading both of its invoice lines against one combined total. The
   // exclusions are named in the detail rather than applied silently: a load
   // that was left out is exactly the thing a person needs told about.
+  //
+  // Two copies of one load (the driver's photo and the supplier's emailed
+  // copy, A15) are one load: only the counted copy takes part from here on.
+  const loads = groupLoads(inputs.tickets, line.id);
+  const countedTickets = loads.map((load) => load.counted);
   const onLinePo =
     line.poNumber === null
       ? []
-      : inputs.tickets.filter((ticket) => onSamePo(ticket.poNumber, line.poNumber));
+      : countedTickets.filter((ticket) => onSamePo(ticket.poNumber, line.poNumber));
 
   // A bare six digit line is compatible with every prefix, so once the order
   // has been identified by its PO, a ticket printing a *different* prefix is a
@@ -814,6 +1091,24 @@ export function matchInvoiceLine(
     exclusions.push(
       `${materialUnknown.length} counted ticket${materialUnknown.length === 1 ? '' : 's'} ` +
         `${materialUnknown.length === 1 ? 'does' : 'do'} not say what ${materialUnknown.length === 1 ? 'it was' : 'they were'} carrying`
+    );
+  }
+  // Loads this line counts, and loads whose copies touch its PO although the
+  // copy that counts does not: both are this line's business when copies
+  // disagree.
+  const loadsHere = loads.filter(
+    (load) =>
+      load.copies.length > 1 &&
+      (relevant.includes(load.counted) ||
+        (line.poNumber !== null && load.copies.some((copy) => onSamePo(copy.poNumber, line.poNumber))))
+  );
+  const secondCopies = loadsHere
+    .filter((load) => relevant.includes(load.counted))
+    .reduce((total, load) => total + load.copies.length - 1, 0);
+  if (secondCopies > 0) {
+    exclusions.push(
+      `${secondCopies} second cop${secondCopies === 1 ? 'y' : 'ies'} of ${secondCopies === 1 ? 'a load' : 'loads'} already counted ` +
+        `${secondCopies === 1 ? 'was' : 'were'} not counted again`
     );
   }
   if (supplierUnknown.length > 0) {
@@ -918,6 +1213,69 @@ export function matchInvoiceLine(
   }
 
   const coveragePassed = checks.find((check) => check.name === 'ticketCoverage')?.passed === true;
+
+  // Two copies of one load must say the same thing. When they do not, the
+  // driver's copy is the one counted (a person at the yard signed it) and the
+  // difference is put in front of a person rather than settled silently.
+  if (loadsHere.length > 0) {
+    const disagreeing = loadsHere
+      .map((load) => ({ load, found: copyDisagreements(load, inputs.tolerances.quantityTolerancePct) }))
+      .filter((entry) => entry.found.length > 0);
+    const name = (load: Load) => load.counted.ticketNumber ?? load.counted.id.slice(0, 6);
+    // Said out loud, so a person can see which reading came from the supplier.
+    const borrowed = loadsHere
+      .filter((load) => load.filled.length > 0)
+      .map((load) => `. Ticket ${name(load)}: ${copyName(load.copies.find((copy) => copy.id === load.counted.id) ?? load.counted)} did not show its ${load.filled.join(', ')}, so the other copy's was used`)
+      .join('');
+    checks.push({
+      name: 'copiesAgree',
+      passed: disagreeing.length === 0,
+      detail:
+        disagreeing.length === 0
+          ? `${loadsHere.length === 1 ? `Ticket ${name(loadsHere[0]!)} arrived` : `${loadsHere.length} tickets arrived`} twice (the driver's copy and the supplier's); the copies agree and each load was counted once` +
+            borrowed
+          : disagreeing
+              .map(({ load, found }) => `Ticket ${name(load)}: the copies disagree (${found.join('; ')}). ${copyName(load.counted).replace(/^the/, 'The')} was counted`)
+              .join('. ') + borrowed,
+      found: disagreeing.length,
+    });
+  }
+
+  // A line whose every counted load is backed only by the supplier's own
+  // emailed copy has no independent evidence: the company asking to be paid
+  // also supplied the proof. It is never passed automatically.
+  if (comparable.length > 0 && comparable.every((ticket) => ticket.emailedBySupplier === true)) {
+    checks.push({
+      name: 'billerTicketsOnly',
+      passed: false,
+      detail:
+        `Every ticket counted for this line was emailed by the supplier, and no driver photo backs ${comparable.length === 1 ? 'it' : 'them'}. ` +
+        'Check the load with the yard before paying.',
+      found: comparable.length,
+    });
+  } else {
+    // The driver's photo backs the load, but could not show its quantity, so
+    // the figure counted is the supplier's own. Counted all the same (the load
+    // happened), but the quantity the supplier is paid for is its own word,
+    // which is the case A15's rule is there for: a person checks it.
+    const billerFigures = loads.filter((load) => load.billerQuantity && comparable.includes(load.counted));
+    if (billerFigures.length > 0) {
+      const named = billerFigures
+        .map((load) => {
+          const { ticketNumber, id, quantity, unit } = load.counted;
+          return `${ticketNumber ?? id.slice(0, 6)} (${quantity}${unit ? ` ${unit}` : ''})`;
+        })
+        .join(', ');
+      checks.push({
+        name: 'billerTicketsOnly',
+        passed: false,
+        detail:
+          `The quantity of ticket ${named} is shown only on the supplier's emailed copy: the driver's photo does not show it. ` +
+          'Check the quantity with the yard before paying.',
+        found: billerFigures.length,
+      });
+    }
+  }
 
   // Reuse only *fails* when the remaining tickets cannot cover the line.
   //
