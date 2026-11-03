@@ -112,6 +112,9 @@ scopes. After a password change, repeat this step.
 
 ## 3. Railway variables — on BOTH the API and the worker service
 
+**When:** at step 6.2, once this version is the only one running. Prepare the
+values now, but leave the services' variables as they are until then.
+
 The API runs the pollers itself unless `WORKER_MODE=off`, and the worker
 always does (`src/workers/runtime.ts`). Only one of them reads the inbox at a
 time: a poll takes a lease (`SystemSetting` key `gmail.pollLease`), renews it
