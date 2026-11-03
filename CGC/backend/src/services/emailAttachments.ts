@@ -76,6 +76,7 @@ export const ATTACHMENT_REASONS = {
   duplicate: 'already read',
   readFailed: 'could not be read, after several tries',
   beforeCutoff: 'received before the inbox go-live date: not read',
+  ticketsNotSplit: 'several delivery tickets in one file the app could not split (locked or very long): file them by hand',
 } as const;
 
 /**
@@ -256,6 +257,8 @@ export function storedFileName(name: string, bytes: Buffer, kind?: AttachmentKin
 export type ReviewReason =
   /** Something was read, and another attachment needs a person (see below). */
   | 'PARTLY_READ'
+  /** A file of several delivery tickets that could not be split into one per ticket. */
+  | 'TICKETS_NOT_SPLIT'
   | 'UNKNOWN_SENDER'
   | 'UNRESOLVED_SENDER'
   | 'SPREADSHEET'
@@ -278,6 +281,7 @@ const NEEDS_A_PERSON = new Set<string>([
   ATTACHMENT_REASONS.mismatch,
   ATTACHMENT_REASONS.heic,
   ATTACHMENT_REASONS.sheetOfLoads,
+  ATTACHMENT_REASONS.ticketsNotSplit,
 ]);
 
 function needsPerson(record: AttachmentRecord): boolean {
@@ -306,6 +310,7 @@ export function attachmentReviewReason(records: readonly AttachmentRecord[]): Re
   if (records.some(r => r.kind === 'spreadsheet' && r.action === 'review')) return 'SPREADSHEET';
   if (records.some(r => r.pages?.some(p => p.kind === 'credit_memo'))) return 'CREDIT_MEMO';
   if (records.some(r => r.action === 'read')) return records.some(needsPerson) ? 'PARTLY_READ' : null;
+  if (records.some(r => r.reason === ATTACHMENT_REASONS.ticketsNotSplit)) return 'TICKETS_NOT_SPLIT';
   if (records.some(r => r.reason === ATTACHMENT_REASONS.unsupported || r.reason === ATTACHMENT_REASONS.mismatch || r.reason === ATTACHMENT_REASONS.heic)) {
     return 'UNSUPPORTED_ATTACHMENTS';
   }

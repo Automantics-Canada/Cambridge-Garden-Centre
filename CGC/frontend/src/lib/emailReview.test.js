@@ -58,6 +58,8 @@ describe('unrecognised senders panel', () => {
     });
     expect(splitQueue([partly]).manual).toEqual([partly]);
     expect(reviewReasonLabel('PARTLY_READ')).toBe('Partly read: enter the rest by hand');
+    expect(reviewReasonLabel('TICKETS_NOT_SPLIT')).toBe('Several tickets in one file: file them by hand');
+    expect(splitQueue([event({ reviewReason: 'TICKETS_NOT_SPLIT' })]).manual).toHaveLength(1);
     expect(sortedAttachments(partly.attachments).map(describeAttachment)).toEqual([
       'invoice-1.pdf · already an invoice in the list',
       'invoice-2.heic · iPhone photo format (HEIC) the reader does not take; send it as JPG or PDF',

@@ -1449,6 +1449,60 @@ describe('sorting pages before anything is created (A15)', () => {
     assert.equal(events.get(id).attachments[0].reason, ATTACHMENT_REASONS.sortFailed);
   });
 
+  // An owner-password PDF from a billing system, or one too long to split:
+  // the file used to be filed as one ticket, which is page 1 only, and the
+  // other tickets were lost with the email marked processed.
+  async function encryptedPdfWith(labels: string[]): Promise<Buffer> {
+    const pdf = await PDFDocument.create();
+    for (const label of labels) pdf.addPage([300, 200]).drawText(label, { x: 20, y: 100, size: 12 });
+    pdf.context.trailerInfo.Encrypt = pdf.context.register(pdf.context.obj({ Filter: 'Standard', V: 1, R: 2, P: -4 }));
+    return Buffer.from(await pdf.save({ useObjectStreams: false }));
+  }
+
+  it('several tickets in a file that cannot be split wait for a person; none is filed from page 1 alone', async () => {
+    triageAnswer = () => ['delivery_ticket', 'delivery_ticket', 'delivery_ticket'];
+    const id = addMessage({ attachments: [{ filename: 'tickets-oct.pdf', content: await encryptedPdfWith(['T 601', 'T 602', 'T 603']) }] });
+    await GmailService.pollInvoices(config());
+
+    assert.equal(tickets.size, 0);
+    assert.equal(invoices.size, 0);
+    const event = events.get(id);
+    assert.equal(event.status, 'NEEDS_REVIEW');
+    assert.equal(event.reviewReason, 'TICKETS_NOT_SPLIT');
+    assert.equal(event.attachments[0].action, 'review');
+    assert.equal(event.attachments[0].reason, ATTACHMENT_REASONS.ticketsNotSplit);
+    assert.ok(labelsOf(id).includes('cgc-review'));
+  });
+
+  it('a damaged multi-page file the sorter calls tickets waits for a person too', async () => {
+    // The default attachment is not a PDF pdf-lib can open: no page count.
+    triageAnswer = () => ['delivery_ticket', 'delivery_ticket'];
+    const id = addMessage();
+    await GmailService.pollInvoices(config());
+    assert.equal(tickets.size, 0);
+    assert.equal(events.get(id).reviewReason, 'TICKETS_NOT_SPLIT');
+  });
+
+  it('an invoice with tickets behind it that cannot be split is read whole; the tickets wait for a person', async () => {
+    triageAnswer = () => ['invoice', 'delivery_ticket', 'delivery_ticket'];
+    const id = addMessage({ attachments: [{ filename: 'invoice-90020.pdf', content: await encryptedPdfWith(['INV', 'T 701', 'T 702']) }] });
+    await GmailService.pollInvoices(config());
+
+    assert.deepEqual([...invoices.keys()], [`${id}:1`]);
+    assert.equal(tickets.size, 0);
+    const event = events.get(id);
+    assert.equal(event.reviewReason, 'PARTLY_READ');
+    assert.equal(event.attachments[0].invoiceId, 'inv-1');
+    assert.equal(event.attachments[0].reason, ATTACHMENT_REASONS.ticketsNotSplit);
+  });
+
+  it('a one-page ticket that cannot be opened is still filed as one ticket', async () => {
+    triageAnswer = () => ['delivery_ticket'];
+    addMessage();
+    await GmailService.pollInvoices(config());
+    assert.equal(tickets.size, 1);
+  });
+
   it('a retried email never files the same ticket page twice', async () => {
     triageAnswer = () => ['invoice', 'delivery_ticket'];
     const id = addMessage({ attachments: [{ filename: 'invoice-90012.pdf', content: await pdfWith(['INV', 'TICKET 504']) }] });

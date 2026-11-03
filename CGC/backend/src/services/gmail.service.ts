@@ -37,7 +37,7 @@ import {
 } from './extraction/extraction.service.js';
 import type { DocumentTriage } from './extraction/schemas.js';
 import { describePages, planPages, unsortedPlan, type PagePlan } from './emailTriage.js';
-import { extractPdfPages, MAX_SPLIT_PAGES, pdfPageCount } from '../lib/pdfPages.js';
+import { extractPdfPages, inspectPdf, MAX_SPLIT_PAGES } from '../lib/pdfPages.js';
 import { detectFileKind } from '../middleware/uploadValidation.js';
 import { detectSpreadsheetKind } from '../lib/spreadsheet.js';
 import {
@@ -980,13 +980,24 @@ export class GmailService {
     outcome: ReadOutcome
   ): Promise<AttachmentRecord> {
     const mimeType = readableMimeType(record, buffer);
-    const pageCount = record.kind === 'pdf' ? await pdfPageCount(buffer) : null;
-    const splittable = pageCount !== null && pageCount > 1 && pageCount <= MAX_SPLIT_PAGES;
+    const pdf = record.kind === 'pdf' ? await inspectPdf(buffer) : { pageCount: null, encrypted: false };
+    const pageCount = pdf.pageCount;
+    const splittable = pageCount !== null && pageCount > 1 && pageCount <= MAX_SPLIT_PAGES && !pdf.encrypted;
 
     let plan: PagePlan;
     let note: string | null = null;
+    /** Pages the sorter called tickets in a file of several pages that cannot be split. */
+    let ticketsTrapped = false;
     try {
-      plan = planPages(await this.triage(buffer, mimeType, record.name || 'attachment'), splittable ? pageCount : null);
+      const triage = await this.triage(buffer, mimeType, record.name || 'attachment');
+      plan = planPages(triage, splittable ? pageCount : null);
+      // Handled whole, a file of several tickets would become one ticket from
+      // its first page (only page 1 is rendered for OCR), and the rest would
+      // be lost. Its pages are counted when pdf-lib can read the page tree,
+      // else taken from the sorter's answer.
+      const pages = pageCount ?? new Set((triage.pages ?? []).map((p) => Math.trunc(p.page))).size;
+      ticketsTrapped = !plan.split && record.kind === 'pdf' && pages > 1
+        && (triage.pages ?? []).some((p) => p.kind === 'delivery_ticket');
     } catch (error) {
       // A rate limit or an outage: the email is tried again on the next poll,
       // before anything is created from it.
@@ -1004,7 +1015,9 @@ export class GmailService {
 
     const ticketIds: string[] = [];
     // A spreadsheet is never filed as a ticket: tickets are photos and scans.
-    const ticketPages = record.kind === 'spreadsheet' ? [] : plan.ticketPages;
+    // Nor is a file of several tickets that could not be split: a person
+    // files those (below), rather than the app filing page 1 as all of them.
+    const ticketPages = record.kind === 'spreadsheet' || ticketsTrapped ? [] : plan.ticketPages;
     for (const page of ticketPages) {
       const ticketKey = `${key}#${page}`;
       const existing = ticketByKey.get(ticketKey);
@@ -1083,6 +1096,18 @@ export class GmailService {
           ...(winner ? { invoiceId: winner.id } : {}),
         };
       }
+    }
+
+    if (ticketsTrapped) {
+      // The invoice, if any, was read whole (its reader skips ticket pages);
+      // the tickets wait for a person either way.
+      return {
+        ...record,
+        action: invoiceId ? 'read' : 'review',
+        reason: ATTACHMENT_REASONS.ticketsNotSplit,
+        pages: plan.pages,
+        ...(invoiceId ? { invoiceId } : {}),
+      };
     }
 
     const created = invoiceId !== null || ticketIds.length > 0;

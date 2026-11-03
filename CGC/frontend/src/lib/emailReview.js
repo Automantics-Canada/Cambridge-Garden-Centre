@@ -28,6 +28,7 @@ export const REVIEW_REASON_LABELS = {
   UNSUPPORTED_ATTACHMENTS: 'No attachment the app can read',
   NO_INVOICE_ATTACHMENT: 'No invoice attached',
   PARTLY_READ: 'Partly read: enter the rest by hand',
+  TICKETS_NOT_SPLIT: 'Several tickets in one file: file them by hand',
   READ_FAILED: 'Could not be read after several tries: enter by hand',
   BEFORE_CUTOFF: 'Sent before the inbox went live: enter by hand if it is not in yet',
 };
