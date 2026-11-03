@@ -52,9 +52,12 @@ import { ATTACHMENT_REASONS } from '../services/emailAttachments.js';
  * PDFs), the office's choices through the order editor, loads through the
  * loads service, and verdicts through the matching engine. Only modules that
  * load without the server's configuration are imported, so the seed needs
- * DATABASE_URL and nothing else, and never reads a .env file. Assigning a
- * stop is written here directly for that reason (dispatch.service pulls in
- * the mailer and its configuration); it writes what assignOrder writes.
+ * DATABASE_URL and nothing else and never loads env.ts. (Prisma itself fills
+ * an unset variable from CGC/backend/.env when that file exists. The guard
+ * reads the environment, whose values win over that file's, and refuses an
+ * unset DATABASE_URL, so it judges the database Prisma really uses.) Assigning a stop
+ * is written here directly for that reason (dispatch.service pulls in the
+ * mailer and its configuration); it writes what assignOrder writes.
  *
  * Files are not created. Invoices and tickets point at /uploads/demo/...
  * paths that do not exist, so their previews show as missing locally.
@@ -79,7 +82,8 @@ const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '::1', '[::1]']);
  * `localhost/db?host=elsewhere` is not mistaken for a local database.
  */
 export function assertDemoDatabase(env: Record<string, string | undefined> = process.env): void {
-  if (env.NODE_ENV === 'production') {
+  // Normalised, so 'Production' or a stray space is refused as well.
+  if (env.NODE_ENV?.trim().toLowerCase() === 'production') {
     throw new Error('Refusing to seed demo data with NODE_ENV=production.');
   }
   if (!env.DATABASE_URL) throw new Error('DATABASE_URL is required, and must point at a loopback database.');
@@ -530,7 +534,13 @@ async function giveStop(documentId: string, driver: { id: string; type: DriverTy
       status: options.status,
       priority: options.priority,
       createdAt: options.placedAt,
-      ...(done ? { startedAt: new Date(options.completedAt!.getTime() - 45 * 60_000), completedAt: options.completedAt! } : {}),
+      // Out of the yard 45 minutes before it was done, but never before it was placed.
+      ...(done
+        ? {
+            startedAt: new Date(Math.max(options.placedAt.getTime(), options.completedAt!.getTime() - 45 * 60_000)),
+            completedAt: options.completedAt!,
+          }
+        : {}),
       ...(options.photo ? { deliveryPhotoUrl: options.photo } : {}),
     },
   });
@@ -716,10 +726,14 @@ export async function seedDemo(): Promise<DemoSeedSummary> {
   });
 
   // ---- today's runs. The first stop is what each driver's phone shows.
-  const placedToday = at(today, 6, 55);
+  // Placed this morning and one stop finished since, in that order and never
+  // in the future, whatever time the seed is run (an early-morning run must
+  // not show a stop finished before it was placed).
   const dayStart = startOfBusinessDay(today)!.getTime();
-  // Done this morning, but never in the future, whenever the seed is run.
-  const doneToday = new Date(Math.max(dayStart + 60_000, Math.min(now.getTime() - 10 * 60_000, at(today, 9, 10).getTime())));
+  const placedToday = new Date(Math.max(dayStart, Math.min(at(today, 6, 55).getTime(), now.getTime() - 60 * 60_000)));
+  const doneToday = new Date(
+    Math.max(placedToday.getTime() + 60_000, Math.min(now.getTime() - 10 * 60_000, at(today, 9, 10).getTime()))
+  );
   await giveStop(idOf(D.yardDoneToday), dana, {
     priority: 1, status: 'DELIVERED', placedAt: placedToday, completedAt: doneToday, photo: '/uploads/demo/pod/990021.jpg',
   });
@@ -742,6 +756,11 @@ export async function seedDemo(): Promise<DemoSeedSummary> {
   await DispatchLoadsService.create(idOf(D.pastTripGravel), { ...pastTrip, ticketNumber: 'DH-1102' }, users.admin.id);
   // CGC's own truck with no rate is fine: nobody bills CGC for it.
   await DispatchLoadsService.create(idOf(D.yardRun), { notes: 'Our tandem' }, users.admin.id);
+
+  // This morning's mail, in the order it came, and all of it already in: run
+  // before nine, the whole morning moves back so nothing arrives in the future.
+  const mailShift = Math.max(0, at(today, 9, 0).getTime() - (now.getTime() - 5 * 60_000));
+  const mailAt = (hours: number, minutes = 0) => new Date(at(today, hours, minutes).getTime() - mailShift);
 
   // ---- tickets: the drivers' photos of yesterday's supplier tickets.
   const lineOf = async (documentNumber: string, product: string) =>
@@ -817,7 +836,7 @@ export async function seedDemo(): Promise<DemoSeedSummary> {
       ocrRawText: 'DP 70001 Demo Paver Charcoal 60mm 300 SQFT',
       ocrConfidence: 0.91,
       status: 'UNLINKED',
-      receivedAt: at(today, 8, 5),
+      receivedAt: mailAt(8, 5),
       emailSourceKey: `${paversMessage}:1#2`,
       duplicateOfTicketId: paversTicket.id,
     },
@@ -829,7 +848,7 @@ export async function seedDemo(): Promise<DemoSeedSummary> {
   }
 
   // ---- invoices, as the inbox would have filed them this morning.
-  const receivedAt = at(today, 8, 5);
+  const receivedAt = mailAt(8, 5);
   const paversInvoice = await prisma.invoice.create({
     data: {
       invoiceNumber: 'DP-5001',
@@ -881,7 +900,7 @@ export async function seedDemo(): Promise<DemoSeedSummary> {
       emailFrom: 'accounts@demoaggregates.example',
       emailSubject: 'Invoice DA-8801 (Excel)',
       gmailMessageId: `${aggregatesMessage}:1`,
-      receivedAt: at(today, 7, 50),
+      receivedAt: mailAt(7, 50),
       ocrRawText: 'Sheet 1\nInvoice\tDA-8801\nA Gravel 19mm\t22\ttonnes\t18.00\nScreened Sand\t15\ttonnes\t16.50',
       OcrJobStatus: 'COMPLETED',
       lineItems: {
@@ -909,7 +928,7 @@ export async function seedDemo(): Promise<DemoSeedSummary> {
       emailFrom: 'dispatch@demohaulage.example',
       emailSubject: 'Haul invoice DH-301',
       gmailMessageId: `${haulageMessage}:1`,
-      receivedAt: at(today, 8, 20),
+      receivedAt: mailAt(8, 20),
       ocrRawText: 'Demo Haulage Ltd. Invoice DH-301',
       OcrJobStatus: 'COMPLETED',
       lineItems: {
@@ -949,7 +968,7 @@ export async function seedDemo(): Promise<DemoSeedSummary> {
     {
       gmailMessageId: aggregatesMessage, subject: 'Invoice DA-8801 (Excel)', fromAddress: 'accounts@demoaggregates.example', toAddress,
       originalFrom: 'accounts@demoaggregates.example', senderMode: 'direct', supplierId: aggregates.id,
-      senderTypeResolved: SenderTypeResolved.SUPPLIER, status: EmailIngestionStatus.PROCESSED, receivedAt: at(today, 7, 50),
+      senderTypeResolved: SenderTypeResolved.SUPPLIER, status: EmailIngestionStatus.PROCESSED, receivedAt: mailAt(7, 50),
       createdInvoiceIds: [excelInvoice.id],
       attachments: [
         { name: 'DA-8801.xlsx', mimeType: xlsx, size: 21_004, partId: '1', kind: 'spreadsheet', action: 'read', reason: null, invoiceId: excelInvoice.id, pages: [{ page: 1, kind: 'invoice' }] },
@@ -958,7 +977,7 @@ export async function seedDemo(): Promise<DemoSeedSummary> {
     {
       gmailMessageId: haulageMessage, subject: 'Haul invoice DH-301', fromAddress: 'dispatch@demohaulage.example', toAddress,
       originalFrom: 'dispatch@demohaulage.example', senderMode: 'direct', supplierId: haulage.id,
-      senderTypeResolved: SenderTypeResolved.TRUCKING_COMPANY, status: EmailIngestionStatus.PROCESSED, receivedAt: at(today, 8, 20),
+      senderTypeResolved: SenderTypeResolved.TRUCKING_COMPANY, status: EmailIngestionStatus.PROCESSED, receivedAt: mailAt(8, 20),
       createdInvoiceIds: [haulInvoice.id],
       attachments: [
         { name: 'DH-301.pdf', mimeType: pdf, size: 54_870, partId: '1', kind: 'pdf', action: 'read', reason: null, invoiceId: haulInvoice.id, pages: [{ page: 1, kind: 'invoice' }] },
@@ -968,7 +987,7 @@ export async function seedDemo(): Promise<DemoSeedSummary> {
       // A statement: recorded, not billed.
       gmailMessageId: 'demo-msg-0004', subject: 'Monthly statement', fromAddress: 'accounts@demoaggregates.example', toAddress,
       originalFrom: 'accounts@demoaggregates.example', senderMode: 'direct', supplierId: aggregates.id,
-      senderTypeResolved: SenderTypeResolved.SUPPLIER, status: EmailIngestionStatus.PROCESSED, receivedAt: at(today, 7, 30),
+      senderTypeResolved: SenderTypeResolved.SUPPLIER, status: EmailIngestionStatus.PROCESSED, receivedAt: mailAt(7, 30),
       attachments: [
         { name: 'statement.pdf', mimeType: pdf, size: 40_112, partId: '1', kind: 'pdf', action: 'skipped', reason: ATTACHMENT_REASONS.statement, pages: [{ page: 1, kind: 'statement' }] },
       ],
@@ -978,7 +997,7 @@ export async function seedDemo(): Promise<DemoSeedSummary> {
       gmailMessageId: 'demo-msg-0005', subject: 'Invoice 4471', fromAddress: 'invoices@unknown-supplier.example', toAddress,
       originalFrom: 'invoices@unknown-supplier.example', senderMode: 'direct', supplierId: null,
       senderTypeResolved: SenderTypeResolved.UNKNOWN, status: EmailIngestionStatus.NEEDS_REVIEW, reviewReason: 'UNKNOWN_SENDER',
-      receivedAt: at(today, 8, 40),
+      receivedAt: mailAt(8, 40),
       attachments: [
         { name: 'invoice-4471.pdf', mimeType: pdf, size: 61_330, partId: '1', kind: 'pdf', action: 'held', reason: ATTACHMENT_REASONS.held },
       ],
@@ -998,7 +1017,7 @@ export async function seedDemo(): Promise<DemoSeedSummary> {
       gmailMessageId: 'demo-msg-0007', subject: 'Invoice DA-8790', fromAddress: 'accounts@demoaggregates.example', toAddress,
       originalFrom: 'accounts@demoaggregates.example', senderMode: 'direct', supplierId: aggregates.id,
       senderTypeResolved: SenderTypeResolved.SUPPLIER, status: EmailIngestionStatus.NEEDS_REVIEW, reviewReason: 'SPREADSHEET',
-      receivedAt: at(today, 8, 45),
+      receivedAt: mailAt(8, 45),
       attachments: [
         { name: 'DA-8790.xls', mimeType: 'application/vnd.ms-excel', size: 33_280, partId: '1', kind: 'spreadsheet', action: 'review', reason: ATTACHMENT_REASONS.legacyXls },
       ],

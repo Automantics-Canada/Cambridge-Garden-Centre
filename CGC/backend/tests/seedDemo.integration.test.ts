@@ -144,6 +144,27 @@ describe('demo seed', { skip: !(confirmed && loopback) }, () => {
     }
   });
 
+  it('every stop was placed, started and finished in that order, and none in the future', async () => {
+    // Whatever time of day the seed runs: an early-morning run once finished
+    // today's stop before it was placed.
+    const now = Date.now();
+    for (const stop of await prisma.delivery.findMany()) {
+      assert.ok(stop.createdAt.getTime() <= now, 'placed in the past');
+      if (stop.startedAt) assert.ok(stop.startedAt >= stop.createdAt, 'started after it was placed');
+      if (stop.completedAt) {
+        assert.ok(stop.startedAt && stop.completedAt >= stop.startedAt, 'finished after it started');
+        assert.ok(stop.completedAt.getTime() <= now, 'finished in the past');
+      }
+    }
+    // This morning's mail has arrived already, too.
+    const received = [
+      ...(await prisma.invoice.findMany({ select: { receivedAt: true } })),
+      ...(await prisma.ticket.findMany({ select: { receivedAt: true } })),
+      ...(await prisma.emailIngestionEvent.findMany({ select: { receivedAt: true } })),
+    ];
+    for (const { receivedAt } of received) assert.ok(receivedAt.getTime() <= now, 'received in the past');
+  });
+
   it('A3: the quotation is flagged, and A7: the re-imported order has no duplicate lines', async () => {
     assert.ok((await documentOf(D.quote)).flags.includes('QUOTE'));
 

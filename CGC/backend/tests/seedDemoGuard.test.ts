@@ -45,6 +45,7 @@ describe('demo seed guard', () => {
       () => assertDemoDatabase({ DATABASE_URL: LOCAL, NODE_ENV: 'production' }),
       /NODE_ENV=production/
     );
+    assert.throws(() => assertDemoDatabase({ DATABASE_URL: LOCAL, NODE_ENV: 'Production ' }), /NODE_ENV=production/);
   });
 
   it('refuses a missing or unreadable DATABASE_URL', () => {

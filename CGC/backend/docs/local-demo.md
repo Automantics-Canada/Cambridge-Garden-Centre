@@ -49,19 +49,28 @@ npx prisma migrate deploy
 npm run seed:demo
 ```
 
-The seed needs nothing but `DATABASE_URL`/`DIRECT_URL` and never reads a
-`.env` file. Run it again whenever you want to start over: it wipes and
-re-creates the same data (new ids, same contents).
+The seed needs nothing but `DATABASE_URL`/`DIRECT_URL` and reads no other
+setting. Export both, as above: Prisma fills any variable you leave unset from
+`CGC/backend/.env` when that file exists, and the seed checks both URLs (and
+refuses) before it writes anything. Run it again whenever you want to start
+over: it wipes and re-creates the same data (new ids, same contents).
 
 ## 3. Run the backend with local-only settings
 
-Do not create a `.env` for this. Pass the environment on the command line, so
-nothing from a real deployment can leak in. These are every variable
+Run the demo from a checkout that has **no `CGC/backend/.env`** (a fresh
+clone or a git worktree), and do not create one. `src/config/env.ts` calls
+`dotenv.config()`, which fills every variable not set on the command line from
+that file: a `.env` holding real credentials would bring back the `GMAIL_*`
+accounts, `NODE_ENV` and the rest that the settings below leave off. The
+command below refuses to start when the file is there.
+
+Pass the environment on the command line instead. These are every variable
 `src/config/env.ts` requires, with safe dummy values, plus the switches that
 keep everything outbound off:
 
 ```sh
 cd CGC/backend
+if [ -e .env ]; then echo "CGC/backend/.env exists: run the demo from a checkout without one."; else
 env -i PATH="$PATH" HOME="$HOME" \
   DATABASE_URL=$DATABASE_URL DIRECT_URL=$DIRECT_URL \
   PORT=4000 \
@@ -74,6 +83,7 @@ env -i PATH="$PATH" HOME="$HOME" \
   SPRUCE_READER=parser \
   FRONTEND_URL=http://127.0.0.1:5173 \
   npm run dev
+fi
 ```
 
 | Variable | Value | Why |
@@ -86,7 +96,7 @@ env -i PATH="$PATH" HOME="$HOME" \
 | `OPENAI_API_KEY` | `sk-local-dummy` | required; any call to the model fails, nothing is sent |
 | `WORKER_MODE` | `off` | the API does not start the Gmail poller, the OCR worker or the matching cron (`src/workers/runtime.ts`). Do not run `npm run dev:worker` |
 | `SPRUCE_READER` | `parser` | a report you upload is read by the layout reader only, never sent to the model |
-| `GMAIL_*`, `GMAIL_INBOX_*` | **unset** | with no inbox credentials the poller is disabled (`gmailPollDisabledReason`), and the outbound mailer (driver emails, `mail.service.ts`, `GmailService.sendEmail`) has no account to send from. The demo drivers' addresses are `@demo.invalid` as well, which can never be delivered |
+| `GMAIL_*`, `GMAIL_INBOX_*` | **unset** (and no `.env` to fill them) | with no inbox credentials the poller is disabled (`gmailPollDisabledReason`), and the outbound mailer (driver emails, `mail.service.ts`, `GmailService.sendEmail`) has no account to send from. The demo drivers' addresses are `@demo.invalid` as well, which can never be delivered |
 | `NODE_ENV` | unset | development. Setting `development` explicitly also turns on Prisma's query log |
 | `CORS_ALLOWED_ORIGINS` | unset | an empty list lets the local frontend in outside production |
 | `INTERNAL_SHARED_SECRET`, `SUPABASE_ANON_KEY` | unset | optional; the first falls back to `JWT_SECRET` |
@@ -102,11 +112,14 @@ From `CGC/frontend`, with Node 22:
 VITE_API_URL=http://127.0.0.1:4000 \
 VITE_SUPABASE_URL=http://127.0.0.1:59999 \
 VITE_SUPABASE_ANON_KEY=local-dummy-anon-key \
-npm run dev
+npm run dev -- --host 127.0.0.1
 ```
 
-Open http://127.0.0.1:5173. (The Supabase values only stop the client
-library from refusing to load; nothing is sent there.)
+Open http://127.0.0.1:5173. (`--host 127.0.0.1` makes Vite listen on that
+address; by default it listens on `localhost`, which on macOS may be `::1`
+only. The Supabase values only stop the client library from refusing to
+load; nothing is sent there. Values given on the command line win over any
+`CGC/frontend/.env*` file Vite also reads.)
 
 ## 5. Logins
 
