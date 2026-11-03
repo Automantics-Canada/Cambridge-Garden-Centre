@@ -7,8 +7,10 @@ import {
   normalizeInvoice,
   normalizePoNumber,
   normalizeTicket,
+  normalizeTicketNumber,
   parseDocumentDate,
 } from '../src/services/extraction/normalize.js';
+import { numberSearchKey } from '../src/lib/ticketNumber.js';
 import type { InvoiceExtraction, TicketExtraction } from '../src/services/extraction/schemas.js';
 
 /**
@@ -50,6 +52,9 @@ function invoice(overrides: Partial<InvoiceExtraction> = {}): InvoiceExtraction 
         unitPrice: 78.5,
         totalPrice: 1727,
         poNumber: '123456',
+        // A material invoice prints neither: it lists products, not loads.
+        ticketNumber: null,
+        serviceDate: null,
       },
     ],
     readability: 'clear',
@@ -307,5 +312,69 @@ describe('Spruce PO numbers', () => {
     assert.equal(result.lineItems[0]?.poNumber, '2608-355356');
     assert.ok(!result.uncertainFields.includes('poNumber'));
     assert.ok(!result.uncertainFields.includes('lineItems[0].poNumber'));
+  });
+});
+
+describe('trucking invoice lines (Q14)', () => {
+  // A hauler lists one line per load or trip: date, ticket or load number,
+  // PO or job, quantity, rate, amount. The invented numbers below stand for
+  // no real carrier.
+  const haulLine = (overrides: Record<string, unknown> = {}) => ({
+    description: 'Tri-axle haul, Example Pit to job',
+    quantity: 1,
+    unit: 'load',
+    unitPrice: 185,
+    totalPrice: 185,
+    poNumber: '999101',
+    ticketNumber: 'Ticket # T-40017',
+    serviceDate: '2026-10-28',
+    ...overrides,
+  });
+
+  test('reads the ticket number without its label, and the haul day at UTC midnight', () => {
+    const result = normalizeInvoice(invoice({ lineItems: [haulLine()] }));
+    const line = result.lineItems[0]!;
+    assert.equal(line.ticketNumber, 'T-40017');
+    assert.equal(line.serviceDate?.toISOString(), '2026-10-28T00:00:00.000Z');
+    assert.deepEqual(result.uncertainFields, []);
+  });
+
+  test('the ticket number compares on the same key ticket search uses', () => {
+    // The driver's photo was read as "t40017"; the invoice prints "#T-40017".
+    const fromInvoice = normalizeTicketNumber('#T-40017');
+    assert.equal(numberSearchKey(fromInvoice!), numberSearchKey('t40017'));
+    assert.equal(normalizeTicketNumber('Load No. 4471'), '4471');
+    assert.equal(normalizeTicketNumber('Tkt: 88213'), '88213');
+    // A word that only starts like a label is kept whole.
+    assert.equal(normalizeTicketNumber('LOADER-5'), 'LOADER-5');
+  });
+
+  test('blank or placeholder ticket numbers are absent', () => {
+    assert.equal(normalizeTicketNumber('  '), null);
+    assert.equal(normalizeTicketNumber('N/A'), null);
+    assert.equal(normalizeTicketNumber(' - '), null);
+    assert.equal(normalizeTicketNumber(null), null);
+  });
+
+  test('an impossible haul date is dropped and flagged on its line', () => {
+    const result = normalizeInvoice(invoice({ lineItems: [haulLine({ serviceDate: '2026-02-30' })] }));
+    assert.equal(result.lineItems[0]?.serviceDate, null);
+    assert.ok(result.uncertainFields.includes('lineItems[0].serviceDate'));
+  });
+
+  test('a material invoice line reads as before, with no ticket and no haul day', () => {
+    const result = normalizeInvoice(invoice());
+    assert.equal(result.lineItems[0]?.ticketNumber, null);
+    assert.equal(result.lineItems[0]?.serviceDate, null);
+    assert.deepEqual(result.uncertainFields, []);
+  });
+
+  test('an older extraction without the new fields still normalizes', () => {
+    // Stored readings and test fixtures from before this change have no
+    // ticketNumber or serviceDate on their lines.
+    const { ticketNumber: _t, serviceDate: _d, ...older } = invoice().lineItems[0]!;
+    const result = normalizeInvoice(invoice({ lineItems: [older as never] }));
+    assert.equal(result.lineItems[0]?.ticketNumber, null);
+    assert.equal(result.lineItems[0]?.serviceDate, null);
   });
 });

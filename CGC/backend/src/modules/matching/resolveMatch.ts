@@ -7,6 +7,7 @@ import {
   TicketStatus,
   type Prisma,
 } from '@prisma/client';
+import { haulCandidates } from './haulMatch.js';
 
 /**
  * A person settling a match verdict.
@@ -60,6 +61,8 @@ async function copiesOf(tx: Prisma.TransactionClient, ticketIds: readonly string
 export type ResolveFailure =
   | { ok: false; code: 'NOT_FOUND' }
   | { ok: false; code: 'TICKETS_ALREADY_CLAIMED'; detail: string }
+  | { ok: false; code: 'LOAD_ALREADY_CLAIMED'; detail: string }
+  | { ok: false; code: 'LOAD_CHOICE_REQUIRED'; detail: string }
   | { ok: false; code: 'NOTE_REQUIRED_DUPLICATE'; detail: string }
   | { ok: false; code: 'ALREADY_RESOLVED'; resolvedAt: Date | null }
   | { ok: false; code: 'ORDER_REQUIRED' }
@@ -77,6 +80,57 @@ export type ResolveResult = { ok: true; matchResultId: string } | ResolveFailure
  */
 function noteRequired(resolution: ResolutionInput): boolean {
   return resolution !== 'CONFIRMED';
+}
+
+/**
+ * Thrown inside the transaction when a load this decision would pay has been
+ * paid by another line, or removed from the board, since the verdict was
+ * computed. Rolls the whole decision back.
+ */
+class LoadClaimConflict extends Error {}
+
+/**
+ * The loads an override pays: the haul of the chosen order that this carrier
+ * hauled. The verdict's own loads when they are on that order; otherwise the
+ * order's loads by this carrier, grouped the way the matcher groups them
+ * (a trip is one haul, a day at a time), leaving out hauls another line paid.
+ * Null when the order had more than one such haul and nothing says which.
+ */
+async function overrideLoadIds(
+  orderId: string,
+  carrierSupplierId: string,
+  verdictLoadIds: string[],
+  invoiceLineId: string
+): Promise<string[] | null> {
+  const order = await prisma.order.findUnique({ where: { id: orderId }, select: { documentId: true } });
+  if (!order?.documentId) return [];
+  const documentId = order.documentId;
+
+  if (verdictLoadIds.length > 0) {
+    const onOrder = await prisma.dispatchLoad.count({ where: { id: { in: verdictLoadIds }, documentId } });
+    if (onOrder > 0) return verdictLoadIds;
+  }
+
+  const own = await prisma.dispatchLoad.findMany({
+    where: { documentId, carrierSupplierId },
+    select: { tripRef: true },
+  });
+  if (own.length === 0) return [];
+  // A trip's other loads are on other orders: read them too, so the trip is
+  // claimed whole.
+  const trips = [...new Set(own.flatMap((load) => (load.tripRef ? [load.tripRef] : [])))];
+  const { loadCandidateLoads } = await import('./matching.service.js');
+  const loads = await loadCandidateLoads({
+    carrierSupplierId,
+    OR: [{ documentId }, ...(trips.length > 0 ? [{ tripRef: { in: trips } }] : [])],
+  });
+  const hauls = haulCandidates(loads, carrierSupplierId, null, 0).filter(
+    (candidate) =>
+      candidate.haul.documentIds.includes(documentId) &&
+      candidate.loads.every((load) => load.claimedByLineItemId === null || load.claimedByLineItemId === invoiceLineId)
+  );
+  if (hauls.length === 1) return hauls[0]!.haul.loadIds;
+  return hauls.length === 0 ? [] : null;
 }
 
 export async function resolveMatchResult(params: {
@@ -102,11 +156,18 @@ export async function resolveMatchResult(params: {
       resolution: true,
       resolvedAt: true,
       ticketIds: true,
+      loadIds: true,
       evidence: true,
       // Which PO this decision changes the picture for; see the recompute
       // after the transaction below.
       ticket: { select: { poNumber: true } },
-      invoiceLine: { select: { poNumber: true } },
+      invoiceLine: {
+        select: {
+          poNumber: true,
+          // A trucking company's line pays dispatch loads, not tickets.
+          invoice: { select: { supplierId: true, supplier: { select: { type: true } } } },
+        },
+      },
     },
   });
 
@@ -131,6 +192,16 @@ export async function resolveMatchResult(params: {
     const checks = Array.isArray(existing.evidence)
       ? (existing.evidence as Array<{ name?: string; passed?: boolean; detail?: string }>)
       : [];
+
+    // A haul another invoice has paid is never paid again (haulMatch.ts).
+    const paidHaul = checks.find((check) => check.name === 'loadReuse' && check.passed === false);
+    if (paidHaul) {
+      return {
+        ok: false,
+        code: 'LOAD_ALREADY_CLAIMED',
+        detail: paidHaul.detail ?? 'This haul has already been paid on another invoice.',
+      };
+    }
 
     const reuse = checks.find((check) => check.name === 'ticketReuse' && check.passed === false);
     if (reuse) {
@@ -167,6 +238,41 @@ export async function resolveMatchResult(params: {
       select: { id: true },
     });
     if (!order) return { ok: false, code: 'ORDER_NOT_FOUND' };
+  }
+
+  // The dispatch loads a trucking line's decision pays (Q14). Claimed on
+  // DispatchLoad, never through TicketClaim: one scale ticket can rightly back
+  // both the pit's material line and the trucker's haul line.
+  const carrierSupplierId =
+    existing.invoiceLine?.invoice.supplier.type === 'TRUCKING_COMPANY'
+      ? existing.invoiceLine.invoice.supplierId
+      : null;
+  let loadIds: string[] = [];
+  if (commits && carrierSupplierId && existing.invoiceLineId) {
+    if (resolution === 'CONFIRMED') {
+      // Confirming a CONFLICT would pay a line without saying which haul it
+      // was, and leave that haul free to be paid again.
+      if (existing.status === 'CONFLICT') {
+        return {
+          ok: false,
+          code: 'LOAD_CHOICE_REQUIRED',
+          detail: 'Several dispatched loads fit this line. Use Override and choose the order this haul was for.',
+        };
+      }
+      loadIds = existing.loadIds;
+    } else if (targetOrderId) {
+      const chosen = await overrideLoadIds(targetOrderId, carrierSupplierId, existing.loadIds, existing.invoiceLineId);
+      if (chosen === null) {
+        return {
+          ok: false,
+          code: 'LOAD_CHOICE_REQUIRED',
+          detail:
+            'That order has more than one load by this carrier, and nothing says which one this line bills. ' +
+            'Put the ticket number on the right load on the dispatch board, then re-run the check.',
+        };
+      }
+      loadIds = chosen;
+    }
   }
 
   let claimedTicketIds: string[] = [];
@@ -255,6 +361,35 @@ export async function resolveMatchResult(params: {
         await tx.ticketClaim.deleteMany({ where: { invoiceLineId } });
       }
 
+      if (carrierSupplierId) {
+        if (commits) {
+          // Claimed only if still unpaid, re-checked here inside the
+          // transaction: two invoices confirmed at the same moment cannot both
+          // pay one load. The second waits on the first's row lock, then finds
+          // the load taken and rolls back.
+          if (loadIds.length > 0) {
+            const claimed = await tx.dispatchLoad.updateMany({
+              where: {
+                id: { in: loadIds },
+                OR: [{ claimedByLineItemId: null }, { claimedByLineItemId: invoiceLineId }],
+              },
+              data: { claimedByLineItemId: invoiceLineId, claimedAt: new Date() },
+            });
+            if (claimed.count !== loadIds.length) throw new LoadClaimConflict();
+          }
+          // What the person chose is what this line now holds.
+          if (resolution === 'OVERRIDDEN') {
+            await tx.matchResult.update({ where: { id: matchResultId }, data: { loadIds } });
+          }
+        } else {
+          // Rejected: the haul is free for whichever invoice really bills it.
+          await tx.dispatchLoad.updateMany({
+            where: { claimedByLineItemId: invoiceLineId },
+            data: { claimedByLineItemId: null, claimedAt: null },
+          });
+        }
+      }
+
       await tx.invoiceLineItem.update({
         where: { id: existing.invoiceLineId },
         data: {
@@ -284,12 +419,21 @@ export async function resolveMatchResult(params: {
           engineOrderId: existing.orderId,
           resolvedOrderId: targetOrderId,
           claimedTicketIds: targetOrderId ? claimedTicketIds : [],
+          ...(carrierSupplierId ? { claimedLoadIds: commits ? loadIds : [] } : {}),
         },
       },
     });
   });
 
   } catch (error) {
+    if (error instanceof LoadClaimConflict) {
+      return {
+        ok: false,
+        code: 'LOAD_ALREADY_CLAIMED',
+        detail:
+          'Somebody paid this haul on another invoice, or it was removed from the dispatch board, while you were deciding. Reload and look again.',
+      };
+    }
     // Two clerks confirming competing lines at the same moment: the unique
     // constraint on TicketClaim.ticketId is the last line of defence, and it
     // holds even when both requests passed their checks a moment earlier.
@@ -320,8 +464,31 @@ export async function resolveMatchResult(params: {
     const { recomputeInvoiceLinesSafely } = await import('./matching.service.js');
     await recomputeInvoiceLinesSafely([poNumber], `resolution of ${matchResultId}`);
   }
+  // A haul paid or released changes what the carrier's other open lines can
+  // claim, whatever PO they print.
+  if (carrierSupplierId) {
+    await recomputeCarrierLinesSafely(carrierSupplierId, `resolution of ${matchResultId}`);
+  }
 
   return { ok: true, matchResultId };
+}
+
+/** Bound on the carrier's open lines re-decided after a haul changes hands. */
+const CARRIER_RECOMPUTE_LIMIT = 200;
+
+/**
+ * Re-decides a trucking company's open invoice lines. Best-effort, outside
+ * the decision's transaction, like the PO recompute: the decision stands
+ * whatever happens here.
+ */
+async function recomputeCarrierLinesSafely(carrierSupplierId: string, context: string): Promise<void> {
+  try {
+    const { recomputeInvoiceLinesForSupplier } = await import('./matching.service.js');
+    const outcome = await recomputeInvoiceLinesForSupplier(carrierSupplierId, CARRIER_RECOMPUTE_LIMIT);
+    console.log(`[Matching] ${context}: recomputed ${outcome.lines} haul line(s) for the carrier.`);
+  } catch (error) {
+    console.error(`[Matching] ${context}: haul line recompute failed:`, error);
+  }
 }
 
 /**
@@ -357,12 +524,18 @@ export async function reopenMatchResult(params: {
       invoiceLineId: true,
       resolution: true,
       ticket: { select: { poNumber: true } },
-      invoiceLine: { select: { poNumber: true } },
+      invoiceLine: {
+        select: { poNumber: true, invoice: { select: { supplierId: true, supplier: { select: { type: true } } } } },
+      },
     },
   });
 
   if (!existing) return { ok: false, code: 'NOT_FOUND' };
   if (!existing.resolution) return { ok: true, matchResultId: existing.id };
+  const carrierSupplierId =
+    existing.invoiceLine?.invoice.supplier.type === 'TRUCKING_COMPANY'
+      ? existing.invoiceLine.invoice.supplierId
+      : null;
 
   await prisma.$transaction(async (tx) => {
     await tx.matchResult.update({
@@ -375,9 +548,14 @@ export async function reopenMatchResult(params: {
       },
     });
 
-    // Reopening un-commits the money, so the loads are no longer spent.
+    // Reopening un-commits the money, so the loads are no longer spent: the
+    // tickets of a material line, and the dispatch loads of a haul line.
     if (existing.invoiceLineId) {
       await tx.ticketClaim.deleteMany({ where: { invoiceLineId: existing.invoiceLineId } });
+      await tx.dispatchLoad.updateMany({
+        where: { claimedByLineItemId: existing.invoiceLineId },
+        data: { claimedByLineItemId: null, claimedAt: null },
+      });
     }
 
     await tx.auditLog.create({
@@ -401,6 +579,9 @@ export async function reopenMatchResult(params: {
   if (poNumber && params.recomputeOthers !== false) {
     const { recomputeInvoiceLinesSafely } = await import('./matching.service.js');
     await recomputeInvoiceLinesSafely([poNumber], `reopening of ${existing.id}`);
+  }
+  if (carrierSupplierId && params.recomputeOthers !== false) {
+    await recomputeCarrierLinesSafely(carrierSupplierId, `reopening of ${existing.id}`);
   }
 
   return { ok: true, matchResultId: existing.id };

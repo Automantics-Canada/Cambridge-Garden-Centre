@@ -37,6 +37,22 @@ describe('refusal messages', () => {
     assert.match(error, /why/i);
   });
 
+  it('passes a paid-haul detail through, naming the invoice that paid it', () => {
+    // A trucking line whose dispatch load another invoice already paid (Q14).
+    const detail =
+      'Load 990101 load 1 was already paid on invoice HAUL-0001 line 1. Paying this line would pay for that haul twice';
+    const { status, error } = explain({ ok: false, code: 'LOAD_ALREADY_CLAIMED', detail });
+    assert.equal(status, 409);
+    assert.equal(error, detail);
+  });
+
+  it('asks for the order when several hauls fit', () => {
+    const detail = 'Several dispatched loads fit this line. Use Override and choose the order this haul was for.';
+    const { status, error } = explain({ ok: false, code: 'LOAD_CHOICE_REQUIRED', detail });
+    assert.equal(status, 400);
+    assert.equal(error, detail);
+  });
+
   it('never reports a refusal as success', () => {
     const codes = [
       { ok: false as const, code: 'NOT_FOUND' as const },

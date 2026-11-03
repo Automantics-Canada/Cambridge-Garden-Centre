@@ -12,7 +12,8 @@ import {
   type MatchDecision,
   type ProductAlias,
 } from './matchEngine.js';
-import { resolveTolerances, type Tolerances } from './tolerances.js';
+import { resolveHaulTolerances, resolveTolerances, type HaulTolerances, type Tolerances } from './tolerances.js';
+import { matchHaulLine, type CandidateLoad } from './haulMatch.js';
 import { deriveLineItemFlag } from '../../lib/lineItemFlag.js';
 import { onSamePo, poKey } from './poKey.js';
 
@@ -54,8 +55,11 @@ import { onSamePo, poKey } from './poKey.js';
  * 6: two copies of one load (the driver's and the supplier's emailed ticket)
  * count once, must agree, share a claim, and a line backed only by the
  * supplier's own copies is never passed automatically.
+ * 7: a trucking company's invoice lines are checked against the dispatch
+ * loads they bill and the rate dispatch set (haulMatch.ts), not against
+ * order lines and scale tickets.
  */
-export const ENGINE_VERSION = 6;
+export const ENGINE_VERSION = 7;
 
 /**
  * `matchMethod` recorded for a link the engine made.
@@ -102,12 +106,19 @@ function poNumberConditions(poNumber: string): Array<{ poNumber: string | { cont
   return conditions;
 }
 
-async function loadTolerances(): Promise<Tolerances> {
-  const settings = await prisma.systemSetting.findMany({
+async function loadMatchSettings() {
+  return prisma.systemSetting.findMany({
     where: { key: { startsWith: 'match.' } },
     select: { key: true, value: true },
   });
-  return resolveTolerances(settings);
+}
+
+async function loadTolerances(): Promise<Tolerances> {
+  return resolveTolerances(await loadMatchSettings());
+}
+
+async function loadHaulTolerances(): Promise<HaulTolerances> {
+  return resolveHaulTolerances(await loadMatchSettings());
 }
 
 async function loadAliases(supplierId: string | null): Promise<ProductAlias[]> {
@@ -309,6 +320,9 @@ async function persist(
       // Stored so a resolution claims exactly what this verdict counted, rather
       // than whatever tickets happen to exist when somebody clicks Confirm.
       ticketIds: decision.ticketIds,
+      // The same for a trucking line's dispatch loads. Written on every
+      // verdict, so a line that stops being a haul line holds none.
+      loadIds: decision.loadIds ?? [],
       engineVersion: ENGINE_VERSION,
       computedAt: new Date(),
     };
@@ -503,6 +517,9 @@ async function applyLineItemColumns(
 ): Promise<void> {
   const totals = decision.totals;
   const agreedRate = totals?.agreedRate ?? null;
+  // A haul line is backed by the dispatch load it bills, not by an order line
+  // and its scale tickets: the load stands for both in the flag.
+  const haulLoads = decision.loadIds?.length ?? null;
   const rateDiscrepancy = totals?.rateDiscrepancy ?? null;
   const quantityDiscrepancy = totals?.quantityDiscrepancy ?? null;
 
@@ -522,8 +539,8 @@ async function applyLineItemColumns(
       approvedTotal:
         agreedRate === null || billedQuantity === null ? null : billedQuantity * agreedRate,
       flag: deriveLineItemFlag({
-        hasOrder: decision.orderId !== null,
-        ticketCount: decision.ticketIds.length,
+        hasOrder: haulLoads === null ? decision.orderId !== null : haulLoads > 0,
+        ticketCount: haulLoads ?? decision.ticketIds.length,
         hasQuantityDiscrepancy: quantityDiscrepancy !== null,
         hasRateDiscrepancy: rateDiscrepancy !== null,
         hasAgreedRate: agreedRate !== null,
@@ -587,6 +604,199 @@ function toDeliveredTicket(ticket: DeliveredTicketRow): DeliveredTicket {
   };
 }
 
+/** What the haul matcher needs of each dispatch load. Office-side only. */
+const CANDIDATE_LOAD_SELECT = {
+  id: true,
+  documentId: true,
+  sequence: true,
+  carrierSupplierId: true,
+  tripRef: true,
+  rate: true,
+  rateUnit: true,
+  quantity: true,
+  ticketNumber: true,
+  claimedByLineItemId: true,
+  createdAt: true,
+  claimedByLineItem: { select: { lineNumber: true, invoice: { select: { invoiceNumber: true } } } },
+  delivery: { select: { completedAt: true } },
+  document: {
+    select: {
+      documentNumber: true,
+      poNumber: true,
+      deliveryDate: true,
+      lines: {
+        select: {
+          id: true,
+          poNumber: true,
+          tickets: { select: { ticketNumber: true }, where: { ticketNumber: { not: null } }, take: 50 },
+        },
+        orderBy: [{ lineNumber: 'asc' }, { createdAt: 'asc' }],
+        take: 50,
+      },
+    },
+  },
+} as const satisfies Prisma.DispatchLoadSelect;
+
+type CandidateLoadRow = Prisma.DispatchLoadGetPayload<{ select: typeof CANDIDATE_LOAD_SELECT }>;
+
+/**
+ * The day a load was hauled. DispatchLoad has no date of its own: the
+ * order's delivery date is the day Spruce scheduled it, the stop's completion
+ * the day it was done, and the day dispatch recorded the load the last resort.
+ */
+function haulDateOf(row: CandidateLoadRow): Date {
+  return row.document.deliveryDate ?? row.delivery?.completedAt ?? row.createdAt;
+}
+
+function toCandidateLoad(row: CandidateLoadRow): CandidateLoad {
+  return {
+    id: row.id,
+    documentId: row.documentId,
+    sequence: row.sequence,
+    carrierSupplierId: row.carrierSupplierId,
+    tripRef: row.tripRef,
+    rate: row.rate === null ? null : row.rate.toString(),
+    rateUnit: row.rateUnit,
+    quantity: row.quantity === null ? null : row.quantity.toString(),
+    claimedByLineItemId: row.claimedByLineItemId,
+    documentNumber: row.document.documentNumber,
+    haulDate: haulDateOf(row),
+    ticketNumber: row.ticketNumber,
+    poNumbers: [
+      ...new Set(
+        [row.document.poNumber, ...row.document.lines.map((orderLine) => orderLine.poNumber)].filter(
+          (po): po is string => Boolean(po)
+        )
+      ),
+    ],
+    orderTicketNumbers: row.document.lines.flatMap((orderLine) =>
+      orderLine.tickets.flatMap((ticket) => (ticket.ticketNumber ? [ticket.ticketNumber] : []))
+    ),
+    orderLineId: row.document.lines[0]?.id ?? null,
+    claim: row.claimedByLineItem
+      ? {
+          invoiceNumber: row.claimedByLineItem.invoice.invoiceNumber,
+          lineNumber: row.claimedByLineItem.lineNumber,
+        }
+      : null,
+  };
+}
+
+/** Dispatch loads as the haul matcher reads them, for any filter. */
+export async function loadCandidateLoads(
+  where: Prisma.DispatchLoadWhereInput,
+  db: Pick<Prisma.TransactionClient, 'dispatchLoad'> = prisma
+): Promise<CandidateLoad[]> {
+  const rows = await db.dispatchLoad.findMany({
+    where,
+    select: CANDIDATE_LOAD_SELECT,
+    orderBy: [{ createdAt: 'asc' }],
+    // A carrier with hundreds of loads in a fortnight is a data problem; the
+    // matcher would call the line a CONFLICT either way.
+    take: 500,
+  });
+  return rows.map(toCandidateLoad);
+}
+
+/**
+ * A carrier's dispatch loads that could be dated inside the window. Asked a
+ * day wider on each side than the matcher's window, by each of the three
+ * dates a load's haul day can come from; the matcher applies the exact
+ * window. CGC's own trucks (no carrier) are never read.
+ */
+export async function loadHaulCandidates(
+  carrierSupplierId: string,
+  anchor: Date,
+  windowDays: number,
+  db: Pick<Prisma.TransactionClient, 'dispatchLoad'> = prisma
+): Promise<CandidateLoad[]> {
+  const from = new Date(anchor.getTime() - (windowDays + 1) * 86_400_000);
+  const to = new Date(anchor.getTime() + (windowDays + 1) * 86_400_000);
+  return loadCandidateLoads(
+    {
+      carrierSupplierId,
+      OR: [
+        { document: { deliveryDate: { gte: from, lte: to } } },
+        { delivery: { completedAt: { gte: from, lte: to } } },
+        { createdAt: { gte: from, lte: to } },
+      ],
+    },
+    db
+  );
+}
+
+/**
+ * A trucking company's invoice line, against the dispatch loads it bills
+ * (client, Oct 2026, Q14). Material lines never come here.
+ */
+async function matchHaulLineById(line: {
+  id: string;
+  poNumber: string | null;
+  ticketNumber: string | null;
+  serviceDate: Date | null;
+  quantity: Prisma.Decimal;
+  unit: string;
+  unitRate: Prisma.Decimal;
+  invoice: { supplierId: string; invoiceDate: Date };
+}): Promise<MatchDecision> {
+  const tolerances = await loadHaulTolerances();
+  const anchor = line.serviceDate ?? line.invoice.invoiceDate;
+  const loads = await loadHaulCandidates(line.invoice.supplierId, anchor, tolerances.haulDateWindowDays);
+
+  // Other unsettled lines whose verdicts count any of these loads.
+  const candidateIds = loads.map((load) => load.id);
+  const competing =
+    candidateIds.length === 0
+      ? []
+      : await prisma.matchResult.findMany({
+          where: { invoiceLineId: { not: line.id }, resolution: null, loadIds: { hasSome: candidateIds } },
+          select: {
+            invoiceLineId: true,
+            loadIds: true,
+            invoiceLine: { select: { lineNumber: true, invoice: { select: { invoiceNumber: true } } } },
+          },
+          take: 50,
+        });
+
+  const decision = matchHaulLine(
+    {
+      id: line.id,
+      poNumber: line.poNumber,
+      ticketNumber: line.ticketNumber,
+      serviceDate: line.serviceDate,
+      quantity: toNumber(line.quantity),
+      unit: line.unit,
+      unitRate: toNumber(line.unitRate),
+      supplierId: line.invoice.supplierId,
+      invoiceDate: line.invoice.invoiceDate,
+    },
+    loads,
+    {
+      tolerances,
+      competingLines: competing.flatMap((other) =>
+        other.invoiceLineId && other.invoiceLine
+          ? [
+              {
+                invoiceLineId: other.invoiceLineId,
+                invoiceNumber: other.invoiceLine.invoice.invoiceNumber,
+                lineNumber: other.invoiceLine.lineNumber,
+                loadIds: other.loadIds,
+              },
+            ]
+          : []
+      ),
+    }
+  );
+
+  const outcome = await persist(MatchSubjectType.INVOICE_LINE, line.id, decision, (tx) =>
+    applyLineItemColumns(tx, line.id, toNumber(line.quantity), decision)
+  );
+  console.log(
+    `[Matching] Haul line ${line.id}: ${decision.status}${outcome.stored ? '' : ` (not stored — ${outcome.reason})`}`
+  );
+  return decision;
+}
+
 /** Decides and records whether one invoice line is safe to pay. */
 export async function matchInvoiceLineById(lineId: string): Promise<MatchDecision | null> {
   const line = await prisma.invoiceLineItem.findUnique({
@@ -598,10 +808,18 @@ export async function matchInvoiceLineById(lineId: string): Promise<MatchDecisio
       quantity: true,
       unit: true,
       unitRate: true,
-      invoice: { select: { supplierId: true, invoiceDate: true } },
+      ticketNumber: true,
+      serviceDate: true,
+      invoice: { select: { supplierId: true, invoiceDate: true, supplier: { select: { type: true } } } },
     },
   });
   if (!line) return null;
+
+  // A trucking company bills hauls, which are checked against what dispatch
+  // recorded for each load. Everything else keeps the order-and-ticket path.
+  if (line.invoice.supplier.type === 'TRUCKING_COMPANY') {
+    return matchHaulLineById(line);
+  }
 
   const supplierId = line.invoice?.supplierId ?? null;
   const invoiceDate = line.invoice?.invoiceDate ?? null;

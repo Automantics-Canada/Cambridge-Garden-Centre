@@ -1,3 +1,4 @@
+import { numberSearchKey } from '../../lib/ticketNumber.js';
 import { normaliseUnit } from '../../lib/units.js';
 import { formatPoKey, poKey } from '../../modules/matching/poKey.js';
 import {
@@ -44,6 +45,10 @@ export interface NormalizedInvoiceLineItem {
   unitPrice: number | null;
   totalPrice: number | null;
   poNumber: string | null;
+  /** A trucking invoice's ticket or load number for the line, label removed. */
+  ticketNumber: string | null;
+  /** The day the line's load or trip was hauled, at UTC midnight. */
+  serviceDate: Date | null;
 }
 
 export interface NormalizedInvoice {
@@ -133,6 +138,25 @@ export function parseDocumentDate(value: string | null | undefined): Date | null
   return parsed;
 }
 
+/** Words printed in front of a ticket or load number, not part of it. */
+const TICKET_LABEL = /^(?:(?:scale\s+|delivery\s+|weigh\s+)?(?:ticket|tkt|load|ref(?:erence)?)\b\s*(?:#|no\.?|num(?:ber)?\.?)?|#|no\.)\s*[:#]?\s*/i;
+
+/**
+ * A ticket or load number as the line prints it, with any "Ticket #" or
+ * "Load No." in front taken off. Kept readable ("T-88213"), because a person
+ * looks for that paper; matching compares it on `numberSearchKey`, the same
+ * letters-and-digits key ticket search and the ticket copies use, so
+ * "T-88213", "#t 88213" and "T88213" are one ticket. A value with no letter or
+ * digit in it identifies nothing and is dropped.
+ */
+export function normalizeTicketNumber(value: string | null | undefined): string | null {
+  const text = cleanText(value);
+  if (text === null) return null;
+  const unlabelled = text.replace(TICKET_LABEL, '').trim();
+  const kept = unlabelled || text;
+  return numberSearchKey(kept) === '' ? null : kept;
+}
+
 /** Rejects NaN and Infinity, which JSON can carry through as numbers. */
 export function cleanNumber(value: number | null | undefined): number | null {
   if (typeof value !== 'number' || !Number.isFinite(value)) return null;
@@ -199,6 +223,15 @@ export function normalizeInvoice(raw: InvoiceExtraction): NormalizedInvoice {
     if (unit === null) flag(uncertainFields, `lineItems[${index}].unit`);
     flagUnreadableUnits(unit, `lineItems[${index}].unit`, uncertainFields);
 
+    // A trucking invoice's per-line ticket number and haul date (Q14). Both
+    // are null on a material invoice, which is read exactly as before. A date
+    // the model returned in a shape that is not a real day is dropped and
+    // marked, rather than becoming a wrong window for finding the load.
+    const serviceDate = parseDocumentDate(item.serviceDate);
+    if (serviceDate === null && cleanText(item.serviceDate) !== null) {
+      flag(uncertainFields, `lineItems[${index}].serviceDate`);
+    }
+
     return {
       description: cleanText(item.description) ?? 'Unknown Item',
       quantity: cleanNumber(item.quantity),
@@ -206,6 +239,8 @@ export function normalizeInvoice(raw: InvoiceExtraction): NormalizedInvoice {
       unitPrice: cleanNumber(item.unitPrice),
       totalPrice: cleanNumber(item.totalPrice),
       poNumber: linePo,
+      ticketNumber: normalizeTicketNumber(item.ticketNumber),
+      serviceDate,
     };
   });
 

@@ -88,7 +88,16 @@ Extract:
     quantity — look for it in all of those places before returning null. A line
     without a unit cannot be checked against a delivery ticket.
   - poNumber: the PO for that specific line. Extract it for every line, even
-    when it repeats the header PO.
+    when it repeats the header PO. On a trucking invoice this column may be
+    headed "PO", "Job" or "Order"; read whichever number it prints.
+  - ticketNumber: the ticket or load number printed on that line, as printed.
+    Trucking (hauling) invoices list one line per load or per trip, each with
+    a date, a ticket or load number, a PO or job, the hours, tonnes or loads,
+    a rate and an amount. Null when the line shows none, as on most material
+    invoices.
+  - serviceDate: the date printed on that line for when the load or trip was
+    hauled, as YYYY-MM-DD. Null when the line shows no date of its own; never
+    copy the invoice date into it.
 
 Suppliers sometimes attach other paperwork to the same file. Read only the
 invoice itself:

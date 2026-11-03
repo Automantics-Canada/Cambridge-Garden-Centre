@@ -14,6 +14,7 @@ import {
   LineItemFlag,
   AuditEntityType,
   AuditActionType,
+  type Prisma,
 } from '@prisma/client';
 
 /**
@@ -201,6 +202,8 @@ export const INVOICE_DETAIL_INCLUDE = {
           evidence: true,
           orderId: true,
           candidateOrderIds: true,
+          // The dispatch loads a trucking line's verdict counted (Q14).
+          loadIds: true,
           computedAt: true,
           resolution: true,
           resolvedAt: true,
@@ -220,6 +223,34 @@ export const INVOICE_DETAIL_INCLUDE = {
 } as const;
 
 
+/** A dispatch load as the invoice page shows it beside a trucking line. */
+export const HAUL_LOAD_DETAIL_SELECT = {
+  id: true,
+  sequence: true,
+  rate: true,
+  rateUnit: true,
+  quantity: true,
+  tripRef: true,
+  ticketNumber: true,
+  claimedByLineItemId: true,
+  carrierSupplier: { select: { name: true } },
+  document: { select: { documentNumber: true } },
+} as const satisfies Prisma.DispatchLoadSelect;
+
+export function toHaulLoadDetail(load: Prisma.DispatchLoadGetPayload<{ select: typeof HAUL_LOAD_DETAIL_SELECT }>) {
+  return {
+    id: load.id,
+    documentNumber: load.document.documentNumber,
+    sequence: load.sequence,
+    carrierName: load.carrierSupplier?.name ?? null,
+    rate: load.rate === null ? null : Number(load.rate),
+    rateUnit: load.rateUnit,
+    quantity: load.quantity === null ? null : Number(load.quantity),
+    tripRef: load.tripRef,
+    ticketNumber: load.ticketNumber,
+    claimedByLineItemId: load.claimedByLineItemId,
+  };
+}
 
 /**
  * Re-derives a line item's flag from what is currently recorded against it.
@@ -307,13 +338,18 @@ async function refuseOrReleaseSettledLines(
   const settled = await prisma.invoiceLineItem.findMany({
     where: {
       invoiceId,
-      OR: [{ matchResult: { resolution: { not: null } } }, { ticketClaims: { some: {} } }],
+      OR: [
+        { matchResult: { resolution: { not: null } } },
+        { ticketClaims: { some: {} } },
+        // A trucking line's paid dispatch loads (DispatchLoad.claimedByLineItemId).
+        { claimedLoads: { some: {} } },
+      ],
     },
     select: {
       id: true,
       lineNumber: true,
       matchResult: { select: { id: true, resolution: true } },
-      _count: { select: { ticketClaims: true } },
+      _count: { select: { ticketClaims: true, claimedLoads: true } },
     },
     orderBy: { lineNumber: 'asc' },
   });
@@ -326,6 +362,9 @@ async function refuseOrReleaseSettledLines(
         line.matchResult?.resolution ? line.matchResult.resolution.toLowerCase() : null,
         line._count.ticketClaims > 0
           ? `${line._count.ticketClaims} claimed ticket${line._count.ticketClaims === 1 ? '' : 's'}`
+          : null,
+        line._count.claimedLoads > 0
+          ? `${line._count.claimedLoads} paid dispatch load${line._count.claimedLoads === 1 ? '' : 's'}`
           : null,
       ].filter(Boolean);
       return `line ${line.lineNumber} (${parts.join(', ')})`;
@@ -362,12 +401,18 @@ async function refuseOrReleaseSettledLines(
 
   // A claim with no verdict behind it cannot be reopened, and deleting it
   // silently is the data loss this function exists to stop.
-  const stranded = await prisma.ticketClaim.count({
-    where: { invoiceLineId: { in: settled.map((line) => line.id) } },
-  });
-  if (stranded > 0) {
+  const settledIds = settled.map((line) => line.id);
+  const [stranded, strandedLoads] = await Promise.all([
+    prisma.ticketClaim.count({ where: { invoiceLineId: { in: settledIds } } }),
+    prisma.dispatchLoad.count({ where: { claimedByLineItemId: { in: settledIds } } }),
+  ]);
+  if (stranded > 0 || strandedLoads > 0) {
+    const what = [
+      stranded > 0 ? `${stranded} ticket claim(s)` : null,
+      strandedLoads > 0 ? `${strandedLoads} paid dispatch load(s)` : null,
+    ].filter(Boolean).join(' and ');
     throw new InvoiceLinesResolvedError(
-      `${stranded} ticket claim(s) on this invoice are not attached to a verdict that could be ` +
+      `${what} on this invoice are not attached to a verdict that could be ` +
         'reopened. Release them on the verification desk before re-reading the invoice.'
     );
   }
@@ -655,6 +700,10 @@ export const InvoiceService = {
             lineNumber: i + 1,
             description,
             poNumber: linePo,
+            // A trucking invoice's ticket or load number and haul day: what
+            // finds the dispatch load the line bills. Null on material lines.
+            ticketNumber: item.ticketNumber ?? null,
+            serviceDate: item.serviceDate ?? null,
             quantity,
             unit,
             unitRate,
@@ -800,10 +849,33 @@ export const InvoiceService = {
   },
 
   async getInvoiceById(id: string) {
-    return prisma.invoice.findUnique({
+    const invoice = await prisma.invoice.findUnique({
       where: { id },
       include: INVOICE_DETAIL_INCLUDE,
     });
+    if (!invoice) return invoice;
+
+    // A trucking line shows the dispatch loads its verdict counted, with the
+    // rate dispatch set: what the billed rate was checked against. Office
+    // screens only (this route admits AP_USER, OWNER and ADMIN).
+    const loadIds = [...new Set(invoice.lineItems.flatMap((item) => item.matchResult?.loadIds ?? []))];
+    const loads = loadIds.length === 0
+      ? []
+      : await prisma.dispatchLoad.findMany({
+          where: { id: { in: loadIds } },
+          select: HAUL_LOAD_DETAIL_SELECT,
+        });
+    const byId = new Map(loads.map((load) => [load.id, toHaulLoadDetail(load)]));
+    return {
+      ...invoice,
+      lineItems: invoice.lineItems.map((item) => ({
+        ...item,
+        haulLoads: (item.matchResult?.loadIds ?? []).flatMap((loadId) => {
+          const load = byId.get(loadId);
+          return load ? [load] : [];
+        }),
+      })),
+    };
   },
 
   /**
