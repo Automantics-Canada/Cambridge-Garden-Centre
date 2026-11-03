@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { after, before, beforeEach, describe, it } from 'node:test';
+import { after, before, beforeEach, describe, it, mock } from 'node:test';
 import jwt from 'jsonwebtoken';
 
 import { env } from '../src/config/env.js';
@@ -375,5 +375,98 @@ describe('dispatch loads (PostgreSQL)', { skip: !runnable }, () => {
     assert.equal((await api('POST', '/api/dispatch/unassign', { documentId: document.id })).status, 200);
     assert.equal(await driverOf(pooled.body.id), null);
     assert.equal(await driverOf(onPurpose.body.id), brokerC.id);
+  });
+  it('re-checks a waiting trucking invoice when dispatch fills in, copies or removes a load\'s rate', async () => {
+    const haulage = await supplier('Example Haulage', 'TRUCKING_COMPANY');
+    const first = await seedOrder('9900-100031');
+    const second = await seedOrder('9900-100032');
+    const unpriced = await api('POST', `/api/dispatch/orders/${first.document.id}/loads`, {
+      carrierSupplierId: haulage.id, ticketNumber: 'TK-3101', tripRef: 'T-31',
+    });
+    const partner = await api('POST', `/api/dispatch/orders/${second.document.id}/loads`, {
+      carrierSupplierId: haulage.id, tripRef: 'T-31',
+    });
+    assert.equal(unpriced.status, 201);
+    assert.equal(partner.status, 201);
+
+    // The carrier's invoice arrived before dispatch set a rate on the trip.
+    const invoice = await prisma.invoice.create({
+      data: {
+        invoiceNumber: 'INV-EX-31', senderType: 'TRUCKING_COMPANY', supplierId: haulage.id, invoiceDate: today(),
+        totalAmount: 120, currency: 'CAD', fileUrl: 'test://invoice', emailFrom: 'billing@haulage.example',
+        emailSubject: 'Invoice', gmailMessageId: 'loads-test-31',
+        lineItems: {
+          create: {
+            lineNumber: 1, description: 'Tri-axle haul', ticketNumber: 'TK-3101', serviceDate: today(),
+            quantity: 1, unit: 'load', unitRate: 120, lineTotal: 120, flag: 'OK',
+          },
+        },
+      },
+      include: { lineItems: true },
+    });
+    const lineId = invoice.lineItems[0]!.id;
+    const { matchInvoiceById } = await import('../src/modules/matching/matching.service.js');
+    await matchInvoiceById(invoice.id);
+    const verdict = async () => {
+      const row = await prisma.matchResult.findUniqueOrThrow({ where: { invoiceLineId: lineId } });
+      const checks = row.evidence as Array<{ name: string; passed: boolean; code?: string }>;
+      return { status: row.status, rate: checks.find(check => check.name === 'haulRate'), loadIds: row.loadIds };
+    };
+    assert.equal((await verdict()).rate?.code, 'NO_RATE_SET');
+
+    // Dispatch sets the rate on one load: the trip's loads disagree now.
+    const priced = await api('PATCH', `/api/dispatch/loads/${unpriced.body.id}`, { rate: '120', rateUnit: 'LOAD' });
+    assert.equal(priced.status, 200, JSON.stringify(priced.body));
+    assert.equal((await verdict()).rate?.code, 'TRIP_RATES_DIFFER', 'decided again without anyone re-running it');
+
+    // Copied to the trip's other load: one rate, and the line passes.
+    const copied = await api('POST', `/api/dispatch/loads/${unpriced.body.id}/copy-rate-to-trip`);
+    assert.equal(copied.status, 200);
+    const passed = await verdict();
+    assert.equal(passed.status, 'MATCHED');
+    assert.equal(passed.rate?.passed, true);
+    const line = await prisma.invoiceLineItem.findUniqueOrThrow({ where: { id: lineId } });
+    assert.equal(Number(line.approvedTotal), 120);
+
+    // Removing the loads leaves the line with nothing to bill against.
+    assert.equal((await api('DELETE', `/api/dispatch/loads/${partner.body.id}`)).status, 200);
+    assert.equal((await api('DELETE', `/api/dispatch/loads/${unpriced.body.id}`)).status, 200);
+    const gone = await verdict();
+    assert.equal(gone.status, 'UNMATCHED');
+    assert.deepEqual(gone.loadIds, []);
+  });
+
+  it('a note on a load re-checks nothing, and a failed re-check never fails the change', async () => {
+    const haulage = await supplier('Example Haulage', 'TRUCKING_COMPANY');
+    const { document } = await seedOrder('9900-100033');
+    const load = await api('POST', `/api/dispatch/orders/${document.id}/loads`, { carrierSupplierId: haulage.id });
+    const invoice = await prisma.invoice.create({
+      data: {
+        invoiceNumber: 'INV-EX-33', senderType: 'TRUCKING_COMPANY', supplierId: haulage.id, invoiceDate: today(),
+        totalAmount: 120, currency: 'CAD', fileUrl: 'test://invoice', emailFrom: 'billing@haulage.example',
+        emailSubject: 'Invoice', gmailMessageId: 'loads-test-33',
+        lineItems: { create: { lineNumber: 1, description: 'Haul', quantity: 1, unit: 'load', unitRate: 120, lineTotal: 120, flag: 'OK' } },
+      },
+    });
+    // Never matched: a re-check would give it a verdict.
+    assert.equal((await api('PATCH', `/api/dispatch/loads/${load.body.id}`, { notes: 'Gate code 4471' })).status, 200);
+    assert.equal(await prisma.matchResult.count({ where: { invoiceLine: { invoiceId: invoice.id } } }), 0);
+
+    // The re-check reads the invoice lines; make that read fail.
+    const { prisma: client } = await import('../src/db/prisma.js');
+    const original = client.invoiceLineItem.findMany;
+    (client.invoiceLineItem as { findMany: unknown }).findMany = async () => {
+      throw new Error('database unavailable');
+    };
+    const quiet = mock.method(console, 'error', () => {});
+    try {
+      const changed = await api('PATCH', `/api/dispatch/loads/${load.body.id}`, { rate: '95', rateUnit: 'LOAD' });
+      assert.equal(changed.status, 200, 'the rate is saved whatever the re-check does');
+      assert.equal(changed.body.rate, 95);
+    } finally {
+      (client.invoiceLineItem as { findMany: unknown }).findMany = original;
+      quiet.mock.restore();
+    }
+    assert.ok(quiet.mock.calls.some(call => String(call.arguments[0]).includes('haul line recompute failed')));
   });
 });

@@ -19,7 +19,7 @@
       "spruceOrderNumbers": ["990103"],
       "poNumbers": ["2610-900103"],
       "invoiceNumber": "SH-2026-118",
-      "expectedTotal": 1017.0,
+      "expectedTotal": 1712.0,
       "alreadyPaid": false,
       "notes": "Trucking: the dispatcher's rate for these loads was $225 per load."
     }

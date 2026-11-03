@@ -71,6 +71,9 @@ async function haulageWorkbook(): Promise<Buffer> {
   invoice.addRow(['Ticket', 'Date', 'Description', 'Loads', 'Rate', 'Amount']);
   invoice.addRow(['SH-501', new Date(Date.UTC(2026, 9, 22)), 'Triaxle haul', 1, 225, 225]);
   invoice.addRow(['SH-502', new Date(Date.UTC(2026, 9, 22)), 'Triaxle haul', 3, 240, { formula: 'D4*E4', result: 720 }]);
+  invoice.addRow(['SH-503', new Date(Date.UTC(2026, 9, 22)), 'Triaxle haul', 1, 225, 225]);
+  invoice.addRow(['SH-504', new Date(Date.UTC(2026, 9, 22)), 'Triaxle haul', 1, 230, 230]);
+  invoice.addRow(['SH-505', new Date(Date.UTC(2026, 9, 22)), 'Triaxle haul', 1, 240, 240]);
   const notes = book.addWorksheet('Notes');
   notes.addRow(['Weekly statement of loads']);
   return Buffer.from(await book.xlsx.writeBuffer());
@@ -83,11 +86,14 @@ const haulageReading = {
     invoiceNumber: 'SH-2026-118',
     date: '2026-10-23',
     poNumber: '2610-900103',
-    // Deliberately not 945 x 1.13: the totals check must say so.
-    totalAmount: 1017,
+    // Deliberately not 1640 x 1.13: the totals check must say so.
+    totalAmount: 1712,
     lineItems: [
-      { description: 'Test Haul Triaxle', quantity: 1, unit: 'load', unitPrice: 225, totalPrice: 225, poNumber: null, ticketNumber: 'SH-501' },
-      { description: 'Test Haul Triaxle', quantity: 3, unit: 'trk', unitPrice: 240, totalPrice: 720, poNumber: null, ticketNumber: 'SH-502' },
+      { description: 'Test Haul Triaxle', quantity: 1, unit: 'load', unitPrice: 225, totalPrice: 225, poNumber: null, ticketNumber: 'SH-501', serviceDate: '2026-10-22' },
+      { description: 'Test Haul Triaxle', quantity: 3, unit: 'trk', unitPrice: 240, totalPrice: 720, poNumber: null, ticketNumber: 'SH-502', serviceDate: '2026-10-22' },
+      { description: 'Test Haul Triaxle', quantity: 1, unit: 'load', unitPrice: 225, totalPrice: 225, poNumber: null, ticketNumber: 'SH-503', serviceDate: '2026-10-22' },
+      { description: 'Test Haul Triaxle', quantity: 1, unit: 'load', unitPrice: 230, totalPrice: 230, poNumber: null, ticketNumber: 'SH-504', serviceDate: '2026-10-22' },
+      { description: 'Test Haul Triaxle', quantity: 1, unit: 'load', unitPrice: 240, totalPrice: 240, poNumber: null, ticketNumber: 'SH-505', serviceDate: '2026-10-22' },
     ],
     readability: 'clear',
     uncertainFields: [],
@@ -198,12 +204,49 @@ describe('sample dry run, pre-extracted readings', () => {
     assert.equal(sheet.supplier?.supplierType, 'TRUCKING_COMPANY');
     assert.equal(sheet.totals?.verdict, 'does-not-add-up');
     assert.equal(sheet.totals?.difference, 72);
-    // A field this build's reader does not keep is still shown from the reply.
-    assert.deepEqual(sheet.invoice?.lines.map((l) => l.ticketNumber), ['SH-501', 'SH-502']);
-    const [first] = sheet.matching!.lines;
-    assert.match(first!.checks.find((c) => c.name === 'ticketCoverage')!.detail, /already been used/);
-    assert.ok(first!.considered.competingLines >= 1);
-    assert.ok(sheet.warnings.some((w) => /dispatcher's rate/.test(w)));
+    assert.deepEqual(sheet.invoice?.lines.map((l) => l.ticketNumber), ['SH-501', 'SH-502', 'SH-503', 'SH-504', 'SH-505']);
+    assert.deepEqual(sheet.invoice?.lines.map((l) => l.serviceDate), Array(5).fill('2026-10-22'));
+  });
+
+  it("checks a trucking company's lines against the dispatch loads they bill, at the dispatcher's rate", () => {
+    const sheet = sample(XLSX_NAME);
+    const [paid, wrongUnit, clean, unpriced, overBilled] = sheet.matching!.lines;
+    const failed = (line: typeof paid) => line!.checks.filter((c) => !c.passed).map((c) => c.name);
+
+    // Each line finds its load by the ticket printed on it, never an order line and its tickets.
+    for (const line of sheet.matching!.lines) {
+      assert.deepEqual(line.tickets, []);
+      assert.ok(line.checks.some((c) => c.name === 'haulLoad'), `line ${line.line} is a haul`);
+      assert.ok(!line.checks.some((c) => c.name === 'ticketCoverage'));
+      assert.equal(line.considered.loads, 5);
+    }
+    assert.deepEqual(sheet.matching!.lines.map((l) => l.loads.map((load) => load.sequence)), [[1], [2], [3], [4], [5]]);
+
+    assert.equal(clean!.status, 'MATCHED');
+    assert.equal(clean!.flag, 'OK');
+    assert.equal(clean!.agreedRate, 225);
+    assert.equal(clean!.approvedTotal, 225);
+
+    // SH-501 was paid on SH-2026-101 already.
+    assert.equal(paid!.status, 'PARTIAL');
+    assert.match(paid!.checks.find((c) => c.name === 'loadReuse')!.detail, /already paid on invoice SH-2026-101 line 1/);
+
+    // "trk" is not a unit the dispatcher's per-load rate can be compared with,
+    // and SH-2026-099 line 2 bills the same load and nobody has ruled on it.
+    assert.equal(wrongUnit!.flag, 'UNIT_MISMATCH');
+    assert.deepEqual(failed(wrongUnit).sort(), ['duplicateBilling', 'haulRate']);
+    assert.equal(wrongUnit!.considered.competingLines, 1);
+
+    assert.match(unpriced!.checks.find((c) => c.name === 'haulRate')!.detail, /Dispatch has not set a haul rate/);
+    assert.equal(unpriced!.agreedRate, null);
+    assert.equal(unpriced!.flag, 'RATE_UNKNOWN');
+
+    assert.equal(overBilled!.flag, 'RATE_MISMATCH');
+    assert.equal(overBilled!.rateDiscrepancy, 15);
+    assert.equal(overBilled!.approvedTotal, 225, 'approved at the rate dispatch set');
+
+    assert.ok(!sheet.warnings.some((w) => /dispatch loads/.test(w)));
+    assert.match(formatDryRun(report), /-> MATCHED \/ OK: order 990103; 990103 load 3; dispatch rate 225/);
   });
 
   it('sends the old .xls format to a person and never asks a model about a file it has no reading for', () => {
@@ -348,7 +391,10 @@ describe('what production would store and file under', () => {
   it('stores an unread quantity and price as 0, an unread unit as "unknown", and falls back to the invoice PO', () => {
     assert.deepEqual(
       storedLineLikeProduction({ description: '', quantity: null, unit: null, unitPrice: null, totalPrice: null, poNumber: null }, 0, '2610-900101'),
-      { lineNumber: 1, description: 'Unknown Item', poNumber: '2610-900101', quantity: 0, unit: 'unknown', unitRate: 0, lineTotal: 0 }
+      {
+        lineNumber: 1, description: 'Unknown Item', poNumber: '2610-900101', quantity: 0, unit: 'unknown', unitRate: 0, lineTotal: 0,
+        ticketNumber: null, serviceDate: null,
+      }
     );
   });
 
@@ -360,6 +406,33 @@ describe('what production would store and file under', () => {
     const created = resolveSupplierLikeProduction('Nobody Paving Co', suppliers);
     assert.equal(created.how, 'would-create');
     assert.equal(resolveSupplierLikeProduction(null, suppliers).how, 'none');
+  });
+
+  it('refuses a dispatch load whose carrier is not a trucking company, or whose rate says per nothing', () => {
+    const base = readExample('related.example.json') as { dispatchLoads: Array<Record<string, unknown>> };
+    const withLoad = (load: Record<string, unknown>) => ({ ...base, dispatchLoads: [{ ...base.dispatchLoads[1], ...load }] });
+    assert.throws(() => parseRelatedRecords(withLoad({ carrier: 'sup-example-aggregates' })), /dispatchLoads\[0\]: carrier "sup-example-aggregates" is not a TRUCKING_COMPANY/);
+    assert.throws(() => parseRelatedRecords(withLoad({ rateUnit: null })), /rateUnit/);
+    const { loads } = parseRelatedRecords(withLoad({}));
+    // The order's PO comes from the orders list, so a PO on the line finds the load.
+    assert.deepEqual(loads[0]!.poNumbers, ['2610-900103']);
+    assert.equal(loads[0]!.orderLineId, 'ord-990103-1');
+  });
+
+  it('warns when a trucking sample has no dispatch loads to be checked against', async () => {
+    const bare = mkdtempSync(path.join(tmpdir(), 'cgc-samples-bare-'));
+    try {
+      writeFileSync(path.join(bare, XLSX_NAME), await haulageWorkbook());
+      writeFileSync(path.join(bare, `${XLSX_NAME}.extraction.json`), JSON.stringify(haulageReading));
+      const related = readExample('related.example.json') as Record<string, unknown>;
+      writeFileSync(path.join(bare, 'related.json'), JSON.stringify({ ...related, dispatchLoads: [] }));
+      const result = await runSampleDryRun(options({ dir: bare, writeReport: false }), { extraction });
+      const [entry] = result.samples;
+      assert.ok(entry!.warnings.some((w) => /No dispatch loads by this trucking company/.test(w)));
+      assert.ok(entry!.matching!.lines.every((line) => line.status === 'UNMATCHED'));
+    } finally {
+      rmSync(bare, { recursive: true, force: true });
+    }
   });
 
   it('refuses a related.json that names a supplier it does not list', () => {

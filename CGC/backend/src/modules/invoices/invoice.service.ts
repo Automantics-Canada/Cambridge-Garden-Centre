@@ -1056,6 +1056,13 @@ export const InvoiceService = {
   },
 
   async linkOrderToLineItem(lineItemId: string, orderId: string, userId: string) {
+    // A quotation is a price given to a customer, not an order: nothing is
+    // billed against it (client, Oct 2026, Q3). The order picker no longer
+    // offers one; this refuses it for a screen open from before, as linking a
+    // ticket by hand already does.
+    const { refuseQuotationLine } = await import('../orders/quotations.js');
+    await refuseQuotationLine(prisma, orderId, 'an invoice line');
+
     // Clearing NO_ORDER is all this link earns. It used to set the flag to OK
     // outright, which also wiped a live RATE_MISMATCH or QTY_MISMATCH â€” so
     // attaching an order silently dismissed a price warning nobody had looked

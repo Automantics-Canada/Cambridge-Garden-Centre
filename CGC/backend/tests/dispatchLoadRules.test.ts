@@ -5,6 +5,7 @@ import {
   LoadInputError,
   applyLoadInput,
   billableHauls,
+  carriersToRecheck,
   changesRate,
   loadChanges,
   lockedChanges,
@@ -126,6 +127,31 @@ describe('loadChanges, lockedChanges and changesRate', () => {
   it('calls a change to the rate or its unit a rate change', () => {
     assert.equal(changesRate(loadChanges(priced, { ...priced, rateUnit: 'HOUR' })), true);
     assert.equal(changesRate(loadChanges(priced, { ...priced, ticketNumber: '1' })), false);
+  });
+});
+
+describe('carriersToRecheck', () => {
+  const priced: LoadState = { ...EMPTY, carrierSupplierId: CARRIER, rate: '95', rateUnit: 'LOAD' };
+  const recheck = (before: LoadState | null, after: LoadState | null) =>
+    carriersToRecheck(before, after, loadChanges(before ?? EMPTY, after ?? EMPTY));
+
+  it('re-checks the carrier when anything a haul line is checked against changes', () => {
+    // The invoice waiting on "No haul rate set" clears once dispatch fills it in.
+    assert.deepEqual(recheck({ ...priced, rate: null, rateUnit: null }, priced), [CARRIER]);
+    for (const change of [{ rateUnit: 'HOUR' }, { quantity: '2' }, { tripRef: 'T-9' }, { ticketNumber: 'TK-1' }] as const) {
+      assert.deepEqual(recheck(priced, { ...priced, ...change }), [CARRIER], JSON.stringify(change));
+    }
+  });
+
+  it('re-checks both carriers when the load moves to another, and the carrier of a removed load', () => {
+    assert.deepEqual(recheck(priced, { ...priced, carrierSupplierId: OTHER_CARRIER }).sort(), [CARRIER, OTHER_CARRIER].sort());
+    assert.deepEqual(recheck(priced, null), [CARRIER]);
+  });
+
+  it('leaves invoices alone for a note or a pit, and for CGC\'s own trucks', () => {
+    assert.deepEqual(recheck(priced, { ...priced, notes: 'Gate code 1234' }), []);
+    assert.deepEqual(recheck(priced, { ...priced, sourceSupplierId: OTHER_CARRIER }), []);
+    assert.deepEqual(recheck(EMPTY, { ...EMPTY, ticketNumber: 'TK-2' }), []);
   });
 });
 

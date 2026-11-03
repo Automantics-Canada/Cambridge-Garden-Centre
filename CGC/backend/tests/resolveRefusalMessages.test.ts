@@ -53,6 +53,14 @@ describe('refusal messages', () => {
     assert.equal(error, detail);
   });
 
+  it('passes a quotation refusal through, naming the quotation', () => {
+    // A quotation is not an order (client, Oct 2026, Q3): nothing is billed against it.
+    const detail = '9900-000001 is a quotation in Spruce, not an order, so nothing can be matched to it.';
+    const { status, error } = explain({ ok: false, code: 'ORDER_IS_QUOTATION', detail });
+    assert.equal(status, 409);
+    assert.equal(error, detail);
+  });
+
   it('never reports a refusal as success', () => {
     const codes = [
       { ok: false as const, code: 'NOT_FOUND' as const },

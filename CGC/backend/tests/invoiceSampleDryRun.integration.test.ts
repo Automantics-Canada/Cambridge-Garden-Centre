@@ -37,11 +37,12 @@ const runnable = confirmed && loopback;
 const USER_ID = '00000000-0000-4000-8000-0000000005a1';
 const SUPPLIER_ID = '00000000-0000-4000-8000-0000000005a2';
 const PO = '2610-900101';
+const CARRIER_ID = '00000000-0000-4000-8000-0000000005a3';
 
 async function reset(): Promise<void> {
   await prisma.$executeRawUnsafe(
     'TRUNCATE TABLE "MatchResult", "TicketOrderMatch", "InvoiceLineItem", "Invoice", "Ticket", "Order", ' +
-      '"OrderDocument", "NegotiatedRate", "SupplierProductAlias", "Supplier", "User", "SystemSetting" ' +
+      '"OrderDocument", "DispatchLoad", "NegotiatedRate", "SupplierProductAlias", "Supplier", "User", "SystemSetting" ' +
       'RESTART IDENTITY CASCADE'
   );
 }
@@ -53,6 +54,7 @@ async function counts(): Promise<number[]> {
     prisma.matchResult.count(),
     prisma.supplier.count(),
     prisma.ticket.count(),
+    prisma.dispatchLoad.count({ where: { claimedByLineItemId: { not: null } } }),
   ]);
 }
 
@@ -124,7 +126,40 @@ describe('sample dry run against a loopback database', { skip: !runnable }, () =
       data: { supplierId: SUPPLIER_ID, productName: 'Test Clear Stone 19mm', rate: 31.5, unit: 'tonne', effectiveFrom: new Date('2026-01-01'), createdById: USER_ID },
     });
 
+    // A brokered haul dispatch recorded for the order, at the rate it set.
+    await prisma.supplier.create({
+      data: { id: CARRIER_ID, name: 'Example Haulage Ltd.', type: 'TRUCKING_COMPANY', emailDomains: [] },
+    });
+    await prisma.orderDocument.update({
+      where: { id: '00000000-0000-4000-8000-0000000005b1' },
+      data: { deliveryDate: new Date('2026-10-21') },
+    });
+    await prisma.dispatchLoad.create({
+      data: {
+        documentId: '00000000-0000-4000-8000-0000000005b1', sequence: 1, carrierSupplierId: CARRIER_ID,
+        rate: '200', rateUnit: 'LOAD', quantity: '1', ticketNumber: 'EH-701', setById: USER_ID,
+      },
+    });
+
     dir = mkdtempSync(path.join(tmpdir(), 'cgc-samples-db-'));
+    writeFileSync(path.join(dir, 'haulage.csv'), 'Ticket,Date,Loads,Rate,Total\nEH-701,2026-10-21,1,210.00,210.00\n');
+    writeFileSync(
+      path.join(dir, 'haulage.csv.extraction.json'),
+      JSON.stringify({
+        invoice: {
+          supplierName: 'Example Haulage Ltd.',
+          invoiceNumber: 'EH-9001',
+          date: '2026-10-24',
+          poNumber: null,
+          totalAmount: 237.3,
+          lineItems: [
+            { description: 'Triaxle haul', quantity: 1, unit: 'load', unitPrice: 210, totalPrice: 210, poNumber: null, ticketNumber: 'EH 701', serviceDate: '2026-10-21' },
+          ],
+          readability: 'clear',
+          uncertainFields: [],
+        },
+      })
+    );
     writeFileSync(path.join(dir, 'example.csv'), 'Item,Qty,Unit,Price,Total\nTest Clear Stone 19mm,30,t,31.50,945.00\n');
     writeFileSync(
       path.join(dir, 'example.csv.extraction.json'),
@@ -163,7 +198,7 @@ describe('sample dry run against a loopback database', { skip: !runnable }, () =
       }
     );
 
-    const sample = report.samples[0]!;
+    const sample = report.samples.find((entry) => entry.file === 'example.csv')!;
     assert.equal(report.relatedRecords, 'loopback database');
     assert.equal(sample.supplier?.resolution, 'exact');
     assert.equal(sample.matching?.lines[0]?.status, 'MATCHED');
@@ -172,6 +207,28 @@ describe('sample dry run against a loopback database', { skip: !runnable }, () =
     assert.equal(sample.matching?.lines[0]?.tickets.length, 2);
     assert.equal(sample.matching?.invoiceTotalCheck.result, 'ok');
     assert.deepEqual(await counts(), before);
+  });
+
+  it("checks a trucking company's sample against the dispatch loads in the database, read only", async () => {
+    const before = await counts();
+    const report = await runSampleDryRun(
+      { dir, mode: 'fixture', saveExtractions: false, related: { kind: 'db' }, only: ['haulage.csv'], writeReport: false },
+      {
+        extraction,
+        db: {
+          loadSuppliers: () => inReadOnlyTransaction(prisma, (tx) => loadSuppliers(tx)),
+          loadRecords: (suppliers, request) =>
+            inReadOnlyTransaction(prisma, (tx) => loadRelatedRecordsFromDb(tx, suppliers, request)),
+        },
+      }
+    );
+    const [line] = report.samples[0]!.matching!.lines;
+    assert.equal(report.samples[0]!.supplier?.supplierType, 'TRUCKING_COMPANY');
+    // Found by the ticket printed on the line; billed $210 against the $200 dispatch set.
+    assert.deepEqual(line!.loads.map((load) => [load.orderNumber, load.sequence, load.rate]), [['990101', 1, 200]]);
+    assert.equal(line!.flag, 'RATE_MISMATCH');
+    assert.equal(line!.approvedTotal, 200);
+    assert.deepEqual(await counts(), before, 'nothing written, no load claimed');
   });
 
   it('runs its reads in a transaction PostgreSQL refuses to write in', async () => {

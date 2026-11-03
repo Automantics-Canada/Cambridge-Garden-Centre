@@ -750,10 +750,16 @@ export async function seedDemo(): Promise<DemoSeedSummary> {
   await DispatchLoadsService.create(idOf(D.tripSecond), trip, users.admin.id);
   // A carrier but no rate yet: the board's "No haul rate".
   await DispatchLoadsService.create(idOf(D.carrierNoRate), { carrierSupplierId: haulage.id, sourceSupplierId: aggregates.id }, users.admin.id);
-  // Yesterday's brokered trip, which the trucking invoice below bills.
+  // Yesterday's brokered trip, which the trucking invoice below bills: one
+  // haul at the trip's rate, whatever orders it served.
   const pastTrip = { carrierSupplierId: haulage.id, rate: '140', rateUnit: 'LOAD', quantity: '1', sourceSupplierId: aggregates.id, tripRef: 'DEMO-TRIP-YESTERDAY' };
   await DispatchLoadsService.create(idOf(D.pastTripSand), { ...pastTrip, ticketNumber: 'DH-1101' }, users.admin.id);
   await DispatchLoadsService.create(idOf(D.pastTripGravel), { ...pastTrip, ticketNumber: 'DH-1102' }, users.admin.id);
+  // Each order needed a second truck later in the day, on its own: one at an
+  // agreed $150, one nobody has priced yet. The invoice bills both.
+  const pastExtra = { carrierSupplierId: haulage.id, rateUnit: 'LOAD', quantity: '1', sourceSupplierId: aggregates.id };
+  await DispatchLoadsService.create(idOf(D.pastTripSand), { ...pastExtra, rate: '150', ticketNumber: 'DH-1103' }, users.admin.id);
+  await DispatchLoadsService.create(idOf(D.pastTripGravel), { ...pastExtra, rateUnit: null, ticketNumber: 'DH-1104' }, users.admin.id);
   // CGC's own truck with no rate is fine: nobody bills CGC for it.
   await DispatchLoadsService.create(idOf(D.yardRun), { notes: 'Our tandem' }, users.admin.id);
 
@@ -912,9 +918,12 @@ export async function seedDemo(): Promise<DemoSeedSummary> {
     },
   });
 
-  // A14: the trucking company bills yesterday's brokered trip. Dispatch set
-  // 140 a load; the second line says 150. The haul-line columns (ticket and
-  // service date per line) belong to a later package and are not set here.
+  // A14: the trucking company bills yesterday's hauls, one line per ticket,
+  // each with the day it ran, as the reader stores a trucking invoice. The
+  // matching engine checks each line against the load dispatch recorded:
+  // the brokered trip at the $140 dispatch set (passes), the second sand
+  // load billed $160 where dispatch agreed $150 (rate mismatch), and the
+  // second gravel load, which nobody priced (no haul rate set).
   const haulageMessage = 'demo-msg-0003';
   const haulInvoice = await prisma.invoice.create({
     data: {
@@ -922,7 +931,7 @@ export async function seedDemo(): Promise<DemoSeedSummary> {
       senderType: SenderType.TRUCKING_COMPANY,
       supplierId: haulage.id,
       invoiceDate: dateOnly(yesterday),
-      totalAmount: money((140 + 150) * 1.13),
+      totalAmount: money((140 + 160 + 150) * 1.13),
       currency: 'CAD',
       fileUrl: '/uploads/demo/invoices/DH-301.pdf',
       emailFrom: 'dispatch@demohaulage.example',
@@ -933,8 +942,18 @@ export async function seedDemo(): Promise<DemoSeedSummary> {
       OcrJobStatus: 'COMPLETED',
       lineItems: {
         create: [
-          { lineNumber: 1, description: 'Tri-axle haul, ticket DH-1101', poNumber: po(D.pastTripSand), quantity: 1, unit: 'load', unitRate: 140, lineTotal: 140, flag: 'OK' },
-          { lineNumber: 2, description: 'Tri-axle haul, ticket DH-1102', poNumber: po(D.pastTripGravel), quantity: 1, unit: 'load', unitRate: 150, lineTotal: 150, flag: 'OK' },
+          {
+            lineNumber: 1, description: 'Tri-axle haul, 2 POs one trip', poNumber: po(D.pastTripSand), ticketNumber: 'DH-1101',
+            serviceDate: dateOnly(yesterday), quantity: 1, unit: 'load', unitRate: 140, lineTotal: 140, flag: 'OK',
+          },
+          {
+            lineNumber: 2, description: 'Tri-axle haul', poNumber: po(D.pastTripSand), ticketNumber: 'DH-1103',
+            serviceDate: dateOnly(yesterday), quantity: 1, unit: 'load', unitRate: 160, lineTotal: 160, flag: 'OK',
+          },
+          {
+            lineNumber: 3, description: 'Tri-axle haul', poNumber: po(D.pastTripGravel), ticketNumber: 'DH-1104',
+            serviceDate: dateOnly(yesterday), quantity: 1, unit: 'load', unitRate: 150, lineTotal: 150, flag: 'OK',
+          },
         ],
       },
     },
