@@ -10,6 +10,7 @@ import {
   loadChanges,
   lockedChanges,
   parseLoadInput,
+  tripLoadHaul,
   type HaulLoad,
   type LoadState,
 } from '../src/modules/dispatch/dispatchLoadRules.js';
@@ -169,7 +170,7 @@ describe('billableHauls', () => {
     ]);
   });
 
-  it('bills a brokered trip over several orders once, at the trip\'s rate, not the sum of its loads', () => {
+  it('bills a brokered trip over several orders as one haul of its loads, at the rate per load', () => {
     const [trip, ...rest] = billableHauls([
       load('a', { tripRef: 't-7' }),
       load('b', { tripRef: 'T-7' }),
@@ -184,9 +185,30 @@ describe('billableHauls', () => {
       rate: '95',
       rateUnit: 'LOAD',
       rateConflict: false,
+      quantity: '3',
+      claimed: false,
+    });
+  });
+
+  it('counts a trip load by load, as many loads as dispatch expected on each', () => {
+    const [trip] = billableHauls([load('a', { tripRef: 'T-7', quantity: '2' }), load('b', { tripRef: 'T-7' })]);
+    assert.equal(trip!.quantity, '3');
+  });
+
+  it('bills one load of a trip on its own, at that load\'s rate', () => {
+    const haul = tripLoadHaul({ ...load('b', { tripRef: 't-7', rate: '120', quantity: '1' }), carrierSupplierId: CARRIER });
+    assert.deepEqual(haul, {
+      carrierSupplierId: CARRIER,
+      tripRef: 'T-7',
+      loadIds: ['b'],
+      documentIds: ['doc-b'],
+      rate: '120',
+      rateUnit: 'LOAD',
+      rateConflict: false,
       quantity: '1',
       claimed: false,
     });
+    assert.equal(tripLoadHaul({ ...load('c', { rate: null }), carrierSupplierId: CARRIER }).rateUnit, null);
   });
 
   it('adds up a trip by the tonne, and leaves a trip by the hour to the client\'s answer', () => {

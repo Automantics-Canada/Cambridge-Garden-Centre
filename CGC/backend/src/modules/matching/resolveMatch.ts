@@ -96,7 +96,11 @@ class LoadClaimConflict extends Error {}
  * hauled. The verdict's own loads when they are on that order; otherwise the
  * order's loads by this carrier, grouped the way the matcher groups them
  * (a trip is one haul, a day at a time), leaving out hauls another line paid.
- * Null when the order had more than one such haul and nothing says which.
+ * A trip that other lines have started paying load by load gives only the
+ * chosen order's own unpaid load. A verdict's haul on that order that was
+ * paid meanwhile, with no unpaid load of it left, is returned as it is so the
+ * claim fails and the override is refused. Null when the order had more than
+ * one such haul and nothing says which.
  */
 async function overrideLoadIds(
   orderId: string,
@@ -108,16 +112,31 @@ async function overrideLoadIds(
   if (!order?.documentId) return [];
   const documentId = order.documentId;
 
+  // Set when the verdict's haul is on the chosen order. If nothing better is
+  // found below it is returned as it is, so that a haul paid since the verdict
+  // fails the claim and the override is refused, never passed with no load.
+  let verdictOnOrder = false;
   if (verdictLoadIds.length > 0) {
-    const onOrder = await prisma.dispatchLoad.count({ where: { id: { in: verdictLoadIds }, documentId } });
-    if (onOrder > 0) return verdictLoadIds;
+    const verdictLoads = await prisma.dispatchLoad.findMany({
+      where: { id: { in: verdictLoadIds } },
+      select: { documentId: true, claimedByLineItemId: true, tripRef: true },
+    });
+    verdictOnOrder = verdictLoads.some((load) => load.documentId === documentId);
+    // The verdict's haul, unless another line has since paid part of a trip
+    // (billed load by load): then the order's own unpaid load is worked out
+    // below. A single load paid since stays as it is and is refused.
+    const unpaid = verdictLoads.every(
+      (load) => load.claimedByLineItemId === null || load.claimedByLineItemId === invoiceLineId
+    );
+    const trip = verdictLoads.some((load) => load.tripRef !== null);
+    if (verdictOnOrder && (unpaid || !trip)) return verdictLoadIds;
   }
 
   const own = await prisma.dispatchLoad.findMany({
     where: { documentId, carrierSupplierId },
     select: { tripRef: true },
   });
-  if (own.length === 0) return [];
+  if (own.length === 0) return verdictOnOrder ? verdictLoadIds : [];
   // A trip's other loads are on other orders: read them too, so the trip is
   // claimed whole.
   const trips = [...new Set(own.flatMap((load) => (load.tripRef ? [load.tripRef] : [])))];
@@ -126,13 +145,22 @@ async function overrideLoadIds(
     carrierSupplierId,
     OR: [{ documentId }, ...(trips.length > 0 ? [{ tripRef: { in: trips } }] : [])],
   });
-  const hauls = haulCandidates(loads, carrierSupplierId, null, 0).filter(
-    (candidate) =>
-      candidate.haul.documentIds.includes(documentId) &&
-      candidate.loads.every((load) => load.claimedByLineItemId === null || load.claimedByLineItemId === invoiceLineId)
-  );
-  if (hauls.length === 1) return hauls[0]!.haul.loadIds;
-  return hauls.length === 0 ? [] : null;
+  const free = (load: { claimedByLineItemId: string | null }) =>
+    load.claimedByLineItemId === null || load.claimedByLineItemId === invoiceLineId;
+  const choices = haulCandidates(loads, carrierSupplierId, null, 0)
+    .filter((candidate) => candidate.haul.documentIds.includes(documentId))
+    .flatMap((candidate) => {
+      if (candidate.loads.every(free)) return [candidate.haul.loadIds];
+      // A trip the carrier is billing load by load, some loads already paid:
+      // this line can only be for the chosen order's own unpaid load of it.
+      if (!candidate.haul.tripRef) return [];
+      return candidate.loads.filter((load) => load.documentId === documentId && free(load)).map((load) => [load.id]);
+    });
+  if (choices.length === 1) return choices[0]!;
+  // Every load of the verdict's trip on this order is paid: claiming the
+  // verdict's loads fails, and the override is refused as already paid.
+  if (choices.length === 0) return verdictOnOrder ? verdictLoadIds : [];
+  return null;
 }
 
 export async function resolveMatchResult(params: {

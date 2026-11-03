@@ -219,17 +219,27 @@ describe('demo seed', { skip: !(confirmed && loopback) }, () => {
     assert.equal(haul.senderType, 'TRUCKING_COMPANY');
     const code = (line: (typeof haul.lineItems)[number], name: string) =>
       (line.matchResult!.evidence as Array<{ name: string; passed: boolean; code?: string }>).find(check => check.name === name);
-    const [trip, overBilled, unpriced] = haul.lineItems;
+    const [tripSand, tripGravel, overBilled, unpriced] = haul.lineItems;
     for (const line of haul.lineItems) {
       assert.ok(line.ticketNumber, `line ${line.lineNumber} carries its ticket`);
       assert.equal(line.serviceDate?.toISOString().slice(0, 10), haul.invoiceDate.toISOString().slice(0, 10));
     }
 
-    // Yesterday's brokered trip: one haul over two orders, at the rate dispatch set.
-    assert.equal(trip!.matchResult!.status, 'MATCHED', trip!.matchResult!.reason);
-    assert.equal(trip!.matchResult!.loadIds.length, 2);
-    assert.equal(Number(trip!.approvedTotal), 140);
-    assert.equal(trip!.flag, 'OK');
+    // Yesterday's brokered trip, billed load by load: each line passes at the
+    // $140 a load dispatch set, and counts only the load its ticket names.
+    const tripLoads = await prisma.dispatchLoad.findMany({
+      where: { tripRef: 'DEMO-TRIP-YESTERDAY' },
+      select: { id: true, ticketNumber: true },
+    });
+    assert.equal(tripLoads.length, 2);
+    for (const line of [tripSand!, tripGravel!]) {
+      assert.equal(line.matchResult!.status, 'MATCHED', line.matchResult!.reason);
+      const own = tripLoads.find(load => load.ticketNumber === line.ticketNumber);
+      assert.deepEqual(line.matchResult!.loadIds, [own!.id], `line ${line.lineNumber} counts only its own load`);
+      assert.equal(Number(line.approvedTotal), 140);
+      assert.equal(line.flag, 'OK');
+      assert.equal(code(line, 'duplicateBilling'), undefined, 'the two loads of the trip are not one billed twice');
+    }
 
     assert.equal(code(overBilled!, 'haulRate')?.code, 'RATE_MISMATCH');
     assert.equal(overBilled!.flag, 'RATE_MISMATCH');

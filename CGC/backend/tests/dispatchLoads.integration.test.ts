@@ -390,15 +390,18 @@ describe('dispatch loads (PostgreSQL)', { skip: !runnable }, () => {
     assert.equal(partner.status, 201);
 
     // The carrier's invoice arrived before dispatch set a rate on the trip.
+    // It bills the whole trip on one line (both loads, found by the order
+    // number): a line quoting one load's own ticket would bill that load
+    // alone, at its own rate, and never see the trip's rates disagree.
     const invoice = await prisma.invoice.create({
       data: {
         invoiceNumber: 'INV-EX-31', senderType: 'TRUCKING_COMPANY', supplierId: haulage.id, invoiceDate: today(),
-        totalAmount: 120, currency: 'CAD', fileUrl: 'test://invoice', emailFrom: 'billing@haulage.example',
+        totalAmount: 240, currency: 'CAD', fileUrl: 'test://invoice', emailFrom: 'billing@haulage.example',
         emailSubject: 'Invoice', gmailMessageId: 'loads-test-31',
         lineItems: {
           create: {
-            lineNumber: 1, description: 'Tri-axle haul', ticketNumber: 'TK-3101', serviceDate: today(),
-            quantity: 1, unit: 'load', unitRate: 120, lineTotal: 120, flag: 'OK',
+            lineNumber: 1, description: 'Tri-axle haul, trip T-31', poNumber: '9900-100031', serviceDate: today(),
+            quantity: 2, unit: 'load', unitRate: 120, lineTotal: 240, flag: 'OK',
           },
         },
       },
@@ -425,8 +428,9 @@ describe('dispatch loads (PostgreSQL)', { skip: !runnable }, () => {
     const passed = await verdict();
     assert.equal(passed.status, 'MATCHED');
     assert.equal(passed.rate?.passed, true);
+    assert.equal(passed.loadIds.length, 2, 'the whole trip');
     const line = await prisma.invoiceLineItem.findUniqueOrThrow({ where: { id: lineId } });
-    assert.equal(Number(line.approvedTotal), 120);
+    assert.equal(Number(line.approvedTotal), 240);
 
     // Removing the loads leaves the line with nothing to bill against.
     assert.equal((await api('DELETE', `/api/dispatch/loads/${partner.body.id}`)).status, 200);

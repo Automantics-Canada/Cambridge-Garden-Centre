@@ -232,12 +232,14 @@ words the product differently; line 2 is a rate mismatch (31.00 billed, 28.50
 agreed). DA-8801's lines match. On the board, 9999-990013 shows "No haul
 rate"; set a rate on its load and the badge goes. DH-301 is Demo Haulage's
 bill for yesterday's hauls, one line per ticket with the day it ran, each
-checked against the load dispatch recorded: line 1 (DH-1101) is the brokered
-trip over 9999-990053 and 990054, one haul at the $140/load dispatch set, and
-passes; line 2 (DH-1103, a second sand load) bills $160 where dispatch agreed
-$150, a rate mismatch approved at $150; line 3 (DH-1104, a second gravel load)
-says "No haul rate set" because nobody priced that load. Set a rate on it
-(9999-990054, load 2) and line 3 is checked again on its own.
+checked against the load dispatch recorded. Lines 1 and 2 (DH-1101, DH-1102)
+bill the two loads of brokered trip DEMO-TRIP-YESTERDAY (9999-990053 and
+990054) one load at a time: each passes at the $140/load dispatch set and
+counts only the load its ticket names, so confirming line 1 leaves line 2
+free to be paid. Line 3 (DH-1103, a second sand load) bills $160 where
+dispatch agreed $150, a rate mismatch approved at $150; line 4 (DH-1104, a
+second gravel load) says "No haul rate set" because nobody priced that load.
+Set a rate on it (9999-990054, load 2) and line 4 is checked again on its own.
 
 **A15. Emailed tickets.** Tickets page: DP-70001 (Drew's photo, MANUAL) and
 "DP 70001" (EMAIL: the copy Demo Pavers attached to its invoice email). The

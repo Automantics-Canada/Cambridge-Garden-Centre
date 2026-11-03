@@ -100,6 +100,13 @@ export function buildTicketWhere(filters?: TicketFilters) {
   return where;
 }
 
+/** Which ticket this one is a copy of, and which copies it has: number and source only. */
+const TICKET_COPY_SELECT = {
+  duplicateOfTicketId: true,
+  duplicateOf: { select: { id: true, ticketNumber: true, source: true } },
+  copies: { select: { id: true, ticketNumber: true, source: true }, orderBy: { receivedAt: 'asc' as const }, take: 5 },
+};
+
 /**
  * Columns the tickets table actually renders.
  *
@@ -127,6 +134,10 @@ const TICKET_LIST_SELECT = {
   status: true,
   receivedAt: true,
   supplier: { select: { id: true, name: true } },
+  // A15: the supplier's emailed copy of a driver's ticket is stored as a
+  // second copy of it. The list says so on both rows, so nobody takes the
+  // two for two loads.
+  ...TICKET_COPY_SELECT,
 } as const;
 
 export const TicketService = {
@@ -438,7 +449,9 @@ export const TicketService = {
         linkedOrder: true,
         orderMatches: {
           include: { order: true }
-        }
+        },
+        duplicateOf: TICKET_COPY_SELECT.duplicateOf,
+        copies: TICKET_COPY_SELECT.copies,
       },
     });
   },

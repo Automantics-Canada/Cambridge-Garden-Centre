@@ -94,9 +94,15 @@ export function editRequest(order, form) {
  * The suppliers to offer as the pit to load at: the active list, plus the
  * one already chosen if it has since left that list, so the form never shows
  * a choice it cannot name.
+ *
+ * Trucking companies are left out (client, Q5: dispatch picks the pit the
+ * material comes from; the hauler is set on the load). One already chosen is
+ * still shown, so the form can name it and the office can change it.
  */
 export function pitOptions(suppliers, order) {
-  const list = (suppliers ?? []).map(({ id, name }) => ({ value: id, label: name }));
+  const list = (suppliers ?? [])
+    .filter(({ type }) => type !== 'TRUCKING_COMPANY')
+    .map(({ id, name }) => ({ value: id, label: name }));
   const chosen = order?.pickupSupplier;
   if (chosen?.id && !list.some((option) => option.value === chosen.id)) {
     list.push({ value: chosen.id, label: chosen.name });

@@ -148,7 +148,7 @@ export const RelatedRecordsFileSchema = z.object({
         rateUnit: z.enum(['LOAD', 'HOUR', 'TONNE']).nullable().default(null),
         /** What dispatch expected: hours or tonnes, or 1 load. */
         quantity: z.number().positive().nullable().default(null),
-        /** Loads of one brokered trip share it, and are billed once. */
+        /** Loads of one brokered trip share it; each load is still paid once. */
         tripRef: z.string().nullable().default(null),
         ticketNumber: z.string().nullable().default(null),
         /** The day it was hauled: the order's delivery date, or the day the stop was done. */

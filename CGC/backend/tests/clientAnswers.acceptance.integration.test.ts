@@ -1459,7 +1459,9 @@ describe('client answers of Oct 2026: one day at the yard (PostgreSQL)', { skip:
       assert.equal(invoice.senderType, 'TRUCKING_COMPANY');
       await runOcr(await ocrJobOfInvoice(invoice.id), {
         invoice: invoiceReading('Hypothetical Haulage Ltd.', 'HH-7001', [
-          { description: 'Tri-axle haul, 2 POs one trip', quantity: 1, unit: 'load', unitPrice: 150, ticketNumber: 'HH-T1', serviceDate: today },
+          // The whole trip on one line: its two loads at $150 a load. It quotes
+          // the first load's ticket, but bills the trip's quantity, not that load's.
+          { description: 'Tri-axle haul, 2 POs one trip', quantity: 2, unit: 'load', unitPrice: 150, ticketNumber: 'HH-T1', serviceDate: today },
           // 5% above the $200 dispatch agreed.
           { description: 'Tri-axle haul', quantity: 1, unit: 'load', unitPrice: 210, ticketNumber: 'HH-T2', serviceDate: today },
           { description: 'Tri-axle haul', quantity: 1, unit: 'load', unitPrice: 180, ticketNumber: 'HH-T3', serviceDate: today },
@@ -1471,7 +1473,7 @@ describe('client answers of Oct 2026: one day at the yard (PostgreSQL)', { skip:
       assert.equal(trip!.serviceDate?.toISOString().slice(0, 10), today);
       assert.equal(trip!.matchResult!.status, 'MATCHED', trip!.matchResult!.reason);
       assert.equal(trip!.matchResult!.loadIds.length, 2, 'the trip is one haul over two orders');
-      assert.equal(Number(trip!.approvedTotal), 150, 'rate x quantity');
+      assert.equal(Number(trip!.approvedTotal), 300, 'rate x quantity');
 
       assert.equal(check(over!.matchResult, 'haulRate')?.code, 'RATE_MISMATCH');
       assert.equal(over!.flag, 'RATE_MISMATCH');

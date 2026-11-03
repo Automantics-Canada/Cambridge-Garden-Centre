@@ -3,6 +3,7 @@ import { numberSearchKey } from '../../lib/ticketNumber.js';
 import {
   billableHauls,
   normaliseTripRef,
+  tripLoadHaul,
   type BillableHaul,
   type HaulLoad,
 } from '../dispatch/dispatchLoadRules.js';
@@ -26,10 +27,14 @@ import type { HaulTolerances } from './tolerances.js';
  * material line is. It is checked against the dispatcher's own record of the
  * load (DispatchLoad): who hauled it, at what rate, per what.
  *
- * Loads are read only through `billableHauls`: each load is one haul, except
- * the loads of one brokered trip (A4: one truck collects several POs), which
- * are one haul at the trip's rate, billed and paid once. CGC's own trucks bill
- * nobody and are never candidates.
+ * Loads are read only through `billableHauls`: each load is one haul, and
+ * the loads of one brokered trip (A4: one truck collects several POs) are one
+ * haul together. A carrier may bill such a trip on one line, or one line per
+ * load: a line whose ticket number is the one dispatch wrote on one load of
+ * the trip bills that load alone (`tripLoadHaul`), unless its quantity is the
+ * whole trip's. Either way each load is paid once, so a line for the whole
+ * trip and a line for one of its loads are caught as billing that load
+ * twice. CGC's own trucks bill nobody and are never candidates.
  *
  * The evidence that identifies the load, strongest first: the ticket or load
  * number on the line, then its PO or order number, then the carrier and the
@@ -71,6 +76,8 @@ export interface HaulCandidate {
   /** `YYYY-MM-DD` the haul ran. */
   day: string;
   loads: CandidateLoad[];
+  /** For one load of a trip billed on its own line: the whole trip that day. */
+  ofTrip?: HaulCandidate;
 }
 
 export interface HaulLineSubject {
@@ -158,9 +165,13 @@ export function haulCandidates(
   return candidates;
 }
 
-/** "721001 load 2", or "trip T-12 (721001 load 1, 721002 load 1)". */
+/**
+ * "721001 load 2", "trip T-12 (721001 load 1, 721002 load 1)", or
+ * "721002 load 1 of trip T-12".
+ */
 export function describeHaul(candidate: HaulCandidate): string {
   const each = candidate.loads.map((load) => `${load.documentNumber} load ${load.sequence}`);
+  if (candidate.ofTrip) return `${each[0]} of trip ${candidate.haul.tripRef} on ${candidate.day}`;
   return candidate.haul.tripRef
     ? `trip ${candidate.haul.tripRef} on ${candidate.day} (${each.join(', ')})`
     : `${each[0]} on ${candidate.day}`;
@@ -195,6 +206,49 @@ function claimedElsewhere(candidate: HaulCandidate, lineId: string): CandidateLo
   );
 }
 
+/** The billed quantity is the haul's expected one, in a unit that compares. */
+function quantityFits(line: HaulLineSubject, candidate: HaulCandidate): boolean {
+  return (
+    line.quantity !== null &&
+    candidate.haul.quantity !== null &&
+    compareUnits(line.unit, candidate.haul.rateUnit).comparable &&
+    withinTolerance(percentDifference(Number(candidate.haul.quantity), line.quantity), 0)
+  );
+}
+
+/** The units a trip may be billed in load by load. Hours of a shared truck are the trip's. */
+const PER_LOAD_UNITS = new Set(['LOAD', 'TONNE']);
+
+/**
+ * The trip, or the one load of it the line's ticket names.
+ *
+ * Dispatch writes each load's own ticket number on it. When the line's ticket
+ * is that number on exactly one load of the trip, and the trip is billed by
+ * the load or the tonne, the carrier is billing that load on its own line:
+ * it is checked against that load's rate and quantity and pays only that
+ * load, so the line for the trip's next load is not refused as already paid.
+ * A line that quotes one load's ticket but bills the whole trip's quantity
+ * (and not that load's) is still the whole trip.
+ */
+function narrowToTripLoad(line: HaulLineSubject, candidate: HaulCandidate, key: string): HaulCandidate {
+  if (!candidate.haul.tripRef || candidate.loads.length < 2) return candidate;
+  const named = candidate.loads.filter((load) => haulTicketKey(load.ticketNumber) === key);
+  // The same number on several loads is the trip's, not one load's.
+  if (named.length !== 1) return candidate;
+  const load = named[0]!;
+  const unit = load.rateUnit ?? normaliseUnit(line.unit);
+  if (!unit || !PER_LOAD_UNITS.has(unit) || !load.carrierSupplierId) return candidate;
+
+  const single: HaulCandidate = {
+    haul: tripLoadHaul({ ...load, carrierSupplierId: load.carrierSupplierId }),
+    day: candidate.day,
+    loads: [load],
+    ofTrip: candidate,
+  };
+  if (quantityFits(line, candidate) && !quantityFits(line, single)) return candidate;
+  return single;
+}
+
 type Method = 'ticket' | 'po' | 'date';
 
 interface Identification {
@@ -225,7 +279,10 @@ function identify(line: HaulLineSubject, candidates: HaulCandidate[]): Identific
     const onLoad = pool.filter((candidate) =>
       candidate.loads.some((load) => haulTicketKey(load.ticketNumber) === key)
     );
-    const byTicket = onLoad.length > 0 ? onLoad : pool.filter((candidate) => ticketMatches(candidate, key));
+    const byTicket =
+      onLoad.length > 0
+        ? onLoad.map((candidate) => narrowToTripLoad(line, candidate, key))
+        : pool.filter((candidate) => ticketMatches(candidate, key));
     if (byTicket.length > 0) {
       pool = byTicket;
       method = 'ticket';
@@ -272,12 +329,7 @@ function identify(line: HaulLineSubject, candidates: HaulCandidate[]): Identific
 
   // Two loads still fit: the billed quantity may tell them apart.
   if (pool.length > 1 && line.quantity !== null) {
-    const byQuantity = pool.filter(
-      (candidate) =>
-        candidate.haul.quantity !== null &&
-        compareUnits(line.unit, candidate.haul.rateUnit).comparable &&
-        withinTolerance(percentDifference(Number(candidate.haul.quantity), line.quantity!), 0)
-    );
+    const byQuantity = pool.filter((candidate) => quantityFits(line, candidate));
     if (byQuantity.length > 0) pool = byQuantity;
   }
 
@@ -315,12 +367,14 @@ function tripLoadsOnOtherDays(
 ): CandidateLoad[] {
   const trip = candidate.haul.tripRef;
   if (!trip) return [];
+  // For one load of a trip, the rest of that day's trip is not "another day".
+  const sameDay = (candidate.ofTrip ?? candidate).haul.loadIds;
   return loads.filter(
     (load) =>
       load.carrierSupplierId === candidate.haul.carrierSupplierId &&
       load.tripRef !== null &&
       normaliseTripRef(load.tripRef) === trip &&
-      !candidate.haul.loadIds.includes(load.id) &&
+      !sameDay.includes(load.id) &&
       inWindow(load, anchor, windowDays)
   );
 }
@@ -416,7 +470,10 @@ function quantityCheck(
   const difference = percentDifference(expected, line.quantity);
   const delta = Number((line.quantity - expected).toFixed(4));
   const noun = `${per(haul.rateUnit)}s`;
-  const tripNote = haul.tripRef && haul.rateUnit === 'LOAD' ? ' (a trip by the load is one load, whatever orders it served)' : '';
+  const tripNote =
+    haul.tripRef && !candidate.ofTrip && haul.rateUnit === 'LOAD'
+      ? ` (trip ${haul.tripRef} has ${candidate.loads.length} loads)`
+      : '';
 
   if (withinTolerance(difference, 0)) {
     return {
@@ -537,13 +594,16 @@ export function matchHaulLine(
           (load.claim ? ` (paid on invoice ${load.claim.invoiceNumber} line ${load.claim.lineNumber})` : '')
       )
       .join(', ');
+    const counted = candidate.ofTrip
+      ? `Only ${candidate.loads[0]!.documentNumber} load ${candidate.loads[0]!.sequence} is counted on this line`
+      : `Only the ${candidate.day} loads are counted on this line`;
     checks.push({
       name: 'haulTrip',
       passed: false,
       code: 'TRIP_SPANS_DAYS',
       detail:
         `Trip ${candidate.haul.tripRef} also has loads dated on other days: ${listed}. ` +
-        `Only the ${candidate.day} loads are counted on this line. Check with dispatch whether this is one trip or the reference was used twice`,
+        `${counted}. Check with dispatch whether this is one trip or the reference was used twice`,
       found: otherDays.length,
     });
   }
@@ -551,13 +611,22 @@ export function matchHaulLine(
   const paidElsewhere = claimedElsewhere(candidate, line.id);
   if (paidElsewhere.length > 0) {
     const first = paidElsewhere.find((load) => load.claim) ?? paidElsewhere[0]!;
+    const wholeTrip = candidate.haul.tripRef !== null && !candidate.ofTrip && candidate.loads.length > 1;
+    // A trip may have been billed load by load: name the load that was paid
+    // unless all of them were.
+    const what = !wholeTrip
+      ? `Load ${first.documentNumber} load ${first.sequence}`
+      : paidElsewhere.length === candidate.loads.length
+        ? `Trip ${candidate.haul.tripRef}`
+        : `${first.documentNumber} load ${first.sequence} of trip ${candidate.haul.tripRef}`;
+    const where = first.claim
+      ? `on invoice ${first.claim.invoiceNumber} line ${first.claim.lineNumber}`
+      : 'on another invoice';
     checks.push({
       name: 'loadReuse',
       passed: false,
       code: 'LOAD_ALREADY_CLAIMED',
-      detail: first.claim
-        ? `${candidate.haul.tripRef ? `Trip ${candidate.haul.tripRef}` : `Load ${first.documentNumber} load ${first.sequence}`} was already paid on invoice ${first.claim.invoiceNumber} line ${first.claim.lineNumber}. Paying this line would pay for that haul twice`
-        : `${candidate.haul.tripRef ? `Trip ${candidate.haul.tripRef}` : `Load ${first.documentNumber} load ${first.sequence}`} was already paid on another invoice. Paying this line would pay for that haul twice`,
+      detail: `${what} was already paid ${where}. Paying this line would pay for that haul twice`,
       found: paidElsewhere.length,
     });
   } else {

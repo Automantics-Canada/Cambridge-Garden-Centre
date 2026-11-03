@@ -65,8 +65,9 @@ dispatch board lists them: the Spruce `orderNumber`, the `carrier` (a
 `TRUCKING_COMPANY` supplier), the `rate` dispatch set with its `rateUnit`
 (`LOAD`, `HOUR` or `TONNE`; leave both `null` for a load nobody priced), the
 expected `quantity`, the `ticketNumber` dispatch wrote down, the `haulDate`,
-and a `tripRef` shared by the loads of one brokered trip (billed once, at the
-trip's rate). A trucking company's lines are checked against these, not
+and a `tripRef` shared by the loads of one brokered trip (billed on one line
+for all its loads, or one line per load whose ticket names that load; each
+load is paid once). A trucking company's lines are checked against these, not
 against orders and tickets, exactly as production does. An open invoice line
 that bills a load names it in `loads`.
 

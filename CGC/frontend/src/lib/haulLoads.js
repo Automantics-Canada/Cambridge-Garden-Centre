@@ -190,3 +190,13 @@ export function tripText(load) {
   const loads = `${trip.loads} load${trip.loads === 1 ? '' : 's'}`;
   return `Trip ${load.tripRef}: ${loads}${trip.orders?.length ? `, ${trip.orders.join(', ')}` : ''}`;
 }
+
+/**
+ * The suppliers a load can be "Loaded at": a pit or yard, never a trucking
+ * company (client, Q5: the hauler is the load's carrier, not where the
+ * material comes from). A load already saved with one still names it: the
+ * form adds the chosen supplier when it is not in this list.
+ */
+export function loadedAtSuppliers(suppliers) {
+  return (suppliers ?? []).filter((supplier) => supplier?.type !== 'TRUCKING_COMPANY');
+}

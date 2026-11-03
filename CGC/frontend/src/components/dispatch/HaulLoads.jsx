@@ -15,6 +15,7 @@ import {
   formatHaulRate,
   loadForm,
   loadSummary,
+  loadedAtSuppliers,
   needsHaulRate,
   newLoadForm,
   tripText,
@@ -269,10 +270,10 @@ export default function HaulLoads({ order, stopDriver = null, readOnly = false, 
                 <Field htmlFor="haul-source" label="Loaded at" hint={editing === 'new' ? 'Blank: the order’s pit.' : undefined}>
                   <Select id="haul-source" value={form.sourceSupplierId} onChange={(e) => setField('sourceSupplierId', e.target.value)} disabled={locked || paid}>
                     <option value="">{editing === 'new' ? 'Order’s pit' : 'Not set'}</option>
-                    {editing !== 'new' && editing.sourceSupplierId && !suppliers.some((s) => s.id === editing.sourceSupplierId) && (
+                    {editing !== 'new' && editing.sourceSupplierId && !loadedAtSuppliers(suppliers).some((s) => s.id === editing.sourceSupplierId) && (
                       <option value={editing.sourceSupplierId}>{editing.sourceName ?? 'Supplier'}</option>
                     )}
-                    {suppliers.map((supplier) => <option key={supplier.id} value={supplier.id}>{supplier.name}</option>)}
+                    {loadedAtSuppliers(suppliers).map((supplier) => <option key={supplier.id} value={supplier.id}>{supplier.name}</option>)}
                   </Select>
                 </Field>
                 <Field htmlFor="haul-rate" label="Rate" error={errors.rate || errors.rateUnit}>
