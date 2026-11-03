@@ -75,6 +75,7 @@ export const ATTACHMENT_REASONS = {
   observed: 'observe mode: nothing is read',
   duplicate: 'already read',
   readFailed: 'could not be read, after several tries',
+  beforeCutoff: 'received before the inbox go-live date: not read',
 } as const;
 
 /**
@@ -260,7 +261,9 @@ export type ReviewReason =
   | 'UNSUPPORTED_ATTACHMENTS'
   | 'NO_INVOICE_ATTACHMENT'
   /** Reading it failed MAX_READ_ATTEMPTS times (gmail.service.ts); the error is on the event. */
-  | 'READ_FAILED';
+  | 'READ_FAILED'
+  /** Its sender was approved, but it arrived before GMAIL_POLL_AFTER: entered by hand, if at all. */
+  | 'BEFORE_CUTOFF';
 
 /**
  * Whether an email from a known sender still needs a person, from what

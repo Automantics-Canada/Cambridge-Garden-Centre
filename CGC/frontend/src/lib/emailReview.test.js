@@ -128,5 +128,9 @@ describe('unrecognised senders panel', () => {
     expect(approvedMessage({ added: { value: 'billing@new-supplier.example' }, supplier: { name: 'Example Stone' }, requeued: 2 }))
       .toBe('billing@new-supplier.example added to Example Stone. 2 emails will be read on the next inbox check.');
     expect(approvedMessage({ added: { value: 'x@y.example' }, supplier: { name: 'S' }, requeued: 1 })).toMatch(/1 email will/);
+    expect(approvedMessage({ added: { value: 'x@y.example' }, supplier: { name: 'S' }, requeued: 0, beforeCutoff: 2 }))
+      .toBe('x@y.example added to S. 0 emails will be read on the next inbox check. 2 older emails were sent before the inbox went live and stay under "Enter by hand".');
+    expect(reviewReasonLabel('BEFORE_CUTOFF')).toMatch(/before the inbox went live/);
+    expect(splitQueue([event({ reviewReason: 'BEFORE_CUTOFF' })]).manual).toHaveLength(1);
   });
 });

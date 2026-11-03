@@ -26,6 +26,7 @@ export const REVIEW_REASON_LABELS = {
   UNSUPPORTED_ATTACHMENTS: 'No attachment the app can read',
   NO_INVOICE_ATTACHMENT: 'No invoice attached',
   READ_FAILED: 'Could not be read after several tries: enter by hand',
+  BEFORE_CUTOFF: 'Sent before the inbox went live: enter by hand if it is not in yet',
 };
 
 export function reviewReasonLabel(reason) {
@@ -149,5 +150,9 @@ export function approvedMessage(result) {
   const supplier = result?.supplier?.name ?? 'the supplier';
   const count = result?.requeued ?? 0;
   const emails = count === 1 ? '1 email' : `${count} emails`;
-  return `${who} added to ${supplier}. ${emails} will be read on the next inbox check.`;
+  const older = result?.beforeCutoff ?? 0;
+  const left = older === 0
+    ? ''
+    : ` ${older === 1 ? '1 older email was' : `${older} older emails were`} sent before the inbox went live and stay${older === 1 ? 's' : ''} under "Enter by hand".`;
+  return `${who} added to ${supplier}. ${emails} will be read on the next inbox check.${left}`;
 }

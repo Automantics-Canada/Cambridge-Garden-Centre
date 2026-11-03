@@ -153,6 +153,38 @@ describe('email review queue (PostgreSQL)', { skip: !(confirmed && loopback) }, 
     assert.equal(again.status, 409);
   });
 
+  // The census and the backlog were AP's to enter by hand. Approving their
+  // sender later must not read them as new invoices: only mail received
+  // since GMAIL_POLL_AFTER is re-queued.
+  it('approving re-queues only mail received since the go-live date; older mail waits for a person', async () => {
+    const saved = env.gmailInbox.pollAfter;
+    env.gmailInbox.pollAfter = '2026-11-02';
+    try {
+      // 23:30 in Toronto on Nov 1 is 03:30 UTC on Nov 2: still before go-live.
+      const census = await queued('billing@census-new.test', { receivedAt: new Date('2026-11-02T03:30:00Z') });
+      const backlog = await queued('billing@census-new.test', { receivedAt: new Date('2026-09-15T14:00:00Z') });
+      const fresh = await queued('billing@census-new.test', { receivedAt: new Date('2026-11-02T14:00:00Z') });
+
+      const approved = await api('POST', `/api/email-events/${census.id}/approve`, { supplierId: stoneId, match: 'address' });
+      assert.equal(approved.status, 200, JSON.stringify(approved.body));
+      assert.equal(approved.body.requeued, 1);
+      assert.equal(approved.body.beforeCutoff, 2);
+
+      const rows = new Map((await prisma.emailIngestionEvent.findMany({
+        where: { id: { in: [census.id, backlog.id, fresh.id] } },
+      })).map(r => [r.id, r]));
+      assert.ok(rows.get(fresh.id)!.requeuedAt);
+      for (const id of [census.id, backlog.id]) {
+        assert.equal(rows.get(id)!.requeuedAt, null, 'not read');
+        assert.equal(rows.get(id)!.status, 'NEEDS_REVIEW');
+        assert.equal(rows.get(id)!.reviewReason, 'BEFORE_CUTOFF');
+        assert.equal(rows.get(id)!.supplierId, stoneId);
+      }
+    } finally {
+      env.gmailInbox.pollAfter = saved;
+    }
+  });
+
   it('approving a domain re-queues everyone at it; a free-mail domain is refused', async () => {
     const one = await queued('a@pavers-new.test');
     const two = await queued('b@pavers-new.test');

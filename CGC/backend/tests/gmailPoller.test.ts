@@ -40,7 +40,7 @@ type FakePart = {
   body?: { attachmentId?: string; data?: string };
   parts?: FakePart[];
 };
-type FakeMessage = { id: string; labelIds: string[]; payload: FakePart };
+type FakeMessage = { id: string; labelIds: string[]; payload: FakePart; internalDate?: string };
 
 const mailbox = {
   profile: INBOX,
@@ -113,7 +113,12 @@ function fakeClient(client: 'inbox' | 'outbound') {
             ...(part.body?.attachmentId ? { body: { ...part.body, attachmentId: `ATT-${part.partId}-${++mailbox.fetches}` } } : {}),
             ...(part.parts ? { parts: part.parts.map(reissue) } : {}),
           });
-          return { data: { id: message.id, labelIds: [...message.labelIds], payload: reissue(message.payload) } };
+          return {
+            data: {
+              id: message.id, labelIds: [...message.labelIds], payload: reissue(message.payload),
+              ...(message.internalDate ? { internalDate: message.internalDate } : {}),
+            },
+          };
         },
         modify: async (args: any) => {
           record('messages.modify', args);
@@ -340,6 +345,8 @@ function addMessage(options: {
   }>;
   unread?: boolean;
   labelled?: boolean;
+  /** When Gmail received it; now when left out. */
+  receivedAt?: Date;
 } = {}) {
   const id = `msg-${String(nextId++).padStart(4, '0')}`;
   const attachments = options.attachments ?? [{ filename: 'invoice-90001.pdf', mimeType: 'application/pdf' }];
@@ -351,6 +358,7 @@ function addMessage(options: {
   ];
   mailbox.messages.unshift({
     id,
+    ...(options.receivedAt ? { internalDate: String(options.receivedAt.getTime()) } : {}),
     labelIds: [
       ...(options.labelled === false ? [] : [labelId('cgc-invoices')!]),
       ...(options.unread === false ? [] : ['UNREAD']),
@@ -1089,6 +1097,29 @@ describe('known senders from the supplier records', () => {
 
     await GmailService.pollInvoices(records());
     assert.equal(invoices.size, 1, 'read once');
+  });
+
+  // Runbook step 6: moving GMAIL_POLL_AFTER to today skips the census
+  // period, which AP entered by hand. An email queued then and approved now
+  // is fetched by id, not by the query, so the date is checked here too.
+  it('an approved email from before GMAIL_POLL_AFTER is not read; it waits for a person', async () => {
+    const id = addMessage({ from: 'billing@new-supplier.test', receivedAt: new Date('2026-10-20T15:00:00Z') });
+    // The census row observe mode wrote for it, now approved.
+    events.set(id, {
+      gmailMessageId: id, status: 'NEEDS_REVIEW', reviewReason: 'UNKNOWN_SENDER', createdInvoiceIds: [], requeuedAt: new Date(clock),
+    });
+    supplier({ emailAddresses: ['billing@new-supplier.test'] });
+    calls.length = 0;
+    await GmailService.pollInvoices(records());
+
+    assert.equal(invoices.size, 0);
+    assert.equal(inboxCalls('attachments.get').length, 0, 'nothing downloaded');
+    const event = events.get(id);
+    assert.equal(event.status, 'NEEDS_REVIEW');
+    assert.equal(event.reviewReason, 'BEFORE_CUTOFF');
+    assert.equal(event.requeuedAt, null);
+    assert.ok(labelsOf(id).includes('cgc-review'));
+    assert.ok(!labelsOf(id).includes('cgc-processed'));
   });
 
   it('observe mode leaves approved mail for ingest mode', async () => {

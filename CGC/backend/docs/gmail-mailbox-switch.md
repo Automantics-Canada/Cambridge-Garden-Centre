@@ -197,9 +197,12 @@ first time it needs them. Do not add them by hand except to deliberately skip a 
    the sender is known and the attachment names and types). No invoice is
    created and the email stays unread. Senders no supplier record knows also
    appear under **Unrecognised senders** on the Invoices page, so the client
-   can map them to suppliers there during the census; approvals made now are
-   read once ingest mode is on. A read-only census, run under the production
-   access rules in `AGENTS.md`:
+   can map them to suppliers there during the census. Approving a sender
+   re-queues only its emails received on or after `GMAIL_POLL_AFTER` (they
+   are read once ingest mode is on); older ones stay in the queue under
+   **Enter by hand** ("Sent before the inbox went live"), because AP handles
+   that mail by hand and reading it would bill it twice. A read-only census,
+   run under the production access rules in `AGENTS.md`:
 
    ```sql
    SELECT "fromAddress", count(*) AS emails, min("receivedAt") AS first_seen, max("receivedAt") AS last_seen
@@ -222,7 +225,9 @@ first time it needs them. Do not add them by hand except to deliberately skip a 
 6. Switch to `GMAIL_INGEST_MODE=ingest`. Observed emails are not marked
    processed, so ingest reads them unless the cutoff excludes them: keep
    `GMAIL_POLL_AFTER` at the observe start to ingest the census period, or move
-   it to today to skip it. Redeploy both.
+   it to today to skip it. The date also holds for approved senders: with it
+   moved to today, a census-period email approved before or after the switch
+   is not read either; it waits under **Enter by hand**. Redeploy both.
 7. Verify: one test email forwarded through ap@ produces exactly one
    `PENDING_REVIEW` invoice whose `emailFrom` is the original sender, not ap@
    (check the stored row, not only the logs). Open a second test email in

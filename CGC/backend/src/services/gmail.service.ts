@@ -4,6 +4,7 @@ import { env } from '../config/env.js';
 import {
   buildInboxQuery,
   gmailPollDisabledReason,
+  readCutoff,
   type GmailInboxConfig,
 } from '../config/gmailConfig.js';
 import { InvoiceService } from '../modules/invoices/invoice.service.js';
@@ -650,6 +651,17 @@ export class GmailService {
       // the query (its review label removed by hand), it is put back.
       if (facts.existing?.status === EmailIngestionStatus.IGNORED) {
         await this.markReview(messageId, labels);
+        return 'needsReview';
+      }
+
+      // Older than the go-live date. The query never lists such mail, but an
+      // email queued during the census and approved since is fetched by id:
+      // AP entered it by hand, so reading it now would bill it twice.
+      const cutoff = readCutoff(config);
+      if (cutoff && facts.receivedAt < cutoff) {
+        console.log(`Email ${messageId} arrived before GMAIL_POLL_AFTER; left for a person.`);
+        await this.queueForReview(facts, labels, 'BEFORE_CUTOFF',
+          heldRecords(triageAttachments(payload), ATTACHMENT_REASONS.beforeCutoff));
         return 'needsReview';
       }
 

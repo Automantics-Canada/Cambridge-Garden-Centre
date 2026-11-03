@@ -1,6 +1,6 @@
 import { EmailIngestionStatus, SupplierType, type Prisma } from '@prisma/client';
 import { env } from '../../config/env.js';
-import type { GmailInboxConfig } from '../../config/gmailConfig.js';
+import { readCutoff, type GmailInboxConfig } from '../../config/gmailConfig.js';
 import { prisma } from '../../db/prisma.js';
 import { domainOf, invalidateKnownSenders, isFreeMailDomain } from '../../services/knownSenders.js';
 import { UNIDENTIFIED_SUPPLIER_NAME } from '../invoices/invoice.service.js';
@@ -15,7 +15,10 @@ import { UNIDENTIFIED_SUPPLIER_NAME } from '../invoices/invoice.service.js';
  *
  *   approves the sender: their address (or their company's domain) is added
  *   to a supplier, new or existing, and every queued email from that sender
- *   is marked for the poller to read again on its next run;
+ *   received since the go-live date (GMAIL_POLL_AFTER) is marked for the
+ *   poller to read again on its next run. Older ones, from the observe period
+ *   or the backlog, were AP's to enter by hand and may be paid already: they
+ *   stay in the queue as BEFORE_CUTOFF, for a person;
  *
  *   ignores an email: it is not an invoice to read, and it stays out of the
  *   queue and out of the poll.
@@ -77,6 +80,11 @@ export interface ApproveResult {
   added: { kind: ApproveMatch; value: string; alreadyListed: boolean };
   /** Emails from this sender now waiting for the poller to read them. */
   requeued: number;
+  /**
+   * Emails from this sender received before the go-live date: not read, left
+   * in the queue to enter by hand (they may have been already).
+   */
+  beforeCutoff: number;
 }
 
 /**
@@ -129,7 +137,12 @@ export const EmailEventService = {
    * could not be read has nothing to approve), when the email no longer waits
    * on its sender, or when everyone at a free-mail domain would be approved.
    */
-  async approveSender(eventId: string, input: ApproveInput, userId: string): Promise<ApproveResult> {
+  async approveSender(
+    eventId: string,
+    input: ApproveInput,
+    userId: string,
+    config: Pick<GmailInboxConfig, 'pollAfter' | 'trustedForwarders' | 'user'> = env.gmailInbox
+  ): Promise<ApproveResult> {
     const match: ApproveMatch = input.match === 'domain' ? 'domain' : 'address';
     if (input.match !== undefined && input.match !== 'domain' && input.match !== 'address') {
       throw httpError(400, 'match must be "address" or "domain"');
@@ -155,7 +168,7 @@ export const EmailEventService = {
       if (match === 'domain' && isFreeMailDomain(domain)) {
         throw httpError(400, `${domain} is shared by many senders. Approve the address ${address} instead.`);
       }
-      const office = officeMailboxes(env.gmailInbox);
+      const office = officeMailboxes(config);
       if (office.addresses.has(address)) {
         throw httpError(400, `${address} is the office's own mailbox, not a supplier. Upload the invoice by hand, or ignore it.`);
       }
@@ -177,22 +190,35 @@ export const EmailEventService = {
       }
 
       const now = new Date();
+      const fromSender = {
+        status: EmailIngestionStatus.NEEDS_REVIEW,
+        reviewReason: 'UNKNOWN_SENDER',
+        requeuedAt: null,
+        originalFrom: match === 'domain'
+          ? { endsWith: `@${domain}`, mode: 'insensitive' as const }
+          : { equals: address, mode: 'insensitive' as const },
+      };
+      const reviewed = { reviewedById: userId, reviewedAt: now, supplierId: supplier.id };
+      // Mail from before the go-live date is not read now that its sender is
+      // known: AP handled it by hand during the census or before the switch,
+      // so reading it would bill it a second time. It stays for a person.
+      const cutoff = readCutoff(config);
+      const older = cutoff
+        ? await tx.emailIngestionEvent.updateMany({
+          where: { ...fromSender, receivedAt: { lt: cutoff } },
+          data: { ...reviewed, reviewReason: 'BEFORE_CUTOFF' },
+        })
+        : { count: 0 };
       const requeued = await tx.emailIngestionEvent.updateMany({
-        where: {
-          status: EmailIngestionStatus.NEEDS_REVIEW,
-          reviewReason: 'UNKNOWN_SENDER',
-          requeuedAt: null,
-          originalFrom: match === 'domain'
-            ? { endsWith: `@${domain}`, mode: 'insensitive' }
-            : { equals: address, mode: 'insensitive' },
-        },
-        data: { requeuedAt: now, reviewedById: userId, reviewedAt: now, supplierId: supplier.id },
+        where: { ...fromSender, ...(cutoff ? { receivedAt: { gte: cutoff } } : {}) },
+        data: { ...reviewed, requeuedAt: now },
       });
 
       return {
         supplier: { id: supplier.id, name: supplier.name, type: supplier.type },
         added: { kind: match, value, alreadyListed },
         requeued: requeued.count,
+        beforeCutoff: older.count,
       };
     }).finally(() => {
       // Even a refused approval is cheap to forget; a saved one must be seen

@@ -65,6 +65,8 @@
  *                               invoices).
  */
 
+import { startOfBusinessDay } from '../lib/businessDay.js';
+
 export type GmailIngestMode = 'ingest' | 'observe';
 
 export const DEFAULT_PROCESSED_LABEL = 'cgc-processed';
@@ -223,4 +225,14 @@ export function buildInboxQuery(config: GmailInboxConfig): string {
     terms.push('is:unread');
   }
   return terms.join(' ');
+}
+
+/**
+ * The first moment mail is read from: the start of the GMAIL_POLL_AFTER day
+ * in the business's time zone, or null when no date is set (the poller then
+ * reads nothing at all). Mail before it is never read, whether the query
+ * finds it or an approval re-queues it.
+ */
+export function readCutoff(config: Pick<GmailInboxConfig, 'pollAfter'>): Date | null {
+  return config.pollAfter ? startOfBusinessDay(config.pollAfter) : null;
 }
