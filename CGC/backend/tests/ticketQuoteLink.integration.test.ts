@@ -3,11 +3,12 @@ import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { prisma } from '../src/db/prisma.js';
+import { InvoiceService } from '../src/modules/invoices/invoice.service.js';
 import { TicketService } from '../src/modules/tickets/ticket.service.js';
 
 /**
- * A ticket is never linked by hand to a line of a quotation, against a real
- * database. A quotation is a price given to a customer, not an order, so
+ * A ticket, or an invoice line, is never linked by hand to a line of a
+ * quotation, against a real database. A quotation is a price given to a customer, not an order, so
  * nothing was delivered against it. The Tickets page's order search no longer
  * offers one; this is the refusal behind it, for a screen open from before.
  *
@@ -28,11 +29,25 @@ const runnable = confirmed && loopback;
 
 const TICKET_ID = '55555555-5555-4555-8555-5555555555c1';
 const lines: Record<'quote' | 'order' | 'loose', string> = { quote: '', order: '', loose: '' };
+let invoiceLineId = '';
+const USER_ID = '55555555-5555-4555-8555-5555555555c2';
 
 async function seed() {
   await prisma.$executeRawUnsafe(
-    'TRUNCATE TABLE "TicketOrderMatch", "Ticket", "Order", "OrderDocument" RESTART IDENTITY CASCADE'
+    'TRUNCATE TABLE "TicketOrderMatch", "Ticket", "Order", "OrderDocument", "InvoiceLineItem", "Invoice", "Supplier", "AuditLog", "User" RESTART IDENTITY CASCADE'
   );
+  await prisma.user.create({ data: { id: USER_ID, name: 'Desk', email: 'desk-quote@example.invalid', passwordHash: 'x', role: 'AP_USER' } });
+  const supplier = await prisma.supplier.create({ data: { name: 'Example Stone', type: 'SUPPLIER', emailDomains: [] } });
+  const invoice = await prisma.invoice.create({
+    data: {
+      invoiceNumber: 'INV-Q-1', senderType: 'SUPPLIER', supplierId: supplier.id, invoiceDate: new Date('2026-10-30'),
+      totalAmount: 10, currency: 'CAD', fileUrl: '/uploads/none.pdf', emailFrom: 'billing@stone.example',
+      emailSubject: 'Invoice', gmailMessageId: 'quote-link-1',
+      lineItems: { create: { lineNumber: 1, description: 'Gravel', quantity: 1, unit: 'MT', unitRate: 10, lineTotal: 10, flag: 'NO_ORDER' } },
+    },
+    include: { lineItems: true },
+  });
+  invoiceLineId = invoice.lineItems[0]!.id;
   await prisma.ticket.create({
     data: {
       id: TICKET_ID, source: 'MANUAL', ticketNumber: 'T-0001', imageUrl: '/uploads/none.png',
@@ -56,7 +71,7 @@ async function seed() {
 const refused = (err: any) =>
   err.status === 409 && err.message === '9900-000001 is a quotation in Spruce, not an order, so a ticket cannot be linked to it.';
 
-describe('linking a ticket to a quotation', { skip: !runnable && 'needs CGC_TEST_CONFIRM_DISPOSABLE=1 and a loopback DATABASE_URL' }, () => {
+describe('linking a ticket or an invoice line to a quotation', { skip: !runnable && 'needs CGC_TEST_CONFIRM_DISPOSABLE=1 and a loopback DATABASE_URL' }, () => {
   before(seed);
   after(() => prisma.$disconnect());
 
@@ -76,5 +91,18 @@ describe('linking a ticket to a quotation', { skip: !runnable && 'needs CGC_TEST
     assert.equal(linked.status, 'LINKED');
     assert.equal(linked.linkedOrderId, lines.loose);
     assert.equal(await prisma.ticketOrderMatch.count(), 1);
+  });
+
+  it('refuses a quotation\'s line for an invoice line linked by hand, and still links an order\'s', async () => {
+    await assert.rejects(
+      InvoiceService.linkOrderToLineItem(invoiceLineId, lines.quote, USER_ID),
+      (err: any) => err.status === 409 && /9900-000001 is a quotation in Spruce, not an order, so an invoice line cannot be linked to it\./.test(err.message)
+    );
+    const untouched = await prisma.invoiceLineItem.findUniqueOrThrow({ where: { id: invoiceLineId } });
+    assert.equal(untouched.matchedOrderId, null);
+    assert.equal(await prisma.auditLog.count(), 0);
+
+    const linked = await InvoiceService.linkOrderToLineItem(invoiceLineId, lines.order, USER_ID);
+    assert.equal(linked.matchedOrderId, lines.order);
   });
 });
