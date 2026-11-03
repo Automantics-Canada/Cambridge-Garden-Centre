@@ -277,7 +277,7 @@ describe('email review queue (PostgreSQL)', { skip: !(confirmed && loopback) }, 
   it('the supplier API sorts domains from addresses and refuses a free-mail domain', async () => {
     const created = await api('POST', '/api/suppliers', {
       name: 'Example Mulch', type: 'SUPPLIER', emailDomains: ['Mulch-Yard.test', 'owner@gmail.com'],
-    }, 'AP_USER');
+    }, 'OWNER');
     assert.equal(created.status, 201, JSON.stringify(created.body));
     assert.deepEqual(created.body.emailDomains, ['mulch-yard.test']);
     assert.deepEqual(created.body.emailAddresses, ['owner@gmail.com']);
@@ -295,6 +295,51 @@ describe('email review queue (PostgreSQL)', { skip: !(confirmed && loopback) }, 
     assert.equal(domainsOnly.status, 200, JSON.stringify(domainsOnly.body));
     assert.deepEqual(domainsOnly.body.emailDomains, ['mulch-yard.test', 'mulch-depot.test']);
     assert.deepEqual(domainsOnly.body.emailAddresses, ['office@mulch-yard.test']);
+  });
+
+  // Sender fields make a sender's mail be read automatically, which is what
+  // approving a sender does, and that is OWNER/ADMIN only (G5). Creating a
+  // supplier stays open to the AP desk, without them.
+  it('the AP desk may create a supplier but not give it email senders or a contact email', async () => {
+    for (const fields of [
+      { emailDomains: ['anything-at-all.test'] },
+      { emailAddresses: ['someone@gmail.com'] },
+      { contactEmail: 'billing@anything-at-all.test' },
+    ]) {
+      const refused = await api('POST', '/api/suppliers', { name: 'Example Sneaky', type: 'SUPPLIER', ...fields }, 'AP_USER');
+      assert.equal(refused.status, 403, JSON.stringify(fields));
+      assert.match(refused.body.error, /owner or admin/);
+    }
+    assert.equal(await prisma.supplier.count({ where: { name: 'Example Sneaky' } }), 0);
+
+    const plain = await api('POST', '/api/suppliers', {
+      name: 'Example Plain', type: 'SUPPLIER', emailDomains: [], emailAddresses: [], contactEmail: '',
+    }, 'AP_USER');
+    assert.equal(plain.status, 201, JSON.stringify(plain.body));
+    const edit = await api('PUT', `/api/suppliers/${plain.body.id}`, { emailDomains: ['plain-yard.test'] }, 'AP_USER');
+    assert.equal(edit.status, 403);
+
+    const byAdmin = await api('POST', '/api/suppliers', {
+      name: 'Example Trusted', type: 'SUPPLIER', emailDomains: ['trusted-yard.test'], contactEmail: 'ap@trusted-yard.test',
+    }, 'ADMIN');
+    assert.equal(byAdmin.status, 201, JSON.stringify(byAdmin.body));
+  });
+
+  it("the supplier form refuses the office's own mailbox and domain as a supplier's", async () => {
+    const saved = env.gmailInbox.trustedForwarders;
+    env.gmailInbox.trustedForwarders = ['ap@garden-centre.test'];
+    try {
+      const domain = await api('POST', '/api/suppliers', { name: 'Example Office', type: 'SUPPLIER', emailDomains: ['garden-centre.test'] });
+      assert.equal(domain.status, 400);
+      assert.match(domain.body.error, /office's own/);
+      const address = await api('POST', '/api/suppliers', { name: 'Example Office', type: 'SUPPLIER', contactEmail: 'AP@garden-centre.test' });
+      assert.equal(address.status, 400);
+      const edit = await api('PUT', `/api/suppliers/${stoneId}`, { emailAddresses: ['ap@garden-centre.test'] });
+      assert.equal(edit.status, 400);
+      assert.ok(!(await prisma.supplier.findUniqueOrThrow({ where: { id: stoneId } })).emailAddresses.includes('ap@garden-centre.test'));
+    } finally {
+      env.gmailInbox.trustedForwarders = saved;
+    }
   });
 
   it('a sender cannot be approved onto the unidentified-supplier placeholder', async () => {

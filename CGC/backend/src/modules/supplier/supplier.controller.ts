@@ -1,7 +1,9 @@
 import type { Response } from 'express';
 import { SupplierService } from './supplier.service.js';
 import type { AuthRequest } from '../../middleware/authMiddleware.js';
-import { SupplierType } from '@prisma/client';
+import { SupplierType, UserRole } from '@prisma/client';
+import { env } from '../../config/env.js';
+import { officeMailboxes } from '../emailEvents/emailEvents.service.js';
 import { RateService } from './rates.service.js';
 import { PriceListService, parseTonMeans } from './priceList.service.js';
 import { scheduleRateRecheck } from './rateRecheck.js';
@@ -44,14 +46,55 @@ function senderFields(body: Record<string, unknown>):
   if (entries.invalid.length > 0) {
     return { ok: false, error: `Not an email domain or address: ${entries.invalid.join(', ')}` };
   }
+  const office = officeError(entries.emailDomains, entries.emailAddresses);
+  if (office) return { ok: false, error: office };
   return { ok: true, emailDomains: entries.emailDomains, emailAddresses: entries.emailAddresses };
 }
+
+/**
+ * The office's own mailboxes and domain are never a supplier's: everything a
+ * colleague forwards by hand would be filed as that supplier's invoices. The
+ * approve button refuses them (emailEvents.service.ts); so does the form.
+ */
+function officeError(domains: string[], addresses: string[]): string | null {
+  const office = officeMailboxes(env.gmailInbox);
+  const address = addresses.find((a) => office.addresses.has(a.toLowerCase()));
+  if (address) return `${address} is the office's own mailbox, not a supplier's.`;
+  const domain = domains.find((d) => office.domains.has(d.toLowerCase()));
+  if (domain) return `${domain} is the office's own domain, not a supplier's. Enter the supplier's own addresses.`;
+  return null;
+}
+
+/** The contact email as stored, lower-cased, or '' when there is none. */
+function contactEmailOf(value: unknown): string {
+  return typeof value === 'string' ? value.trim().toLowerCase() : '';
+}
+
+const MANAGERS: readonly string[] = [UserRole.OWNER, UserRole.ADMIN];
+
+/**
+ * A supplier's email domains, addresses and contact email decide whose mail
+ * the invoice inbox reads automatically (services/knownSenders.ts): the
+ * same power as approving a sender, which is OWNER/ADMIN only (decision G5).
+ * Editing a supplier is OWNER/ADMIN by route; creating one is open to the AP
+ * desk, so here the AP desk may create a supplier without them.
+ */
+const SENDER_FIELDS_FOR_MANAGERS =
+  'Only an owner or admin can give a supplier email domains, addresses or a contact email: they decide whose ' +
+  'invoices are read automatically. Save the supplier without them, and ask an owner or admin to add them.';
 
 export const createSupplier = async (req: AuthRequest, res: Response) => {
   const { name, type, keywords, contactName, contactEmail, phone, address } =
     req.body;
   const senders = senderFields(req.body ?? {});
   if (!senders.ok) return res.status(400).json({ error: senders.error });
+  const contact = contactEmailOf(contactEmail);
+  const trusts = senders.emailDomains.length > 0 || senders.emailAddresses.length > 0 || contact !== '';
+  if (trusts && !MANAGERS.includes(req.user?.role ?? '')) {
+    return res.status(403).json({ error: SENDER_FIELDS_FOR_MANAGERS });
+  }
+  const office = contact ? officeError([], [contact]) : null;
+  if (office) return res.status(400).json({ error: office });
 
   if (!name || !type) {
     return res.status(400).json({ error: 'name and type are required' });
@@ -80,6 +123,9 @@ export const createSupplier = async (req: AuthRequest, res: Response) => {
 export const updateSupplier = async (req: AuthRequest, res: Response) => {
   const { id } = req.params;
   const data = { ...(req.body ?? {}) };
+  const contact = contactEmailOf(data.contactEmail);
+  const office = contact ? officeError([], [contact]) : null;
+  if (office) return res.status(400).json({ error: office });
   if ('emailDomains' in data || 'emailAddresses' in data) {
     const senders = senderFields(data);
     if (!senders.ok) return res.status(400).json({ error: senders.error });

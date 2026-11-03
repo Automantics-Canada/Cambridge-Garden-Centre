@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isFreeMailDomain, joinSenderEntries, senderEntriesError, splitSenderEntries } from './emailSenders';
+import { canSetSupplierSenders, isFreeMailDomain, joinSenderEntries, senderEntriesError, splitSenderEntries } from './emailSenders';
 
 describe('supplier email senders', () => {
   it('sorts one box into domains and full addresses', () => {
@@ -27,5 +27,15 @@ describe('supplier email senders', () => {
     expect(joinSenderEntries({ emailDomains: ['supplier.example'], emailAddresses: ['owner@gmail.com'] }))
       .toBe('supplier.example, owner@gmail.com');
     expect(joinSenderEntries(null)).toBe('');
+  });
+});
+
+describe('who sets a supplier\'s senders', () => {
+  it('owners and admins only: the senders decide whose invoices are read automatically', () => {
+    expect(canSetSupplierSenders('OWNER')).toBe(true);
+    expect(canSetSupplierSenders('ADMIN')).toBe(true);
+    expect(canSetSupplierSenders('AP_USER')).toBe(false);
+    expect(canSetSupplierSenders('DRIVER')).toBe(false);
+    expect(canSetSupplierSenders(undefined)).toBe(false);
   });
 });

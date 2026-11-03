@@ -5,7 +5,7 @@ import toast from 'react-hot-toast';
 import { createSupplier, updateSupplier, clearError } from '../store/supplierSlice';
 import { Button, Field, Input, Select, Textarea } from './ui';
 import { cn } from '../lib/cn';
-import { joinSenderEntries, senderEntriesError, splitSenderEntries } from '../lib/emailSenders';
+import { canSetSupplierSenders, joinSenderEntries, senderEntriesError, splitSenderEntries } from '../lib/emailSenders';
 
 const SUPPLIER_TYPES = ['SUPPLIER', 'TRUCKING_COMPANY'];
 
@@ -17,6 +17,8 @@ const formatTypeLabel = (str) => {
 export default function SupplierForm({ supplier = null, onClose }) {
   const dispatch = useDispatch();
   const { loading, error } = useSelector((state) => state.suppliers);
+  const role = useSelector((state) => state.auth?.user?.role);
+  const canSetSenders = canSetSupplierSenders(role);
 
   const [formData, setFormData] = useState({
     name: supplier?.name || '',
@@ -107,12 +109,13 @@ export default function SupplierForm({ supplier = null, onClose }) {
       return;
     }
 
-    const { emailSenders, ...rest } = formData;
+    const { emailSenders, contactEmail, ...rest } = formData;
     const { emailDomains, emailAddresses } = splitSenderEntries(emailSenders);
     const submitData = {
       ...rest,
-      emailDomains,
-      emailAddresses,
+      // Sent only by those allowed to set them, so the AP desk can still
+      // save the rest of the supplier.
+      ...(canSetSenders ? { emailDomains, emailAddresses, contactEmail } : {}),
       keywords: formData.keywords.trim() ? formData.keywords.split(',').map(k => k.trim()).filter(Boolean) : [],
     };
 
@@ -186,7 +189,9 @@ export default function SupplierForm({ supplier = null, onClose }) {
       <Motion.div variants={itemVariants}>
         <Field
           label="Invoice email senders"
-          hint="Domains or full addresses, comma separated. Use the full address for Gmail, Outlook and other shared mail."
+          hint={canSetSenders
+            ? 'Domains or full addresses, comma separated. Use the full address for Gmail, Outlook and other shared mail.'
+            : 'An owner or admin sets these: they decide whose invoices are read automatically.'}
           htmlFor="supplier-email-senders"
           error={validationErrors.emailSenders}
         >
@@ -195,6 +200,7 @@ export default function SupplierForm({ supplier = null, onClose }) {
             type="text"
             name="emailSenders"
             value={formData.emailSenders}
+            disabled={!canSetSenders}
             onChange={handleChange}
             placeholder="supplier.example, billing@supplier.example"
             className={cn(validationErrors.emailSenders && 'border-clay')}
@@ -233,12 +239,18 @@ export default function SupplierForm({ supplier = null, onClose }) {
       </Motion.div>
 
       <Motion.div variants={itemVariants}>
-        <Field label="Contact email" htmlFor="supplier-contact-email" error={validationErrors.contactEmail}>
+        <Field
+          label="Contact email"
+          hint={canSetSenders ? undefined : 'Set by an owner or admin: mail from it is read as this supplier\'s.'}
+          htmlFor="supplier-contact-email"
+          error={validationErrors.contactEmail}
+        >
           <Input
             id="supplier-contact-email"
             type="email"
             name="contactEmail"
             value={formData.contactEmail}
+            disabled={!canSetSenders}
             onChange={handleChange}
             placeholder="Enter contact email"
             className={cn(validationErrors.contactEmail && 'border-clay')}
