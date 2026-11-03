@@ -101,6 +101,7 @@ export const HAUL_CHECK_LABELS = {
   RATE_MISMATCH: 'Haul rate differs from dispatch',
   NO_RATE_SET: 'No haul rate set by dispatch',
   TRIP_RATES_DIFFER: 'Trip loads have different rates',
+  TRIP_SPANS_DAYS: 'Trip has loads on other days',
   UNIT_MISMATCH: 'Haul rate is per a different unit',
   LOAD_ALREADY_CLAIMED: 'Load already paid on another invoice',
   NO_LOAD_FOUND: 'No dispatched load found',
@@ -140,6 +141,8 @@ export function checkTitle(name, code) {
       return 'Haul rate';
     case 'haulQuantity':
       return 'Hauled quantity';
+    case 'haulTrip':
+      return 'Trip';
     case 'loadReuse':
       return 'Load already paid';
     default:

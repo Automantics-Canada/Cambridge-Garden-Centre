@@ -165,6 +165,7 @@ describe('checkTitle', () => {
     expect(checkTitle('haulRate', 'NO_RATE_SET')).toBe('No haul rate set by dispatch');
     expect(checkTitle('loadReuse', 'LOAD_ALREADY_CLAIMED')).toBe('Load already paid on another invoice');
     expect(checkTitle('haulLoad', 'NO_LOAD_FOUND')).toBe('No dispatched load found');
+    expect(checkTitle('haulTrip', 'TRIP_SPANS_DAYS')).toBe('Trip has loads on other days');
   });
 
   it('names a haul check that passed without alarming words', () => {

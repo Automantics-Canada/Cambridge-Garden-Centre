@@ -15,6 +15,7 @@ import {
 import { resolveHaulTolerances, resolveTolerances, type HaulTolerances, type Tolerances } from './tolerances.js';
 import { matchHaulLine, type CandidateLoad } from './haulMatch.js';
 import { deriveLineItemFlag } from '../../lib/lineItemFlag.js';
+import { businessDayOf } from '../../lib/businessDay.js';
 import { onSamePo, poKey } from './poKey.js';
 
 /**
@@ -643,9 +644,20 @@ type CandidateLoadRow = Prisma.DispatchLoadGetPayload<{ select: typeof CANDIDATE
  * The day a load was hauled. DispatchLoad has no date of its own: the
  * order's delivery date is the day Spruce scheduled it, the stop's completion
  * the day it was done, and the day dispatch recorded the load the last resort.
+ *
+ * The matcher compares calendar days (`YYYY-MM-DD`, at UTC midnight), which a
+ * delivery date already is. The other two are instants, so they are turned
+ * into the yard's day first: a load finished at 9 pm in Cambridge is already
+ * the next day in UTC, and would otherwise miss a line dated the day it ran.
  */
-function haulDateOf(row: CandidateLoadRow): Date {
-  return row.document.deliveryDate ?? row.delivery?.completedAt ?? row.createdAt;
+export function haulDateOf(row: {
+  document: { deliveryDate: Date | null };
+  delivery: { completedAt: Date | null } | null;
+  createdAt: Date;
+}): Date {
+  if (row.document.deliveryDate) return row.document.deliveryDate;
+  const instant = row.delivery?.completedAt ?? row.createdAt;
+  return new Date(`${businessDayOf(instant)}T00:00:00.000Z`);
 }
 
 function toCandidateLoad(row: CandidateLoadRow): CandidateLoad {
@@ -690,12 +702,15 @@ export async function loadCandidateLoads(
   const rows = await db.dispatchLoad.findMany({
     where,
     select: CANDIDATE_LOAD_SELECT,
-    orderBy: [{ createdAt: 'asc' }],
+    // Newest first, so that if the bound below is ever reached it drops the
+    // oldest loads rather than the ones an invoice is most likely billing.
+    orderBy: [{ createdAt: 'desc' }],
     // A carrier with hundreds of loads in a fortnight is a data problem; the
     // matcher would call the line a CONFLICT either way.
     take: 500,
   });
-  return rows.map(toCandidateLoad);
+  // Back in the order dispatch recorded them, which is the order they are listed in.
+  return rows.reverse().map(toCandidateLoad);
 }
 
 /**

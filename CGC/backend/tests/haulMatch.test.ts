@@ -204,12 +204,40 @@ describe('a brokered trip (A4: one truck, several POs)', () => {
     assert.equal(check(decision, 'haulRate')!.code, 'TRIP_RATES_DIFFER');
   });
 
-  test('a trip reference reused on another day is another trip', () => {
+  test('a trip reference reused on another day is another trip, and is shown to a person', () => {
     const today = load({ tripRef: 'T-12', poNumbers: ['2608-100001'], ticketNumber: 'T-500' });
     const later = load({ tripRef: 'T-12', poNumbers: ['2608-100009'], haulDate: daysFrom(DAY, 2) });
     const decision = matchHaulLine(line({ ticketNumber: 'T-500' }), [today, later], { tolerances });
-    assert.equal(decision.status, 'MATCHED');
     assert.deepEqual(decision.loadIds, [today.id], 'the later day must not be paid with this line');
+    // Reused, or one trip whose orders carry different dates: not for the
+    // matcher to decide, so it is never passed on its own.
+    assert.equal(decision.status, 'PARTIAL');
+    const trip = check(decision, 'haulTrip')!;
+    assert.equal(trip.code, 'TRIP_SPANS_DAYS');
+    assert.match(trip.detail, /on 2026-10-30/);
+  });
+
+  test('the second half of a trip split across days is not passed as a fresh haul', () => {
+    // One brokered truck, two orders; the carried-over order keeps an older
+    // Spruce date, so the halves fall on different days. The first half is
+    // already paid; a second bill naming the other order must not sail through.
+    const first = load({
+      tripRef: 'T-12', poNumbers: ['2608-100001'], haulDate: daysFrom(DAY, -1),
+      claimedByLineItemId: 'line-paid', claim: { invoiceNumber: 'HX-1', lineNumber: 1 },
+    });
+    const second = load({ tripRef: 'T-12', poNumbers: ['2608-100002'] });
+    const decision = matchHaulLine(line({ poNumber: '100002' }), [first, second], { tolerances });
+    assert.equal(decision.status, 'PARTIAL');
+    assert.deepEqual(decision.loadIds, [second.id]);
+    assert.match(check(decision, 'haulTrip')!.detail, /paid on invoice HX-1 line 1/);
+  });
+
+  test('a trip reference used again outside the window is not mentioned', () => {
+    const today = load({ tripRef: 'T-12', poNumbers: ['2608-100001'] });
+    const nextMonth = load({ tripRef: 'T-12', poNumbers: ['2608-100009'], haulDate: daysFrom(DAY, 30) });
+    const decision = matchHaulLine(line({ poNumber: '100001' }), [today, nextMonth], { tolerances });
+    assert.equal(decision.status, 'MATCHED', decision.reason);
+    assert.equal(check(decision, 'haulTrip'), undefined);
   });
 
   test('a trip reference reused the next week does not match at all', () => {

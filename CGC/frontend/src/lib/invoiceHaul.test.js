@@ -62,4 +62,13 @@ describe('missingRateText', () => {
     expect(missingRateText({ haulLoads: [load()] })).toMatch(/dispatch/);
     expect(missingRateText({ haulLoads: [] })).toBe('No agreed rate on file for this product.');
   });
+
+  it('does not send a trucking line with no load found to the product rate list', () => {
+    const item = {
+      haulLoads: [],
+      matchResult: { evidence: [{ name: 'haulLoad', passed: false, code: 'NO_LOAD_FOUND', detail: 'x' }] },
+    };
+    expect(missingRateText(item)).toMatch(/No dispatched load found/);
+    expect(missingRateText(item)).not.toMatch(/product/);
+  });
 });

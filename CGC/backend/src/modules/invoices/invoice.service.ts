@@ -948,22 +948,40 @@ export const InvoiceService = {
     );
 
     if (toConfirm.length > 0) {
-      const { resolveMatchResult } = await import('../matching/resolveMatch.js');
-      for (const line of toConfirm) {
-        const outcome = await resolveMatchResult({
-          matchResultId: line.matchResult!.id,
-          resolution: 'CONFIRMED',
-          note: 'Confirmed as part of verifying this invoice.',
-          userId,
-        });
-        if (!outcome.ok) {
-          throw Object.assign(
-            new Error(
-              `Line ${line.lineNumber} could not be confirmed: ` +
-                ('detail' in outcome ? outcome.detail : outcome.code)
-            ),
-            { status: 409 }
-          );
+      const { resolveMatchResult, recomputeCarrierLinesSafely } = await import('../matching/resolveMatch.js');
+      // A trucking company's other open lines are re-checked once, after
+      // every load this invoice pays has been claimed, not once per line: a
+      // thirty-line haul invoice would otherwise re-check the carrier's open
+      // lines thirty times inside one request.
+      const invoice = await prisma.invoice.findUnique({
+        where: { id },
+        select: { supplierId: true, supplier: { select: { type: true } } },
+      });
+      const carrierSupplierId = invoice?.supplier.type === 'TRUCKING_COMPANY' ? invoice.supplierId : null;
+      try {
+        for (const line of toConfirm) {
+          const outcome = await resolveMatchResult({
+            matchResultId: line.matchResult!.id,
+            resolution: 'CONFIRMED',
+            note: 'Confirmed as part of verifying this invoice.',
+            userId,
+            recomputeCarrier: carrierSupplierId === null,
+          });
+          if (!outcome.ok) {
+            throw Object.assign(
+              new Error(
+                `Line ${line.lineNumber} could not be confirmed: ` +
+                  ('detail' in outcome ? outcome.detail : outcome.code)
+              ),
+              { status: 409 }
+            );
+          }
+        }
+      } finally {
+        // Also when a line was refused part-way: the lines before it are
+        // confirmed and their loads claimed, which the others must now see.
+        if (carrierSupplierId) {
+          await recomputeCarrierLinesSafely(carrierSupplierId, `verifying invoice ${id}`);
         }
       }
     }

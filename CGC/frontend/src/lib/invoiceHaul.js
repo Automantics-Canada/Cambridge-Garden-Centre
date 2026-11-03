@@ -32,7 +32,22 @@ export function haulLoadRows(item) {
   }));
 }
 
-/** The note under a line whose agreed rate is missing: for a haul, dispatch sets it. */
+/**
+ * Whether the line was checked as a trucking line at all, even when no load
+ * was found for it: its verdict carries the haul checks.
+ */
+function checkedAsHaul(item) {
+  const evidence = item?.matchResult?.evidence;
+  return Array.isArray(evidence) && evidence.some((check) => check?.name === 'haulLoad');
+}
+
+/**
+ * The note under a line whose agreed rate is missing. For a haul the rate is
+ * the one dispatch sets on the load, so the note says where to look: on the
+ * load, or for the load itself when none was found.
+ */
 export function missingRateText(item) {
-  return isHaulLine(item) ? 'No haul rate set by dispatch for this load.' : 'No agreed rate on file for this product.';
+  if (isHaulLine(item)) return 'No haul rate set by dispatch for this load.';
+  if (checkedAsHaul(item)) return 'No dispatched load found, so there is no haul rate to check against.';
+  return 'No agreed rate on file for this product.';
 }

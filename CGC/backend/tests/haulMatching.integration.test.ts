@@ -91,7 +91,14 @@ async function reset(): Promise<void> {
 
 /** A trucking invoice with one line per entry, read as the extraction would store it. */
 async function haulInvoice(
-  lines: Array<{ ticketNumber?: string | null; poNumber?: string | null; unitRate?: number; quantity?: number; unit?: string }>,
+  lines: Array<{
+    ticketNumber?: string | null;
+    poNumber?: string | null;
+    unitRate?: number;
+    quantity?: number;
+    unit?: string;
+    serviceDate?: Date;
+  }>,
   supplierId = CARRIER_ID
 ): Promise<{ invoiceId: string; lineIds: string[] }> {
   invoiceCounter += 1;
@@ -120,7 +127,7 @@ async function haulInvoice(
         description: 'Tri-axle haul',
         poNumber: entry.poNumber ?? null,
         ticketNumber: entry.ticketNumber ?? null,
-        serviceDate: DAY,
+        serviceDate: entry.serviceDate ?? DAY,
         quantity,
         unit: entry.unit ?? 'load',
         unitRate,
@@ -217,6 +224,37 @@ describe('trucking invoices against dispatch loads (PostgreSQL)', { skip: !runna
     const duplicate = evidence.find((check) => check.name === 'duplicateBilling');
     assert.equal(duplicate?.passed, false);
     assert.match(duplicate!.detail, /HAUL-0+\d+ line 1/);
+  });
+
+  it('verifying one invoice re-checks the carrier\'s other open invoice once its loads are paid', async () => {
+    const first = await haulInvoice([{ ticketNumber: 'TK-7001' }]);
+    const second = await haulInvoice([{ ticketNumber: 'TK-7001' }]);
+    assert.equal((await verdictOf(first.lineIds[0]!)).status, 'MATCHED');
+
+    await InvoiceService.verifyInvoice(first.invoiceId, USER_ID);
+    assert.equal((await loadRow(loads.A)).claimedByLineItemId, first.lineIds[0]);
+    const reuse = ((await verdictOf(second.lineIds[0]!)).evidence as Array<{ name: string; code?: string }>).find(
+      (check) => check.name === 'loadReuse'
+    );
+    assert.equal(reuse?.code, 'LOAD_ALREADY_CLAIMED');
+  });
+
+  it('a load with no order date is dated by the yard\'s day, not the UTC one', async () => {
+    // Recorded at 9:30 pm in Cambridge on 27 October, which is already the
+    // 28th in UTC. The line says it was hauled on the 27th.
+    const document = await prisma.orderDocument.create({
+      data: { documentNumber: '990103', customerName: 'Example Customer', poNumber: '2608-700003' },
+    });
+    const evening = await prisma.dispatchLoad.create({
+      data: {
+        documentId: document.id, sequence: 1, carrierSupplierId: CARRIER_ID, rate: '185', rateUnit: 'LOAD',
+        setById: USER_ID, createdAt: new Date('2026-10-28T01:30:00.000Z'),
+      },
+    });
+    const { lineIds } = await haulInvoice([{ serviceDate: new Date('2026-10-27T00:00:00.000Z') }]);
+    const verdict = await verdictOf(lineIds[0]!);
+    assert.deepEqual(verdict.loadIds, [evening.id], verdict.reason);
+    assert.equal(verdict.status, 'PARTIAL', 'carrier and date alone is never a pass');
   });
 
   it('rejecting a line leaves its load unpaid', async () => {

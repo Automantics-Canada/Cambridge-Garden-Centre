@@ -2,6 +2,7 @@ import { compareUnits, normaliseUnit } from '../../lib/units.js';
 import { numberSearchKey } from '../../lib/ticketNumber.js';
 import {
   billableHauls,
+  normaliseTripRef,
   type BillableHaul,
   type HaulLoad,
 } from '../dispatch/dispatchLoadRules.js';
@@ -126,6 +127,10 @@ export function haulTicketKey(value: string | null | undefined): string | null {
  * the reference alone would merge them into one haul and pay one line for
  * both. The window is days either side of the anchor, counted in whole days.
  */
+function inWindow(load: CandidateLoad, anchor: Date | null, windowDays: number): boolean {
+  return anchor === null || Math.abs(dayStart(load.haulDate) - dayStart(anchor)) <= windowDays * DAY_MS;
+}
+
 export function haulCandidates(
   loads: ReadonlyArray<CandidateLoad>,
   carrierSupplierId: string | null,
@@ -133,14 +138,12 @@ export function haulCandidates(
   windowDays: number
 ): HaulCandidate[] {
   if (!carrierSupplierId) return [];
-  const inWindow = loads.filter(
-    (load) =>
-      load.carrierSupplierId === carrierSupplierId &&
-      (anchor === null || Math.abs(dayStart(load.haulDate) - dayStart(anchor)) <= windowDays * DAY_MS)
+  const inWindowLoads = loads.filter(
+    (load) => load.carrierSupplierId === carrierSupplierId && inWindow(load, anchor, windowDays)
   );
 
   const byDay = new Map<string, CandidateLoad[]>();
-  for (const load of inWindow) {
+  for (const load of inWindowLoads) {
     const day = isoDay(load.haulDate);
     byDay.set(day, [...(byDay.get(day) ?? []), load]);
   }
@@ -292,6 +295,34 @@ function windowText(line: HaulLineSubject, windowDays: number): string {
   const anchor = line.serviceDate ?? line.invoiceDate;
   if (!anchor) return '';
   return ` within ${windowDays} day${windowDays === 1 ? '' : 's'} of ${isoDay(anchor)}`;
+}
+
+/**
+ * Loads of the same trip reference, by the same carrier and inside the window,
+ * that fell on another day and so are not part of this haul.
+ *
+ * Hauls are grouped a day at a time so that a reference reused on another day
+ * is not merged into this trip. The price of that is a real trip whose orders
+ * carry different dates (a carried-over order keeps its old Spruce date) being
+ * cut in two, and the second half then looking like a fresh, unpaid haul. Both
+ * readings are possible, so neither is passed without a person.
+ */
+function tripLoadsOnOtherDays(
+  loads: ReadonlyArray<CandidateLoad>,
+  candidate: HaulCandidate,
+  anchor: Date | null,
+  windowDays: number
+): CandidateLoad[] {
+  const trip = candidate.haul.tripRef;
+  if (!trip) return [];
+  return loads.filter(
+    (load) =>
+      load.carrierSupplierId === candidate.haul.carrierSupplierId &&
+      load.tripRef !== null &&
+      normaliseTripRef(load.tripRef) === trip &&
+      !candidate.haul.loadIds.includes(load.id) &&
+      inWindow(load, anchor, windowDays)
+  );
 }
 
 /** The rate check: the billed price per unit against the dispatcher's. */
@@ -496,6 +527,26 @@ export function matchHaulLine(
         : `Dispatch load ${describeHaul(candidate)}, ${how}`
     ),
   });
+
+  const otherDays = tripLoadsOnOtherDays(loads, candidate, anchor, tolerances.haulDateWindowDays);
+  if (otherDays.length > 0) {
+    const listed = otherDays
+      .map(
+        (load) =>
+          `${load.documentNumber} load ${load.sequence} on ${isoDay(load.haulDate)}` +
+          (load.claim ? ` (paid on invoice ${load.claim.invoiceNumber} line ${load.claim.lineNumber})` : '')
+      )
+      .join(', ');
+    checks.push({
+      name: 'haulTrip',
+      passed: false,
+      code: 'TRIP_SPANS_DAYS',
+      detail:
+        `Trip ${candidate.haul.tripRef} also has loads dated on other days: ${listed}. ` +
+        `Only the ${candidate.day} loads are counted on this line. Check with dispatch whether this is one trip or the reference was used twice`,
+      found: otherDays.length,
+    });
+  }
 
   const paidElsewhere = claimedElsewhere(candidate, line.id);
   if (paidElsewhere.length > 0) {

@@ -139,6 +139,12 @@ export async function resolveMatchResult(params: {
   orderId?: string | null;
   note?: string | null;
   userId: string;
+  /**
+   * False when the caller re-checks the carrier's open haul lines itself once
+   * it is done, as Verify does after confirming every clean line of an
+   * invoice: otherwise each line would re-check all of them again.
+   */
+  recomputeCarrier?: boolean;
 }): Promise<ResolveResult> {
   const { matchResultId, resolution, userId } = params;
   const note = params.note?.trim() || null;
@@ -466,7 +472,7 @@ export async function resolveMatchResult(params: {
   }
   // A haul paid or released changes what the carrier's other open lines can
   // claim, whatever PO they print.
-  if (carrierSupplierId) {
+  if (carrierSupplierId && params.recomputeCarrier !== false) {
     await recomputeCarrierLinesSafely(carrierSupplierId, `resolution of ${matchResultId}`);
   }
 
@@ -481,7 +487,7 @@ const CARRIER_RECOMPUTE_LIMIT = 200;
  * the decision's transaction, like the PO recompute: the decision stands
  * whatever happens here.
  */
-async function recomputeCarrierLinesSafely(carrierSupplierId: string, context: string): Promise<void> {
+export async function recomputeCarrierLinesSafely(carrierSupplierId: string, context: string): Promise<void> {
   try {
     const { recomputeInvoiceLinesForSupplier } = await import('./matching.service.js');
     const outcome = await recomputeInvoiceLinesForSupplier(carrierSupplierId, CARRIER_RECOMPUTE_LIMIT);

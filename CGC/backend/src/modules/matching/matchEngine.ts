@@ -49,6 +49,7 @@ export interface MatchCheck {
     | 'haulLoad'
     | 'haulRate'
     | 'haulQuantity'
+    | 'haulTrip'
     | 'loadReuse';
   passed: boolean;
   /**
@@ -71,6 +72,7 @@ export type HaulCheckCode =
   | 'RATE_MISMATCH'
   | 'NO_RATE_SET'
   | 'TRIP_RATES_DIFFER'
+  | 'TRIP_SPANS_DAYS'
   | 'UNIT_MISMATCH'
   | 'LOAD_ALREADY_CLAIMED';
 
