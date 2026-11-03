@@ -2,7 +2,9 @@ import type { Response } from 'express';
 
 import type { AuthRequest } from '../../../middleware/authMiddleware.js';
 import { EditValidationError, parseEditRequest } from './editableFields.js';
-import { OrderEditError, applyOrderEdits, getOrderForEditing, resetOrderEdit } from './orderEdits.service.js';
+import { OrderEditError, applyOrderEdits, getOrderForEditing, markNotQuotation, resetOrderEdit } from './orderEdits.service.js';
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function sendEditError(res: Response, error: unknown) {
   if (error instanceof EditValidationError || error instanceof OrderEditError) {
@@ -43,6 +45,22 @@ export const resetOrderField = async (req: AuthRequest, res: Response) => {
     }
     await resetOrderEdit(id, field, lineId ?? null, req.user!.id);
     return res.json({ order: await getOrderForEditing(id) });
+  } catch (error) {
+    return sendEditError(res, error);
+  }
+};
+
+/**
+ * "Not a quotation": the office says an order the import took for a
+ * quotation is a real one. Answers with the order as it now stands.
+ */
+export const markOrderNotQuotation = async (req: AuthRequest, res: Response) => {
+  const id = req.params.id as string;
+  // Not an order id at all: no such order, without asking the database.
+  if (!UUID.test(id)) return res.status(404).json({ error: 'That order no longer exists.' });
+  try {
+    const { changed } = await markNotQuotation(id, req.user!.id);
+    return res.json({ changed, order: await getOrderForEditing(id) });
   } catch (error) {
     return sendEditError(res, error);
   }

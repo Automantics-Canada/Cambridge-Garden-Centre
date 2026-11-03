@@ -262,6 +262,17 @@ describe('order routes', () => {
     assertGuarded(orderRouter, 'get', '/import/jobs/:jobId', OPERATIONS);
     assert.equal(admittedRoles(effectiveChain(orderRouter, 'get', '/'))?.includes('DRIVER'), false);
   });
+
+  it('only the office edits an order or says it is not a quotation', () => {
+    for (const [method, path] of [
+      ['patch', '/documents/:id'],
+      ['post', '/documents/:id/reset'],
+      ['post', '/documents/:id/not-a-quotation'],
+    ] as const) {
+      assertGuarded(orderRouter, method, path, OPERATIONS);
+      assert.equal(admittedRoles(effectiveChain(orderRouter, method, path))?.includes('DRIVER'), false, `${method} ${path}`);
+    }
+  });
 });
 
 describe('supplier routes', () => {

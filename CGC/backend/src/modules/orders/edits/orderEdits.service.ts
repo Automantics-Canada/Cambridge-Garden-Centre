@@ -10,6 +10,7 @@ import {
   type OrderFlag,
 } from '../import/mergeOrderFacts.js';
 import { NO_UPDATES, updatesForDay } from '../import/orderChanges.js';
+import { NOT_A_QUOTE_FLAG, QUOTE_FLAG } from '../quotations.js';
 import { awaitingSupplierByOrder, fulfilmentByDocument, pickupFromByDocument } from '../../dispatch/dispatchOrderView.js';
 import {
   EditValidationError,
@@ -131,6 +132,72 @@ async function recomputeDerived(db: Db, documentId: string): Promise<void> {
       data: { customerName: document.customerName, deliveryDate: document.deliveryDate },
     });
   }
+}
+
+/**
+ * Takes QUOTE off an order, adding `also` (the office's NOT_A_QUOTE), and
+ * puts back what a quotation goes without: whether it is a pickup, and the
+ * flags read off its state (no address, no phone, ...). Returns false,
+ * having written nothing, for an order that is not flagged a quotation.
+ */
+export async function dropQuoteFlag(db: Db, documentId: string, also: OrderFlag[] = []): Promise<boolean> {
+  const { flags } = await db.orderDocument.findUniqueOrThrow({ where: { id: documentId }, select: { flags: true } });
+  if (!flags.includes(QUOTE_FLAG)) return false;
+  // Conditional on the flags read, so an import writing this order at the
+  // same moment is not overwritten with what it has just replaced.
+  const written = await db.orderDocument.updateMany({
+    where: { id: documentId, flags: { equals: flags } },
+    data: { flags: combineFlags(flags, [QUOTE_FLAG as OrderFlag], also) },
+  });
+  if (written.count === 0) throw new OrderEditError(409, 'This order changed just now. Refresh and try again.');
+  await recomputeDerived(db, documentId);
+  return true;
+}
+
+/**
+ * The office's "Not a quotation": the order the import took for a quotation
+ * is a real one.
+ *
+ * The import calls a document a quotation when Item Tracking lists it inside
+ * the Order report's range, the Order report leaves it out, and nothing has
+ * happened to it in the app. A real order can look the same: entered,
+ * delivered and closed in Spruce between two uploads, so no upload ever saw
+ * it open. Nothing would ever take the flag off such an order, and while it
+ * stood, its tickets and invoice lines could not be linked to it.
+ *
+ * QUOTE comes off and NOT_A_QUOTE goes on, which every later upload keeps,
+ * so the import never calls the order a quotation again (left off a later
+ * Order report, it reads as closed instead, as any order would). The order
+ * is not marked closed here: the office knows it is an order, not whether it
+ * is done, and "Done outside the app" says that. Audited. Marking an order
+ * that is not flagged a quotation changes nothing.
+ */
+export async function markNotQuotation(documentId: string, userId: string): Promise<{ changed: boolean }> {
+  return prisma.$transaction(async (tx) => {
+    const document = await tx.orderDocument.findUnique({
+      where: { id: documentId },
+      select: { documentNumber: true, flags: true },
+    });
+    if (!document) throw new OrderEditError(404, 'That order no longer exists.');
+
+    const changed = await dropQuoteFlag(tx, documentId, [NOT_A_QUOTE_FLAG as OrderFlag]);
+    if (!changed) return { changed: false };
+
+    await tx.auditLog.create({
+      data: {
+        entityType: 'ORDER',
+        entityId: documentId,
+        actionType: 'ORDER_EDITED',
+        performedById: userId,
+        details: {
+          documentNumber: document.documentNumber,
+          action: 'NOT_A_QUOTATION',
+          changes: [{ field: 'flags', lineId: null, from: QUOTE_FLAG, to: NOT_A_QUOTE_FLAG }],
+        } as Prisma.InputJsonValue,
+      },
+    });
+    return { changed: true };
+  });
 }
 
 /**

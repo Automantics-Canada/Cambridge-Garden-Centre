@@ -69,7 +69,9 @@ async function seed() {
 }
 
 const refused = (err: any) =>
-  err.status === 409 && err.message === '9900-000001 is a quotation in Spruce, not an order, so a ticket cannot be linked to it.';
+  err.status === 409 && err.message ===
+    '9900-000001 is a quotation in Spruce, not an order, so a ticket cannot be linked to it. ' +
+    'If it is a real order, mark it "Not a quotation" on the order first.';
 
 describe('linking a ticket or an invoice line to a quotation', { skip: !runnable && 'needs CGC_TEST_CONFIRM_DISPOSABLE=1 and a loopback DATABASE_URL' }, () => {
   before(seed);

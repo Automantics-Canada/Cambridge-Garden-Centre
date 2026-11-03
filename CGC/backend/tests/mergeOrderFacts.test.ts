@@ -361,6 +361,34 @@ describe('quotations and orders no longer open (Q3, Q7)', () => {
     assert.deepEqual(batchFlags(itemOnly(), { reports }, fresh).decided, []);
   });
 
+  it('never takes an order the office marked "Not a quotation" for one again: off the Order report, it is closed', () => {
+    const result = batchFlags(itemOnly(), context, { ...fresh, confirmedOrder: true });
+    assert.deepEqual(result.flags, ['NOT_OPEN']);
+    // The office's word is never decided by an upload, so it stays.
+    assert.deepEqual(combineFlags(['NOT_A_QUOTE'], result.decided, result.flags), ['NOT_OPEN', 'NOT_A_QUOTE']);
+  });
+
+  it('clears QUOTE once anything shows the document is an order, whatever its entry date', () => {
+    // Entered before the Order report's range: NOT_OPEN cannot be judged,
+    // but a PO, a stop or the office's word still says it is no quotation.
+    const before = { orderDateRaw: '8/20/2026' };
+    for (const [rows, history] of [
+      [itemOnly({ ...before, poNumber: '9900-300001' }), fresh],
+      [itemOnly(before), { ...fresh, hasPo: true }],
+      [itemOnly(before), { ...fresh, hasActivity: true }],
+      [itemOnly(before), { ...fresh, confirmedOrder: true }],
+    ] as const) {
+      const result = batchFlags(rows, context, history);
+      assert.deepEqual(result.flags, []);
+      assert.ok(result.decided.includes('QUOTE') && !result.decided.includes('NOT_OPEN'));
+      assert.deepEqual(combineFlags(['QUOTE'], result.decided, result.flags), []);
+      assert.deepEqual(combineFlags(['NOT_OPEN'], result.decided, result.flags), ['NOT_OPEN'], 'closed stays a question for the Order report');
+    }
+    // And without an Order report at all.
+    const noSummary = batchFlags(itemOnly({ poNumber: '9900-300001' }), { reports: new Set(['DELIVERY', 'ITEM_TRACKING'] as const) }, fresh);
+    assert.deepEqual(combineFlags(['QUOTE'], noSummary.decided, noSummary.flags), []);
+  });
+
   it('falls back on the stored entry date when Item Tracking prints none', () => {
     const result = batchFlags(itemOnly({ orderDateRaw: undefined }), context, { ...fresh, orderDate: day('2026-09-02') });
     assert.deepEqual(result.flags, ['QUOTE']);

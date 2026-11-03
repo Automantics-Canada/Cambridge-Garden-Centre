@@ -1,6 +1,7 @@
 import type { DeliveryStatus, Prisma } from '@prisma/client';
 
 import { prisma } from '../../db/prisma.js';
+import { OrderEditError, dropQuoteFlag } from '../orders/edits/orderEdits.service.js';
 import { DISPATCH_DOCUMENT_SELECT, representativeLineId } from './dispatchOrderView.js';
 
 /**
@@ -17,6 +18,7 @@ import { DISPATCH_DOCUMENT_SELECT, representativeLineId } from './dispatchOrderV
  * row; one is made if the order never had a stop. A stop a driver has
  * started is theirs to finish on the phone, and a cancelled one stays
  * cancelled. Marking an order that is already delivered changes nothing.
+ * An order flagged a quotation loses the flag: it went out, so it was one.
  */
 
 export class DoneOutsideAppError extends Error {
@@ -107,6 +109,15 @@ export async function markDoneOutsideApp(
         } as Prisma.InputJsonValue,
       },
     });
+
+    // Delivered is an order, whatever the import took it for: an order the
+    // app never saw open can have been flagged a quotation.
+    try {
+      await dropQuoteFlag(tx, documentId);
+    } catch (error) {
+      if (error instanceof OrderEditError) throw new DoneOutsideAppError(error.status, error.message);
+      throw error;
+    }
 
     return { deliveryId, status: 'DELIVERED', completedAt: now, changed: true };
   });

@@ -67,6 +67,10 @@ describe('whole orders on the board', () => {
     expect(assignWarning({ spruceOrderId: '2608-700001' })).toBeNull();
   });
 
+  it('leaves the office\'s "Not a quotation" off the badges: a decision made, nothing to do', () => {
+    expect(flagBadges({ flags: ['NOT_OPEN', 'NOT_A_QUOTE'] }).map((badge) => badge.label)).toEqual(['No longer open']);
+  });
+
   it('puts the flags that need attention first', () => {
     expect(flagBadges({ flags: ['SMALL_TRUCK', 'CHECK_ADDRESS'] }).map((badge) => badge.label))
       .toEqual(['Check address', 'Small truck']);

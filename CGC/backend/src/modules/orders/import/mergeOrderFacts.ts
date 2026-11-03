@@ -134,6 +134,12 @@ export const ORDER_FLAGS = [
   // Order report's range but left off it, and nothing has ever happened to it.
   // The client confirmed (Oct 2026) that this is what such a document is.
   'QUOTE',
+  // The office said this document is a real order, not a quotation ("Not a
+  // quotation" on the order). The import's quotation rule can take an order
+  // the app never saw open for one (entered, delivered and closed between two
+  // uploads), so the office's word wins from then on: an import never sets
+  // QUOTE on it again, and never clears this.
+  'NOT_A_QUOTE',
   // A dispatcher corrected a field and Spruce has since said something else.
   // Kept by the order's corrections, never decided by an import.
   'SPRUCE_VALUE_CHANGED',
@@ -401,17 +407,19 @@ export interface DocumentHistory {
   hasActivity: boolean;
   /** The stored entry date, for an upload whose Item Tracking prints none. */
   orderDate?: Date | null;
+  /** The office marked it "Not a quotation" (NOT_A_QUOTE). */
+  confirmedOrder?: boolean;
 }
 
 const documentNumberOf = (rows: ReportRows): string | undefined =>
   Object.values(rows).flatMap(list => list ?? [])[0]?.documentNumber;
 
-/** Nothing about it says it was ever an order. */
+/** Nothing about it says it was ever an order, and the office has not said so either. */
 function looksLikeQuote(rows: ReportRows, history: DocumentHistory | undefined): boolean {
   if (!history) return false;
   const everOpen = history.sourceReports.includes('ORDER_SUMMARY') || history.sourceReports.includes('DELIVERY');
   const hasPo = history.hasPo || (rows.ITEM_TRACKING ?? []).some(row => row.poNumber);
-  return !everOpen && !hasPo && !history.hasActivity;
+  return !everOpen && !hasPo && !history.hasActivity && !history.confirmedOrder;
 }
 
 /**
@@ -494,6 +502,14 @@ export function batchFlags(
       flags.push(looksLikeQuote(rows, history) ? 'QUOTE' : 'NOT_OPEN');
     }
   }
+
+  // Whatever the dates, a document something now shows to be an order is no
+  // quotation: a PO on its lines, a stop, driver, invoice or ticket, or the
+  // office's word. Without this a QUOTE stood until a report listed the
+  // document as open, which for an order closed before any upload saw it
+  // open is never. Only QUOTE is decided: whether it is still open is not
+  // something this tells.
+  if (!decided.includes('QUOTE') && history && !looksLikeQuote(rows, history)) decided.push('QUOTE');
 
   return { flags, decided };
 }

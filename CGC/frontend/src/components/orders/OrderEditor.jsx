@@ -18,9 +18,11 @@ import {
 import {
   DELIVERY_TYPE_OPTIONS,
   ORDER_FIELDS,
+  canMarkNotQuotation,
   editRequest,
   formFromOrder,
   lineUpdateFor,
+  notQuotationConfirm,
   overrideFor,
   pitOptions,
   spruceText,
@@ -107,6 +109,26 @@ export default function OrderEditor({ orderRef, onClose, onSaved, readOnly = fal
       onClose();
     } catch (err) {
       toast.error(err.response?.data?.error || 'The order could not be marked delivered.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  /**
+   * The import took a real order for a quotation (one entered and closed
+   * between two uploads looks like one). The order comes back to the lists,
+   * and later uploads keep the office's word.
+   */
+  const markNotQuotation = async () => {
+    if (!window.confirm(notQuotationConfirm(order))) return;
+    setSaving(true);
+    try {
+      const res = await api.post(`/api/orders/documents/${order.id}/not-a-quotation`);
+      show(res.data.order);
+      toast.success(`${order.documentNumber} is an order, not a quotation`);
+      onSaved?.(res.data.order);
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'The order could not be marked.');
     } finally {
       setSaving(false);
     }
@@ -265,12 +287,19 @@ export default function OrderEditor({ orderRef, onClose, onSaved, readOnly = fal
             <Button onClick={onClose}>Close</Button>
           ) : (
             <>
-              {/* The customer collects a pickup: there is no delivery to mark done, as on the board. */}
-              {order && !order.isPickup && canMarkDoneOutside({ wholeOrder: true }, order.delivery?.status ?? null) && (
-                <Button className="mr-auto" onClick={markDoneOutside} disabled={!order || saving}>
-                  Done outside the app
-                </Button>
-              )}
+              <div className="mr-auto flex flex-wrap gap-3">
+                {canMarkNotQuotation(order) && (
+                  <Button onClick={markNotQuotation} disabled={saving}>
+                    Not a quotation
+                  </Button>
+                )}
+                {/* The customer collects a pickup: there is no delivery to mark done, as on the board. */}
+                {order && !order.isPickup && canMarkDoneOutside({ wholeOrder: true }, order.delivery?.status ?? null) && (
+                  <Button onClick={markDoneOutside} disabled={!order || saving}>
+                    Done outside the app
+                  </Button>
+                )}
+              </div>
               <Button onClick={onClose} disabled={saving}>Cancel</Button>
               <Button variant="primary" onClick={save} disabled={!order || saving}>
                 {saving ? 'Saving…' : 'Save changes'}

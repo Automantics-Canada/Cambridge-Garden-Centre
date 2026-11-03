@@ -6,6 +6,7 @@ import { OrderPdfImportService, type ImportSummary } from '../orderPdfImport.ser
 import type { ParsedSpruceReport, ParsedSpruceRow, SpruceReportType } from '../spruce/spruceReportTypes.js';
 import { deliveryTypeOf } from './lineClass.js';
 import { reassertOverrides } from '../edits/orderEdits.service.js';
+import { NOT_A_QUOTE_FLAG } from '../quotations.js';
 import { diffOrder, isOverridden, snapshotOrders, type ChangeRow, type OrderSnapshot } from './orderChanges.js';
 import {
   batchFlags,
@@ -811,6 +812,8 @@ async function mergeBatch(
         line._count.lineItems > 0 || line._count.ticketMatches > 0
       ),
       orderDate: stored.orderDate,
+      // The office's "Not a quotation": kept through every upload.
+      confirmedOrder: stored.flags.includes(NOT_A_QUOTE_FLAG),
     };
     const decided = batchFlags(rows, context, history);
     const checkedByAi = readDifferently(files, documentNumber, rows);
