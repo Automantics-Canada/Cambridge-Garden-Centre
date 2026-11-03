@@ -2,6 +2,7 @@ import './setupEnv.js';
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
+  copyGroup,
   plannedLinks,
   primaryCopy,
   sameLoadCopies,
@@ -86,5 +87,41 @@ describe('sameLoadCopies', () => {
 
   it('a different supplier with the same number is never a copy', () => {
     assert.deepEqual(sameLoadCopies(emailed, [copy('o', 'MANUAL', '2026-10-01T08:00:00Z', { supplierId: 'sup-2' })]), []);
+  });
+});
+
+describe('copyGroup', () => {
+  const ids = (group: CopyCandidate[]) => group.map((c) => c.id).sort();
+
+  it('a matched copy brings the copies it is grouped with, so no chain is left', () => {
+    const y = copy('y', 'EMAIL', '2026-10-01', { poNumber: '300' });
+    const x = copy('x', 'EMAIL', '2026-10-02', { poNumber: '200', duplicateOfTicketId: 'y' });
+    const z = copy('z', 'MANUAL', '2026-10-03', { poNumber: '300', supplierId: null });
+    const group = copyGroup(z, [y], [x, y]);
+    assert.deepEqual(ids(group), ['x', 'y', 'z']);
+    assert.deepEqual([...plannedLinks(group)].sort(), [['x', 'z'], ['y', 'z'], ['z', null]]);
+  });
+
+  it('and the copy it pointed at', () => {
+    const x = copy('x', 'EMAIL', '2026-10-01', { poNumber: '300' });
+    const y = copy('y', 'EMAIL', '2026-10-02', { poNumber: '200', duplicateOfTicketId: 'x' });
+    const z = copy('z', 'MANUAL', '2026-10-03', { poNumber: '200', supplierId: null });
+    assert.deepEqual(ids(copyGroup(z, [y], [x])), ['x', 'y', 'z']);
+  });
+
+  it("leaves out a family of another supplier's copies, and joins nothing a blank ticket would bridge", () => {
+    const blank = copy('b', 'MANUAL', '2026-10-01', { supplierId: null });
+    const theirs = copy('t', 'EMAIL', '2026-10-02', { supplierId: 'sup-2', duplicateOfTicketId: 'b' });
+    const mine = copy('m', 'EMAIL', '2026-10-03');
+    assert.deepEqual(ids(copyGroup(mine, [blank], [theirs])), ['m']);
+
+    const other = copy('o', 'EMAIL', '2026-10-04');
+    assert.deepEqual(ids(copyGroup(blank, [theirs, other], [])), ['b']);
+  });
+
+  it("a copy already under this ticket keeps no old family of its own", () => {
+    const d = copy('d', 'MANUAL', '2026-10-01');
+    const e = copy('e', 'EMAIL', '2026-10-02', { duplicateOfTicketId: 'd' });
+    assert.deepEqual(ids(copyGroup(d, [e], [])), ['d', 'e']);
   });
 });

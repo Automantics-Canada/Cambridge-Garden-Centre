@@ -141,9 +141,60 @@ export interface CopyLinkOutcome {
 }
 
 /**
+ * The copies this ticket joins: each matched copy together with the copies it
+ * is already grouped with (the one it points at, and everything pointing at
+ * that one or at it). Pure.
+ *
+ * Linking only the matched copies left chains. Two emailed copies X → Y, then
+ * a driver photo Z matching Y alone (its supplier unread, the PO agreeing
+ * with Y's but not X's): Y moved under Z, X still pointed at Y, and matching,
+ * which follows one link, counted Y and Z as two loads. The same happened
+ * when Y pointed at X and only Y matched: X stayed a load of its own.
+ *
+ * A family whose copies name a supplier other than this ticket's is left out,
+ * and for a ticket with no supplier nothing is joined when the families would
+ * bring two suppliers together: the rule sameLoadCopies applies to a single
+ * blank ticket, applied to the groups it would merge.
+ */
+export function copyGroup(
+  ticket: CopyCandidate,
+  matched: readonly CopyCandidate[],
+  related: readonly CopyCandidate[]
+): CopyCandidate[] {
+  const byId = new Map<string, CopyCandidate>([...matched, ...related].map((copy) => [copy.id, copy]));
+  byId.delete(ticket.id);
+  const rootOf = (copy: CopyCandidate) => copy.duplicateOfTicketId ?? copy.id;
+
+  const families: CopyCandidate[][] = [];
+  const seen = new Set<string>();
+  for (const copy of matched) {
+    if (seen.has(copy.id)) continue;
+    const root = rootOf(copy);
+    // A copy already counted under this ticket: its old group is this
+    // ticket's own, which is rebuilt here, not merged.
+    const members = root === ticket.id
+      ? [copy]
+      : [...byId.values()].filter((other) =>
+        other.id === copy.id || other.id === root || other.duplicateOfTicketId === root || other.duplicateOfTicketId === copy.id);
+    for (const member of members) seen.add(member.id);
+    families.push(members);
+  }
+
+  const suppliersOf = (copies: readonly CopyCandidate[]) =>
+    new Set(copies.map((copy) => copy.supplierId).filter((id): id is string => Boolean(id)));
+  const kept = ticket.supplierId
+    ? families.filter((family) => [...suppliersOf(family)].every((id) => id === ticket.supplierId))
+    : families;
+  const joined = [...new Map(kept.flat().map((copy) => [copy.id, copy])).values()];
+  if (suppliersOf([ticket, ...joined]).size > 1) return [ticket];
+  return [ticket, ...joined];
+}
+
+/**
  * Links this ticket with every other copy of its load, or unlinks it when it
  * no longer is one (its number was corrected, say). Copies that pointed at it
- * and no longer match are released too.
+ * and no longer match are released too. Every copy in the group points at
+ * the one that counts, never at another copy.
  */
 export async function linkTicketCopies(
   ticketId: string,
@@ -167,7 +218,20 @@ export async function linkTicketCopies(
       select: COPY_SELECT,
       take: 20,
     });
-    group = [ticket, ...sameLoadCopies(ticket, others)];
+    const matched = sameLoadCopies(ticket, others);
+    // The groups those copies already belong to: the copy each points at,
+    // and every copy pointing at that one or at a matched copy.
+    const roots = [...new Set(matched.map((copy) => copy.duplicateOfTicketId ?? copy.id))].filter((id) => id !== ticket.id);
+    const linked = [...new Set([...roots, ...matched.map((copy) => copy.id)])];
+    const related = roots.length === 0 ? [] : await db.ticket.findMany({
+      where: {
+        id: { not: ticket.id },
+        OR: [{ id: { in: roots } }, { duplicateOfTicketId: { in: linked } }],
+      },
+      select: COPY_SELECT,
+      take: 50,
+    });
+    group = copyGroup(ticket, matched, related);
   }
 
   const plan = plannedLinks(group);
