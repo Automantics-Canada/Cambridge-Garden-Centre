@@ -93,6 +93,11 @@ export function explain(outcome: ResolveFailure): { status: number; error: strin
       return { status: 404, error: 'That verdict no longer exists' };
     case 'TICKETS_ALREADY_CLAIMED':
       return { status: 409, error: outcome.detail };
+    // A trucking line whose haul another invoice already paid (Q14).
+    case 'LOAD_ALREADY_CLAIMED':
+      return { status: 409, error: outcome.detail };
+    case 'LOAD_CHOICE_REQUIRED':
+      return { status: 400, error: outcome.detail };
     case 'NOTE_REQUIRED_DUPLICATE':
       return {
         status: 400,

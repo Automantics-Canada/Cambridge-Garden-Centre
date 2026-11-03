@@ -44,8 +44,20 @@ export interface MatchCheck {
     | 'ticketReuse'
     | 'duplicateBilling'
     | 'copiesAgree'
-    | 'billerTicketsOnly';
+    | 'billerTicketsOnly'
+    // A trucking invoice line against the dispatch load it bills (haulMatch.ts).
+    | 'haulLoad'
+    | 'haulRate'
+    | 'haulQuantity'
+    | 'haulTrip'
+    | 'loadReuse';
   passed: boolean;
+  /**
+   * Which problem a failed haul check found, for the desk's wording and for
+   * the gates that refuse a payment (resolveMatch.ts). Absent on the material
+   * checks, whose name already says it.
+   */
+  code?: HaulCheckCode;
   /** A sentence naming what was compared and what came back. */
   detail: string;
   expected?: string | number | null;
@@ -53,6 +65,16 @@ export interface MatchCheck {
   /** Signed difference where both sides were numbers and comparable. */
   delta?: number;
 }
+
+/** What a failed trucking-invoice check found. See haulMatch.ts. */
+export type HaulCheckCode =
+  | 'NO_LOAD_FOUND'
+  | 'RATE_MISMATCH'
+  | 'NO_RATE_SET'
+  | 'TRIP_RATES_DIFFER'
+  | 'TRIP_SPANS_DAYS'
+  | 'UNIT_MISMATCH'
+  | 'LOAD_ALREADY_CLAIMED';
 
 export interface MatchDecision {
   status: MatchStatus;
@@ -68,6 +90,11 @@ export interface MatchDecision {
   reason: string;
   /** Set for an invoice line, null for a ticket, which has no such columns. */
   totals: LineTotals | null;
+  /**
+   * The dispatch loads a trucking invoice line's verdict counted, which a
+   * resolution claims. Absent (no loads) for every other subject.
+   */
+  loadIds?: string[];
 }
 
 export interface CandidateOrder {
@@ -460,7 +487,7 @@ function daysBetween(a: Date, b: Date): number {
  * broken system rather than as the data problem it actually is. Every caller
  * checks `Number.isFinite` and says what happened in words instead.
  */
-function percentDifference(expected: number, found: number): number {
+export function percentDifference(expected: number, found: number): number {
   if (expected === 0) return found === 0 ? 0 : Infinity;
   return Math.abs((found - expected) / expected) * 100;
 }
@@ -472,7 +499,7 @@ function percentDifference(expected: number, found: number): number {
  * evaluates to 2.0000000000000018 percent, and rejecting a load for the
  * eighteenth decimal place would be indefensible to the person reading it.
  */
-function withinTolerance(differencePct: number, tolerancePct: number): boolean {
+export function withinTolerance(differencePct: number, tolerancePct: number): boolean {
   return differencePct <= tolerancePct + 1e-9;
 }
 

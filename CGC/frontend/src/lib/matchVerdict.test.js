@@ -159,4 +159,23 @@ describe('checkTitle', () => {
   it('passes through anything it does not know rather than hiding it', () => {
     expect(checkTitle('somethingNew')).toBe('somethingNew');
   });
+
+  it('says in plain words what a failed haul check found', () => {
+    expect(checkTitle('haulRate', 'RATE_MISMATCH')).toBe('Haul rate differs from dispatch');
+    expect(checkTitle('haulRate', 'NO_RATE_SET')).toBe('No haul rate set by dispatch');
+    expect(checkTitle('loadReuse', 'LOAD_ALREADY_CLAIMED')).toBe('Load already paid on another invoice');
+    expect(checkTitle('haulLoad', 'NO_LOAD_FOUND')).toBe('No dispatched load found');
+    expect(checkTitle('haulTrip', 'TRIP_SPANS_DAYS')).toBe('Trip has loads on other days');
+  });
+
+  it('names a haul check that passed without alarming words', () => {
+    expect(checkTitle('haulRate')).toBe('Haul rate');
+    expect(checkTitle('haulLoad')).toBe('Dispatched load');
+    expect(checkTitle('haulQuantity')).toBe('Hauled quantity');
+    expect(checkTitle('loadReuse')).toBe('Load already paid');
+  });
+
+  it('falls back to the name for a code it does not know', () => {
+    expect(checkTitle('haulRate', 'SOMETHING_NEW')).toBe('Haul rate');
+  });
 });

@@ -80,3 +80,82 @@ export function resolveTolerances(
     ),
   };
 }
+
+/**
+ * How far a trucking invoice line may stray from the dispatch load it bills
+ * (client, Oct 2026, Q14: the dispatcher sets a rate on every load and the
+ * invoice is matched against it). Kept apart from `Tolerances` because a haul
+ * is judged against the dispatcher's own figures, not against an order and its
+ * scale tickets, and the client may want them set differently.
+ *
+ * Stored in `SystemSetting` like the others, so the office can change them
+ * without a release.
+ */
+export interface HaulTolerances {
+  /** Percent a billed haul rate may differ from the dispatcher's rate. */
+  haulPriceTolerancePct: number;
+  /**
+   * Days either side of the line's haul date (or the invoice date) a load may
+   * be dated. A week covers a carrier billing last week's loads; it also
+   * bounds a trip reference reused weeks later, which must never match.
+   */
+  haulDateWindowDays: number;
+  /**
+   * A billed quantity this many percent away from the load's expected
+   * quantity stops the line; nearer than that it is noted only. Expected
+   * hours and tonnes are the dispatcher's estimate, not a measurement.
+   */
+  haulQuantityReviewPct: number;
+}
+
+export const DEFAULT_HAUL_TOLERANCES: HaulTolerances = {
+  haulPriceTolerancePct: 1,
+  haulDateWindowDays: 7,
+  haulQuantityReviewPct: 25,
+};
+
+export const HAUL_TOLERANCE_SETTING_KEYS = {
+  haulPriceTolerancePct: 'match.haulPriceTolerancePct',
+  haulDateWindowDays: 'match.haulDateWindowDays',
+  haulQuantityReviewPct: 'match.haulQuantityReviewPct',
+} as const;
+
+/**
+ * Haul tolerances from stored settings, with the same rule as
+ * `resolveTolerances`: anything unusable falls back to the default rather
+ * than widening silently. A date window is capped at 31 days, because a
+ * wider one would let a trip reference reused next month match this one.
+ */
+export function resolveHaulTolerances(
+  settings: ReadonlyArray<{ key: string; value: unknown }> = []
+): HaulTolerances {
+  const byKey = new Map(settings.map((setting) => [setting.key, setting.value]));
+  const read = (key: string, fallback: number, max: number): number => {
+    const raw = byKey.get(key);
+    const value =
+      typeof raw === 'number'
+        ? raw
+        : typeof raw === 'string' && raw.trim() !== ''
+          ? Number(raw)
+          : Number.NaN;
+    if (!Number.isFinite(value) || value < 0 || value > max) return fallback;
+    return value;
+  };
+  return {
+    haulPriceTolerancePct: read(
+      HAUL_TOLERANCE_SETTING_KEYS.haulPriceTolerancePct,
+      DEFAULT_HAUL_TOLERANCES.haulPriceTolerancePct,
+      100
+    ),
+    haulDateWindowDays: read(
+      HAUL_TOLERANCE_SETTING_KEYS.haulDateWindowDays,
+      DEFAULT_HAUL_TOLERANCES.haulDateWindowDays,
+      31
+    ),
+    haulQuantityReviewPct: read(
+      HAUL_TOLERANCE_SETTING_KEYS.haulQuantityReviewPct,
+      DEFAULT_HAUL_TOLERANCES.haulQuantityReviewPct,
+      100
+    ),
+  };
+}

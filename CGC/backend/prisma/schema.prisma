@@ -334,6 +334,13 @@ model InvoiceLineItem {
   flag            LineItemFlag
   isOverridden    Boolean      @default(false)
   overrideNote    String?
+  /// The ticket or load number a trucking invoice prints on this line, as
+  /// read. Matched on its letters and digits (`numberSearchKey`), the same
+  /// reduction ticket search uses. Null on most material invoices.
+  ticketNumber    String?
+  /// The day the line's load or trip was hauled, where the invoice prints one
+  /// per line. Anchors the date window for finding the dispatch load.
+  serviceDate     DateTime?    @db.Date
   invoice         Invoice      @relation(fields: [invoiceId], references: [id])
   matchedOrder    Order?       @relation(fields: [matchedOrderId], references: [id])
   matchedTickets  Ticket[]     @relation("InvoiceLineItemToTicket")
@@ -1080,6 +1087,10 @@ model MatchResult {
   candidateOrderIds String[]
   /// Tickets this verdict actually counted — what a resolution will claim.
   ticketIds     String[]          @default([])
+  /// Dispatch loads a trucking invoice line's verdict counted: one load, or
+  /// every load of one brokered trip. What a resolution claims on
+  /// DispatchLoad.claimedByLineItemId; empty for material lines.
+  loadIds       String[]          @default([])
   /// Bumped when the cascade changes, so old verdicts can be told apart.
   engineVersion Int               @default(1)
   computedAt    DateTime          @default(now())
