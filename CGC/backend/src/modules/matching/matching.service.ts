@@ -116,8 +116,8 @@ function poNumberConditions(poNumber: string): Array<{ poNumber: string | { cont
   return conditions;
 }
 
-async function loadMatchSettings() {
-  return prisma.systemSetting.findMany({
+async function loadMatchSettings(db: Pick<Prisma.TransactionClient, 'systemSetting'> = prisma) {
+  return db.systemSetting.findMany({
     where: { key: { startsWith: 'match.' } },
     select: { key: true, value: true },
   });
@@ -127,8 +127,10 @@ async function loadTolerances(): Promise<Tolerances> {
   return resolveTolerances(await loadMatchSettings());
 }
 
-async function loadHaulTolerances(): Promise<HaulTolerances> {
-  return resolveHaulTolerances(await loadMatchSettings());
+export async function loadHaulTolerances(
+  db: Pick<Prisma.TransactionClient, 'systemSetting'> = prisma
+): Promise<HaulTolerances> {
+  return resolveHaulTolerances(await loadMatchSettings(db));
 }
 
 async function loadAliases(supplierId: string | null): Promise<ProductAlias[]> {

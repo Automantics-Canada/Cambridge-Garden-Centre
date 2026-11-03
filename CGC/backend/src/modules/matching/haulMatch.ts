@@ -135,7 +135,17 @@ export function haulTicketKey(value: string | null | undefined): string | null {
  * both. The window is days either side of the anchor, counted in whole days.
  */
 function inWindow(load: CandidateLoad, anchor: Date | null, windowDays: number): boolean {
-  return anchor === null || Math.abs(dayStart(load.haulDate) - dayStart(anchor)) <= windowDays * DAY_MS;
+  return anchor === null || withinHaulWindow(load.haulDate, anchor, windowDays);
+}
+
+/**
+ * Two haul days at most `windowDays` whole days apart. The window inside
+ * which loads with one trip reference may be one trip; outside it the
+ * reference was used again. The dispatch board scopes a trip with this too
+ * (dispatchLoads.service.ts), so the board and the matcher read one trip alike.
+ */
+export function withinHaulWindow(haulDate: Date, anchor: Date, windowDays: number): boolean {
+  return Math.abs(dayStart(haulDate) - dayStart(anchor)) <= windowDays * DAY_MS;
 }
 
 export function haulCandidates(

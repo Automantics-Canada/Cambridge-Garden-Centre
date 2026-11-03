@@ -14,6 +14,8 @@ import {
   type LoadChange,
   type LoadState,
 } from './dispatchLoadRules.js';
+import { haulDateOf, loadHaulTolerances } from '../matching/matching.service.js';
+import { withinHaulWindow } from '../matching/haulMatch.js';
 
 /**
  * Dispatch loads: the trucks sent for an order, each with the haul rate the
@@ -54,14 +56,16 @@ const LOAD_SELECT = {
   sourceSupplier: { select: { name: true } },
   driver: { select: { name: true, type: true, companyName: true } },
   setBy: { select: { name: true } },
-  document: { select: { documentNumber: true } },
+  // The haul day, as the matcher dates a load (haulDateOf), to scope its trip.
+  document: { select: { documentNumber: true, deliveryDate: true } },
+  delivery: { select: { completedAt: true } },
 } satisfies Prisma.DispatchLoadSelect;
 
 type LoadRow = Prisma.DispatchLoadGetPayload<{ select: typeof LOAD_SELECT }>;
 
 /** The other loads of a trip, as a load's `trip` summary counts them. */
 export interface TripSummary {
-  /** How many loads share the trip reference, this one included. */
+  /** How many loads are on the trip, this one included. */
   loads: number;
   /** The orders the trip serves, by Spruce number. */
   orders: string[];
@@ -125,23 +129,83 @@ function toView(row: LoadRow, trips: Map<string, TripSummary>): DispatchLoadView
     setByName: row.setBy?.name ?? null,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
-    trip: row.tripRef ? trips.get(row.tripRef) ?? null : null,
+    trip: row.tripRef ? trips.get(row.id) ?? null : null,
   };
 }
 
-/** Each trip reference among `refs`, summarised over every load that carries it. */
-async function tripSummaries(db: Pick<Prisma.TransactionClient, 'dispatchLoad'>, refs: string[]) {
-  const result = new Map<string, TripSummary>();
-  const unique = [...new Set(refs)];
-  if (unique.length === 0) return result;
+/** What deciding which loads are one trip needs of a load. */
+const TRIP_LOAD_SELECT = {
+  id: true,
+  tripRef: true,
+  carrierSupplierId: true,
+  rate: true,
+  rateUnit: true,
+  claimedByLineItemId: true,
+  documentId: true,
+  sequence: true,
+  createdAt: true,
+  document: { select: { documentNumber: true, deliveryDate: true, flags: true } },
+  delivery: { select: { completedAt: true } },
+} satisfies Prisma.DispatchLoadSelect;
+
+type TripLoadRow = Prisma.DispatchLoadGetPayload<{ select: typeof TRIP_LOAD_SELECT }>;
+
+/**
+ * Whether `load` is on the same trip as a load hauled on `haulDate`: hauled
+ * within the matcher's date window of it (haulMatch.ts).
+ *
+ * A trip reference is short free text, and dispatch reuses it. The matcher
+ * already treats the same reference weeks apart as another trip; without the
+ * same limit here the board summed last month's T-1 into today's, refused
+ * today's T-1 to another carrier for good, and "Use this rate for the whole
+ * trip" repriced an unpaid load from last month, so its invoice was checked
+ * against the wrong rate.
+ */
+const nearHaulDay = (load: Parameters<typeof haulDateOf>[0], haulDate: Date, windowDays: number) =>
+  withinHaulWindow(haulDateOf(load), haulDate, windowDays);
+
+/** The loads with this trip reference (and `where`) on the same trip as a load hauled on `haulDate`. */
+async function tripLoadsNear(
+  db: Pick<Prisma.TransactionClient, 'dispatchLoad' | 'systemSetting'>,
+  tripRef: string,
+  haulDate: Date,
+  where: Prisma.DispatchLoadWhereInput = {}
+): Promise<TripLoadRow[]> {
+  const { haulDateWindowDays } = await loadHaulTolerances(db);
   const loads = await db.dispatchLoad.findMany({
-    where: { tripRef: { in: unique } },
-    select: { tripRef: true, rate: true, rateUnit: true, document: { select: { documentNumber: true } } },
+    where: { ...where, tripRef },
+    select: TRIP_LOAD_SELECT,
     orderBy: { createdAt: 'asc' },
   });
-  for (const ref of unique) {
-    const trip = loads.filter(load => load.tripRef === ref);
-    result.set(ref, {
+  return loads.filter(load => nearHaulDay(load, haulDate, haulDateWindowDays));
+}
+
+/**
+ * Each trip load's summary, by load id: the loads of its trip (same
+ * reference, same carrier, within the haul window of this load). One read
+ * for the whole board.
+ */
+async function tripSummaries(db: Pick<Prisma.TransactionClient, 'dispatchLoad' | 'systemSetting'>, rows: LoadRow[]) {
+  const result = new Map<string, TripSummary>();
+  const refs = [...new Set(rows.flatMap(row => (row.tripRef ? [row.tripRef] : [])))];
+  if (refs.length === 0) return result;
+  // One after the other: `db` may be a transaction, which runs one query at a time.
+  const { haulDateWindowDays } = await loadHaulTolerances(db);
+  const loads = await db.dispatchLoad.findMany({
+    where: { tripRef: { in: refs } },
+    select: TRIP_LOAD_SELECT,
+    orderBy: { createdAt: 'asc' },
+  });
+  for (const row of rows) {
+    if (!row.tripRef) continue;
+    const haulDate = haulDateOf(row);
+    const trip = loads.filter(
+      load =>
+        load.tripRef === row.tripRef &&
+        load.carrierSupplierId === row.carrierSupplierId &&
+        nearHaulDay(load, haulDate, haulDateWindowDays)
+    );
+    result.set(row.id, {
       loads: trip.length,
       orders: [...new Set(trip.map(load => load.document.documentNumber))],
       sameRate: new Set(trip.map(load => `${load.rate === null ? 'none' : Number(load.rate)}|${load.rateUnit}`)).size <= 1,
@@ -150,8 +214,8 @@ async function tripSummaries(db: Pick<Prisma.TransactionClient, 'dispatchLoad'>,
   return result;
 }
 
-async function viewsOf(db: Pick<Prisma.TransactionClient, 'dispatchLoad'>, rows: LoadRow[]) {
-  const trips = await tripSummaries(db, rows.flatMap(row => (row.tripRef ? [row.tripRef] : [])));
+async function viewsOf(db: Pick<Prisma.TransactionClient, 'dispatchLoad' | 'systemSetting'>, rows: LoadRow[]) {
+  const trips = await tripSummaries(db, rows);
   return rows.map(row => toView(row, trips));
 }
 
@@ -160,7 +224,7 @@ async function viewsOf(db: Pick<Prisma.TransactionClient, 'dispatchLoad'>, rows:
  * board; office screens only.
  */
 export async function haulLoadsByDocument(
-  db: Pick<Prisma.TransactionClient, 'dispatchLoad'>,
+  db: Pick<Prisma.TransactionClient, 'dispatchLoad' | 'systemSetting'>,
   documentIds: string[]
 ): Promise<Map<string, DispatchLoadView[]>> {
   const ids = [...new Set(documentIds)];
@@ -201,7 +265,8 @@ type OrderForLoads = {
   documentNumber: string;
   flags: string[];
   pickupSupplierId: string | null;
-  delivery: { id: string; driver: { id: string; type: string } | null } | null;
+  deliveryDate: Date | null;
+  delivery: { id: string; completedAt: Date | null; driver: { id: string; type: string } | null } | null;
 };
 
 async function orderFor(tx: Prisma.TransactionClient, documentId: string): Promise<OrderForLoads> {
@@ -209,8 +274,8 @@ async function orderFor(tx: Prisma.TransactionClient, documentId: string): Promi
     ? await tx.orderDocument.findUnique({
         where: { id: documentId },
         select: {
-          id: true, documentNumber: true, flags: true, pickupSupplierId: true,
-          delivery: { select: { id: true, driver: { select: { id: true, type: true } } } },
+          id: true, documentNumber: true, flags: true, pickupSupplierId: true, deliveryDate: true,
+          delivery: { select: { id: true, completedAt: true, driver: { select: { id: true, type: true } } } },
         },
       })
     : null;
@@ -228,12 +293,15 @@ function refuseQuotation(order: { documentNumber: string; flags: string[] }) {
 /**
  * The carrier, driver, pit and trip a load names are real and fit together:
  * a carrier is an active trucking company, and one trip has one carrier.
+ * A trip is the loads with its reference hauled within the matcher's date
+ * window of this load (`haulDate`); the reference used again later is free.
  */
 async function checkReferences(
   tx: Prisma.TransactionClient,
   state: LoadState,
   changes: LoadChange[],
-  loadId: string | null
+  loadId: string | null,
+  haulDate: Date
 ) {
   const changed = (field: keyof LoadState) => changes.some(change => change.field === field);
 
@@ -261,20 +329,19 @@ async function checkReferences(
   if (state.tripRef && (changed('tripRef') || changed('carrierSupplierId'))) {
     // Another load of the trip with a different carrier. CGC's own trucks
     // (no carrier) count as a carrier of their own here.
-    const other = await tx.dispatchLoad.findFirst({
-      where: {
-        tripRef: state.tripRef,
-        ...(loadId ? { id: { not: loadId } } : {}),
-        ...(state.carrierSupplierId === null
-          ? { carrierSupplierId: { not: null } }
-          : { OR: [{ carrierSupplierId: null }, { carrierSupplierId: { not: state.carrierSupplierId } }] }),
-      },
-      select: { carrierSupplier: { select: { name: true } } },
+    const [other] = await tripLoadsNear(tx, state.tripRef, haulDate, {
+      ...(loadId ? { id: { not: loadId } } : {}),
+      ...(state.carrierSupplierId === null
+        ? { carrierSupplierId: { not: null } }
+        : { OR: [{ carrierSupplierId: null }, { carrierSupplierId: { not: state.carrierSupplierId } }] }),
     });
     if (other) {
+      const carrier = other.carrierSupplierId
+        ? (await tx.supplier.findUnique({ where: { id: other.carrierSupplierId }, select: { name: true } }))?.name ?? 'another carrier'
+        : 'CGC fleet';
       throw new DispatchLoadError(
         409,
-        `Trip ${state.tripRef} is with ${other.carrierSupplier?.name ?? 'CGC fleet'}. ` +
+        `Trip ${state.tripRef} is with ${carrier}. ` +
           'A trip has one carrier: change this load\'s carrier or use another trip reference.'
       );
     }
@@ -324,8 +391,9 @@ async function loadFor(tx: Prisma.TransactionClient, loadId: string) {
         select: {
           id: true, documentId: true, sequence: true, deliveryId: true, claimedByLineItemId: true,
           carrierSupplierId: true, driverId: true, rate: true, rateUnit: true, quantity: true,
-          sourceSupplierId: true, tripRef: true, ticketNumber: true, notes: true,
-          document: { select: { documentNumber: true, flags: true, delivery: { select: { id: true } } } },
+          sourceSupplierId: true, tripRef: true, ticketNumber: true, notes: true, createdAt: true,
+          delivery: { select: { completedAt: true } },
+          document: { select: { documentNumber: true, flags: true, deliveryDate: true, delivery: { select: { id: true } } } },
         },
       })
     : null;
@@ -419,7 +487,9 @@ export const DispatchLoadsService = {
       };
       const state = applyLoadInput(defaults, input);
       const changes = loadChanges(EMPTY_STATE, state);
-      await checkReferences(tx, state, changes, null);
+      // The day the matcher will date this load: it is filed under the stop.
+      const haulDate = haulDateOf({ document: order, delivery: order.delivery, createdAt: new Date() });
+      await checkReferences(tx, state, changes, null, haulDate);
 
       const last = await tx.dispatchLoad.findFirst({
         where: { documentId: order.id },
@@ -455,7 +525,7 @@ export const DispatchLoadsService = {
       if (load.claimedByLineItemId && lockedChanges(changes).length > 0) {
         throw new DispatchLoadError(409, CLAIMED_MESSAGE);
       }
-      await checkReferences(tx, after, changes, load.id);
+      await checkReferences(tx, after, changes, load.id, haulDateOf(load));
 
       if (changes.length > 0) {
         // Re-checked in the write, so a claim made since the read is not overwritten.
@@ -517,7 +587,10 @@ export const DispatchLoadsService = {
   /**
    * Gives every other load of this load's trip the same rate and unit: the
    * loads one brokered truck collected together (A4) are priced alike,
-   * whether the carrier bills the trip on one line or load by load. Loads already paid, and
+   * whether the carrier bills the trip on one line or load by load. The trip
+   * is this carrier's loads with the reference within the haul window of this
+   * load, as the matcher reads it; the same reference used weeks apart is
+   * another trip and keeps its own rate. Loads already paid, and
    * loads on an order that is now a quotation, are left as they are and
    * counted as skipped.
    */
@@ -529,12 +602,11 @@ export const DispatchLoadsService = {
       if (!source.tripRef) throw new DispatchLoadError(400, 'This load is not on a trip. Give it a trip reference first.');
       if (source.rate === null) throw new DispatchLoadError(400, 'This load has no rate to copy yet.');
 
-      const others = await tx.dispatchLoad.findMany({
-        where: { tripRef: source.tripRef, id: { not: source.id } },
-        select: {
-          id: true, documentId: true, sequence: true, rate: true, rateUnit: true, claimedByLineItemId: true,
-          document: { select: { documentNumber: true, flags: true } },
-        },
+      // The same trip only: this carrier's loads with the reference near this
+      // load's haul day. A reference reused weeks later is another trip.
+      const others = await tripLoadsNear(tx, source.tripRef, haulDateOf(source), {
+        id: { not: source.id },
+        carrierSupplierId: source.carrierSupplierId,
       });
 
       let updated = 0;

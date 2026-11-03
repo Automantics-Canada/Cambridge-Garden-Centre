@@ -298,6 +298,44 @@ describe('dispatch loads (PostgreSQL)', { skip: !runnable }, () => {
     assert.equal((await api('POST', `/api/dispatch/loads/${loose.body.id}/copy-rate-to-trip`)).status, 400);
   });
 
+  it('a trip reference reused a month later is another trip: its summary, carrier rule and rate copy stay apart', async () => {
+    const haulage = await supplier('Example Haulage', 'TRUCKING_COMPANY');
+    const otherHaulage = await supplier('Other Haulage', 'TRUCKING_COMPANY');
+    const monthAgo = new Date(today().getTime() - 31 * 86_400_000);
+    const old = await seedOrder('9900-100051', { deliveryDate: monthAgo });
+    const now = await seedOrder('9900-100052');
+    const alsoNow = await seedOrder('9900-100053');
+
+    // Last month's T-1, unpaid because its invoice has not come in yet.
+    const october = await api('POST', `/api/dispatch/orders/${old.document.id}/loads`, {
+      carrierSupplierId: haulage.id, tripRef: 'T-1', rate: '400', rateUnit: 'LOAD',
+    });
+    assert.equal(october.status, 201, JSON.stringify(october.body));
+
+    // Today the same short reference is used again, at today's rate.
+    const today1 = await api('POST', `/api/dispatch/orders/${now.document.id}/loads`, {
+      carrierSupplierId: haulage.id, tripRef: 'T-1', rate: '450', rateUnit: 'LOAD',
+    });
+    assert.equal(today1.status, 201, JSON.stringify(today1.body));
+    assert.deepEqual(today1.body.trip, { loads: 1, orders: ['9900-100052'], sameRate: true }, 'last month\'s load is not on this trip');
+
+    // "Use this rate for the whole trip" must not reprice last month's load.
+    const copied = await api('POST', `/api/dispatch/loads/${today1.body.id}/copy-rate-to-trip`);
+    assert.deepEqual(copied.body, { tripRef: 'T-1', updated: 0, skipped: 0 });
+    assert.equal(Number((await prisma.dispatchLoad.findUniqueOrThrow({ where: { id: october.body.id } })).rate), 400);
+    assert.equal(await prisma.auditLog.count({ where: { entityId: old.document.id, actionType: 'LOAD_RATE_SET' } }), 0);
+
+    // Another carrier may use T-1 today: last month's trip does not hold the reference forever.
+    const reused = await api('POST', `/api/dispatch/orders/${alsoNow.document.id}/loads`, { carrierSupplierId: otherHaulage.id, tripRef: 'T-2' });
+    assert.equal(reused.status, 201);
+    const moved = await api('PATCH', `/api/dispatch/loads/${october.body.id}`, { tripRef: 'T-2' });
+    assert.equal(moved.status, 200, 'a month apart, T-2 is free for last month\'s carrier too');
+    // Within the window the one-carrier rule still holds.
+    const clash = await api('PATCH', `/api/dispatch/loads/${reused.body.id}`, { tripRef: 'T-1' });
+    assert.equal(clash.status, 409);
+    assert.match(clash.body.error, /Trip T-1 is with Example Haulage/);
+  });
+
   it('shows loads on the office board, files them under the stop, and defaults a brokered driver', async () => {
     const haulage = await supplier('Example Haulage', 'TRUCKING_COMPANY');
     const pool = await seedOrder('9900-100010');
