@@ -208,7 +208,40 @@ describe('demo seed', { skip: !(confirmed && loopback) }, () => {
     assert.equal(overBilled!.flag, 'RATE_MISMATCH');
 
     assert.equal(await prisma.negotiatedRate.count({ where: { spruceItemCode: { not: null } } }), 5);
-    assert.equal(await prisma.dispatchLoad.count({ where: { carrierSupplier: { type: 'TRUCKING_COMPANY' }, rate: { not: null } } }), 4);
+    assert.equal(await prisma.dispatchLoad.count({ where: { carrierSupplier: { type: 'TRUCKING_COMPANY' }, rate: { not: null } } }), 5);
+  });
+
+  it('A14: the trucking invoice is checked line by line against the loads dispatch recorded', async () => {
+    const haul = await prisma.invoice.findFirstOrThrow({
+      where: { invoiceNumber: 'DH-301' },
+      include: { lineItems: { include: { matchResult: true }, orderBy: { lineNumber: 'asc' } } },
+    });
+    assert.equal(haul.senderType, 'TRUCKING_COMPANY');
+    const code = (line: (typeof haul.lineItems)[number], name: string) =>
+      (line.matchResult!.evidence as Array<{ name: string; passed: boolean; code?: string }>).find(check => check.name === name);
+    const [trip, overBilled, unpriced] = haul.lineItems;
+    for (const line of haul.lineItems) {
+      assert.ok(line.ticketNumber, `line ${line.lineNumber} carries its ticket`);
+      assert.equal(line.serviceDate?.toISOString().slice(0, 10), haul.invoiceDate.toISOString().slice(0, 10));
+    }
+
+    // Yesterday's brokered trip: one haul over two orders, at the rate dispatch set.
+    assert.equal(trip!.matchResult!.status, 'MATCHED', trip!.matchResult!.reason);
+    assert.equal(trip!.matchResult!.loadIds.length, 2);
+    assert.equal(Number(trip!.approvedTotal), 140);
+    assert.equal(trip!.flag, 'OK');
+
+    assert.equal(code(overBilled!, 'haulRate')?.code, 'RATE_MISMATCH');
+    assert.equal(overBilled!.flag, 'RATE_MISMATCH');
+    assert.equal(Number(overBilled!.negotiatedRate), 150);
+    assert.equal(Number(overBilled!.approvedTotal), 150);
+
+    assert.equal(code(unpriced!, 'haulRate')?.code, 'NO_RATE_SET');
+    assert.equal(unpriced!.matchResult!.status, 'PARTIAL');
+    assert.equal(unpriced!.approvedTotal, null);
+
+    // Nothing is paid until somebody verifies: no load is claimed.
+    assert.equal(await prisma.dispatchLoad.count({ where: { claimedByLineItemId: { not: null } } }), 0);
   });
 
   it("A15: the supplier's emailed ticket is linked to the driver's, as the app would link it", async () => {
