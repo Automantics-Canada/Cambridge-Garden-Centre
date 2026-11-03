@@ -15,8 +15,10 @@
  * RelatedRecords a related.json produces, and the same pure path decides.
  */
 import { SupplierType, TicketSource, type Prisma, type PrismaClient } from '@prisma/client';
+import { businessDayOf } from '../../lib/businessDay.js';
+import type { CandidateLoad } from '../../modules/matching/haulMatch.js';
 import { poKey } from '../../modules/matching/poKey.js';
-import { resolveTolerances } from '../../modules/matching/tolerances.js';
+import { resolveHaulTolerances, resolveTolerances } from '../../modules/matching/tolerances.js';
 import type {
   RelatedInvoiceLine,
   RelatedOrder,
@@ -75,7 +77,8 @@ export function assertLoopbackDatabase(env: Record<string, string | undefined>):
 /** The handful of models this loader reads. Only findMany is ever called on them. */
 export type ReadOnlyDb = Pick<
   Prisma.TransactionClient,
-  'supplier' | 'supplierProductAlias' | 'order' | 'ticket' | 'negotiatedRate' | 'invoiceLineItem' | 'systemSetting'
+  | 'supplier' | 'supplierProductAlias' | 'order' | 'ticket' | 'negotiatedRate' | 'invoiceLineItem' | 'systemSetting'
+  | 'dispatchLoad' | 'matchResult'
 >;
 
 /** Runs `read` inside a transaction PostgreSQL will not let write. */
@@ -119,6 +122,140 @@ export interface RecordsRequest {
   poNumbers: string[];
   /** The supplier and invoice date of each sample, for the no-PO route. */
   supplierDates: Array<{ supplierId: string; date: Date | null }>;
+  /**
+   * A trucking company's samples: the carrier and each day its lines say a
+   * haul ran (or the invoice date), for the dispatch loads they may bill.
+   */
+  haulDates?: Array<{ carrierSupplierId: string; date: Date }>;
+}
+
+/** Same as CANDIDATE_LOAD_SELECT in matching.service.ts: what the haul matcher reads of a load. */
+const LOAD_SELECT = {
+  id: true,
+  documentId: true,
+  sequence: true,
+  carrierSupplierId: true,
+  tripRef: true,
+  rate: true,
+  rateUnit: true,
+  quantity: true,
+  ticketNumber: true,
+  claimedByLineItemId: true,
+  createdAt: true,
+  claimedByLineItem: { select: { lineNumber: true, invoice: { select: { invoiceNumber: true } } } },
+  delivery: { select: { completedAt: true } },
+  document: {
+    select: {
+      documentNumber: true,
+      poNumber: true,
+      deliveryDate: true,
+      lines: {
+        select: {
+          id: true,
+          poNumber: true,
+          tickets: { select: { ticketNumber: true }, where: { ticketNumber: { not: null } }, take: 50 },
+        },
+        orderBy: [{ lineNumber: 'asc' }, { createdAt: 'asc' }],
+        take: 50,
+      },
+    },
+  },
+} as const satisfies Prisma.DispatchLoadSelect;
+
+type LoadRow = Prisma.DispatchLoadGetPayload<{ select: typeof LOAD_SELECT }>;
+
+/**
+ * Same as haulDateOf in matching.service.ts: the order's delivery date, else
+ * the yard's day the stop was done, else the yard's day the load was recorded.
+ */
+function haulDateOf(row: LoadRow): Date {
+  if (row.document.deliveryDate) return row.document.deliveryDate;
+  const instant = row.delivery?.completedAt ?? row.createdAt;
+  return new Date(`${businessDayOf(instant)}T00:00:00.000Z`);
+}
+
+/** Same as toCandidateLoad in matching.service.ts. */
+function toCandidateLoad(row: LoadRow): CandidateLoad {
+  return {
+    id: row.id,
+    documentId: row.documentId,
+    sequence: row.sequence,
+    carrierSupplierId: row.carrierSupplierId,
+    tripRef: row.tripRef,
+    rate: row.rate === null ? null : row.rate.toString(),
+    rateUnit: row.rateUnit,
+    quantity: row.quantity === null ? null : row.quantity.toString(),
+    claimedByLineItemId: row.claimedByLineItemId,
+    documentNumber: row.document.documentNumber,
+    haulDate: haulDateOf(row),
+    ticketNumber: row.ticketNumber,
+    poNumbers: [
+      ...new Set([row.document.poNumber, ...row.document.lines.map((line) => line.poNumber)].filter((po): po is string => Boolean(po))),
+    ],
+    orderTicketNumbers: row.document.lines.flatMap((line) =>
+      line.tickets.flatMap((ticket) => (ticket.ticketNumber ? [ticket.ticketNumber] : []))
+    ),
+    orderLineId: row.document.lines[0]?.id ?? null,
+    claim: row.claimedByLineItem
+      ? { invoiceNumber: row.claimedByLineItem.invoice.invoiceNumber, lineNumber: row.claimedByLineItem.lineNumber }
+      : null,
+  };
+}
+
+/**
+ * The carriers' dispatch loads that could be what the samples' lines bill,
+ * and the unsettled lines elsewhere whose verdicts count any of them. Same
+ * net as loadHaulCandidates in matching.service.ts: a day wider on each side
+ * than the matcher's window, by each of the three dates a haul day comes from.
+ */
+async function loadHauls(
+  db: ReadOnlyDb,
+  haulDates: NonNullable<RecordsRequest['haulDates']>,
+  windowDays: number
+): Promise<{ loads: CandidateLoad[]; competing: RelatedInvoiceLine[] }> {
+  if (haulDates.length === 0) return { loads: [], competing: [] };
+  const spread = (windowDays + 1) * 86_400_000;
+  const where: Prisma.DispatchLoadWhereInput[] = haulDates.map(({ carrierSupplierId, date }) => {
+    const range = { gte: new Date(date.getTime() - spread), lte: new Date(date.getTime() + spread) };
+    return {
+      carrierSupplierId,
+      OR: [{ document: { deliveryDate: range } }, { delivery: { completedAt: range } }, { createdAt: range }],
+    };
+  });
+  const rows = await db.dispatchLoad.findMany({ where: { OR: where }, select: LOAD_SELECT, orderBy: { createdAt: 'asc' }, take: 2_000 });
+  const ids = rows.map((row) => row.id);
+  const verdicts =
+    ids.length === 0
+      ? []
+      : await db.matchResult.findMany({
+          where: { invoiceLineId: { not: null }, resolution: null, loadIds: { hasSome: ids } },
+          select: {
+            invoiceLineId: true,
+            loadIds: true,
+            invoiceLine: {
+              select: { lineNumber: true, poNumber: true, invoice: { select: { invoiceNumber: true, invoiceDate: true, supplierId: true } } },
+            },
+          },
+          take: 500,
+        });
+  return {
+    loads: rows.map(toCandidateLoad),
+    competing: verdicts.flatMap((verdict) =>
+      verdict.invoiceLineId && verdict.invoiceLine
+        ? [
+            {
+              invoiceLineId: verdict.invoiceLineId,
+              invoiceNumber: verdict.invoiceLine.invoice.invoiceNumber,
+              lineNumber: verdict.invoiceLine.lineNumber,
+              invoiceDate: verdict.invoiceLine.invoice.invoiceDate,
+              poNumber: verdict.invoiceLine.poNumber,
+              supplierId: verdict.invoiceLine.invoice.supplierId,
+              loadIds: verdict.loadIds,
+            },
+          ]
+        : []
+    ),
+  };
 }
 
 /**
@@ -136,6 +273,7 @@ export async function loadRelatedRecordsFromDb(
     select: { key: true, value: true },
   });
   const tolerances = resolveTolerances(settings);
+  const haulTolerances = resolveHaulTolerances(settings);
   const windowMs = tolerances.dateWindowDays * 86_400_000;
 
   const poNumbers = [...new Set(request.poNumbers.filter((po) => po.trim() !== ''))];
@@ -305,7 +443,25 @@ export async function loadRelatedRecordsFromDb(
     invoiceDate: row.invoice.invoiceDate,
     poNumber: row.poNumber,
     supplierId: row.invoice.supplierId,
+    loadIds: [],
   }));
 
-  return { tolerances, suppliers, aliases: aliasRows, orders, tickets, rates, openInvoiceLines };
+  const hauls = await loadHauls(db, request.haulDates ?? [], haulTolerances.haulDateWindowDays);
+  for (const line of hauls.competing) {
+    const known = openInvoiceLines.find((other) => other.invoiceLineId === line.invoiceLineId);
+    if (known) known.loadIds = line.loadIds;
+    else openInvoiceLines.push(line);
+  }
+
+  return {
+    tolerances,
+    haulTolerances,
+    suppliers,
+    aliases: aliasRows,
+    orders,
+    tickets,
+    rates,
+    loads: hauls.loads,
+    openInvoiceLines,
+  };
 }

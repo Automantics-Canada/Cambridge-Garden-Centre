@@ -49,7 +49,7 @@ The script refuses to run if git would commit any sample or the report.
 | --- | --- |
 | `<anything>.pdf`, `.png`, `.jpg`, `.xlsx`, `.csv` | the samples, one invoice email attachment each |
 | `manifest.json` (optional) | per file: supplier, type, Spruce order and PO numbers, invoice number, expected total, already paid, notes. Example: [`invoice-samples/manifest.example.json`](invoice-samples/manifest.example.json) |
-| `related.json` (optional) | the suppliers, aliases, orders, driver tickets, agreed rates and open invoice lines to match against. Example: [`invoice-samples/related.example.json`](invoice-samples/related.example.json) |
+| `related.json` (optional) | the suppliers, aliases, orders, driver tickets, agreed rates, dispatch loads and open invoice lines to match against. Example: [`invoice-samples/related.example.json`](invoice-samples/related.example.json) |
 | `<file>.extraction.json` | what the model read from `<file>`, saved by `--save-extractions` (or written by hand). Example: [`invoice-samples/extraction.example.json`](invoice-samples/extraction.example.json) |
 | `dry-run-report.json` | written by each run |
 
@@ -59,6 +59,16 @@ referred to by `id` or by exact name; dates are `YYYY-MM-DD`; a ticket's
 for the supplier's; `claimedBy` marks a load already paid on another invoice
 line; `quote: true` marks a quotation line (never a candidate, as in
 production).
+
+`dispatchLoads` are the loads dispatch recorded, one entry per load as the
+dispatch board lists them: the Spruce `orderNumber`, the `carrier` (a
+`TRUCKING_COMPANY` supplier), the `rate` dispatch set with its `rateUnit`
+(`LOAD`, `HOUR` or `TONNE`; leave both `null` for a load nobody priced), the
+expected `quantity`, the `ticketNumber` dispatch wrote down, the `haulDate`,
+and a `tripRef` shared by the loads of one brokered trip (billed once, at the
+trip's rate). A trucking company's lines are checked against these, not
+against orders and tickets, exactly as production does. An open invoice line
+that bills a load names it in `loads`.
 
 ## Running it
 
@@ -131,7 +141,11 @@ For each sample, on the console and in `dry-run-report.json`:
   `CONFLICT`) and the flag (`OK`, `RATE_MISMATCH`, `QTY_MISMATCH`, `NO_TICKET`,
   `NO_ORDER`, `RATE_UNKNOWN`, `UNIT_MISMATCH`, `MULTIPLE_FLAGS`) production
   would store, the order and tickets it would use, the agreed rate and the
-  approved amount, with each failed check in words. The values are judged as
+  approved amount, with each failed check in words. A trucking company's line
+  names the dispatch load (or brokered trip) it bills instead, and is checked
+  against the rate dispatch set on it: a rate more than 1% off, a load nobody
+  priced ("Dispatch has not set a haul rate"), or a load already paid on
+  another invoice line all hold it for a person. The values are judged as
   production stores them: an unread quantity or price counts as 0 and an
   unread unit as `unknown`.
 - **Invoice note** — the total check production would write on the invoice.
@@ -143,9 +157,9 @@ and flags across all samples.
 
 ## What it does not cover
 
-- Trucking lines are checked by the material-line engine. The per-load check
-  against the dispatcher's rate (WP12) is a separate change and is not part of
-  this preview.
+- A trucking sample is only as good as the `dispatchLoads` written for it (or
+  the loads in the `--db` database); with none for its carrier, every line
+  says no load was found, and the report warns.
 - Two samples billing the same PO do not see each other as competing lines;
   only `openInvoiceLines` in `related.json` (or open lines in the `--db`
   database) do.
@@ -153,7 +167,10 @@ and flags across all samples.
   supplier and ticket number, one copy on file).
 
 The preview mirrors production code it cannot call without a database:
-`matchInvoiceLineById`'s queries, `processInvoiceOcr`'s stored line values,
+`matchInvoiceLineById`'s queries (and, for a trucking line, `matchHaulLineById`'s
+loads and competing lines), `processInvoiceOcr`'s stored line values,
 `findOrCreateSupplier` and `refreshInvoiceTotalCheck`. They are copied in
-`src/modules/matching/dryRunDecision.ts`; when one of those changes, change the
-copy too.
+`src/modules/matching/dryRunDecision.ts` and, for `--db`, in
+`src/scripts/sampleDryRun/loopbackRecords.ts`; when one of those changes,
+change the copy too. The verdicts themselves are production's own pure
+functions (`matchInvoiceLine`, `matchHaulLine`).

@@ -36,6 +36,7 @@ import { ExtractionError, type ExtractionProvider } from '../services/extraction
 import type { NormalizedInvoice, NormalizedTicket } from '../services/extraction/normalize.js';
 import { extractPdfPages, MAX_SPLIT_PAGES, pdfPageCount } from '../lib/pdfPages.js';
 import {
+  decideHaulLineDryRun,
   decideInvoiceLineDryRun,
   emptyRelatedRecords,
   parseRelatedRecords,
@@ -143,11 +144,16 @@ export interface MatchLineReport {
   order: { id: string; orderNumber: string | null; poNumber: string | null; product: string } | null;
   candidateOrders: number;
   tickets: Array<{ id: string; ticketNumber: string | null }>;
+  /**
+   * A trucking company's line: the dispatch loads it bills, with the rate
+   * dispatch set (the agreed rate below is that rate). Empty otherwise.
+   */
+  loads: Array<{ id: string; orderNumber: string; sequence: number; ticketNumber: string | null; tripRef: string | null; rate: number | null; rateUnit: string | null }>;
   agreedRate: number | null;
   approvedTotal: number | null;
   rateDiscrepancy: number | null;
   quantityDiscrepancy: number | null;
-  considered: { orders: number; tickets: number; rates: number; competingLines: number };
+  considered: { orders: number; tickets: number; rates: number; competingLines: number; loads: number };
   checks: Array<{ name: string; passed: boolean; detail: string }>;
 }
 
@@ -526,10 +532,21 @@ function matchSample(reading: SampleReading, records: RelatedRecords): void {
   }
   const orderById = new Map(records.orders.map((order) => [order.id, order]));
   const ticketById = new Map(withTickets.tickets.map((ticket) => [ticket.id, ticket]));
+  const loadById = new Map(records.loads.map((load) => [load.id, load]));
+  // A trucking company bills hauls, checked against the loads dispatch
+  // recorded and the rate it set on each, as matchInvoiceLineById does.
+  const trucking = report.supplier.supplierType === 'TRUCKING_COMPANY';
+  const decide = trucking ? decideHaulLineDryRun : decideInvoiceLineDryRun;
+  if (trucking && !records.loads.some((load) => load.carrierSupplierId === supplierId)) {
+    report.warnings.push(
+      'No dispatch loads by this trucking company were given, so no line can find the load it bills. ' +
+        "Add the loads dispatch recorded (dispatchLoads in related.json, or --db) to check them against the dispatcher's rate"
+    );
+  }
 
   const lines: MatchLineReport[] = invoice.lineItems.map((item, index) => {
     const stored = storedLineLikeProduction(item, index, invoice.poNumber);
-    const result = decideInvoiceLineDryRun(
+    const result = decide(
       stored,
       { lineId: `sample:${report.file}#${index + 1}`, supplierId, invoiceDate: matchingDate(invoice) },
       withTickets
@@ -544,6 +561,20 @@ function matchSample(reading: SampleReading, records: RelatedRecords): void {
       order: order ? { id: order.id, orderNumber: order.orderNumber, poNumber: order.poNumber, product: order.product } : null,
       candidateOrders: result.decision.candidateOrderIds.length,
       tickets: result.decision.ticketIds.map((id) => ({ id, ticketNumber: ticketById.get(id)?.ticketNumber ?? null })),
+      loads: result.loadIds.flatMap((id) => {
+        const load = loadById.get(id);
+        return load
+          ? [{
+              id,
+              orderNumber: load.documentNumber,
+              sequence: load.sequence,
+              ticketNumber: load.ticketNumber,
+              tripRef: load.tripRef,
+              rate: load.rate === null ? null : Number(load.rate),
+              rateUnit: load.rateUnit,
+            }]
+          : [];
+      }),
       agreedRate: result.decision.totals?.agreedRate ?? null,
       approvedTotal: result.approvedTotal,
       rateDiscrepancy: result.decision.totals?.rateDiscrepancy ?? null,
@@ -704,6 +735,12 @@ export async function runSampleDryRun(options: DryRunOptions, deps: DryRunDeps):
       }
       for (const { ticket } of tickets) if (ticket.poNumber) request.poNumbers.push(ticket.poNumber);
       if (report.supplier?.supplierId) request.supplierDates.push({ supplierId: report.supplier.supplierId, date: matchingDate(invoice) });
+      if (report.supplier?.supplierId && report.supplier.supplierType === 'TRUCKING_COMPANY') {
+        const carrierSupplierId = report.supplier.supplierId;
+        for (const date of [matchingDate(invoice), ...invoice.lineItems.flatMap((line) => (line.serviceDate ? [line.serviceDate] : []))]) {
+          (request.haulDates ??= []).push({ carrierSupplierId, date });
+        }
+      }
     }
     records = await deps.db.loadRecords(dbSuppliers, request);
   }
@@ -716,11 +753,6 @@ export async function runSampleDryRun(options: DryRunOptions, deps: DryRunDeps):
         invoice,
         report.manifest,
         report.supplier?.supplierName ?? report.supplier?.printed ?? invoice.supplierName
-      );
-    }
-    if (report.supplier?.supplierType === 'TRUCKING_COMPANY') {
-      report.warnings.push(
-        "Trucking lines are checked here by the material-line engine; the per-load check against the dispatcher's rate (WP12) is not part of this preview"
       );
     }
   }
@@ -826,7 +858,10 @@ export function formatDryRun(report: DryRunReport): string {
         out.push(`   Line ${line.line}: ${read}`);
         if (m) {
           const order = m.order ? `order ${m.order.orderNumber ?? m.order.id}` : `${m.candidateOrders} candidate order(s)`;
-          out.push(`     -> ${m.status} / ${m.flag}: ${order}; ${m.tickets.length} ticket(s); agreed rate ${m.agreedRate ?? '-'}`);
+          const evidence = m.loads.length > 0
+            ? `${m.loads.map((load) => `${load.orderNumber} load ${load.sequence}`).join(', ')}; dispatch rate ${m.agreedRate ?? '-'}`
+            : `${m.tickets.length} ticket(s); agreed rate ${m.agreedRate ?? '-'}`;
+          out.push(`     -> ${m.status} / ${m.flag}: ${order}; ${evidence}`);
           for (const check of m.checks.filter((c) => !c.passed)) out.push(`        x ${check.name}: ${check.detail}`);
         }
       }

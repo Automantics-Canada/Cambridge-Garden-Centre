@@ -1,6 +1,6 @@
 {
-  "notes": "Invented example of the records a sample is matched against. Write one from the Spruce order/PO numbers, the driver tickets and the agreed rates the client sends. Suppliers are referred to by id or by exact name.",
-  "tolerances": { "quantityTolerancePct": 2, "dateWindowDays": 3, "priceTolerancePct": 1 },
+  "notes": "Invented example of the records a sample is matched against. Write one from the Spruce order/PO numbers, the driver tickets and the agreed rates the client sends. Suppliers are referred to by id or by exact name. A trucking company's lines are checked against dispatchLoads: the loads dispatch recorded, with the rate it set on each.",
+  "tolerances": { "quantityTolerancePct": 2, "dateWindowDays": 3, "priceTolerancePct": 1, "haulPriceTolerancePct": 1, "haulDateWindowDays": 7 },
   "suppliers": [
     { "id": "sup-example-aggregates", "name": "Example Aggregates Ltd.", "type": "SUPPLIER" },
     { "id": "sup-sample-haulage", "name": "Sample Haulage Inc.", "type": "TRUCKING_COMPANY" }
@@ -62,7 +62,14 @@
     { "supplier": "sup-example-aggregates", "productName": "Test Clear Stone 19mm", "rate": 31.5, "unit": "tonne", "effectiveFrom": "2026-01-01", "spruceItemCode": "TESTCLR19" },
     { "supplier": "sup-sample-haulage", "productName": "Test Haul Triaxle", "rate": 225, "unit": "load", "effectiveFrom": "2026-01-01" }
   ],
+  "dispatchLoads": [
+    { "id": "load-sh-501", "orderNumber": "990103", "sequence": 1, "carrier": "sup-sample-haulage", "rate": 225, "rateUnit": "LOAD", "quantity": 1, "ticketNumber": "SH-501", "haulDate": "2026-10-22", "claimedBy": { "invoiceNumber": "SH-2026-101", "lineNumber": 1 } },
+    { "id": "load-sh-502", "orderNumber": "990103", "sequence": 2, "carrier": "sup-sample-haulage", "rate": 225, "rateUnit": "LOAD", "quantity": 1, "ticketNumber": "SH-502", "haulDate": "2026-10-22" },
+    { "id": "load-sh-503", "orderNumber": "990103", "sequence": 3, "carrier": "sup-sample-haulage", "rate": 225, "rateUnit": "LOAD", "quantity": 1, "ticketNumber": "SH-503", "haulDate": "2026-10-22" },
+    { "id": "load-sh-504", "orderNumber": "990103", "sequence": 4, "carrier": "sup-sample-haulage", "rate": null, "rateUnit": null, "quantity": 1, "ticketNumber": "SH-504", "haulDate": "2026-10-22" },
+    { "id": "load-sh-505", "orderNumber": "990103", "sequence": 5, "carrier": "Sample Haulage Inc.", "rate": 225, "rateUnit": "LOAD", "quantity": 1, "ticketNumber": "SH-505", "haulDate": "2026-10-22" }
+  ],
   "openInvoiceLines": [
-    { "invoiceNumber": "SH-2026-099", "lineNumber": 2, "poNumber": "2610-900103", "supplier": "sup-sample-haulage", "invoiceDate": "2026-10-20" }
+    { "invoiceNumber": "SH-2026-099", "lineNumber": 2, "poNumber": "2610-900103", "supplier": "sup-sample-haulage", "invoiceDate": "2026-10-20", "loads": ["load-sh-502"] }
   ]
 }

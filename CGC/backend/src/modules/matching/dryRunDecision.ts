@@ -11,8 +11,9 @@
  * disposable loopback database (scripts/sampleDryRun/loopbackRecords.ts).
  *
  * Nothing here reads or writes a database. It composes what production
- * already uses: matchInvoiceLine for the verdict, deriveLineItemFlag for the
- * one-word flag. The selection of which rows to hand the engine mirrors the
+ * already uses: matchInvoiceLine for a material line's verdict, matchHaulLine
+ * for a trucking company's line (checked against the dispatch loads it
+ * bills), deriveLineItemFlag for the one-word flag. The selection of which rows to hand the engine mirrors the
  * queries in matching.service.ts (matchInvoiceLineById), and the supplier
  * lookup and stored-line values mirror invoice.service.ts and
  * supplier.service.ts. Those are written against the database and cannot be
@@ -31,8 +32,9 @@ import {
   type MatchDecision,
   type ProductAlias,
 } from './matchEngine.js';
+import { matchHaulLine, type CandidateLoad, type CompetingHaulLine } from './haulMatch.js';
 import { onSamePo, poKey } from './poKey.js';
-import { DEFAULT_TOLERANCES, type Tolerances } from './tolerances.js';
+import { DEFAULT_HAUL_TOLERANCES, DEFAULT_TOLERANCES, type HaulTolerances, type Tolerances } from './tolerances.js';
 
 // ---------------------------------------------------------------------------
 // The related records, as written by hand (related.json) or read from a
@@ -54,6 +56,9 @@ export const RelatedRecordsFileSchema = z.object({
       quantityTolerancePct: z.number().min(0).max(100).optional(),
       dateWindowDays: z.number().min(0).max(100).optional(),
       priceTolerancePct: z.number().min(0).max(100).optional(),
+      haulPriceTolerancePct: z.number().min(0).max(100).optional(),
+      haulDateWindowDays: z.number().min(0).max(100).optional(),
+      haulQuantityReviewPct: z.number().min(0).max(1000).optional(),
     })
     .optional(),
   suppliers: z
@@ -125,6 +130,41 @@ export const RelatedRecordsFileSchema = z.object({
       })
     )
     .default([]),
+  /**
+   * The loads dispatch recorded, with the haul rate set on each (client, Q14).
+   * A trucking company's sample lines are checked against these, not against
+   * orders and tickets. One entry per load, as the dispatch board lists them.
+   */
+  dispatchLoads: z
+    .array(
+      z.object({
+        id: z.string().min(1).optional(),
+        /** The Spruce order the load was for. */
+        orderNumber: z.string().min(1),
+        sequence: z.number().int().positive().default(1),
+        /** The trucking company that hauled it. CGC's own trucks bill nobody and are left out. */
+        carrier: SupplierRefSchema,
+        rate: z.number().min(0).nullable().default(null),
+        rateUnit: z.enum(['LOAD', 'HOUR', 'TONNE']).nullable().default(null),
+        /** What dispatch expected: hours or tonnes, or 1 load. */
+        quantity: z.number().positive().nullable().default(null),
+        /** Loads of one brokered trip share it, and are billed once. */
+        tripRef: z.string().nullable().default(null),
+        ticketNumber: z.string().nullable().default(null),
+        /** The day it was hauled: the order's delivery date, or the day the stop was done. */
+        haulDate: isoDate,
+        /** The order's POs; the orders list's POs for this order number are added. */
+        poNumbers: z.array(z.string()).default([]),
+        /** Numbers of the drivers' tickets linked to the order. */
+        orderTicketNumbers: z.array(z.string()).default([]),
+        /** Set when another invoice line has already paid this load. */
+        claimedBy: z
+          .object({ invoiceNumber: z.string(), lineNumber: z.number().int().positive() })
+          .nullable()
+          .default(null),
+      })
+    )
+    .default([]),
   /** Other invoices' lines on file that nobody has ruled on yet. */
   openInvoiceLines: z
     .array(
@@ -135,6 +175,8 @@ export const RelatedRecordsFileSchema = z.object({
         poNumber: z.string().nullable().default(null),
         supplier: SupplierRefSchema.nullable().default(null),
         invoiceDate: isoDate.nullable().default(null),
+        /** For a trucking company's line: the ids of the dispatch loads its verdict counts. */
+        loads: z.array(z.string()).default([]),
       })
     )
     .default([]),
@@ -166,22 +208,29 @@ export interface RelatedRate extends AgreedRate {
 export interface RelatedInvoiceLine extends CompetingLine {
   poNumber: string | null;
   supplierId: string | null;
+  /** The dispatch loads a trucking line's verdict counts; empty for a material line. */
+  loadIds: string[];
 }
 
 /** Everything the engine may be shown, already resolved to ids and dates. */
 export interface RelatedRecords {
   tolerances: Tolerances;
+  haulTolerances: HaulTolerances;
   suppliers: RelatedSupplier[];
   aliases: ProductAlias[];
   orders: RelatedOrder[];
   tickets: RelatedTicket[];
   rates: RelatedRate[];
+  /** Dispatch loads by trucking companies, as the haul matcher reads them. */
+  loads: CandidateLoad[];
   openInvoiceLines: RelatedInvoiceLine[];
 }
 
 export function emptyRelatedRecords(): RelatedRecords {
   return {
     tolerances: { ...DEFAULT_TOLERANCES },
+    haulTolerances: { ...DEFAULT_HAUL_TOLERANCES },
+    loads: [],
     suppliers: [],
     aliases: [],
     orders: [],
@@ -277,8 +326,62 @@ export function parseRelatedRecords(input: unknown): RelatedRecords {
     }
   }
 
+  const loads: CandidateLoad[] = file.dispatchLoads.map((load, index) => {
+    const where = `dispatchLoads[${index}]`;
+    const carrierSupplierId = supplierId(load.carrier, where)!;
+    // As the loads service refuses it: a carrier is a trucking company, and
+    // a rate always says what it is per.
+    if (suppliers.find((supplier) => supplier.id === carrierSupplierId)?.type !== SupplierType.TRUCKING_COMPANY) {
+      throw new Error(`${where}: carrier "${load.carrier}" is not a TRUCKING_COMPANY supplier`);
+    }
+    if (load.rate !== null && load.rateUnit === null) {
+      throw new Error(`${where}: say whether the rate is per LOAD, HOUR or TONNE (rateUnit)`);
+    }
+    const sameOrder = orders.filter((order) => order.orderNumber === load.orderNumber);
+    return {
+      id: load.id ?? `load-${index + 1}`,
+      documentId: `order:${load.orderNumber}`,
+      sequence: load.sequence,
+      carrierSupplierId,
+      tripRef: load.tripRef,
+      rate: load.rate === null ? null : String(load.rate),
+      rateUnit: load.rateUnit,
+      quantity: load.quantity === null ? null : String(load.quantity),
+      claimedByLineItemId: load.claimedBy ? `on-file:${load.claimedBy.invoiceNumber}#${load.claimedBy.lineNumber}` : null,
+      documentNumber: load.orderNumber,
+      haulDate: utcDate(load.haulDate)!,
+      ticketNumber: load.ticketNumber,
+      poNumbers: [...new Set([...load.poNumbers, ...sameOrder.flatMap((order) => (order.poNumber ? [order.poNumber] : []))])],
+      orderTicketNumbers: load.orderTicketNumbers,
+      orderLineId: sameOrder[0]?.id ?? null,
+      claim: load.claimedBy ? { invoiceNumber: load.claimedBy.invoiceNumber, lineNumber: load.claimedBy.lineNumber } : null,
+    };
+  });
+  const loadIds = new Set<string>();
+  for (const load of loads) {
+    if (loadIds.has(load.id)) throw new Error(`Two dispatch loads have the id "${load.id}"`);
+    loadIds.add(load.id);
+  }
+
+  const tolerances = stripUndefined(file.tolerances ?? {});
   return {
-    tolerances: { ...DEFAULT_TOLERANCES, ...stripUndefined(file.tolerances ?? {}) },
+    tolerances: {
+      ...DEFAULT_TOLERANCES,
+      ...stripUndefined({
+        quantityTolerancePct: tolerances.quantityTolerancePct,
+        dateWindowDays: tolerances.dateWindowDays,
+        priceTolerancePct: tolerances.priceTolerancePct,
+      }),
+    },
+    haulTolerances: {
+      ...DEFAULT_HAUL_TOLERANCES,
+      ...stripUndefined({
+        haulPriceTolerancePct: tolerances.haulPriceTolerancePct,
+        haulDateWindowDays: tolerances.haulDateWindowDays,
+        haulQuantityReviewPct: tolerances.haulQuantityReviewPct,
+      }),
+    },
+    loads,
     suppliers,
     aliases: file.aliases.map((alias, index) => ({
       supplierId: supplierId(alias.supplier, `aliases[${index}]`)!,
@@ -304,6 +407,7 @@ export function parseRelatedRecords(input: unknown): RelatedRecords {
       invoiceDate: utcDate(line.invoiceDate),
       poNumber: line.poNumber,
       supplierId: supplierId(line.supplier, `openInvoiceLines[${index}]`),
+      loadIds: line.loads,
     })),
   };
 }
@@ -379,6 +483,10 @@ export interface ReadLine {
   unitPrice: number | null;
   totalPrice: number | null;
   poNumber: string | null;
+  /** The ticket or load number printed on the line (trucking invoices). */
+  ticketNumber?: string | null;
+  /** The day the line says the haul ran (trucking invoices). */
+  serviceDate?: Date | null;
 }
 
 /** The line as production writes it to InvoiceLineItem, which is what the engine then reads back. */
@@ -390,6 +498,8 @@ export interface StoredLine {
   unit: string;
   unitRate: number;
   lineTotal: number;
+  ticketNumber: string | null;
+  serviceDate: Date | null;
 }
 
 /**
@@ -411,6 +521,8 @@ export function storedLineLikeProduction(item: ReadLine, index: number, invoiceP
     unit: item.unit ?? 'unknown',
     unitRate,
     lineTotal: Number(item.totalPrice) || quantity * unitRate,
+    ticketNumber: item.ticketNumber ?? null,
+    serviceDate: item.serviceDate ?? null,
   };
 }
 
@@ -526,7 +638,9 @@ export interface DryRunLineDecision {
   /** Billed quantity at the agreed rate, as production computes it; null without a rate. */
   approvedTotal: number | null;
   /** How many rows each kind of input offered the engine, for reading the verdict. */
-  considered: { orders: number; tickets: number; rates: number; competingLines: number };
+  considered: { orders: number; tickets: number; rates: number; competingLines: number; loads: number };
+  /** The dispatch loads a trucking line's verdict counts; empty for a material line. */
+  loadIds: string[];
 }
 
 /**
@@ -575,7 +689,71 @@ export function decideInvoiceLineDryRun(
       tickets: inputs.tickets.length,
       rates: inputs.agreedRates.length,
       competingLines: inputs.competingLines.length,
+      loads: 0,
     },
+    loadIds: [],
+  };
+}
+
+/**
+ * The verdict and flag production would store for a trucking company's line,
+ * stored nowhere: checked against the dispatch loads it bills and the rate
+ * dispatch set on them (client, Q14), as matchHaulLineById does.
+ *
+ * Mirrors its loaders: the carrier's loads in the window around the line's
+ * haul date (or the invoice date), and other unsettled lines whose verdicts
+ * count any of those loads. The flag counts the load as the line's order and
+ * ticket, as applyLineItemColumns does for a haul.
+ */
+export function decideHaulLineDryRun(
+  line: StoredLine,
+  context: { lineId: string; supplierId: string | null; invoiceDate: Date | null },
+  records: RelatedRecords
+): DryRunLineDecision {
+  const tolerances = records.haulTolerances;
+  const loads = records.loads.filter((load) => load.carrierSupplierId === context.supplierId);
+  const candidateIds = new Set(loads.map((load) => load.id));
+  const competingLines: CompetingHaulLine[] = records.openInvoiceLines
+    .filter((other) => other.invoiceLineId !== context.lineId && other.loadIds.some((id) => candidateIds.has(id)))
+    .map((other) => ({
+      invoiceLineId: other.invoiceLineId,
+      invoiceNumber: other.invoiceNumber,
+      lineNumber: other.lineNumber,
+      loadIds: other.loadIds,
+    }));
+
+  const decision = matchHaulLine(
+    {
+      id: context.lineId,
+      poNumber: line.poNumber,
+      ticketNumber: line.ticketNumber,
+      serviceDate: line.serviceDate,
+      quantity: line.quantity,
+      unit: line.unit,
+      unitRate: line.unitRate,
+      supplierId: context.supplierId,
+      invoiceDate: context.invoiceDate,
+    },
+    loads,
+    { tolerances, competingLines }
+  );
+
+  const totals = decision.totals;
+  const agreedRate = totals?.agreedRate ?? null;
+  const counted = decision.loadIds.length;
+  return {
+    decision,
+    flag: deriveLineItemFlag({
+      hasOrder: counted > 0,
+      ticketCount: counted,
+      hasQuantityDiscrepancy: (totals?.quantityDiscrepancy ?? null) !== null,
+      hasRateDiscrepancy: (totals?.rateDiscrepancy ?? null) !== null,
+      hasAgreedRate: agreedRate !== null,
+      rateUnitMismatch: totals?.rateUnitMismatch ?? false,
+    }),
+    approvedTotal: agreedRate === null ? null : Number((line.quantity * agreedRate).toFixed(4)),
+    considered: { orders: 0, tickets: 0, rates: 0, competingLines: competingLines.length, loads: loads.length },
+    loadIds: decision.loadIds,
   };
 }
 
