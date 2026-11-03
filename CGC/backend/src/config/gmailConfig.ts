@@ -53,11 +53,13 @@
  *                               nothing the app can read. The query excludes
  *                               it, so the email is not fetched every minute;
  *                               approving the sender reads it again.
- *   GMAIL_POLL_AFTER            YYYY-MM-DD. Mail received before it is never
- *                               read. Without it the query also keeps
- *                               `is:unread`, as before, so turning this version
- *                               on cannot reach back into mail somebody already
- *                               read or paid.
+ *   GMAIL_POLL_AFTER            YYYY-MM-DD, required. Mail received before
+ *                               it is never read, not even when its sender is
+ *                               approved later. Without it the poller does
+ *                               nothing at all (see gmailPollDisabledReason):
+ *                               deploying this version with the variables the
+ *                               previous poller used must not read, label or
+ *                               queue the mail that poller left alone.
  *   GMAIL_INGEST_MODE           ingest (default: what the poller always did)
  *                               or observe (record who sends what, create no
  *                               invoices).
@@ -177,6 +179,19 @@ export function gmailPollDisabledReason(config: GmailInboxConfig): string | null
   if (new Set(labels).size !== labels.length) {
     return 'GMAIL_INVOICE_LABEL, GMAIL_PROCESSED_LABEL, GMAIL_OBSERVED_LABEL and GMAIL_REVIEW_LABEL must all differ.';
   }
+  // The previous poller read unread labelled mail from GMAIL_SENDER_ALLOWLIST
+  // only, left everything else unread on purpose, and did nothing with an
+  // empty list. This version also knows senders from the supplier records and
+  // queues the rest for review. Run on the old variables alone, it would turn
+  // old unread mail from a supplier the env list never named into invoices
+  // (perhaps paid by hand weeks ago) and label every other old email. So no
+  // poll, in either mode, until somebody has chosen the date mail is read
+  // from. This is what makes the deploy itself safe: until the date is set,
+  // the new version neither reads nor labels anything.
+  if (!config.pollAfter) {
+    return 'GMAIL_POLL_AFTER is not set. Nothing is read or labelled until it is: set it to the go-live date ' +
+      '(YYYY-MM-DD), with GMAIL_INGEST_MODE=observe to start (docs/gmail-mailbox-switch.md, step 6).';
+  }
   // An empty GMAIL_SENDER_ALLOWLIST used to stop ingest mode, because the
   // list was the only thing between a labelled email and a new invoice. Mail
   // from a sender no supplier record knows now waits in the review queue and
@@ -203,6 +218,8 @@ export function buildInboxQuery(config: GmailInboxConfig): string {
   if (config.pollAfter) {
     terms.push(`after:${config.pollAfter.replace(/-/g, '/')}`);
   } else {
+    // The poller never gets here: it does not run without a cutoff. Kept so a
+    // caller that forgets the check still cannot reach mail somebody read.
     terms.push('is:unread');
   }
   return terms.join(' ');

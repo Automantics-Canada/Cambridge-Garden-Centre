@@ -443,6 +443,53 @@ describe('configuration', () => {
   });
 });
 
+describe('deploying with the variables production already has', () => {
+  // Production runs the previous poller with GMAIL_INVOICE_LABEL (and maybe
+  // GMAIL_SENDER_ALLOWLIST) and none of the new GMAIL_* settings. That poller
+  // left unread every labelled email from a sender off the env allowlist, and
+  // did nothing at all with an empty allowlist. This version knows senders
+  // from the supplier records too, so polling with the old variables would
+  // turn that old unread mail into invoices, or flood the review queue. It
+  // does nothing until the go-live date is set.
+  const OLD_ENV = {
+    GMAIL_INBOX_CLIENT_ID: 'inbox-client-id.test',
+    GMAIL_INBOX_CLIENT_SECRET: 'inbox-client-secret-test',
+    GMAIL_INBOX_REFRESH_TOKEN: 'inbox-refresh-token-test',
+    GMAIL_INVOICE_LABEL: 'cgc-invoices',
+    GMAIL_SENDER_ALLOWLIST: 'allowlisted-only.test',
+  };
+
+  it('reads, labels and creates nothing without GMAIL_POLL_AFTER, and says why', async () => {
+    suppliers.push({
+      id: 'sup-1', name: 'Stone Supplier', type: 'SUPPLIER', emailDomains: ['stone-supplier.test'], emailAddresses: [], contactEmail: null,
+    });
+    const known = addMessage();
+    const unknown = addMessage({ from: 'Somebody <someone@unknown-sender.test>' });
+
+    await GmailService.pollInvoices(readGmailInboxConfig(OLD_ENV));
+
+    assert.equal(invoices.size, 0);
+    assert.equal(events.size, 0);
+    assert.equal(calls.length, 0, 'no Gmail call at all: no label is created or applied');
+    assert.deepEqual(labelsOf(known).sort(), ['INBOX', 'UNREAD', 'cgc-invoices']);
+    assert.deepEqual(labelsOf(unknown).sort(), ['INBOX', 'UNREAD', 'cgc-invoices']);
+    assert.equal(status().enabled, false);
+    assert.match(status().disabledReason, /GMAIL_POLL_AFTER is not set/);
+  });
+
+  it('observe mode needs the date too: a census of old unread mail would label it', async () => {
+    addMessage({ from: 'Somebody <someone@unknown-sender.test>' });
+    await GmailService.pollInvoices(readGmailInboxConfig({ ...OLD_ENV, GMAIL_INGEST_MODE: 'observe' }));
+    assert.equal(events.size, 0);
+    assert.equal(calls.length, 0);
+    assert.match(status().disabledReason, /GMAIL_POLL_AFTER/);
+  });
+
+  it('with the date set, polling starts', () => {
+    assert.equal(gmailPollDisabledReason(readGmailInboxConfig({ ...OLD_ENV, GMAIL_POLL_AFTER: '2026-11-02' })), null);
+  });
+});
+
 describe('query', () => {
   it('excludes the processed and review labels and adds the cutoff, with no is:unread', () => {
     const q = buildInboxQuery(config());
@@ -487,10 +534,12 @@ describe('processed label', () => {
     assert.ok(invoices.has(`${id}:1`));
   });
 
-  it('without a cutoff an opened message is left alone, as before', async () => {
+  it('without a cutoff nothing is read, opened or not', async () => {
     addMessage({ unread: false });
+    addMessage();
     await GmailService.pollInvoices(config({ GMAIL_POLL_AFTER: undefined }));
     assert.equal(invoices.size, 0);
+    assert.equal(inboxCalls('messages.list').length, 0);
   });
 
   it('a failed attachment leaves the message unlabelled, and the retry adds only what is missing', async () => {

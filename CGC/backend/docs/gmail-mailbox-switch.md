@@ -105,7 +105,7 @@ then redeploy both.
 | `GMAIL_INBOX_USER` | `cgcsoftware1718@gmail.com` — polling stops if the token is for any other mailbox |
 | `GMAIL_INVOICE_LABEL` | the label the filter applies, e.g. `cgc-invoices` |
 | `GMAIL_TRUSTED_FORWARDERS` | `ap@cambridgegardencentre.ca` |
-| `GMAIL_POLL_AFTER` | go-live date, `YYYY-MM-DD` |
+| `GMAIL_POLL_AFTER` | go-live date, `YYYY-MM-DD`. Required: nothing is polled without it |
 | `GMAIL_INGEST_MODE` | `observe` first, `ingest` later |
 | `GMAIL_SENDER_ALLOWLIST` | optional; senders known even without a supplier record. Free-mail domains here count for nothing |
 | `GMAIL_PROCESSED_LABEL`, `GMAIL_OBSERVED_LABEL`, `GMAIL_REVIEW_LABEL` | optional; default `cgc-processed`, `cgc-observed`, `cgc-review` |
@@ -116,7 +116,9 @@ including the welcome email; the inbox variables fall back to them only when
 unset.
 
 A mistyped `GMAIL_INGEST_MODE` or `GMAIL_POLL_AFTER` stops polling and the
-health block says why. It never falls back to ingesting.
+health block says why. It never falls back to ingesting. So does a missing
+`GMAIL_POLL_AFTER`: set these variables only at step 6.2, not before the first
+deploy of this version.
 
 ## 4. Gmail filter in cgcsoftware1718@gmail.com
 
@@ -164,11 +166,25 @@ first time it needs them. Do not add them by hand except to deliberately skip a 
 
 ## 6. Go-live
 
-1. Deploy this version to both services. Until `GMAIL_POLL_AFTER` is set the
-   query still includes `is:unread`, exactly as before, so deploying cannot
-   reach mail somebody already read.
-2. Set the step 3 variables with `GMAIL_INGEST_MODE=observe` and
-   `GMAIL_POLL_AFTER` = today. Redeploy both.
+1. Deploy this version to both services **with the variables they have
+   today**. Without `GMAIL_POLL_AFTER` this version polls nothing: it does not
+   read, label or queue any email, in either mode, and `/api/health` → `gmail`
+   says `enabled: false` with `disabledReason` "GMAIL_POLL_AFTER is not set…".
+   That is deliberate. The previous poller left unread every labelled email
+   from a sender off `GMAIL_SENDER_ALLOWLIST` (and read nothing with an empty
+   list). This version also knows senders from the supplier records, so
+   polling on the old variables would turn that old unread mail into new
+   invoices, some perhaps already paid by hand. Until step 2, nothing is read
+   automatically: AP enters invoices by hand, as before the app.
+   While the deploy rolls out, the old version's poller may still run in a
+   container that has not stopped yet; the new one does nothing, so the two
+   never read the same email (they key invoices differently and would each
+   make one).
+2. Once **no old-version container is left** on either service (Railway →
+   Deployments shows only the new one as active), set the step 3 variables
+   with `GMAIL_INGEST_MODE=observe` and `GMAIL_POLL_AFTER` = today. Redeploy
+   both. Never set `GMAIL_POLL_AFTER` in the same deploy that first ships this
+   version.
 3. Check `/api/health` → `gmail`: `enabled: true`, `mode: "observe"`,
    `mailboxMatchesConfig: true`, `invoiceLabelFound: true`,
    `lastResult: "ok"`, `stale: false`.
@@ -247,6 +263,9 @@ No secret, token or full email address is ever written to the status.
   in the poll; an ignored email gets the label straight back.
 - An empty `GMAIL_SENDER_ALLOWLIST` no longer stops ingest mode: unknown
   senders wait in the review queue instead of becoming invoices.
+- A missing `GMAIL_POLL_AFTER` stops polling altogether (it used to mean
+  "unread mail only"). Deployed on the old variables, this version therefore
+  does nothing until step 6.2.
 
 ## For the client: exporting the ap@ Safe Senders list
 

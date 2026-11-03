@@ -734,6 +734,8 @@ const inboxConfig = (overrides: Record<string, string> = {}) => readGmailInboxCo
   GMAIL_INBOX_REFRESH_TOKEN: 'inbox-refresh-token-test',
   GMAIL_INVOICE_LABEL: INVOICE_LABEL,
   GMAIL_TRUSTED_FORWARDERS: FORWARDER,
+  // Required: without a go-live date the poller reads and labels nothing.
+  GMAIL_POLL_AFTER: '2026-01-01',
   ...overrides,
 });
 
