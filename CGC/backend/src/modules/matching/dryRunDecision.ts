@@ -607,7 +607,8 @@ export function previewInvoiceTotalCheck(
       unpricedLines: unpriced.length,
       note:
         `Total not checked: ${unpriced.length} of ${lines.length} line(s) have no applicable agreed rate ` +
-        `(${unpriced.map((line) => line.description).join('; ')}). Billed: $${billedTotal.toFixed(2)}.`,
+        `(${unpriced.map((line) => line.description).join('; ')}). Billed: $${billedTotal.toFixed(2)}. ` +
+        'It is checked again automatically once those rates are added.',
     };
   }
   const subtotal = lines.reduce((sum, line) => sum + line.quantity * (line.agreedRate as number), 0);

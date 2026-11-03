@@ -185,6 +185,8 @@ describe('sample dry run, pre-extracted readings', () => {
 
     assert.equal(lines[2]!.flag, 'MULTIPLE_FLAGS');
     assert.equal(sample(PDF_NAME).matching!.invoiceTotalCheck.result, 'unpriced');
+    // Word for word what refreshInvoiceTotalCheck writes.
+    assert.match(sample(PDF_NAME).matching!.invoiceTotalCheck.note ?? '', /^Total not checked: 2 of 3 line\(s\) have no applicable agreed rate \(.*\)\. Billed: \$1491\.84\. It is checked again automatically once those rates are added\.$/);
   });
 
   it('reads an Excel invoice as text through the production reader, and finds what is wrong with it', () => {
@@ -259,6 +261,47 @@ describe('sample dry run, reading with a model', () => {
       assert.equal(offline.samples[0]!.supplier?.resolution, 'not checked');
     } finally {
       rmSync(live, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('a printed supplier production does not know', () => {
+  it("matches under the new, empty supplier production would create, so another supplier's tickets do not count", async () => {
+    const unknown = mkdtempSync(path.join(tmpdir(), 'cgc-samples-unknown-'));
+    try {
+      const document = await PDFDocument.create();
+      document.addPage([400, 300]);
+      writeFileSync(path.join(unknown, 'nobody-paving.pdf'), Buffer.from(await document.save()));
+      writeFileSync(
+        path.join(unknown, 'nobody-paving.pdf.extraction.json'),
+        JSON.stringify({
+          triage: { pages: [{ page: 1, kind: 'invoice' }] },
+          invoice: {
+            supplierName: 'Nobody Paving Co',
+            invoiceNumber: 'NP-1',
+            date: '2026-10-22',
+            poNumber: '2610-900101',
+            totalAmount: 1067.85,
+            lineItems: [{ description: 'Test Clear Stone 19mm', quantity: 30, unit: 't', unitPrice: 31.5, totalPrice: 945, poNumber: null }],
+          },
+        })
+      );
+      writeFileSync(path.join(unknown, 'related.json'), readFileSync(path.join(examples, 'related.example.json')));
+
+      const result = await runSampleDryRun(options({ dir: unknown, writeReport: false }), { extraction });
+      const [entry] = result.samples;
+      assert.equal(entry!.supplier?.resolution, 'would-create');
+      assert.equal(entry!.supplier?.supplierId, null);
+      const [line] = entry!.matching!.lines;
+      // EX-70011 is Example Aggregates' ticket on this PO. Matched with no
+      // supplier at all it would have been counted; production files the
+      // invoice under a new supplier, and the engine sets it aside.
+      assert.ok(!line!.tickets.some((t) => t.ticketNumber === 'EX-70011'));
+      assert.ok(line!.checks.some((c) => c.name === 'ticketCoverage' && !c.passed));
+      assert.notEqual(line!.flag, 'OK');
+      assert.deepEqual(result.summary.suppliersProductionWouldCreate, ['Nobody Paving Co']);
+    } finally {
+      rmSync(unknown, { recursive: true, force: true });
     }
   });
 });

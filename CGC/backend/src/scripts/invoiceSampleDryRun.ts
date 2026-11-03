@@ -492,10 +492,21 @@ function matchingDate(invoice: NormalizedInvoice): Date {
   return invoice.invoiceDate ?? new Date(new Date().toISOString().slice(0, 10));
 }
 
+/** An id no related record carries: the supplier production would create for this printed name. */
+function newSupplierPlaceholderId(printed: string | null): string {
+  return `would-create:${(printed ?? '').trim()}`;
+}
+
 function matchSample(reading: SampleReading, records: RelatedRecords): void {
   const { report, invoice } = reading;
   if (!invoice || !report.supplier) return;
-  const supplierId = report.supplier.supplierId;
+  // Where production would create a supplier, the invoice is filed under that
+  // new, empty supplier, not under none. The difference matters: with no
+  // supplier the engine counts every ticket on the PO, another supplier's
+  // included, and could pass a line production would not.
+  const supplierId =
+    report.supplier.supplierId ??
+    (report.supplier.resolution === 'would-create' ? newSupplierPlaceholderId(report.supplier.printed) : null);
   const withTickets = withEmailedTickets(
     records,
     reading.tickets.map(({ page, ticket }) => ({
@@ -928,7 +939,7 @@ export function parseArgs(argv: string[]): DryRunOptions | 'help' {
  * main checkout's holds production's) is never what this process sees:
  * dotenv does not override a variable that is already set.
  */
-function fillUnusedEnvironment(options: DryRunOptions): void {
+function fillUnusedEnvironment(options: DryRunOptions, dbUrl: string | null): void {
   const unused: Record<string, string> = {
     JWT_SECRET: 'unused-by-the-sample-dry-run',
     SUPABASE_URL: 'https://unused.invalid',
@@ -936,10 +947,11 @@ function fillUnusedEnvironment(options: DryRunOptions): void {
     SUPABASE_STORAGE_BUCKET: 'unused',
   };
   for (const [key, value] of Object.entries(unused)) process.env[key] = value;
-  if (options.related.kind !== 'db') {
-    process.env.DATABASE_URL = 'postgresql://unused:unused@127.0.0.1:1/unused';
-    process.env.DIRECT_URL = 'postgresql://unused:unused@127.0.0.1:1/unused';
-  }
+  // With --db, both point at the database that passed the loopback check, so
+  // a DIRECT_URL from a .env (production's, in the main checkout) is never
+  // what this process holds either.
+  process.env.DATABASE_URL = dbUrl ?? 'postgresql://unused:unused@127.0.0.1:1/unused';
+  process.env.DIRECT_URL = dbUrl ?? 'postgresql://unused:unused@127.0.0.1:1/unused';
   if (options.mode === 'fixture') process.env.OPENAI_API_KEY ||= 'unused-by-the-sample-dry-run';
 }
 
@@ -957,7 +969,7 @@ async function main(): Promise<number> {
     const { assertLoopbackDatabase } = await import('./sampleDryRun/loopbackRecords.js');
     dbUrl = assertLoopbackDatabase(process.env);
   }
-  fillUnusedEnvironment(options);
+  fillUnusedEnvironment(options, dbUrl);
 
   const extraction = await import('../services/extraction/extraction.service.js');
   let liveProvider: ExtractionProvider | undefined;
