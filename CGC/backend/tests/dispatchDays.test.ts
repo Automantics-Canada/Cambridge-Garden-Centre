@@ -4,14 +4,23 @@ import { describe, it } from 'node:test';
 import {
   carriedOverWhere,
   dayOfDeliveryDate,
+  dayPoolWhere,
   deliveryDayDate,
   isPastDay,
   todayPoolWhere,
   undatedWhere,
   upcomingDays,
   upcomingWhere,
+  upcomingWithoutDriverWhere,
   uploadedOnWhere,
 } from '../src/modules/dispatch/dispatchDays.js';
+
+const QUOTE = { flags: { has: 'QUOTE' } };
+// No stop, or one with no driver that is not finished: a delivered or
+// cancelled stop whose driver was removed is history, not work.
+const WITHOUT_DRIVER = {
+  OR: [{ delivery: null }, { delivery: { driverId: null, status: { notIn: ['DELIVERED', 'CANCELLED'] } } }],
+};
 
 const count = (iso: string | null, n: number) => ({
   deliveryDate: iso ? new Date(`${iso}T00:00:00.000Z`) : null,
@@ -45,11 +54,13 @@ describe('board days', () => {
     assert.throws(() => uploadedOnWhere('2026-02-31'), /Invalid date/);
   });
 
-  it("pools today's deliveries and today's upload that have no driver, never pickups", () => {
+  it("pools today's deliveries and today's upload that have no driver, never pickups or quotations", () => {
     const where = todayPoolWhere('2026-08-15');
     assert.equal(where.isPickup, false);
+    // At the top, so a quotation Item Tracking dated today stays out as well.
+    assert.deepEqual(where.NOT, QUOTE);
     assert.deepEqual(where.AND, [
-      { OR: [{ delivery: null }, { delivery: { driverId: null } }] },
+      WITHOUT_DRIVER,
       {
         OR: [
           { deliveryDate: new Date('2026-08-15T00:00:00.000Z') },
@@ -67,22 +78,38 @@ describe('board days', () => {
     // Spruce has invoiced, closed or voided a NOT_OPEN order: nothing to carry.
     // One in today's upload is in today's pool instead.
     assert.deepEqual(where.NOT, [{ flags: { hasSome: ['NOT_OPEN', 'QUOTE'] } }, uploadedOnWhere('2026-08-15')]);
-    assert.deepEqual(where.OR, [
-      { delivery: null },
-      { delivery: { driverId: null, status: { notIn: ['DELIVERED', 'CANCELLED'] } } },
-    ]);
+    assert.deepEqual(where.OR, WITHOUT_DRIVER.OR);
   });
 
-  it('counts only days after today as upcoming', () => {
-    assert.deepEqual(upcomingWhere('2026-08-15'), {
-      deliveryDate: { gt: new Date('2026-08-15T00:00:00.000Z') },
+  it("pools another day's deliveries with no driver, never pickups or quotations", () => {
+    assert.deepEqual(dayPoolWhere('2026-08-19'), {
+      deliveryDate: new Date('2026-08-19T00:00:00.000Z'),
       isPickup: false,
+      NOT: QUOTE,
+      ...WITHOUT_DRIVER,
     });
   });
 
+  it('counts only days after today as upcoming, never quotations', () => {
+    const upcoming = {
+      deliveryDate: { gt: new Date('2026-08-15T00:00:00.000Z') },
+      isPickup: false,
+      NOT: QUOTE,
+    };
+    assert.deepEqual(upcomingWhere('2026-08-15'), upcoming);
+    assert.deepEqual(upcomingWithoutDriverWhere('2026-08-15'), { ...upcoming, ...WITHOUT_DRIVER });
+  });
+
   it('lists open pickups and open undated deliveries, searched by number or customer', () => {
-    // NOT_OPEN leaves out a pickup as well as an undated delivery.
-    const open = { NOT: { flags: { hasSome: ['NOT_OPEN', 'QUOTE'] } }, OR: [{ isPickup: true }, { deliveryDate: null }] };
+    // NOT_OPEN and QUOTE leave out a pickup as well as an undated delivery,
+    // and a finished stop is done whether or not Spruce dated it.
+    const open = {
+      NOT: [
+        { flags: { hasSome: ['NOT_OPEN', 'QUOTE'] } },
+        { delivery: { status: { in: ['DELIVERED', 'CANCELLED'] } } },
+      ],
+      OR: [{ isPickup: true }, { deliveryDate: null }],
+    };
     assert.deepEqual(undatedWhere(), open);
     assert.deepEqual(undatedWhere('   '), open);
     assert.deepEqual(undatedWhere(' 712589 ').AND, [
