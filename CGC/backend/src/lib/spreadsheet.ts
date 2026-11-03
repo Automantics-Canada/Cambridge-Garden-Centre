@@ -2,11 +2,12 @@
  * Reads a CSV or .xlsx file into rows of plain text, within fixed bounds.
  *
  * Two things need this: supplier price lists loaded on the Rates page, and
- * (later) Excel invoices that arrive by email. Both are files a stranger can
- * shape, so everything here is bounded before it is trusted: the file size,
- * the uncompressed size of an .xlsx (it is a ZIP, and a small ZIP can expand to
- * gigabytes), the number of sheets, rows and columns, and the length of each
- * cell.
+ * Excel invoices that arrive by email. Both are files a stranger can shape,
+ * so everything here is bounded before it is trusted: the file size, the
+ * uncompressed size of an .xlsx (it is a ZIP, and a small ZIP can expand to
+ * gigabytes; the size is measured while inflating, never taken from the
+ * file's own headers), the number of sheets, rows and columns, and the
+ * length of each cell.
  *
  * Every cell comes back as a string. A formula gives the value Excel last
  * saved for it and is never evaluated; a date cell becomes `YYYY-MM-DD`;
@@ -15,6 +16,7 @@
  * Legacy `.xls` files are refused with a reason rather than guessed at: the
  * reader used here (exceljs) cannot read them.
  */
+import { crc32, inflateRawSync } from 'node:zlib';
 import ExcelJS from 'exceljs';
 import { parse } from 'csv-parse/sync';
 
@@ -148,6 +150,136 @@ export function zipDeclaredSize(buffer: Buffer): { bytes: number; entries: numbe
     at += 46 + buffer.readUInt16LE(at + 28) + buffer.readUInt16LE(at + 30) + buffer.readUInt16LE(at + 32);
   }
   return { bytes, entries };
+}
+
+/** Most entries an .xlsx may hold; a real workbook has a few dozen. */
+const MAX_ZIP_ENTRIES = 2_000;
+
+/**
+ * Every entry of a ZIP, inflated here with a hard cap on the bytes that
+ * actually come out, or the reason it is refused.
+ *
+ * The sizes a ZIP states are the file's own claim: an entry that says 100
+ * bytes can hold gigabytes of zeros in a few hundred kilobytes. exceljs
+ * (through JSZip) inflates an entry whole and only then compares it with
+ * the claim, so a small upload or email attachment could exhaust the
+ * process's memory. Here each entry is inflated by zlib with
+ * `maxOutputLength` set to what is left of the limit, which stops inflating
+ * the moment it is passed.
+ */
+export function inflateZipBounded(
+  buffer: Buffer,
+  maxBytes: number
+): { ok: true; entries: Array<{ name: Buffer; utf8: boolean; data: Buffer }> } | { ok: false; code: 'TOO_LARGE' | 'UNREADABLE' } {
+  const EOCD = 0x06054b50;
+  const CENTRAL = 0x02014b50;
+  const LOCAL = 0x04034b50;
+  const searchFrom = Math.max(0, buffer.length - 22 - 0xffff);
+  let eocd = -1;
+  for (let i = buffer.length - 22; i >= searchFrom; i--) {
+    if (buffer.readUInt32LE(i) === EOCD) {
+      eocd = i;
+      break;
+    }
+  }
+  if (eocd < 0) return { ok: false, code: 'UNREADABLE' };
+  const count = buffer.readUInt16LE(eocd + 10);
+  const dirSize = buffer.readUInt32LE(eocd + 12);
+  const dirOffset = buffer.readUInt32LE(eocd + 16);
+  if (count === 0xffff || dirSize === 0xffffffff || dirOffset === 0xffffffff) return { ok: false, code: 'UNREADABLE' };
+  if (count > MAX_ZIP_ENTRIES) return { ok: false, code: 'TOO_LARGE' };
+  if (dirOffset + dirSize > buffer.length) return { ok: false, code: 'UNREADABLE' };
+
+  const entries: Array<{ name: Buffer; utf8: boolean; data: Buffer }> = [];
+  let total = 0;
+  let at = dirOffset;
+  for (let n = 0; n < count; n++) {
+    if (at + 46 > buffer.length || buffer.readUInt32LE(at) !== CENTRAL) return { ok: false, code: 'UNREADABLE' };
+    const flags = buffer.readUInt16LE(at + 8);
+    const method = buffer.readUInt16LE(at + 10);
+    const compressedSize = buffer.readUInt32LE(at + 20);
+    const nameLength = buffer.readUInt16LE(at + 28);
+    const extraLength = buffer.readUInt16LE(at + 30);
+    const commentLength = buffer.readUInt16LE(at + 32);
+    const localOffset = buffer.readUInt32LE(at + 42);
+    const name = buffer.subarray(at + 46, at + 46 + nameLength);
+    at += 46 + nameLength + extraLength + commentLength;
+
+    // Encrypted entries, and compression other than none or deflate, are
+    // nothing Excel writes for a workbook.
+    if (flags & 0x1) return { ok: false, code: 'UNREADABLE' };
+    if (localOffset + 30 > buffer.length || buffer.readUInt32LE(localOffset) !== LOCAL) return { ok: false, code: 'UNREADABLE' };
+    const start = localOffset + 30 + buffer.readUInt16LE(localOffset + 26) + buffer.readUInt16LE(localOffset + 28);
+    if (start + compressedSize > buffer.length) return { ok: false, code: 'UNREADABLE' };
+    const packed = buffer.subarray(start, start + compressedSize);
+
+    let data: Buffer;
+    if (method === 0) {
+      data = packed;
+    } else if (method === 8) {
+      try {
+        data = inflateRawSync(packed, { maxOutputLength: Math.max(1, maxBytes - total) });
+      } catch (error) {
+        const code = (error as { code?: unknown }).code;
+        return { ok: false, code: code === 'ERR_BUFFER_TOO_LARGE' ? 'TOO_LARGE' : 'UNREADABLE' };
+      }
+    } else {
+      return { ok: false, code: 'UNREADABLE' };
+    }
+    total += data.length;
+    if (total > maxBytes) return { ok: false, code: 'TOO_LARGE' };
+    entries.push({ name, utf8: Boolean(flags & 0x800), data });
+  }
+  return { ok: true, entries };
+}
+
+/**
+ * A ZIP of the given entries, stored without compression. What exceljs is
+ * handed after inflateZipBounded: it can only copy these bytes, whose size is
+ * already known, and never inflates anything itself.
+ */
+export function storedZip(entries: ReadonlyArray<{ name: Buffer; utf8: boolean; data: Buffer }>): Buffer {
+  const parts: Buffer[] = [];
+  const directory: Buffer[] = [];
+  let offset = 0;
+  for (const entry of entries) {
+    const crc = crc32(entry.data);
+    const flags = entry.utf8 ? 0x800 : 0;
+    const local = Buffer.alloc(30);
+    local.writeUInt32LE(0x04034b50, 0);
+    local.writeUInt16LE(20, 4);
+    local.writeUInt16LE(flags, 6);
+    local.writeUInt16LE(0, 8);
+    local.writeUInt16LE(0x21, 12);
+    local.writeUInt32LE(crc, 14);
+    local.writeUInt32LE(entry.data.length, 18);
+    local.writeUInt32LE(entry.data.length, 22);
+    local.writeUInt16LE(entry.name.length, 26);
+    parts.push(local, entry.name, entry.data);
+
+    const central = Buffer.alloc(46);
+    central.writeUInt32LE(0x02014b50, 0);
+    central.writeUInt16LE(20, 4);
+    central.writeUInt16LE(20, 6);
+    central.writeUInt16LE(flags, 8);
+    central.writeUInt16LE(0, 10);
+    central.writeUInt16LE(0x21, 14);
+    central.writeUInt32LE(crc, 16);
+    central.writeUInt32LE(entry.data.length, 20);
+    central.writeUInt32LE(entry.data.length, 24);
+    central.writeUInt16LE(entry.name.length, 28);
+    central.writeUInt32LE(offset, 42);
+    directory.push(central, entry.name);
+    offset += 30 + entry.name.length + entry.data.length;
+  }
+  const dir = Buffer.concat(directory);
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0);
+  end.writeUInt16LE(entries.length, 8);
+  end.writeUInt16LE(entries.length, 10);
+  end.writeUInt32LE(dir.length, 12);
+  end.writeUInt32LE(offset, 16);
+  return Buffer.concat([...parts, dir, end]);
 }
 
 function isoDate(value: Date): string {
@@ -285,17 +417,22 @@ function readCsv(buffer: Buffer, limits: SpreadsheetLimits, overflow: 'error' | 
 }
 
 async function readXlsx(buffer: Buffer, limits: SpreadsheetLimits, overflow: 'error' | 'truncate'): Promise<SpreadsheetSheet[]> {
+  const unreadable = () => new SpreadsheetError('UNREADABLE', 'The .xlsx file could not be read. Save it again from Excel and retry.');
+  const tooLarge = () => new SpreadsheetError('TOO_LARGE', 'The workbook is too large to read. Save just the sheet you need and retry.');
+
+  // The sizes the file states, first: an honest large workbook is refused
+  // without inflating anything.
   const declared = zipDeclaredSize(buffer);
-  if (!declared) {
-    throw new SpreadsheetError('UNREADABLE', 'The .xlsx file could not be read. Save it again from Excel and retry.');
-  }
-  if (declared.bytes > limits.maxUncompressedBytes || declared.entries > 2_000) {
-    throw new SpreadsheetError('TOO_LARGE', 'The workbook is too large to read. Save just the sheet you need and retry.');
-  }
+  if (!declared) throw unreadable();
+  if (declared.bytes > limits.maxUncompressedBytes || declared.entries > MAX_ZIP_ENTRIES) throw tooLarge();
+
+  // Then the sizes it really has: a file can state anything.
+  const inflated = inflateZipBounded(buffer, limits.maxUncompressedBytes);
+  if (!inflated.ok) throw inflated.code === 'TOO_LARGE' ? tooLarge() : unreadable();
 
   const workbook = new ExcelJS.Workbook();
   try {
-    await workbook.xlsx.load(buffer as unknown as ArrayBuffer);
+    await workbook.xlsx.load(storedZip(inflated.entries) as unknown as ArrayBuffer);
   } catch (error) {
     throw new SpreadsheetError('UNREADABLE', `The .xlsx file could not be read: ${(error as Error).message}`);
   }
