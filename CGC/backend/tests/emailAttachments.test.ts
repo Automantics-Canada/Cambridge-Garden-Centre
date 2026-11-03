@@ -115,8 +115,30 @@ describe('attachmentReviewReason', () => {
 
   it('a read attachment finishes the email unless a spreadsheet came with it', () => {
     assert.equal(attachmentReviewReason([r({})]), null);
-    assert.equal(attachmentReviewReason([r({}), r({ kind: 'other', action: 'skipped', reason: ATTACHMENT_REASONS.unsupported })]), null);
     assert.equal(attachmentReviewReason([r({}), r({ kind: 'spreadsheet', action: 'review' })]), 'SPREADSHEET');
+  });
+
+  // This used to finish the email: one attachment read, and a second invoice
+  // sent as an iPhone photo, a Word file or a list of loads was only noted
+  // on a PROCESSED event nobody sees. Nothing may be dropped silently (A12),
+  // so the email waits for a person, with what was read listed beside it.
+  it('a read attachment beside one a person must deal with leaves the email partly read', () => {
+    for (const reason of [ATTACHMENT_REASONS.unsupported, ATTACHMENT_REASONS.heic, ATTACHMENT_REASONS.mismatch, ATTACHMENT_REASONS.sheetOfLoads]) {
+      assert.equal(attachmentReviewReason([r({}), r({ kind: 'other', action: 'skipped', reason })]), 'PARTLY_READ', reason);
+    }
+    assert.equal(attachmentReviewReason([r({}), r({ action: 'review', reason: 'anything a person must do' })]), 'PARTLY_READ');
+    // Left out on purpose, not for a person: logos, icons, statements, repeats.
+    assert.equal(attachmentReviewReason([r({}), r({ kind: 'image', action: 'skipped', reason: ATTACHMENT_REASONS.inline })]), null);
+    assert.equal(attachmentReviewReason([r({}), r({ kind: 'image', action: 'skipped', reason: ATTACHMENT_REASONS.tinyImage })]), null);
+    assert.equal(attachmentReviewReason([r({}), r({ action: 'skipped', pages: [{ page: 1, kind: 'statement' }], reason: ATTACHMENT_REASONS.statement })]), null);
+    assert.equal(attachmentReviewReason([r({}), r({ reason: ATTACHMENT_REASONS.duplicate })]), null);
+  });
+
+  it('a statement beside a file nobody can read still waits for a person', () => {
+    assert.equal(attachmentReviewReason([
+      r({ action: 'skipped', pages: [{ page: 1, kind: 'statement' }] }),
+      r({ kind: 'image', action: 'skipped', reason: ATTACHMENT_REASONS.heic }),
+    ]), 'UNSUPPORTED_ATTACHMENTS');
   });
 
   it('a credit memo waits for a person; a statement alone is recorded and done', () => {

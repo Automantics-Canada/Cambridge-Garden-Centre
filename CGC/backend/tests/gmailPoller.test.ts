@@ -1242,6 +1242,24 @@ describe('attachment selection', () => {
     assert.equal(supportingFiles.size, 1);
   });
 
+  it('a second invoice sent as an iPhone photo keeps the email on the review queue, beside the one that was read', async () => {
+    const id = addMessage({ attachments: [
+      { filename: 'invoice-90006.pdf' },
+      { filename: 'invoice-90007.heic', mimeType: 'image/heic', size: 900_000 },
+    ] });
+    await GmailService.pollInvoices(config());
+
+    assert.deepEqual([...invoices.keys()], [`${id}:1`], 'the PDF is still read');
+    const event = events.get(id);
+    assert.equal(event.status, 'NEEDS_REVIEW');
+    assert.equal(event.reviewReason, 'PARTLY_READ');
+    assert.deepEqual(event.createdInvoiceIds, ['inv-1']);
+    assert.equal(event.attachments[1].reason, ATTACHMENT_REASONS.heic);
+    assert.ok(labelsOf(id).includes('cgc-review'));
+    assert.ok(!labelsOf(id).includes('cgc-processed'));
+    assert.equal(status().counts.needsReview, 1);
+  });
+
   it('an inline signature logo is skipped and listed; the PDF is the only invoice', async () => {
     const id = addMessage({ attachments: [
       { filename: 'invoice-90004.pdf' },

@@ -48,6 +48,22 @@ describe('unrecognised senders panel', () => {
     expect(reviewReasonLabel('SOMETHING_NEW')).toBe('Needs a look');
   });
 
+  it('an email read in part is entered by hand, beside what was read', () => {
+    const partly = event({
+      reviewReason: 'PARTLY_READ',
+      attachments: [
+        { name: 'invoice-1.pdf', action: 'read', invoiceId: 'inv-1' },
+        { name: 'invoice-2.heic', action: 'skipped', reason: 'iPhone photo format (HEIC) the reader does not take; send it as JPG or PDF' },
+      ],
+    });
+    expect(splitQueue([partly]).manual).toEqual([partly]);
+    expect(reviewReasonLabel('PARTLY_READ')).toBe('Partly read: enter the rest by hand');
+    expect(sortedAttachments(partly.attachments).map(describeAttachment)).toEqual([
+      'invoice-1.pdf · already an invoice in the list',
+      'invoice-2.heic · iPhone photo format (HEIC) the reader does not take; send it as JPG or PDF',
+    ]);
+  });
+
   it('an email that failed every try is entered by hand, and says why', () => {
     const failed = event({
       reviewReason: 'READ_FAILED',

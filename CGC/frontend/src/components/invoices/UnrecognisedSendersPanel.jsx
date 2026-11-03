@@ -114,7 +114,7 @@ export default function UnrecognisedSendersPanel({ role, suppliers = [], refresh
         <>
           <div className="px-5 pt-4 pb-2 border-t border-line">
             <h3 className="text-[13px] font-semibold text-muted">Enter by hand</h3>
-            <p className="text-[12.5px] text-muted">Known senders whose attachments the app cannot read yet. Ignore each one once it is entered.</p>
+            <p className="text-[12.5px] text-muted">Known senders with something the app could not read. Files already read are marked; enter the rest, then ignore the email here.</p>
           </div>
           <ul className="divide-y divide-line">
             {manual.map((event) => (
