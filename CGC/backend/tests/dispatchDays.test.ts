@@ -102,11 +102,13 @@ describe('board days', () => {
 
   it('lists open pickups and open undated deliveries, searched by number or customer', () => {
     // NOT_OPEN and QUOTE leave out a pickup as well as an undated delivery,
-    // and a finished stop is done whether or not Spruce dated it.
+    // and a delivered stop is done whether or not Spruce dated it. A
+    // cancelled one is not: Spruce may make the order a pickup, or date it
+    // again, and this list is then the only place it shows.
     const open = {
       NOT: [
         { flags: { hasSome: ['NOT_OPEN', 'QUOTE'] } },
-        { delivery: { status: { in: ['DELIVERED', 'CANCELLED'] } } },
+        { delivery: { status: 'DELIVERED' } },
       ],
       OR: [{ isPickup: true }, { deliveryDate: null }],
     };
