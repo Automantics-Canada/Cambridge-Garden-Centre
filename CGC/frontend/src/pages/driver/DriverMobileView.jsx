@@ -287,7 +287,9 @@ export default function DriverMobileView() {
                       </div>
                       {/* A bought-in order is loaded at the supplier first; the
                           PO is what the driver quotes at their counter, and
-                          their ticket is what the driver photographs below. */}
+                          their ticket is what the driver photographs below.
+                          A pit dispatch chose may have no PO yet: then there
+                          is nothing to quote, so no line for it. */}
                       {stop.pickups.length > 0 && (
                         <div className="flex items-start gap-4 text-sm pt-4 border-t border-line">
                           <div className="w-8 h-8 rounded-pill bg-surface flex items-center justify-center shadow-card border border-line flex-shrink-0">
@@ -299,7 +301,7 @@ export default function DriverMobileView() {
                               <div key={`${pickup.name}-${pickup.location}-${pickup.po}`} className="space-y-0.5">
                                 <p className="font-semibold text-ink">{supplierWithYard(pickup.name, pickup.location) || 'Supplier not named'}</p>
                                 {pickup.address && <p className="text-[13px] text-muted leading-relaxed">{pickup.address}</p>}
-                                <p className="text-[13px] text-ink tabular">Quote PO <span className="font-semibold">{pickup.po}</span></p>
+                                {pickup.po && <p className="text-[13px] text-ink tabular">Quote PO <span className="font-semibold">{pickup.po}</span></p>}
                               </div>
                             ))}
                           </div>

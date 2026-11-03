@@ -44,6 +44,11 @@ export function formFromOrder(order) {
       { product: line.product ?? '', quantity: quantityText(line.quantity) },
     ])),
     dispatcherNotes: order.dispatcherNotes ?? '',
+    // Dispatch's own choices: how the order reaches the customer, and where
+    // it is loaded. Empty means "as the reports say" and "no pit chosen".
+    fulfilmentOverride: order.fulfilmentOverride ?? '',
+    pickupSupplierId: order.pickupSupplierId ?? '',
+    pickupLocation: order.pickupLocation ?? '',
   };
 }
 
@@ -76,7 +81,27 @@ export function editRequest(order, form) {
 
   if (!same(form.dispatcherNotes, original.dispatcherNotes)) request.dispatcherNotes = form.dispatcherNotes;
 
+  if (!same(form.fulfilmentOverride, original.fulfilmentOverride)) request.fulfilmentOverride = form.fulfilmentOverride;
+  if (!same(form.pickupSupplierId, original.pickupSupplierId)) request.pickupSupplierId = form.pickupSupplierId;
+  // A yard of no supplier means nothing: clearing the supplier clears it too.
+  const location = form.pickupSupplierId ? form.pickupLocation : '';
+  if (!same(location, original.pickupLocation)) request.pickupLocation = location;
+
   return Object.keys(request).length > 0 ? request : null;
+}
+
+/**
+ * The suppliers to offer as the pit to load at: the active list, plus the
+ * one already chosen if it has since left that list, so the form never shows
+ * a choice it cannot name.
+ */
+export function pitOptions(suppliers, order) {
+  const list = (suppliers ?? []).map(({ id, name }) => ({ value: id, label: name }));
+  const chosen = order?.pickupSupplier;
+  if (chosen?.id && !list.some((option) => option.value === chosen.id)) {
+    list.push({ value: chosen.id, label: chosen.name });
+  }
+  return [{ value: '', label: 'None chosen' }, ...list];
 }
 
 /** The correction on a field, if it has one. `lineId` null for the order's own. */

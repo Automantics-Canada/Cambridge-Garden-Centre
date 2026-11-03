@@ -1,7 +1,15 @@
 import { describe, expect, it } from 'vitest';
 
 import { flagBadges } from './dispatchBoard';
-import { externalStatus, FULFILMENT_LABELS, fulfilmentType, routeLine, undatedText } from './fulfilment';
+import {
+  externalStatus,
+  FULFILMENT_LABELS,
+  FULFILMENT_OPTIONS,
+  fulfilmentSignalText,
+  fulfilmentType,
+  routeLine,
+  undatedText,
+} from './fulfilment';
 import { deliveryStatusView, pastDueWithoutDriver } from './orderList';
 
 /** The spec's acceptance checks, on the Oct 21, 2026 orders as the server describes them. */
@@ -35,7 +43,7 @@ describe('fulfilment display (the manager\'s acceptance checks)', () => {
     expect(externalStatus(o)).toBe('Unilock delivers to site');
     expect(deliveryStatusView(o).label).toBe('Unilock delivers to site');
     expect(undatedText(o)).toBe('Set by Unilock');
-    expect(flagBadges(o).map((badge) => badge.label)).toEqual(['No supplier PO yet', 'Not in Order report']);
+    expect(flagBadges(o).map((badge) => badge.label)).toEqual(['No supplier PO yet', 'Not in Order report: usually a quotation']);
     expect(pastDueWithoutDriver({ ...o, deliveryDate: '2026-10-01' }, '2026-10-22')).toBe(false);
   });
 
@@ -68,16 +76,49 @@ describe('fulfilment display (the manager\'s acceptance checks)', () => {
     expect(deliveryStatusView(order('yard_pickup')).label).toBe('Pickup at yard');
   });
 
-  it('721442 and 721493: a delivery read from its charge alone asks staff to confirm', () => {
-    const o = order('yard_delivery', [], ['CHECK_DELIVERY_OR_PICKUP']);
+  // The client (Oct 2026): a delivery charge makes it a delivery, and one on
+  // no Deliveries report was most likely done already. A statement, not a question.
+  it('721442 and 721493: a charged delivery on no Deliveries report says it was likely delivered', () => {
+    const o = order('yard_delivery', [], ['NOT_ON_DELIVERIES_REPORT']);
     expect(FULFILMENT_LABELS[fulfilmentType(o)]).toBe('Delivery');
-    expect(flagBadges(o).map((badge) => badge.label)).toEqual(['Delivery or pickup? Confirm']);
+    expect(flagBadges(o)).toEqual([
+      { flag: 'NOT_ON_DELIVERIES_REPORT', label: 'Not on a Deliveries report: likely delivered already', tone: 'neutral' },
+    ]);
+  });
+
+  it('notes supplier-delivery wording on what stays CGC work, for staff to confirm', () => {
+    const o = order('yard_delivery', [], ['SUPPLIER_DELIVERY_NOTED']);
+    expect(FULFILMENT_LABELS[fulfilmentType(o)]).toBe('Delivery');
+    expect(flagBadges(o).map((badge) => [badge.label, badge.tone])).toEqual([['Supplier delivery mentioned: confirm', 'warn']]);
+  });
+
+  it('names the pit dispatch chose on the route line', () => {
+    expect(routeLine(order('supplier_haul_delivery', [place('Example Pit', 'North')]))).toBe('Collect at Example Pit North → deliver to site');
   });
 
   it('13. an external order also on the CGC schedule keeps its type and says so', () => {
     const o = order('external_pickup', [place('Permacon')], ['ON_CGC_DELIVERY_SCHEDULE']);
     expect(FULFILMENT_LABELS[fulfilmentType(o)]).toBe('Supplier pickup');
     expect(flagBadges(o).map((badge) => badge.label)).toEqual(['On CGC delivery schedule']);
+  });
+
+  it('says what decided the type: dispatch, the pit dispatch chose, or the report', () => {
+    const signal = (id, text) => ({ fulfilment: { type: 'yard_delivery', places: [], checks: [], signal: { id, text } } });
+    expect(fulfilmentSignalText(signal('STAFF', 'Set by dispatch'))).toBe('Set by dispatch');
+    expect(fulfilmentSignalText(signal('H2', 'Set by dispatch: Example Pit'))).toBe('Set by dispatch: Example Pit');
+    expect(fulfilmentSignalText(signal('P2', 'FOB UNILOCK AYR'))).toBe('From the report: "FOB UNILOCK AYR"');
+    expect(fulfilmentSignalText(order('yard_pickup'))).toBeNull();
+  });
+
+  it('offers the reports\' reading and the five types, by the values the server stores', () => {
+    expect(FULFILMENT_OPTIONS).toEqual([
+      { value: '', label: 'As the reports say' },
+      { value: 'yard_pickup', label: 'Pickup' },
+      { value: 'yard_delivery', label: 'Delivery' },
+      { value: 'supplier_haul_delivery', label: 'Delivery via supplier' },
+      { value: 'external_pickup', label: 'Supplier pickup' },
+      { value: 'supplier_direct_ship', label: 'Direct ship' },
+    ]);
   });
 
   it('falls back to what the import decided for an answer without a type', () => {

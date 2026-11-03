@@ -80,6 +80,18 @@ model OrderDocument {
   delivery        Delivery?
   /// A dispatcher's note for the driver. Ours, not Spruce's: no report writes it.
   dispatcherNotes String?
+  /// How the order reaches the customer when dispatch says otherwise than the
+  /// reports: yard_pickup, yard_delivery, supplier_haul_delivery,
+  /// external_pickup or supplier_direct_ship. Ours, like dispatcherNotes; null
+  /// means "as the reports say". Office screens only, never a driver's.
+  fulfilmentOverride String?
+  /// The pit or supplier dispatch chose to load at, where the order names none
+  /// (a "PitBlk" order with no PO). Office screens only; the driver is told
+  /// its name and address as the place to pick up, and nothing else of it.
+  pickupSupplierId String?   @db.Uuid
+  pickupSupplier   Supplier? @relation("OrderPickupSupplier", fields: [pickupSupplierId], references: [id], onDelete: SetNull)
+  /// Which of that supplier's yards or pits, where it has several: "Ayr".
+  pickupLocation   String?
   /// Fields a dispatcher has corrected. The columns above hold the corrected
   /// value; each override keeps what Spruce says.
   overrides       OrderOverride[]
@@ -89,6 +101,7 @@ model OrderDocument {
   @@index([orderDate])
   @@index([deliveryDate])
   @@index([poNumber])
+  @@index([pickupSupplierId])
 }
 
 model Order {
@@ -346,6 +359,8 @@ model Supplier {
   invoices        Invoice[]
   negotiatedRates NegotiatedRate[]
   orders          Order[]
+  /// Orders dispatch chose this supplier's yard or pit to load at.
+  pickupOrders    OrderDocument[] @relation("OrderPickupSupplier")
   productAliases  SupplierProductAlias[]
   tickets         Ticket[]
 }

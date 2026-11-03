@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { editRequest, formFromOrder, lineUpdateFor, overrideFor, spruceText, updateFor, updateNote } from './orderEditor';
+import { editRequest, formFromOrder, lineUpdateFor, overrideFor, pitOptions, spruceText, updateFor, updateNote } from './orderEditor';
 
 const order = {
   id: 'doc-1',
@@ -45,6 +45,41 @@ describe('the edit form', () => {
     const form = formFromOrder(order);
     form.fields.customerName = '  Pat Example ';
     expect(editRequest(order, form)).toBeNull();
+  });
+});
+
+describe("dispatch's own choices: how the order reaches the customer, and where it is loaded", () => {
+  const pitId = '0b9a3c1e-1111-4222-8333-944455556666';
+
+  it('starts from what is set, "as the reports say" and no pit when nothing is', () => {
+    const form = formFromOrder(order);
+    expect([form.fulfilmentOverride, form.pickupSupplierId, form.pickupLocation]).toEqual(['', '', '']);
+    const set = formFromOrder({ ...order, fulfilmentOverride: 'supplier_haul_delivery', pickupSupplierId: pitId, pickupLocation: 'North' });
+    expect([set.fulfilmentOverride, set.pickupSupplierId, set.pickupLocation]).toEqual(['supplier_haul_delivery', pitId, 'North']);
+  });
+
+  it('sends only what changed, and clears the yard with the supplier', () => {
+    const form = formFromOrder(order);
+    form.fulfilmentOverride = 'external_pickup';
+    form.pickupSupplierId = pitId;
+    form.pickupLocation = 'North';
+    expect(editRequest(order, form)).toEqual({ fulfilmentOverride: 'external_pickup', pickupSupplierId: pitId, pickupLocation: 'North' });
+
+    const chosen = { ...order, pickupSupplierId: pitId, pickupLocation: 'North' };
+    const cleared = formFromOrder(chosen);
+    cleared.pickupSupplierId = '';
+    expect(editRequest(chosen, cleared)).toEqual({ pickupSupplierId: '', pickupLocation: '' });
+
+    const back = formFromOrder({ ...order, fulfilmentOverride: 'yard_pickup' });
+    back.fulfilmentOverride = '';
+    expect(editRequest({ ...order, fulfilmentOverride: 'yard_pickup' }, back)).toEqual({ fulfilmentOverride: '' });
+  });
+
+  it('offers the active suppliers, and keeps the one chosen if it has left the list', () => {
+    const suppliers = [{ id: 's-1', name: 'Example Pit' }];
+    expect(pitOptions(suppliers, order)).toEqual([{ value: '', label: 'None chosen' }, { value: 's-1', label: 'Example Pit' }]);
+    expect(pitOptions(suppliers, { pickupSupplier: { id: 's-2', name: 'Retired Pit' } }).map((option) => option.label))
+      .toEqual(['None chosen', 'Example Pit', 'Retired Pit']);
   });
 });
 

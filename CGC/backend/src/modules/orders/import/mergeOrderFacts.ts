@@ -1,4 +1,5 @@
 import { parseSpruceDate } from '../../../lib/spruceDate.js';
+import { classifyFulfilment, customerCollects, isSupplierDeliveryLine } from '../../dispatch/fulfilment.js';
 import type { ParsedSpruceRow, SpruceReportType } from '../spruce/spruceReportTypes.js';
 import { classifyLine, deliveryTypeOf } from './lineClass.js';
 
@@ -192,15 +193,26 @@ export interface OrderState {
 }
 
 /**
- * Collected from the yard rather than delivered.
+ * Collected from the yard rather than delivered, as far as the order's date,
+ * address and lines say.
  *
- * Only an order with no delivery date can be one. It then counts as a pickup
- * when the address says so, a comment says so, or nothing on it is charged
- * for delivery — an unscheduled order with a delivery charge is a delivery
- * whose date has not been set yet, and must not vanish into the pickup list.
+ * Only an order with no delivery date can be one. Any CGC delivery charge
+ * makes it a delivery: the client confirmed (Oct 2026) that an order with a
+ * delivery charge on its lines is one, whatever its address says, and that
+ * one missing from the Deliveries report was most likely delivered already.
+ * A "{Supplier} Direct Delivery" line is not CGC's charge, so it does not
+ * count. Otherwise it is a pickup when the address says so, a comment says
+ * so, or nothing on it is charged for delivery.
+ *
+ * `derivePickup` has the last word: an FOB order is collected by the
+ * customer at the supplier whatever it is charged.
  */
 export function isPickupOrder(state: OrderState): boolean {
   if (state.deliveryDate) return false;
+  const charged = state.lines.some(line =>
+    classifyLine(line.itemCode, line.description) === 'DELIVERY_CHARGE' && !isSupplierDeliveryLine(line.description)
+  );
+  if (charged) return false;
   if (/pick\s?up/i.test(state.shippingAddress ?? '')) return true;
 
   const saysPickup = state.lines.some(
@@ -242,6 +254,20 @@ export function stateFlags(state: OrderState, isPickup: boolean): OrderFlag[] {
 export const CLOSED_FLAGS: readonly OrderFlag[] = ['NOT_OPEN', 'QUOTE'];
 
 /**
+ * What else the order says about how it reaches the customer, beyond its
+ * state: what fulfilment.ts reads.
+ */
+export interface FulfilmentFacts {
+  orderNotes: string | null;
+  /** The Order report's Delivery column: "SCH" for a scheduled delivery. */
+  deliveryFlag: string | null;
+  /** Every report that has listed the order, this upload's included. */
+  sourceReports: readonly string[];
+  /** The type dispatch set (`OrderDocument.fulfilmentOverride`); null: as the reports say. */
+  override: string | null;
+}
+
+/**
  * What decides an order's derived fields: its state, and its flags as they
  * will stand — those stored, less what the caller has just decided again,
  * plus what it found. An object, so that what else comes to decide a pickup
@@ -257,6 +283,11 @@ export interface DeriveInput {
     /** Of those, the ones it set. */
     fresh?: readonly OrderFlag[];
   };
+  /**
+   * How the order reaches the customer. Both callers pass it; without it the
+   * order's state alone decides, as before there was a fulfilment type.
+   */
+  fulfilment?: FulfilmentFacts;
 }
 
 function standingFlags(flags: DeriveInput['flags']): OrderFlag[] {
@@ -264,17 +295,49 @@ function standingFlags(flags: DeriveInput['flags']): OrderFlag[] {
 }
 
 /**
- * Whether the customer collects the order, for `OrderDocument.isPickup`.
+ * Whether the customer collects the order, for `OrderDocument.isPickup`: at
+ * CGC's yard, or at a supplier. The dispatch board's pools ask for
+ * `isPickup: false` in SQL, so this is what keeps an order off them.
  *
  * The import and a dispatcher's edit both call this, so the two can never
  * disagree. Before it, the import looked only at what the upload had just
  * decided and an edit only at the stored flags: an order closed by an earlier
  * upload went back to being a pickup at the next upload without the Order
  * report, and stayed a delivery when edited.
+ *
+ * A closed order or a quotation is never a pickup. Otherwise the fulfilment
+ * type decides (fulfilment.ts): an FOB order is the customer's to collect at
+ * the supplier (the client: more than 95% of the time) even when it is dated
+ * or charged for delivery, and stays off the pools; any CGC delivery is not a
+ * pickup; and the type dispatch set on the order wins over both.
  */
 export function derivePickup(input: DeriveInput): boolean {
   if (standingFlags(input.flags).some(flag => CLOSED_FLAGS.includes(flag))) return false;
-  return isPickupOrder(input.state);
+  const pickup = isPickupOrder(input.state);
+  if (!input.fulfilment) return pickup;
+
+  const { state, fulfilment } = input;
+  const how = classifyFulfilment({
+    isPickup: pickup,
+    shippingAddress: state.shippingAddress,
+    deliveryInstructions: state.deliveryInstructions,
+    orderNotes: fulfilment.orderNotes,
+    deliveryFlag: fulfilment.deliveryFlag,
+    sourceReports: fulfilment.sourceReports,
+    deliveryDate: state.deliveryDate,
+    override: fulfilment.override,
+    lines: state.lines.map(line => ({
+      itemCode: line.itemCode ?? null,
+      description: line.description ?? null,
+      lineClass: null,
+      poNumber: line.poNumber ?? null,
+      vendorCode: null,
+      vendorLocation: null,
+      supplierName: null,
+      supplierAddress: null,
+    })),
+  });
+  return customerCollects(how.type);
 }
 
 /**

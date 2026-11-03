@@ -79,6 +79,9 @@ async function recomputeDerived(db: Db, documentId: string): Promise<void> {
       sourceReports: true,
       shippingAddress: true,
       deliveryInstructions: true,
+      orderNotes: true,
+      deliveryFlag: true,
+      fulfilmentOverride: true,
       flags: true,
       lines: { select: { spruceItemNumber: true, product: true, poNumber: true } },
       overrides: { select: { field: true, spruceChanged: true } },
@@ -95,9 +98,19 @@ async function recomputeDerived(db: Db, documentId: string): Promise<void> {
     inItemTracking: document.sourceReports.includes('ITEM_TRACKING'),
     inDeliveryReport: document.sourceReports.includes('DELIVERY'),
   };
-  // The same rule the import applies, from the same flags, so an edit never
-  // turns an order the import closed back into a pickup, or the other way.
-  const derive: DeriveInput = { state, flags: { stored: document.flags } };
+  // The same rule the import applies, from the same flags and the same
+  // fulfilment facts, so an edit never turns an order the import closed back
+  // into a pickup, or the other way.
+  const derive: DeriveInput = {
+    state,
+    flags: { stored: document.flags },
+    fulfilment: {
+      orderNotes: document.orderNotes,
+      deliveryFlag: document.deliveryFlag,
+      sourceReports: document.sourceReports,
+      override: document.fulfilmentOverride,
+    },
+  };
   const isPickup = derivePickup(derive);
   const fresh = derivedStateFlags(derive, isPickup);
   if (document.overrides.some(override => override.spruceChanged)) fresh.push(CHANGED);
@@ -201,6 +214,48 @@ async function correct(
   return { field: target.field, lineId: target.lineId, from: target.current, to: target.value };
 }
 
+type FulfilmentColumns = {
+  id: string;
+  fulfilmentOverride: string | null;
+  pickupSupplierId: string | null;
+  pickupLocation: string | null;
+};
+
+/** Writes the dispatcher's fulfilment choices that changed, and says which. */
+async function applyFulfilmentEdits(db: Db, row: FulfilmentColumns, edits: ParsedEdits) {
+  const changes: Array<{ field: string; lineId: null; from: string | null; to: string | null }> = [];
+  const data: Prisma.OrderDocumentUncheckedUpdateInput = {};
+
+  if (edits.fulfilmentOverride !== undefined && edits.fulfilmentOverride !== row.fulfilmentOverride) {
+    data.fulfilmentOverride = edits.fulfilmentOverride;
+    changes.push({ field: 'fulfilmentOverride', lineId: null, from: row.fulfilmentOverride, to: edits.fulfilmentOverride });
+  }
+
+  let location = edits.pickupLocation;
+  if (edits.pickupSupplierId !== undefined && edits.pickupSupplierId !== row.pickupSupplierId) {
+    if (edits.pickupSupplierId !== null) {
+      const supplier = await db.supplier.findUnique({ where: { id: edits.pickupSupplierId }, select: { active: true } });
+      if (!supplier?.active) throw new EditValidationError('That supplier is not on the active list.');
+    } else {
+      // A yard of no supplier means nothing.
+      location = null;
+    }
+    data.pickupSupplierId = edits.pickupSupplierId;
+    changes.push({ field: 'pickupSupplierId', lineId: null, from: row.pickupSupplierId, to: edits.pickupSupplierId });
+  }
+  // Nor can a yard be named on its own: with no supplier chosen, it stays empty.
+  const supplierId = edits.pickupSupplierId !== undefined ? edits.pickupSupplierId : row.pickupSupplierId;
+  if (supplierId === null && location !== undefined) location = null;
+
+  if (location !== undefined && location !== row.pickupLocation) {
+    data.pickupLocation = location;
+    changes.push({ field: 'pickupLocation', lineId: null, from: row.pickupLocation, to: location });
+  }
+
+  if (changes.length > 0) await db.orderDocument.update({ where: { id: row.id }, data });
+  return changes;
+}
+
 export async function applyOrderEdits(documentId: string, edits: ParsedEdits, userId: string) {
   return prisma.$transaction(async (tx) => {
     const document = await tx.orderDocument.findUnique({
@@ -234,6 +289,12 @@ export async function applyOrderEdits(documentId: string, edits: ParsedEdits, us
       await tx.orderDocument.update({ where: { id: documentId }, data: { dispatcherNotes: edits.dispatcherNotes } });
       changes.push({ field: 'dispatcherNotes', lineId: null, from: row.dispatcherNotes, to: edits.dispatcherNotes });
     }
+
+    // How the order reaches the customer, and where it is loaded: dispatch's
+    // own decisions, like the note. No report writes them, so there is no
+    // Spruce value to keep beside them and no override row; the audit log
+    // records each change.
+    changes.push(...await applyFulfilmentEdits(tx, row, edits));
 
     if (changes.length > 0) {
       await recomputeDerived(tx, documentId);
@@ -297,7 +358,9 @@ export async function resetOrderEdit(documentId: string, field: string, lineId: 
  *
  * `awaitingSupplier` names who the order waits on and under which PO, for
  * the "Awaiting supplier" flag; `pickupFrom` where the driver collects the
- * material (empty: CGC's own yard). The screen is office-only.
+ * material (empty: CGC's own yard). `fulfilmentOverride` and the pit
+ * (`pickupSupplier`, `pickupLocation`) are what dispatch set on the order.
+ * The screen is office-only.
  *
  * @param today 'YYYY-MM-DD' in the yard's timezone; for tests.
  */
@@ -318,6 +381,12 @@ export async function getOrderForEditing(idOrNumber: string, today?: string) {
       deliveryType: true,
       deliveryDate: true,
       dispatcherNotes: true,
+      fulfilmentOverride: true,
+      pickupSupplierId: true,
+      pickupLocation: true,
+      pickupSupplier: { select: { id: true, name: true } },
+      // Whether the stop is finished or on a truck, for "Done outside the app".
+      delivery: { select: { status: true } },
       isPickup: true,
       flags: true,
       lines: {
@@ -339,13 +408,13 @@ export async function getOrderForEditing(idOrNumber: string, today?: string) {
   });
   if (!document) throw new OrderEditError(404, 'That order is not in the system.');
 
-  const [suggestion, changed, awaiting, pickup, fulfilment] = await Promise.all([
+  const [suggestion, changed, awaiting, fulfilment] = await Promise.all([
     addressSuggestion(document),
     updatesForDay(prisma, [document.id], today),
     awaitingSupplierByOrder(prisma, [document]),
-    pickupFromByDocument(prisma, [document.id]),
     fulfilmentByDocument(prisma, [document.id]),
   ]);
+  const pickup = await pickupFromByDocument(prisma, [document.id], fulfilment);
   const { updatedFields, updates } = changed.get(document.id) ?? NO_UPDATES;
   return {
     ...document,

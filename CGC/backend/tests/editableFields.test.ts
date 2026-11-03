@@ -56,6 +56,29 @@ describe('what a dispatcher may correct', () => {
     assert.equal('dispatcherNotes' in parseEditRequest({ fields: {} }), false);
     assert.equal(parseEditRequest({ dispatcherNotes: '' }).dispatcherNotes, null, 'emptied, not ignored');
   });
+
+  it('reads how the order reaches the customer and where to load, each only when named', () => {
+    const none = parseEditRequest({ fields: {} });
+    for (const key of ['fulfilmentOverride', 'pickupSupplierId', 'pickupLocation']) assert.equal(key in none, false, key);
+
+    const set = parseEditRequest({
+      fulfilmentOverride: 'supplier_haul_delivery',
+      pickupSupplierId: '0b9a3c1e-1111-4222-8333-944455556666',
+      pickupLocation: '  North  yard ',
+    });
+    assert.equal(set.fulfilmentOverride, 'supplier_haul_delivery');
+    assert.equal(set.pickupSupplierId, '0b9a3c1e-1111-4222-8333-944455556666');
+    assert.equal(set.pickupLocation, 'North yard');
+
+    const cleared = parseEditRequest({ fulfilmentOverride: '', pickupSupplierId: null, pickupLocation: '' });
+    assert.deepEqual([cleared.fulfilmentOverride, cleared.pickupSupplierId, cleared.pickupLocation], [null, null, null]);
+  });
+
+  it('refuses a fulfilment type or supplier id it does not know', () => {
+    for (const body of [{ fulfilmentOverride: 'teleport' }, { fulfilmentOverride: 3 }, { pickupSupplierId: 'Example Pit' }]) {
+      assert.throws(() => parseEditRequest(body), EditValidationError, JSON.stringify(body));
+    }
+  });
 });
 
 describe('comparing Spruce\'s value with a correction', () => {

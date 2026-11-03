@@ -1,12 +1,20 @@
 import React, { useCallback, useEffect, useState } from 'react';
+import { useSelector } from 'react-redux';
 import { RotateCcw, X } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 import api from '../../api/axios';
 import { Badge, Button, Field, Input, ModalOverlay, Select, Textarea } from '../ui';
+import { getCachedSupplierOptions, loadSupplierOptions } from '../../data/routeData';
 import { flagInfo } from '../../lib/spruceImport';
-import { CGC_YARD_ADDRESS, flagLabel } from '../../lib/dispatchBoard';
-import { FULFILMENT_LABELS, fulfilmentCheckBadges, fulfilmentType } from '../../lib/fulfilment';
+import { CGC_YARD_ADDRESS, canMarkDoneOutside, doneOutsideConfirm, flagLabel } from '../../lib/dispatchBoard';
+import {
+  FULFILMENT_LABELS,
+  FULFILMENT_OPTIONS,
+  fulfilmentCheckBadges,
+  fulfilmentSignalText,
+  fulfilmentType,
+} from '../../lib/fulfilment';
 import {
   DELIVERY_TYPE_OPTIONS,
   ORDER_FIELDS,
@@ -14,6 +22,7 @@ import {
   formFromOrder,
   lineUpdateFor,
   overrideFor,
+  pitOptions,
   spruceText,
   updateFor,
   updateNote,
@@ -32,10 +41,13 @@ import {
  * @param readOnly show the order without letting it change, for a past day
  */
 export default function OrderEditor({ orderRef, onClose, onSaved, readOnly = false }) {
+  const userId = useSelector((state) => state.auth?.user?.id);
   const [order, setOrder] = useState(null);
   const [form, setForm] = useState(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
+  // The suppliers dispatch can name as the pit to load at.
+  const [suppliers, setSuppliers] = useState(() => getCachedSupplierOptions(userId) ?? []);
   const locked = saving || readOnly;
 
   const show = useCallback((loaded) => {
@@ -50,6 +62,15 @@ export default function OrderEditor({ orderRef, onClose, onSaved, readOnly = fal
       .catch((err) => { if (!cancelled) setError(err.response?.data?.error || 'This order could not be opened.'); });
     return () => { cancelled = true; };
   }, [orderRef, show]);
+
+  useEffect(() => {
+    if (readOnly || !userId) return undefined;
+    let cancelled = false;
+    loadSupplierOptions(userId)
+      .then((list) => { if (!cancelled) setSuppliers(list); })
+      .catch((err) => console.error('Supplier list failed', err));
+    return () => { cancelled = true; };
+  }, [readOnly, userId]);
 
   const setField = (key, value) => setForm((current) => ({ ...current, fields: { ...current.fields, [key]: value } }));
   const setLine = (id, key, value) =>
@@ -70,6 +91,22 @@ export default function OrderEditor({ orderRef, onClose, onSaved, readOnly = fal
       onClose();
     } catch (err) {
       toast.error(err.response?.data?.error || 'The change could not be saved.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  /** Delivered without the app: the stop is marked delivered, and the order leaves the board. */
+  const markDoneOutside = async () => {
+    if (!window.confirm(doneOutsideConfirm(order))) return;
+    setSaving(true);
+    try {
+      await api.post(`/api/dispatch/orders/${order.id}/done-outside-app`);
+      toast.success(`${order.documentNumber} marked delivered`);
+      onSaved?.(order);
+      onClose();
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'The order could not be marked delivered.');
     } finally {
       setSaving(false);
     }
@@ -122,7 +159,14 @@ export default function OrderEditor({ orderRef, onClose, onSaved, readOnly = fal
 
           {order && form && (
             <>
-              <Fulfilment order={order} />
+              <Fulfilment
+                order={order}
+                form={form}
+                setForm={setForm}
+                suppliers={suppliers}
+                locked={locked}
+                readOnly={readOnly}
+              />
               {ORDER_FIELDS.map(({ key, label, multiline, type }) => {
                 const override = overrideFor(order, key);
                 const id = `order-edit-${key}`;
@@ -221,6 +265,12 @@ export default function OrderEditor({ orderRef, onClose, onSaved, readOnly = fal
             <Button onClick={onClose}>Close</Button>
           ) : (
             <>
+              {/* The customer collects a pickup: there is no delivery to mark done, as on the board. */}
+              {order && !order.isPickup && canMarkDoneOutside({ wholeOrder: true }, order.delivery?.status ?? null) && (
+                <Button className="mr-auto" onClick={markDoneOutside} disabled={!order || saving}>
+                  Done outside the app
+                </Button>
+              )}
               <Button onClick={onClose} disabled={saving}>Cancel</Button>
               <Button variant="primary" onClick={save} disabled={!order || saving}>
                 {saving ? 'Saving…' : 'Save changes'}
@@ -278,12 +328,19 @@ function UpdateNote({ update, field }) {
 
 /**
  * How the goods reach the customer, and where they are collected: the
- * suppliers with the PO to quote, a pit nobody named, or CGC's own yard. Read
- * from the reports, so it is shown, not edited.
+ * suppliers with the PO to quote, a pit nobody named, or CGC's own yard.
+ *
+ * Read from the reports, and dispatch can say otherwise (client answers, Oct
+ * 2026): the type for the rare exception — an FOB order a CGC truck collects
+ * after all, a supplier that delivers itself — and the pit or supplier to
+ * load at when the order names none. Both are kept through the reports being
+ * uploaded again; what is shown below is the result once saved.
  */
-function Fulfilment({ order }) {
+function Fulfilment({ order, form, setForm, suppliers, locked, readOnly }) {
   const type = fulfilmentType(order);
   const places = order?.fulfilment?.places ?? [];
+  const signal = fulfilmentSignalText(order);
+  const set = (key, value) => setForm((current) => ({ ...current, [key]: value }));
   const where = {
     yard_pickup: `The customer collects at the Cambridge Garden Centre yard, ${CGC_YARD_ADDRESS}.`,
     yard_delivery: `Pick up at the Cambridge Garden Centre yard, ${CGC_YARD_ADDRESS}, then deliver to the address below.`,
@@ -307,8 +364,41 @@ function Fulfilment({ order }) {
           {place.po && <p className="text-muted tabular">Supplier PO {place.po}</p>}
         </div>
       ))}
-      {order?.fulfilment?.signal && (
-        <p className="text-[12px] text-muted">From the report: "{order.fulfilment.signal.text}"</p>
+      {signal && <p className="text-[12px] text-muted">{signal}</p>}
+
+      {!readOnly && form && (
+        <div className="grid gap-3 pt-2 border-t border-line sm:grid-cols-2">
+          <Field htmlFor="order-edit-fulfilment" label="How it reaches the customer">
+            <Select
+              id="order-edit-fulfilment"
+              value={form.fulfilmentOverride}
+              onChange={(e) => set('fulfilmentOverride', e.target.value)}
+              disabled={locked}
+            >
+              {FULFILMENT_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+            </Select>
+          </Field>
+          <Field htmlFor="order-edit-pit" label="Pit / supplier to load at" hint="For a CGC delivery the order names no supplier for.">
+            <Select
+              id="order-edit-pit"
+              value={form.pickupSupplierId}
+              onChange={(e) => set('pickupSupplierId', e.target.value)}
+              disabled={locked}
+            >
+              {pitOptions(suppliers, order).map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+            </Select>
+          </Field>
+          {form.pickupSupplierId && (
+            <Field htmlFor="order-edit-pit-location" label="Which yard or pit" hint="Optional: where the supplier has several.">
+              <Input
+                id="order-edit-pit-location"
+                value={form.pickupLocation}
+                onChange={(e) => set('pickupLocation', e.target.value)}
+                disabled={locked}
+              />
+            </Field>
+          )}
+        </div>
       )}
     </div>
   );

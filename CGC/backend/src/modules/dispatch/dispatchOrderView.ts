@@ -1,6 +1,7 @@
 import type { Prisma } from '@prisma/client';
 import { classifyFulfilment, type Fulfilment } from './fulfilment.js';
 
+import { businessDayOf } from '../../lib/businessDay.js';
 import { classifyLine } from '../orders/import/lineClass.js';
 import { updatesForDay } from '../orders/import/orderChanges.js';
 
@@ -81,6 +82,13 @@ export interface DispatchOrderView {
   pickupFrom?: PickupFrom[];
   /** How the goods reach the customer. Set by the office board. */
   fulfilment?: Fulfilment;
+  /**
+   * In today's pool only because it came in today's upload: no date, on no
+   * Deliveries report, a delivery only because a line charges for one. The
+   * client (Oct 2026): such an order was most likely delivered already, so
+   * the board keeps it apart from the day's real work. Set by the office board.
+   */
+  likelyDelivered?: boolean;
   /** The order's id. Assigning and unassigning name it. */
   id: string;
   /** Always true: this row is a whole order, not a single line. */
@@ -257,6 +265,8 @@ export function representativeLineId(document: Pick<DispatchDocument, 'lines'>):
 
 /** Anything a board response holds whole orders in. */
 interface BoardLike {
+  /** The day the board is for, 'YYYY-MM-DD'. */
+  day?: string;
   carriedOver?: unknown[];
   unassignedOrders?: unknown[];
   drivers?: Array<{ deliveries?: Array<{ order?: unknown }> }>;
@@ -400,7 +410,11 @@ export interface PickupFrom {
    * yard is worse than naming the right one without a street.
    */
   address: string | null;
-  po: string;
+  /**
+   * The PO to quote at the counter; null where none was raised, such as a pit
+   * dispatch chose for an order with no PO yet.
+   */
+  po: string | null;
 }
 
 /**
@@ -421,40 +435,58 @@ const PICKUP_LINE_SELECT = {
   poNumber: true,
   vendorCode: true,
   vendorLocation: true,
-  supplier: { select: { name: true, address: true } },
+  supplier: { select: { id: true, name: true, address: true } },
 } as const;
+
+type KnownSupplier = { id: string; name: string; address: string | null };
 
 type PickupLine = {
   poNumber: string | null;
   vendorCode: string | null;
   vendorLocation: string | null;
-  supplier: { name: string; address: string | null } | null;
+  supplier: KnownSupplier | null;
 };
 
 /**
- * Where each order's material is picked up, by order: the suppliers its lines
- * were bought from under a PO. An order with none is picked up at Cambridge
- * Garden Centre's own yard. Read whatever the order's state: the place does
- * not stop mattering once the material has arrived.
+ * Where a driver loads an order, from how it reaches the customer: the places
+ * of a delivery via a supplier or pit, or of a supplier pickup a CGC truck
+ * has anyway, and nothing for the other types (CGC's own yard, or no CGC
+ * truck at all).
+ *
+ * The same places the office sees, so dispatch and the driver never disagree:
+ * an FOB order dispatch sends a CGC truck for goes to the FOB yard, a pit
+ * dispatch chose is named with its address, and a PO on a skid deposit alone
+ * no longer sends a yard delivery to the supplier. A pit nobody named is left
+ * out; the driver is told to ask dispatch instead (`pickupAtPit`).
+ *
+ * A new object with exactly the four keys, never the place itself: this goes
+ * to the driver's phone.
+ */
+export function driverPickupsOf(fulfilment: Fulfilment | undefined | null): PickupFrom[] {
+  // A supplier pickup has no CGC driver as a rule; one that has a stop on a
+  // truck anyway (given out before dispatch set the type, or assigned before
+  // FOB orders counted as the customer's) is the CGC truck collecting there,
+  // so it goes to that supplier, never to CGC's yard where the goods are not.
+  if (fulfilment?.type !== 'supplier_haul_delivery' && fulfilment?.type !== 'external_pickup') return [];
+  return fulfilment.places
+    .filter(place => place.name)
+    .map(({ name, location, address, po }) => ({ name, location, address, po }));
+}
+
+/**
+ * Where each order's material is picked up, by order (see `driverPickupsOf`).
+ * Empty means Cambridge Garden Centre's own yard, or no CGC truck. Read
+ * whatever the order's state: the place does not stop mattering once the
+ * material has arrived.
  */
 export async function pickupFromByDocument(
-  db: Pick<Prisma.TransactionClient, 'order' | 'supplierSpruceVendor'>,
-  documentIds: string[]
+  db: Pick<Prisma.TransactionClient, 'orderDocument' | 'order' | 'supplierSpruceVendor'>,
+  documentIds: string[],
+  fulfilment?: Map<string, Fulfilment>
 ): Promise<Map<string, PickupFrom[]>> {
   const ids = [...new Set(documentIds)];
-  const result = new Map<string, PickupFrom[]>(ids.map(id => [id, []]));
-  if (ids.length === 0) return result;
-
-  const lines = await db.order.findMany({
-    where: { documentId: { in: ids }, poNumber: { not: null } },
-    select: PICKUP_LINE_SELECT,
-    orderBy: [{ lineNumber: 'asc' }, { id: 'asc' }],
-  });
-  const suppliers = await suppliersForVendors(db, lines);
-  for (const id of ids) {
-    result.set(id, pickupPlaces(lines.filter(line => line.documentId === id), suppliers));
-  }
-  return result;
+  const how = fulfilment ?? await fulfilmentByDocument(db, ids);
+  return new Map(ids.map(id => [id, driverPickupsOf(how.get(id))]));
 }
 
 /**
@@ -462,11 +494,13 @@ export async function pickupFromByDocument(
  * back from this: the driver sees who, which yard and which PO to quote.
  */
 export async function pickupFromOf(
-  db: Pick<Prisma.TransactionClient, 'order' | 'supplierSpruceVendor'>,
+  db: Pick<Prisma.TransactionClient, 'orderDocument' | 'order' | 'supplierSpruceVendor'>,
   stop: { documentId: string | null; orderId: string }
 ): Promise<PickupFrom[]> {
   if (stop.documentId) return (await pickupFromByDocument(db, [stop.documentId])).get(stop.documentId) ?? [];
 
+  // A stop made before orders were dispatched whole names one line only:
+  // where that line was bought, as it always was.
   const lines = await db.order.findMany({
     where: { id: stop.orderId, poNumber: { not: null } },
     select: PICKUP_LINE_SELECT,
@@ -489,9 +523,13 @@ export async function fulfilmentByDocument(
   const [documents, lines] = await Promise.all([
     db.orderDocument.findMany({
       where: { id: { in: ids } },
+      // The dispatcher's choices are read here, never through
+      // DISPATCH_DOCUMENT_SELECT: that select also shapes the driver's stop.
       select: {
         id: true, isPickup: true, shippingAddress: true, deliveryInstructions: true,
-        orderNotes: true, deliveryFlag: true, sourceReports: true,
+        orderNotes: true, deliveryFlag: true, sourceReports: true, deliveryDate: true,
+        fulfilmentOverride: true, pickupLocation: true,
+        pickupSupplier: { select: { id: true, name: true, address: true } },
       },
     }),
     db.order.findMany({
@@ -499,16 +537,18 @@ export async function fulfilmentByDocument(
       select: {
         documentId: true, spruceItemNumber: true, product: true, lineClass: true,
         poNumber: true, vendorCode: true, vendorLocation: true,
-        supplier: { select: { name: true, address: true } },
+        supplier: { select: { id: true, name: true, address: true } },
       },
       orderBy: [{ lineNumber: 'asc' }, { id: 'asc' }],
     }),
   ]);
   const suppliers = await suppliersForVendors(db, lines);
 
-  for (const document of documents) {
+  for (const { fulfilmentOverride, pickupSupplier, pickupLocation, ...document } of documents) {
     result.set(document.id, classifyFulfilment({
       ...document,
+      override: fulfilmentOverride,
+      pit: pickupSupplier ? { ...pickupSupplier, location: pickupLocation } : null,
       lines: lines
         .filter(line => line.documentId === document.id)
         .map(line => {
@@ -522,6 +562,7 @@ export async function fulfilmentByDocument(
             vendorLocation: line.vendorLocation,
             supplierName: known?.name ?? null,
             supplierAddress: known?.address ?? null,
+            supplierId: known?.id ?? null,
           };
         }),
     }));
@@ -533,21 +574,21 @@ export async function fulfilmentByDocument(
 async function suppliersForVendors(
   db: Pick<Prisma.TransactionClient, 'supplierSpruceVendor'>,
   lines: PickupLine[]
-): Promise<Map<string, { name: string; address: string | null }>> {
+): Promise<Map<string, KnownSupplier>> {
   const unnamed = [...new Set(
     lines.filter(line => !line.supplier && line.vendorCode).map(line => vendorKey(line.vendorCode!))
   )];
-  const mapped = new Map<string, { name: string; address: string | null }>();
+  const mapped = new Map<string, KnownSupplier>();
   if (unnamed.length === 0) return mapped;
   const mappings = await db.supplierSpruceVendor.findMany({
     where: { code: { in: unnamed }, active: true, supplier: { active: true } },
-    select: { code: true, supplier: { select: { name: true, address: true } } },
+    select: { code: true, supplier: { select: { id: true, name: true, address: true } } },
   });
   for (const mapping of mappings) mapped.set(vendorKey(mapping.code), mapping.supplier);
   return mapped;
 }
 
-function pickupPlaces(lines: PickupLine[], mapped: Map<string, { name: string; address: string | null }>): PickupFrom[] {
+function pickupPlaces(lines: PickupLine[], mapped: Map<string, KnownSupplier>): PickupFrom[] {
   const seen = new Set<string>();
   const result: PickupFrom[] = [];
   for (const line of lines) {
@@ -569,29 +610,84 @@ function pickupPlaces(lines: PickupLine[], mapped: Map<string, { name: string; a
 /**
  * Names the supplier and PO on every whole order a board response holds, or a
  * list of rows. One read for the whole board, like `withUpdatedFields`.
+ *
+ * On today's board it also marks the pool's orders that were most likely
+ * delivered already (`likelyDelivered`), and on every board it drops the
+ * orders the office marked done outside the app.
+ *
+ * @param today 'YYYY-MM-DD' in the yard's timezone, America/Toronto
  */
 export async function withAwaitingSupplier<T extends BoardLike | unknown[]>(
-  db: Pick<Prisma.TransactionClient, 'orderDocument' | 'order' | 'supplierSpruceVendor'>,
-  board: T
+  db: Pick<Prisma.TransactionClient, 'orderDocument' | 'order' | 'supplierSpruceVendor' | 'delivery'>,
+  board: T,
+  today: string = businessDayOf()
 ): Promise<T> {
   const orders = wholeOrdersIn(board);
-  const [awaiting, pickup, fulfilment] = await Promise.all([
+  const ids = orders.map(order => order.id);
+  const [awaiting, fulfilment, done] = await Promise.all([
     awaitingSupplierByOrder(db, orders),
-    pickupFromByDocument(db, orders.map(order => order.id)),
-    fulfilmentByDocument(db, orders.map(order => order.id)),
+    fulfilmentByDocument(db, ids),
+    deliveredIds(db, ids),
   ]);
   for (const order of orders) {
     order.awaitingSupplier = awaiting.get(order.id) ?? [];
-    order.pickupFrom = pickup.get(order.id) ?? [];
     const how = fulfilment.get(order.id);
+    order.pickupFrom = driverPickupsOf(how);
     if (how) order.fulfilment = how;
   }
-  return withoutDirectShips(board);
+  if (!Array.isArray(board) && board.day === today) {
+    for (const order of (board.unassignedOrders ?? []).filter(isWholeOrder)) {
+      order.likelyDelivered = isLikelyDelivered(order);
+    }
+  }
+  return withoutDirectShips(withoutDelivered(board, done));
+}
+
+/**
+ * An undated pool order that no Deliveries report has listed and dispatch
+ * has not taken in hand (no type or pit set). The fulfilment check says the
+ * first part; a pit dispatch named (H2) means someone is arranging it.
+ */
+export function isLikelyDelivered(order: Pick<DispatchOrderView, 'deliveryDate' | 'fulfilment'>): boolean {
+  return !order.deliveryDate &&
+    (order.fulfilment?.checks.includes('NOT_ON_DELIVERIES_REPORT') ?? false) &&
+    order.fulfilment?.signal?.id !== 'H2';
+}
+
+/** The orders among `ids` whose stop is delivered. */
+async function deliveredIds(db: Pick<Prisma.TransactionClient, 'delivery'>, ids: string[]): Promise<Set<string>> {
+  if (ids.length === 0) return new Set();
+  const stops = await db.delivery.findMany({
+    where: { documentId: { in: ids }, status: 'DELIVERED' },
+    select: { documentId: true },
+  });
+  return new Set(stops.map(stop => stop.documentId!));
+}
+
+/**
+ * A delivered order waits for nothing. A driver's delivered stop keeps its
+ * driver and never reaches the pool; one the office marked done outside the
+ * app may have none, and the pool's query, which looks for orders without a
+ * driver, would keep offering it. Drivers' runs are left alone: today's
+ * completed stops belong there.
+ */
+function withoutDelivered<T extends BoardLike | unknown[]>(board: T, done: Set<string>): T {
+  if (done.size === 0) return board;
+  const kept = (rows: unknown[] | undefined) => rows?.filter(row => !(isWholeOrder(row) && done.has(row.id)));
+  if (Array.isArray(board)) {
+    board.splice(0, board.length, ...kept(board)!);
+    return board;
+  }
+  if (board.unassignedOrders) board.unassignedOrders = kept(board.unassignedOrders) as typeof board.unassignedOrders;
+  if (board.carriedOver) board.carriedOver = kept(board.carriedOver) as typeof board.carriedOver;
+  return board;
 }
 
 /**
  * A supplier's own truck delivers a direct ship, so no CGC driver is ever
- * given it: it leaves the board's pools, and stays on the Orders page.
+ * given it: it leaves the board's pools, and stays on the Orders page. Only
+ * dispatch can make an order one now (the type on the order); the reports'
+ * wording alone keeps it CGC work.
  */
 function withoutDirectShips<T extends BoardLike | unknown[]>(board: T): T {
   const kept = (rows: unknown[] | undefined) =>
@@ -618,6 +714,6 @@ export async function withOfficeFields<T extends BoardLike | unknown[]>(
   board: T,
   today?: string
 ): Promise<T> {
-  await Promise.all([withUpdatedFields(db, board, today), withAwaitingSupplier(db, board)]);
+  await Promise.all([withUpdatedFields(db, board, today), withAwaitingSupplier(db, board, today)]);
   return board;
 }

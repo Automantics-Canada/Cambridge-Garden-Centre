@@ -1,5 +1,7 @@
 import type { Prisma } from '@prisma/client';
 
+import { FULFILMENT_TYPES, isFulfilmentType, type FulfilmentType } from '../../dispatch/fulfilment.js';
+
 /**
  * What a dispatcher may correct on an order, and how each value is checked.
  *
@@ -111,13 +113,25 @@ export interface ParsedEdits {
   lines: Array<{ lineId: string; values: Partial<Record<LineField, StoredValue>> }>;
   /** Present when the request set the dispatcher's note, including to nothing. */
   dispatcherNotes?: string | null;
+  /**
+   * Present when the request set how the order reaches the customer; null
+   * for "as the reports say". Ours, like the note: not a Spruce correction.
+   */
+  fulfilmentOverride?: FulfilmentType | null;
+  /** Present when the request set the pit or supplier to load at; null clears it. */
+  pickupSupplierId?: string | null;
+  /** Present when the request set which of that supplier's yards. */
+  pickupLocation?: string | null;
 }
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
 /**
- * Reads an edit request: `{ fields, lines, dispatcherNotes }`.
+ * Reads an edit request: `{ fields, lines, dispatcherNotes, fulfilmentOverride,
+ * pickupSupplierId, pickupLocation }`.
  *
  * Anything not on the lists above is refused by name rather than ignored, so a
  * screen that tries to edit a price learns it cannot instead of believing it
@@ -151,6 +165,24 @@ export function parseEditRequest(body: unknown): ParsedEdits {
 
   if ('dispatcherNotes' in body) {
     parsed.dispatcherNotes = parseEditValue('dispatcherNotes', 'text', body.dispatcherNotes);
+  }
+
+  if ('fulfilmentOverride' in body) {
+    const value = parseEditValue('fulfilmentOverride', 'text', body.fulfilmentOverride);
+    if (value !== null && !isFulfilmentType(value)) {
+      throw new EditValidationError(`fulfilmentOverride must be one of ${FULFILMENT_TYPES.join(', ')}, or empty.`);
+    }
+    parsed.fulfilmentOverride = value;
+  }
+
+  if ('pickupSupplierId' in body) {
+    const value = parseEditValue('pickupSupplierId', 'text', body.pickupSupplierId);
+    if (value !== null && !UUID.test(value)) throw new EditValidationError('pickupSupplierId must be a supplier id.');
+    parsed.pickupSupplierId = value;
+  }
+
+  if ('pickupLocation' in body) {
+    parsed.pickupLocation = parseEditValue('pickupLocation', 'text', body.pickupLocation);
   }
 
   return parsed;

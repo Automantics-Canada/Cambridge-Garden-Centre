@@ -26,12 +26,13 @@ const DELIVERY_TYPE_LABELS = {
 const atYard = (delivery) =>
   Array.isArray(delivery?.pickupFrom) && delivery.pickupFrom.length === 0 && !delivery?.pickupAtPit;
 
+/** No PO where none was raised: a pit dispatch chose for an order with no PO yet. */
 const pickupsOf = (delivery) =>
   (delivery?.pickupFrom ?? []).map(({ name, location, address, po }) => ({
     name: name || null,
     location: location || null,
     address: address || null,
-    po,
+    po: po || null,
   }));
 
 /** Spaces and case tidied, for comparing descriptions. */

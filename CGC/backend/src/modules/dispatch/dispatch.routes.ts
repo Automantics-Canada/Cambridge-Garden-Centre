@@ -8,6 +8,7 @@ import {
   reorderDeliveries,
   resendEmail,
 } from './dispatch.controller.js';
+import { markOrderDoneOutsideApp } from './doneOutsideApp.controller.js';
 import { authMiddleware, requireRole } from '../../middleware/authMiddleware.js';
 
 const router = Router();
@@ -21,5 +22,7 @@ router.post('/assign', assignDriver);
 router.post('/unassign', unassignDriver);
 router.post('/reorder', reorderDeliveries);
 router.post('/resend-email/:deliveryId', resendEmail);
+// The office marks an order delivered that went out without the app.
+router.post('/orders/:documentId/done-outside-app', markOrderDoneOutsideApp);
 
 export default router;

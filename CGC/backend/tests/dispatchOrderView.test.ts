@@ -6,6 +6,8 @@ import {
   DISPATCH_DOCUMENT_SELECT,
   awaitingSupplierByOrder,
   awaitingSupplierOf,
+  driverPickupsOf,
+  isLikelyDelivered,
   representativeLineId,
   toDispatchOrder,
   withAwaitingSupplier,
@@ -169,7 +171,7 @@ describe('who an order is awaiting', () => {
   });
 
   /** Answers like the database would; records what was asked. */
-  function fakeDb(seen: { lineIds?: string[]; codes?: string[] }) {
+  function fakeDb(seen: { lineIds?: string[]; codes?: string[] }, delivered: string[] = []) {
     const lines = [
       { documentId: 'doc-1', poNumber: '9900-100001', vendorCode: 'EXAMPLEV01', supplier: null },
       { documentId: 'doc-1', poNumber: '9900-100001', vendorCode: 'EXAMPLEV01', supplier: null },
@@ -178,6 +180,10 @@ describe('who an order is awaiting', () => {
     ];
     return {
       orderDocument: { findMany: async () => [] },
+      delivery: {
+        findMany: async ({ where }: { where: { documentId: { in: string[] } } }) =>
+          delivered.filter(id => where.documentId.in.includes(id)).map(documentId => ({ documentId })),
+      },
       order: {
         findMany: async ({ where }: { where: { documentId: { in: string[] } } }) => {
           seen.lineIds = where.documentId.in;
@@ -233,11 +239,100 @@ describe('who an order is awaiting', () => {
     assert.equal('awaitingSupplier' in olderStop, false);
   });
 
+  it('drops orders the office marked delivered from the pool and Carried over, never from a run', async () => {
+    const done = { ...toDispatchOrder(document([{}])), id: 'doc-7' };
+    const waiting = { ...toDispatchOrder(document([{}])), id: 'doc-8' };
+    const carried = { ...toDispatchOrder(document([{}])), id: 'doc-9' };
+    const finishedOnRun = { ...toDispatchOrder(document([{}])), id: 'doc-10' };
+    const board = await withAwaitingSupplier(fakeDb({}, ['doc-7', 'doc-9', 'doc-10']), {
+      unassignedOrders: [done, waiting],
+      carriedOver: [carried],
+      drivers: [{ deliveries: [{ order: finishedOnRun }] }],
+    });
+    assert.deepEqual(board.unassignedOrders.map(order => order.id), ['doc-8']);
+    assert.deepEqual(board.carriedOver, []);
+    assert.equal(board.drivers[0]!.deliveries[0]!.order, finishedOnRun);
+
+    const list = await withAwaitingSupplier(fakeDb({}, ['doc-7']), [done, waiting]);
+    assert.deepEqual(list.map(order => order.id), ['doc-8'], 'the undated list too');
+  });
+
   it("is not part of the row itself, so a driver's stop never carries it", () => {
     assert.equal('awaitingSupplier' in toDispatchOrder(document([{}])), false);
     assert.equal('supplier' in DISPATCH_DOCUMENT_SELECT.lines.select, false);
     assert.equal('poNumber' in DISPATCH_DOCUMENT_SELECT.lines.select, false);
     assert.equal('vendorCode' in DISPATCH_DOCUMENT_SELECT.lines.select, false);
     assert.equal('poNumber' in DISPATCH_DOCUMENT_SELECT, false);
+    // Dispatch's own choices are office business too.
+    for (const key of ['fulfilmentOverride', 'pickupSupplierId', 'pickupSupplier', 'pickupLocation', 'orderNotes']) {
+      assert.equal(key in DISPATCH_DOCUMENT_SELECT, false, key);
+    }
+  });
+});
+
+describe('where the driver loads', () => {
+  const haul = (places: Array<{ name: string | null; location: string | null; address: string | null; po: string | null }>) =>
+    ({ type: 'supplier_haul_delivery' as const, places, signal: null, checks: [] });
+
+  it('takes a haul\'s places, with exactly the four keys and no PO where none was raised', () => {
+    const place = { name: 'Example Pit', location: null, address: '1 Pit Rd', po: null, extra: 'never sent' };
+    const pickups = driverPickupsOf(haul([place]));
+    assert.deepEqual(pickups, [{ name: 'Example Pit', location: null, address: '1 Pit Rd', po: null }]);
+    assert.deepEqual(Object.keys(pickups[0]!).sort(), ['address', 'location', 'name', 'po']);
+  });
+
+  it('leaves out a pit nobody named, and sends nobody to a supplier for the other types', () => {
+    assert.deepEqual(driverPickupsOf(haul([{ name: null, location: null, address: null, po: null }])), []);
+    for (const type of ['yard_delivery', 'yard_pickup', 'supplier_direct_ship'] as const) {
+      assert.deepEqual(driverPickupsOf({ type, places: [{ name: 'Example', location: null, address: null, po: '9900-1' }], signal: null, checks: [] }), [], type);
+    }
+    assert.deepEqual(driverPickupsOf(undefined), []);
+  });
+
+  // An FOB order already on a truck (assigned before FOB orders counted as the
+  // customer's, or before dispatch set the type): the CGC truck collects at
+  // the supplier. Sending it to CGC's yard would send it where the goods are not.
+  it('sends a driver who has a supplier pickup to that supplier, never to the yard', () => {
+    const place = { name: 'Example Supply', location: 'North', address: null, po: '9900-1', extra: 'never sent' };
+    const pickups = driverPickupsOf({ type: 'external_pickup', places: [place], signal: null, checks: [] });
+    assert.deepEqual(pickups, [{ name: 'Example Supply', location: 'North', address: null, po: '9900-1' }]);
+  });
+});
+
+describe('likely delivered already', () => {
+  const how = (checks: string[], signal: { id: 'H2' | 'STAFF'; text: string } | null = null) =>
+    ({ type: 'yard_delivery' as const, places: [], signal, checks: checks as never[] });
+
+  it('is an undated order on no Deliveries report that dispatch has not taken in hand', () => {
+    assert.equal(isLikelyDelivered({ deliveryDate: null, fulfilment: how(['NOT_ON_DELIVERIES_REPORT']) }), true);
+    assert.equal(isLikelyDelivered({ deliveryDate: null, fulfilment: how([]) }), false);
+    assert.equal(isLikelyDelivered({ deliveryDate: new Date('2026-10-23'), fulfilment: how(['NOT_ON_DELIVERIES_REPORT']) }), false);
+    assert.equal(isLikelyDelivered({ deliveryDate: null, fulfilment: how(['NOT_ON_DELIVERIES_REPORT'], { id: 'H2', text: 'Set by dispatch: Example Pit' }) }), false);
+    assert.equal(isLikelyDelivered({ deliveryDate: null }), false);
+  });
+
+  it('is marked on today\'s pool only', async () => {
+    const undated = { ...toDispatchOrder(document([{}])), deliveryDate: null };
+    const db = {
+      orderDocument: {
+        findMany: async () => [{
+          id: 'doc-1', isPickup: false, shippingAddress: null, deliveryInstructions: null, orderNotes: null, deliveryFlag: null,
+          sourceReports: ['ITEM_TRACKING'], deliveryDate: null, fulfilmentOverride: null, pickupLocation: null, pickupSupplier: null,
+        }],
+      },
+      order: {
+        findMany: async () => [{
+          documentId: 'doc-1', spruceItemNumber: 'MISCDELE', product: 'Slinger Delivery Standard', lineClass: null,
+          poNumber: null, vendorCode: null, vendorLocation: null, supplier: null,
+        }],
+      },
+      supplierSpruceVendor: { findMany: async () => [] },
+      delivery: { findMany: async () => [] },
+    } as unknown as Parameters<typeof withAwaitingSupplier>[0];
+
+    const today = await withAwaitingSupplier(db, { day: '2026-10-23', unassignedOrders: [{ ...undated }] }, '2026-10-23');
+    assert.equal((today.unassignedOrders[0] as { likelyDelivered?: boolean }).likelyDelivered, true);
+    const other = await withAwaitingSupplier(db, { day: '2026-10-24', unassignedOrders: [{ ...undated }] }, '2026-10-23');
+    assert.equal('likelyDelivered' in (other.unassignedOrders[0] as object), false);
   });
 });

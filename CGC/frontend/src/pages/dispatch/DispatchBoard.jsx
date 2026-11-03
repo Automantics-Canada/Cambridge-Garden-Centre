@@ -11,7 +11,7 @@ import { businessDayOffset, formatDate } from '../../lib/date';
 import { cn } from '../../lib/cn';
 import { isTerminal, statusErrorMessage, statusOptionsFor } from '../../lib/deliveryTransitions';
 import { formatOrderQuantity } from '../../lib/quantity';
-import { assignWarning, awaitingSupplierDetail, awaitingSupplierText, deliveryTypeLabel, flagBadges, mergeUnassignedOrders, orderRef, updatedTitle } from '../../lib/dispatchBoard';
+import { LIKELY_DELIVERED_TITLE, assignWarning, awaitingSupplierDetail, awaitingSupplierText, canMarkDoneOutside, deliveryTypeLabel, doneOutsideConfirm, flagBadges, mergeUnassignedOrders, orderRef, splitLikelyDelivered, updatedTitle } from '../../lib/dispatchBoard';
 import { flagApplies, routeLine } from '../../lib/fulfilment';
 import { flagInfo } from '../../lib/spruceImport';
 import { canCorrectHistory, deliveryDay, formatDeliveryDay, isPastDay, returnsTo, upcomingSummary, uploadedOn } from '../../lib/dispatchDays';
@@ -109,6 +109,24 @@ function EditButton({ order, onEdit, readOnly = false }) {
   );
 }
 
+/**
+ * Marks a whole order delivered outside the app (client answers, Oct 2026):
+ * done in Spruce, or before the app saw its report, so it stops lingering.
+ */
+function DoneOutsideButton({ order, onDone }) {
+  if (!canMarkDoneOutside(order)) return null;
+  return (
+    <button
+      type="button"
+      onClick={(e) => { e.stopPropagation(); onDone(order); }}
+      className="px-2.5 py-1.5 rounded-control border border-line text-muted hover:bg-brand/10 hover:text-ink text-[12.5px] font-bold transition-colors bg-surface"
+      title="Delivered without the app: mark it done so it leaves the board"
+    >
+      Done outside the app
+    </button>
+  );
+}
+
 /** The header row every section of the board shares. */
 function SectionHeader({ dot, title, detail, children }) {
   return (
@@ -136,6 +154,8 @@ export default function DispatchBoard() {
   // The order open in the editor, by id, and whether it opened from a past day.
   const [editingOrderId, setEditingOrderId] = useState(null);
   const [editingReadOnly, setEditingReadOnly] = useState(false);
+  // Today's orders most likely delivered already sit in a group of their own, closed until opened.
+  const [showLikelyDelivered, setShowLikelyDelivered] = useState(false);
 
   const [draggingOrderId, setDraggingOrderId] = useState(null);
   const [draggingFromDriverId, setDraggingFromDriverId] = useState(null);
@@ -618,6 +638,27 @@ export default function DispatchBoard() {
 
   const filteredUnassignedOrders = filterOrders(board.unassignedOrders);
   const filteredCarriedOver = isTodayBoard ? filterOrders(board.carriedOver) : [];
+  // Undated orders on no Deliveries report were most likely delivered on an
+  // earlier day (client, Oct 2026): still on today's board, but not mixed in
+  // with the day's real work.
+  const { work: poolWork, likelyDelivered: poolLikelyDelivered } = isTodayBoard
+    ? splitLikelyDelivered(filteredUnassignedOrders)
+    : { work: filteredUnassignedOrders, likelyDelivered: [] };
+
+  /** Marks an order delivered outside the app, then redraws the board and the undated list. */
+  const markDoneOutside = (order) => {
+    if (!window.confirm(doneOutsideConfirm(order))) return;
+    api.post(`/api/dispatch/orders/${order.id}/done-outside-app`)
+      .then(() => {
+        toast.success(`${order.spruceOrderId} marked delivered`);
+        fetchBoard(true);
+        fetchUndated(undatedSearch.trim());
+      })
+      .catch((err) => {
+        toast.error(err.response?.data?.error || 'The order could not be marked delivered.');
+        fetchBoard(true);
+      });
+  };
 
   /** Hands a waiting order to the driver picked from its Quick Assign menu. */
   const quickAssign = (order, driverId) => {
@@ -706,6 +747,7 @@ export default function DispatchBoard() {
       <td className="px-6 py-4 whitespace-nowrap text-right">
         <div className="flex items-center justify-end gap-2">
           <EditButton order={order} onEdit={openEditor} readOnly={readOnly} />
+          {!readOnly && <DoneOutsideButton order={order} onDone={markDoneOutside} />}
           {!readOnly && (
             <select
               className="border border-line rounded-control px-2 py-1 text-[12.5px] font-bold bg-surface focus:ring-1 focus:ring-brand outline-none cursor-pointer text-muted hover:border-brand/40 transition-all"
@@ -1274,24 +1316,48 @@ export default function DispatchBoard() {
                     ) : (
                       filteredCarriedOver.map(order => waitingRow(order, { carried: true }))
                     )
-                  ) : filteredUnassignedOrders.length === 0 ? (
-                    <tr>
-                      <td colSpan="7" className="px-6 py-12 text-center text-muted select-none">
-                        <EmptyState
-                          icon={Package2}
-                          title={awaitingDateChoice ? 'Pick a date' : `Nothing waiting for ${poolDateLabel}`}
-                          message={
-                            awaitingDateChoice
-                              ? 'Choose a date above to see the orders due out that day.'
-                              : isTodayBoard
-                                ? 'Every order due out today or in today’s upload has a driver, or none match this search.'
-                                : 'Every order due out this day is assigned, or none match this search.'
-                          }
-                        />
-                      </td>
-                    </tr>
                   ) : (
-                    filteredUnassignedOrders.map(order => waitingRow(order))
+                    <>
+                      {poolWork.length === 0 ? (
+                        <tr>
+                          <td colSpan="7" className="px-6 py-12 text-center text-muted select-none">
+                            <EmptyState
+                              icon={Package2}
+                              title={awaitingDateChoice ? 'Pick a date' : `Nothing waiting for ${poolDateLabel}`}
+                              message={
+                                awaitingDateChoice
+                                  ? 'Choose a date above to see the orders due out that day.'
+                                  : isTodayBoard
+                                    ? 'Every order due out today or in today’s upload has a driver, or none match this search.'
+                                    : 'Every order due out this day is assigned, or none match this search.'
+                              }
+                            />
+                          </td>
+                        </tr>
+                      ) : (
+                        poolWork.map(order => waitingRow(order))
+                      )}
+                      {poolLikelyDelivered.length > 0 && (
+                        <tr className="bg-ink/[0.03]">
+                          <td colSpan="7" className="px-6 py-3">
+                            <button
+                              type="button"
+                              aria-expanded={showLikelyDelivered}
+                              onClick={() => setShowLikelyDelivered((open) => !open)}
+                              className="flex items-center gap-2 text-[13px] font-bold text-ink"
+                            >
+                              {showLikelyDelivered ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                              {LIKELY_DELIVERED_TITLE}
+                              <span className="font-semibold text-muted tabular">{poolLikelyDelivered.length}</span>
+                            </button>
+                            <p className="text-[12.5px] text-muted mt-0.5 pl-6">
+                              No date and on no Deliveries report, so most likely done on an earlier day. Mark them done outside the app, or set a date to send one out.
+                            </p>
+                          </td>
+                        </tr>
+                      )}
+                      {showLikelyDelivered && poolLikelyDelivered.map(order => waitingRow(order))}
+                    </>
                   )}
                 </tbody>
               </table>
@@ -1396,7 +1462,10 @@ export default function DispatchBoard() {
                         <OrderFlags order={order} />
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-right">
-                        <EditButton order={order} onEdit={(id) => openEditor(id, false)} />
+                        <div className="flex items-center justify-end gap-2">
+                          <EditButton order={order} onEdit={(id) => openEditor(id, false)} />
+                          {!order.isPickup && <DoneOutsideButton order={order} onDone={markDoneOutside} />}
+                        </div>
                       </td>
                     </tr>
                   ))
