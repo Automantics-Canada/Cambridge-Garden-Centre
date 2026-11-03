@@ -40,15 +40,16 @@
  *   - none of its lines has a supplier PO;
  *   - it has no stop, and no line has a driver, an invoice or a ticket;
  *   - the office has not marked it "Not a quotation".
- * Writing adds QUOTE, drops NOT_OPEN (the two say different things about the
- * same document; the import sets one or the other) and the state flags the
- * import never raises on a quotation (no address, no phone, ...), and sets
- * isPickup false.
+ * Writing adds QUOTE, drops the state flags the import never raises on a
+ * quotation (no address, no phone, ...), and sets isPickup false. NOT_OPEN,
+ * if an earlier upload set it, stays: the import would replace it, but here
+ * it is what the order goes back to if the flag was wrong. Both keep the
+ * document off every dispatch list, so together they show nothing new.
  *
  * Nothing is deleted, and every flag written can be taken back: "Not a
- * quotation" on the order (Orders page, Quotations) takes QUOTE off, works out
- * again whether it is a pickup and which state flags it has, and keeps later
- * uploads from calling it a quotation.
+ * quotation" on the order (Orders page, Quotations) takes QUOTE off, leaves
+ * NOT_OPEN where it was, works out again whether it is a pickup and which
+ * state flags it has, and keeps later uploads from calling it a quotation.
  *
  * DATABASE_URL must be set in the environment: the database is never read
  * from a .env file, so the script cannot pick up one nobody named.
@@ -72,7 +73,8 @@ const USAGE =
 /** How a flag written here is taken back, said wherever the script writes. */
 export const UNDO =
   'To undo one: open the order (Orders page, Quotations) and choose "Not a quotation". ' +
-  'That takes QUOTE off, works out again whether it is a pickup and its flags, and keeps later uploads from flagging it.';
+  'That takes QUOTE off (NOT_OPEN, if it had it before, stays), works out again whether it is a pickup ' +
+  'and its other flags, and keeps later uploads from flagging it.';
 
 export class Refusal extends Error {}
 
@@ -192,15 +194,16 @@ export function isQuoteCandidate(document: StoredDocument): boolean {
 }
 
 /**
- * QUOTE in, NOT_OPEN out, and the flags read off the order's state out too
- * (no address, no phone, ...): the import raises none of them on a quotation,
- * which is going nowhere, so leaving them would show it as needing attention.
- * Every other flag is kept. In the vocabulary's order, as the import stores
- * them, so the next import does not rewrite them.
+ * QUOTE in, and the flags read off the order's state out (no address, no
+ * phone, ...): the import raises none of them on a quotation, which is going
+ * nowhere, so leaving them would show it as needing attention. Every other
+ * flag is kept, NOT_OPEN included, so that "Not a quotation" leaves a closed
+ * order closed rather than putting it back as work. In the vocabulary's
+ * order, as the import stores them, so the next import does not rewrite them.
  */
 export function quoteFlags(flags: readonly string[]): string[] {
   const vocabulary: readonly string[] = ORDER_FLAGS;
-  const dropped: readonly string[] = ['NOT_OPEN', ...STATE_FLAGS];
+  const dropped: readonly string[] = STATE_FLAGS;
   const all = new Set([...flags.filter(flag => !dropped.includes(flag)), 'QUOTE']);
   return [...vocabulary.filter(flag => all.has(flag)), ...flags.filter(flag => !vocabulary.includes(flag))];
 }

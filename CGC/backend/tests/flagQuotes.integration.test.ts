@@ -117,7 +117,7 @@ describe('flagging stored quotations (PostgreSQL)', { skip: !disposableConfirmed
     const plan = await planQuoteFlags(prisma);
 
     assert.deepEqual(plan.flag.map(item => [item.documentNumber, item.orderDate, item.before, item.after]), [
-      ['9900-000001', '2026-09-02', ['NOT_OPEN'], ['QUOTE']],
+      ['9900-000001', '2026-09-02', ['NOT_OPEN'], ['NOT_OPEN', 'QUOTE']],
       ['9900-000002', '2026-09-01', [], ['QUOTE']],
     ]);
     assert.deepEqual(plan.flag[0]!.coverage, [{ dispatchDate: '2026-09-02', from: '2026-09-01', to: '2026-09-02' }]);
@@ -135,7 +135,7 @@ describe('flagging stored quotations (PostgreSQL)', { skip: !disposableConfirmed
     const result = await applyQuoteFlags(prisma, (await planQuoteFlags(prisma, ['9900-000001'])).flag);
 
     assert.deepEqual(result, { written: 1, skipped: [] });
-    assert.deepEqual(await flagsOf('9900-000001'), { flags: ['QUOTE'], isPickup: false });
+    assert.deepEqual(await flagsOf('9900-000001'), { flags: ['NOT_OPEN', 'QUOTE'], isPickup: false });
     assert.deepEqual(await flagsOf('9900-000002'), { flags: [], isPickup: true });
 
     await applyQuoteFlags(prisma, (await planQuoteFlags(prisma)).flag);
@@ -162,22 +162,31 @@ describe('undoing the backfill (PostgreSQL)', { skip: !disposableConfirmed }, ()
     await prisma.$disconnect();
   });
 
-  it('is undone by "Not a quotation", isPickup included, and a second run leaves the document alone', async () => {
+  it('is undone by "Not a quotation": flags and isPickup back as they were, and a second run leaves it alone', async () => {
     await prisma.$executeRawUnsafe(
       'TRUNCATE TABLE "ImportBatch", "User", "OrderDocument", "Order", "Delivery", "Driver", "AuditLog" RESTART IDENTITY CASCADE'
     );
+    // Closed in Spruce by an earlier upload's reading, and never judged.
     await seed('9900-000001', { sourceReports: ['ITEM_TRACKING'], flags: ['NOT_OPEN'] });
-    await upload('2026-09-02', { from: '2026-09-01', to: '2026-09-02' }, ['9900-000001']);
+    await seed('9900-000002', { sourceReports: ['ITEM_TRACKING'] });
+    await upload('2026-09-02', { from: '2026-09-01', to: '2026-09-02' }, ['9900-000001', '9900-000002']);
+    await prisma.orderDocument.update({ where: { documentNumber: '9900-000001' }, data: { isPickup: false } });
     await applyQuoteFlags(prisma, (await planQuoteFlags(prisma)).flag);
-    assert.deepEqual(await flagsOf('9900-000001'), { flags: ['QUOTE'], isPickup: false });
+    assert.deepEqual(await flagsOf('9900-000001'), { flags: ['NOT_OPEN', 'QUOTE'], isPickup: false });
+    assert.deepEqual(await flagsOf('9900-000002'), { flags: ['QUOTE'], isPickup: false });
 
     const { markNotQuotation } = await import('../src/modules/orders/edits/orderEdits.service.js');
-    const { id } = await prisma.orderDocument.findUniqueOrThrow({ where: { documentNumber: '9900-000001' } });
     const userId = (await prisma.user.findFirstOrThrow()).id;
-    await markNotQuotation(id, userId);
+    for (const documentNumber of ['9900-000001', '9900-000002']) {
+      const { id } = await prisma.orderDocument.findUniqueOrThrow({ where: { documentNumber } });
+      await markNotQuotation(id, userId);
+    }
 
+    // The closed one stays closed: off the dispatch lists, as before the
+    // backfill, not back as work with nothing to do.
+    assert.deepEqual(await flagsOf('9900-000001'), { flags: ['NOT_OPEN', 'NOT_A_QUOTE'], isPickup: false });
     // Undated, uncharged: a pickup again, as it was.
-    assert.deepEqual(await flagsOf('9900-000001'), { flags: ['NOT_A_QUOTE'], isPickup: true });
+    assert.deepEqual(await flagsOf('9900-000002'), { flags: ['NOT_A_QUOTE'], isPickup: true });
     assert.deepEqual(await planQuoteFlags(prisma), { flag: [], notJudged: [] });
   });
 });

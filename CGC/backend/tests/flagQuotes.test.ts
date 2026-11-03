@@ -108,13 +108,13 @@ describe('flagQuotes', () => {
     assert.match(UNDO, /"Not a quotation"/);
   });
 
-  it('adds QUOTE in place of NOT_OPEN and keeps every other flag', () => {
-    assert.deepEqual(quoteFlags(['NOT_OPEN']), ['QUOTE']);
-    assert.deepEqual(quoteFlags(['DATE_MISMATCH', 'NOT_OPEN']), ['DATE_MISMATCH', 'QUOTE']);
+  it('adds QUOTE, keeps NOT_OPEN so "Not a quotation" puts the order back as it was, and keeps every other flag', () => {
+    assert.deepEqual(quoteFlags(['NOT_OPEN']), ['NOT_OPEN', 'QUOTE']);
+    assert.deepEqual(quoteFlags(['DATE_MISMATCH', 'NOT_OPEN']), ['DATE_MISMATCH', 'NOT_OPEN', 'QUOTE']);
     assert.deepEqual(quoteFlags([]), ['QUOTE']);
-    assert.deepEqual(quoteFlags(['SPRUCE_VALUE_CHANGED', 'NOT_OPEN']), ['QUOTE', 'SPRUCE_VALUE_CHANGED'], 'in the order the import stores');
+    assert.deepEqual(quoteFlags(['SPRUCE_VALUE_CHANGED', 'NOT_OPEN']), ['NOT_OPEN', 'QUOTE', 'SPRUCE_VALUE_CHANGED'], 'in the order the import stores');
     assert.deepEqual(quoteFlags(['SOMETHING_RETIRED']), ['QUOTE', 'SOMETHING_RETIRED'], 'nothing unknown dropped');
     // The import raises no state flag on a quotation; the backfill agrees.
-    assert.deepEqual(quoteFlags(['NO_ADDRESS', 'NO_PHONE', 'NOT_OPEN', 'READ_DIFFERENTLY']), ['READ_DIFFERENTLY', 'QUOTE']);
+    assert.deepEqual(quoteFlags(['NO_ADDRESS', 'NO_PHONE', 'NOT_OPEN', 'READ_DIFFERENTLY']), ['READ_DIFFERENTLY', 'NOT_OPEN', 'QUOTE']);
   });
 });
