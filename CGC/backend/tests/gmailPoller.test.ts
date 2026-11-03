@@ -1050,6 +1050,21 @@ describe('sorting pages before anything is created (A15)', () => {
     assert.equal(events.get(id).status, 'PROCESSED');
   });
 
+  it('a spreadsheet of loads on its own is not filed as a ticket and waits for a person, saying so', async () => {
+    triageAnswer = () => ['delivery_ticket'];
+    const id = addMessage({ attachments: [{
+      filename: 'loads-oct.xlsx', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', content: await xlsxBytes(),
+    }] });
+    await GmailService.pollInvoices(config());
+
+    assert.equal(invoices.size, 0);
+    assert.equal(tickets.size, 0);
+    const event = events.get(id);
+    assert.equal(event.status, 'NEEDS_REVIEW');
+    assert.equal(event.attachments[0].action, 'skipped');
+    assert.equal(event.attachments[0].reason, ATTACHMENT_REASONS.sheetOfLoads);
+  });
+
   it('a statement is recorded on the email and never becomes an invoice', async () => {
     triageAnswer = () => ['statement', 'statement'];
     const id = addMessage({ attachments: [{ filename: 'statement-oct.pdf', content: await pdfWith(['Statement p1', 'Statement p2']) }] });

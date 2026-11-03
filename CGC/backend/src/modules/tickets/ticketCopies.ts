@@ -22,6 +22,7 @@
 import { TicketSource, type Prisma } from '@prisma/client';
 import { prisma } from '../../db/prisma.js';
 import { numberSearchKey } from './ticket.service.js';
+import { onSamePo } from '../matching/poKey.js';
 
 /**
  * Ticket numbers shorter than this are not trusted to identify a load: "12"
@@ -58,6 +59,32 @@ export interface CopyCandidate {
 export function withinCopyWindow(a: Date | null, b: Date | null): boolean {
   if (!a || !b) return true;
   return Math.abs(a.getTime() - b.getTime()) / 86_400_000 <= COPY_DATE_WINDOW_DAYS;
+}
+
+/**
+ * Which of the tickets carrying this ticket's number are copies of its load.
+ *
+ * Same supplier is the rule. A ticket whose supplier could not be read (a
+ * driver photo where OCR missed the name) is still counted by the engine, so
+ * leaving it unlinked counted the load twice: once on the driver's blank-supplier
+ * copy, once on the supplier's emailed copy. Such a pair is linked when the
+ * PO agrees as well, which a different supplier's ticket that merely shares a
+ * number will not. Where the blank ticket would bridge two different suppliers
+ * nothing is linked: that is not one load.
+ */
+export function sameLoadCopies<T extends Pick<CopyCandidate, 'supplierId' | 'poNumber' | 'ticketDate'>>(
+  ticket: T,
+  others: readonly T[]
+): T[] {
+  const matches = others.filter((other) => {
+    if (!withinCopyWindow(other.ticketDate, ticket.ticketDate)) return false;
+    if (ticket.supplierId && other.supplierId) return ticket.supplierId === other.supplierId;
+    return onSamePo(ticket.poNumber, other.poNumber);
+  });
+  const suppliers = new Set(
+    [ticket, ...matches].map((copy) => copy.supplierId).filter((id): id is string => Boolean(id))
+  );
+  return suppliers.size > 1 ? [] : matches;
 }
 
 /**
@@ -127,19 +154,20 @@ export async function linkTicketCopies(
 
   const key = ticketCopyKey(ticket.ticketNumber);
   let group: CopyCandidate[] = [ticket];
-  if (key && ticket.supplierId) {
+  if (key) {
     // The stored key is "ticket|po" (migration 20260915120000); the ticket
-    // part is what identifies a load. The PO is compared later, as evidence.
+    // part is what identifies a load. The PO is compared later, as evidence,
+    // except where a supplier is blank (sameLoadCopies).
     const others = await db.ticket.findMany({
       where: {
         id: { not: ticket.id },
-        supplierId: ticket.supplierId,
         numberSearchKey: { startsWith: `${key}|` },
+        ...(ticket.supplierId ? { OR: [{ supplierId: ticket.supplierId }, { supplierId: null }] } : {}),
       },
       select: COPY_SELECT,
       take: 20,
     });
-    group = [ticket, ...others.filter((other) => withinCopyWindow(other.ticketDate, ticket.ticketDate))];
+    group = [ticket, ...sameLoadCopies(ticket, others)];
   }
 
   const plan = plannedLinks(group);

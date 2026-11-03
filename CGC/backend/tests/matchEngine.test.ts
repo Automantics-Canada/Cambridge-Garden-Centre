@@ -1435,6 +1435,32 @@ describe('two copies of one load: the driver photo and the supplier emailed tick
     assert.deepEqual(decision.ticketIds, ['driver-copy']);
   });
 
+  test('a driver photo whose PO could not be read still counts, on the PO its supplier copy shows', () => {
+    // Before, the counted driver copy (no PO) fell off this line: coverage read
+    // "no delivery ticket" and copiesAgree claimed the load had been counted.
+    const decision = decide([driverCopy({ poNumber: null }), emailedCopy()]);
+    assert.equal(check(decision, 'ticketCoverage')?.passed, true);
+    assert.equal(check(decision, 'ticketCoverage')?.found, 24.6);
+    assert.deepEqual(decision.ticketIds, ['driver-copy']);
+    const copies = check(decision, 'copiesAgree');
+    assert.equal(copies?.passed, true);
+    assert.match(copies?.detail ?? '', /the driver's copy did not show its PO, so the other copy's was used/);
+    assert.equal(check(decision, 'billerTicketsOnly'), undefined);
+    assert.equal(decision.status, 'MATCHED');
+  });
+
+  test('a quantity the driver photo does not show is taken, with its unit, from the other copy', () => {
+    const decision = decide([driverCopy({ quantity: null, unit: null }), emailedCopy()]);
+    assert.equal(check(decision, 'ticketCoverage')?.found, 24.6);
+    assert.match(check(decision, 'copiesAgree')?.detail ?? '', /did not show its quantity/);
+  });
+
+  test('a value the driver copy does show is never replaced by the supplier copy', () => {
+    const decision = decide([driverCopy({ quantity: 20 }), emailedCopy()], { quantity: 20 });
+    assert.equal(check(decision, 'ticketCoverage')?.found, 20);
+    assert.equal(check(decision, 'copiesAgree')?.passed, false);
+  });
+
   test('the driver copy counts even when the supplier copy happens to be the one pointed at', () => {
     const decision = decide([
       driverCopy({ duplicateOfTicketId: 'emailed-copy' }),

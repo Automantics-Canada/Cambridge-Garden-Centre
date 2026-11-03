@@ -796,7 +796,9 @@ export class GmailService {
           originalName: name,
           // The supplier, never the AP mailbox that forwarded it.
           fromEmail: facts.sender.originalSender!,
-          supplierId: facts.lookup.supplier?.id ?? null,
+          // Unknown here (an allow-listed address with no supplier record): the
+          // ticket service looks the sender up itself.
+          supplierId: facts.lookup.supplier?.id,
           emailSourceKey: ticketKey,
         });
         ticketByKey.set(ticketKey, ticket.id);
@@ -841,8 +843,16 @@ export class GmailService {
 
     const created = invoiceId !== null || ticketIds.length > 0;
     const single = plan.pages.length === 1 ? plan.pages[0]!.kind : null;
+    // A spreadsheet of loads with no invoice beside it was not filed anywhere:
+    // saying "filed with the tickets" would send a person looking for it there.
     const reason = note
-      ?? (single === null ? describePages(plan.pages) : single === 'invoice' ? null : REASON_BY_KIND[single]);
+      ?? (single === null
+        ? describePages(plan.pages)
+        : single === 'invoice'
+          ? null
+          : single === 'delivery_ticket' && record.kind === 'spreadsheet'
+            ? ATTACHMENT_REASONS.sheetOfLoads
+            : REASON_BY_KIND[single]);
     return {
       ...record,
       // A credit memo waits for a person; a statement or a cover letter is

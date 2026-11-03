@@ -177,6 +177,23 @@ describe('two copies of one ticket', { skip: !(confirmed && loopback) }, () => {
     assert.equal(linked, 0, `${driver.id} ${shortA.id} stay unlinked`);
   });
 
+  it("a driver photo whose supplier could not be read is linked by its PO, so the load is not counted twice", async () => {
+    // The engine counts a blank-supplier ticket for the line; left unlinked,
+    // it and the supplier's emailed copy made 49.2 tonnes out of one load.
+    const driver = await ticket('MANUAL', { supplierId: null });
+    const emailed = await ticket('EMAIL');
+    assert.equal((await linkTicketCopies(emailed.id)).primaryId, driver.id);
+
+    const decision = await matchInvoiceLineById(await invoiceLine());
+    assert.equal(check(decision, 'ticketCoverage')?.found, 24.6);
+    assert.deepEqual(decision?.ticketIds, [driver.id]);
+    assert.equal(check(decision, 'billerTicketsOnly'), undefined);
+
+    // Same number, blank supplier, another PO: a different load.
+    const elsewhere = await ticket('MANUAL', { supplierId: null, poNumber: '777777' });
+    assert.equal((await linkTicketCopies(elsewhere.id)).primaryId, null);
+  });
+
   it('copies that disagree are flagged, and the driver copy is what is counted', async () => {
     const driver = await ticket('MANUAL');
     const emailed = await ticket('EMAIL', { quantity: 30 });

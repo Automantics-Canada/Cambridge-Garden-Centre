@@ -193,13 +193,12 @@ export const TicketService = {
     buffer: Buffer;
     originalName: string;
     fromEmail: string;
-    supplierId?: string | null;
+    supplierId?: string | null | undefined;
     emailSourceKey?: string | null;
   }) {
     const { imageUrl, thumbnailUrl } = await saveTicketImage(params.buffer, params.originalName);
 
-    const supplierId =
-      params.supplierId !== undefined ? params.supplierId : await findSupplierIdByEmail(params.fromEmail);
+    const supplierId = params.supplierId ?? (await findSupplierIdByEmail(params.fromEmail));
 
     const ticket = await prisma.ticket.create({
       data: {
@@ -477,8 +476,9 @@ export const TicketService = {
     });
 
     // A corrected ticket number or supplier can make this ticket a copy of
-    // another load, or stop it being one.
-    if ('ticketNumber' in data || 'supplierId' in data || 'ticketDate' in data) {
+    // another load, or stop it being one; so can the PO, where one of the two
+    // copies has no supplier (ticketCopies.sameLoadCopies).
+    if ('ticketNumber' in data || 'supplierId' in data || 'ticketDate' in data || 'poNumber' in data) {
       try {
         const { linkTicketCopies } = await import('./ticketCopies.js');
         const copies = await linkTicketCopies(id);

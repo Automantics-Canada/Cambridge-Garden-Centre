@@ -4,6 +4,7 @@ import { describe, it } from 'node:test';
 import {
   plannedLinks,
   primaryCopy,
+  sameLoadCopies,
   ticketCopyKey,
   withinCopyWindow,
   type CopyCandidate,
@@ -58,5 +59,32 @@ describe('withinCopyWindow', () => {
     assert.equal(withinCopyWindow(null, new Date('2026-01-01')), true);
     assert.equal(withinCopyWindow(new Date('2026-01-01'), new Date('2026-03-01')), true);
     assert.equal(withinCopyWindow(new Date('2025-01-01'), new Date('2026-01-01')), false);
+  });
+});
+
+describe('sameLoadCopies', () => {
+  const driver = copy('d', 'MANUAL', '2026-10-01T08:00:00Z', { supplierId: null });
+  const emailed = copy('e', 'EMAIL', '2026-10-02T08:00:00Z');
+
+  it('same supplier is a copy whatever the PO says (the engine flags a PO that disagrees)', () => {
+    assert.deepEqual(sameLoadCopies(emailed, [copy('x', 'MANUAL', '2026-10-01T08:00:00Z', { poNumber: '777777' })]).map((c) => c.id), ['x']);
+  });
+
+  it("a driver photo whose supplier could not be read is linked when the PO agrees, from either side", () => {
+    // Left apart, the engine counted the load twice: the blank-supplier copy
+    // is still counted for the line.
+    assert.deepEqual(sameLoadCopies(emailed, [driver]).map((c) => c.id), ['d']);
+    assert.deepEqual(sameLoadCopies(driver, [emailed]).map((c) => c.id), ['e']);
+    assert.deepEqual(sameLoadCopies(emailed, [{ ...driver, poNumber: '2608-482913' }]).map((c) => c.id), ['d']);
+  });
+
+  it('but not when the PO differs or is missing, nor across two different suppliers', () => {
+    assert.deepEqual(sameLoadCopies(emailed, [{ ...driver, poNumber: '777777' }]), []);
+    assert.deepEqual(sameLoadCopies(emailed, [{ ...driver, poNumber: null }]), []);
+    assert.deepEqual(sameLoadCopies(driver, [emailed, copy('o', 'EMAIL', '2026-10-02T08:00:00Z', { supplierId: 'sup-2' })]), []);
+  });
+
+  it('a different supplier with the same number is never a copy', () => {
+    assert.deepEqual(sameLoadCopies(emailed, [copy('o', 'MANUAL', '2026-10-01T08:00:00Z', { supplierId: 'sup-2' })]), []);
   });
 });

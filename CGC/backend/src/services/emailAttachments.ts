@@ -63,6 +63,7 @@ export const ATTACHMENT_REASONS = {
   unreadableSheet: 'spreadsheet could not be read',
   supportingFile: 'kept with the invoice from this email as a supporting file',
   ticketFiled: 'delivery ticket: filed with the tickets',
+  sheetOfLoads: 'a list of loads with no invoice beside it: enter by hand',
   statement: 'statement: recorded, not billed',
   creditMemo: 'credit memo: enter it by hand',
   notInvoice: 'not an invoice or a delivery ticket',

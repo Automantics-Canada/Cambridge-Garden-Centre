@@ -183,10 +183,57 @@ export interface DeliveredTicket {
 
 /** One load and every copy of its ticket on file. */
 interface Load {
-  /** The copy that is counted, carrying the claim of whichever copy has one. */
+  /**
+   * The copy that is counted, carrying the claim of whichever copy has one,
+   * and any field it could not show taken from another copy (`filled`).
+   */
   counted: DeliveredTicket;
-  /** Every copy, the counted one included. */
+  /** Every copy as it was read, the counted one included. */
   copies: DeliveredTicket[];
+  /** What the counted copy did not show and another copy supplied, e.g. "PO". */
+  filled: string[];
+}
+
+/**
+ * The counted copy with its gaps filled from the other copies, driver copies
+ * first. A driver's photo whose PO or quantity could not be read is still the
+ * same paper as the supplier's copy that shows it: left blank, the load fell
+ * off its PO, the line read "no delivery ticket", and the copies-agree check
+ * said the load had been counted when it had not. Only blanks are filled; a
+ * value the counted copy does show is never replaced (that is a disagreement,
+ * reported by copyDisagreements).
+ */
+function fillGaps(counted: DeliveredTicket, copies: readonly DeliveredTicket[]): { ticket: DeliveredTicket; filled: string[] } {
+  const ticket = { ...counted };
+  const filled: string[] = [];
+  const donors = copies
+    .filter((copy) => copy.id !== counted.id)
+    .sort((a, b) => Number(a.emailedBySupplier === true) - Number(b.emailedBySupplier === true));
+  for (const donor of donors) {
+    if (!ticket.poNumber && donor.poNumber) {
+      ticket.poNumber = donor.poNumber;
+      filled.push('PO');
+    }
+    if (ticket.quantity === null && donor.quantity !== null) {
+      // A quantity means nothing without its unit, so the two travel together.
+      ticket.quantity = donor.quantity;
+      ticket.unit = donor.unit;
+      filled.push('quantity');
+    }
+    if (!ticket.material && donor.material) {
+      ticket.material = donor.material;
+      filled.push('material');
+    }
+    if (!ticket.supplierId && donor.supplierId) {
+      ticket.supplierId = donor.supplierId;
+      filled.push('supplier');
+    }
+    if (!ticket.ticketDate && donor.ticketDate) {
+      ticket.ticketDate = donor.ticketDate;
+      filled.push('date');
+    }
+  }
+  return { ticket, filled };
 }
 
 /**
@@ -213,7 +260,8 @@ export function groupLoads(tickets: ReadonlyArray<DeliveredTicket>, lineId: stri
       copies[0]!;
     const claims = copies.map((copy) => copy.claim).filter((claim): claim is TicketClaimRef => claim != null);
     const claim = claims.find((entry) => entry.invoiceLineId !== lineId) ?? claims[0] ?? null;
-    return { counted: { ...counted, claim }, copies };
+    const { ticket, filled } = fillGaps(counted, copies);
+    return { counted: { ...ticket, claim }, copies, filled };
   });
 }
 
@@ -231,7 +279,8 @@ function isoDay(date: Date | null | undefined): string | null {
  * a phrase for a person.
  */
 export function copyDisagreements(load: Load, tolerancePct: number): string[] {
-  const base = load.counted;
+  // Compared as read: a field the counted copy borrowed is not a second opinion.
+  const base = load.copies.find((copy) => copy.id === load.counted.id) ?? load.counted;
   const found: string[] = [];
   for (const other of load.copies) {
     if (other.id === base.id) continue;
@@ -1135,15 +1184,21 @@ export function matchInvoiceLine(
       .map((load) => ({ load, found: copyDisagreements(load, inputs.tolerances.quantityTolerancePct) }))
       .filter((entry) => entry.found.length > 0);
     const name = (load: Load) => load.counted.ticketNumber ?? load.counted.id.slice(0, 6);
+    // Said out loud, so a person can see which reading came from the supplier.
+    const borrowed = loadsHere
+      .filter((load) => load.filled.length > 0)
+      .map((load) => `. Ticket ${name(load)}: ${copyName(load.copies.find((copy) => copy.id === load.counted.id) ?? load.counted)} did not show its ${load.filled.join(', ')}, so the other copy's was used`)
+      .join('');
     checks.push({
       name: 'copiesAgree',
       passed: disagreeing.length === 0,
       detail:
         disagreeing.length === 0
-          ? `${loadsHere.length === 1 ? `Ticket ${name(loadsHere[0]!)} arrived` : `${loadsHere.length} tickets arrived`} twice (the driver's copy and the supplier's); the copies agree and each load was counted once`
+          ? `${loadsHere.length === 1 ? `Ticket ${name(loadsHere[0]!)} arrived` : `${loadsHere.length} tickets arrived`} twice (the driver's copy and the supplier's); the copies agree and each load was counted once` +
+            borrowed
           : disagreeing
               .map(({ load, found }) => `Ticket ${name(load)}: the copies disagree (${found.join('; ')}). ${copyName(load.counted).replace(/^the/, 'The')} was counted`)
-              .join('. '),
+              .join('. ') + borrowed,
       found: disagreeing.length,
     });
   }
