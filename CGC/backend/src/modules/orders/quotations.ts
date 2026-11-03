@@ -10,6 +10,15 @@ import type { PrismaClient } from '@prisma/client';
 /** The flag the import sets on a quotation. */
 export const QUOTE_FLAG = 'QUOTE';
 
+/**
+ * The office's "Not a quotation": the import took a real order for one, and
+ * no later upload may again. See `markNotQuotation`.
+ */
+export const NOT_A_QUOTE_FLAG = 'NOT_A_QUOTE';
+
+/** What a refusal adds, so the person refused knows the way out. */
+export const NOT_A_QUOTATION_HINT = 'If it is a real order, mark it "Not a quotation" on the order first.';
+
 type LineReader = Pick<PrismaClient, 'order'>;
 
 /**
@@ -27,7 +36,9 @@ export async function refuseQuotationLine(db: LineReader, orderId: string, what:
   const document = line?.document;
   if (document?.flags.includes(QUOTE_FLAG)) {
     throw Object.assign(
-      new Error(`${document.documentNumber} is a quotation in Spruce, not an order, so ${what} cannot be linked to it.`),
+      new Error(
+        `${document.documentNumber} is a quotation in Spruce, not an order, so ${what} cannot be linked to it. ${NOT_A_QUOTATION_HINT}`
+      ),
       { status: 409 }
     );
   }

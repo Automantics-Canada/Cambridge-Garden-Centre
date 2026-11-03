@@ -154,11 +154,15 @@ export function upcomingWithoutDriverWhere(today: string): Prisma.OrderDocumentW
  *
  * An order Spruce no longer lists as open, pickup or not, has been invoiced,
  * closed or voided, or was only ever a quotation; it is waiting for nothing,
- * so it is left out. So is one whose stop is finished: delivered or
- * cancelled is done, with or without a date from Spruce.
+ * so it is left out. So is one whose stop was delivered (or marked done
+ * outside the app): it is done, with or without a date from Spruce.
+ *
+ * A cancelled stop is not the order's end. The customer may now collect it
+ * (Spruce makes it a pickup) or it waits for a new date, and no pool lists a
+ * pickup or a finished stop, so this list is the only screen left to show it.
  */
 const UNDATED: Prisma.OrderDocumentWhereInput = {
-  NOT: [CLOSED_IN_SPRUCE, { delivery: { status: { in: FINISHED_STATUSES } } }],
+  NOT: [CLOSED_IN_SPRUCE, { delivery: { status: 'DELIVERED' } }],
   OR: [{ isPickup: true }, { deliveryDate: null }],
 };
 

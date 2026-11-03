@@ -1,6 +1,17 @@
 import { describe, expect, it } from 'vitest';
 
-import { editRequest, formFromOrder, lineUpdateFor, overrideFor, pitOptions, spruceText, updateFor, updateNote } from './orderEditor';
+import {
+  canMarkNotQuotation,
+  editRequest,
+  formFromOrder,
+  lineUpdateFor,
+  notQuotationConfirm,
+  overrideFor,
+  pitOptions,
+  spruceText,
+  updateFor,
+  updateNote,
+} from './orderEditor';
 
 const order = {
   id: 'doc-1',
@@ -132,5 +143,20 @@ describe("what today's upload changed", () => {
     expect(updateFor(updated, 'quantity')).toBeNull();
     expect(updateNote(null, 'phone')).toBeNull();
     expect(updateFor(order, 'shippingAddress')).toBeNull();
+  });
+});
+
+describe('"Not a quotation"', () => {
+  it('is offered only on an order flagged a quotation, and not on a past day', () => {
+    expect(canMarkNotQuotation({ flags: ['QUOTE'] })).toBe(true);
+    expect(canMarkNotQuotation({ flags: ['QUOTE'] }, true)).toBe(false);
+    expect(canMarkNotQuotation({ flags: ['NOT_OPEN', 'NOT_A_QUOTE'] })).toBe(false);
+    expect(canMarkNotQuotation({})).toBe(false);
+  });
+
+  it('asks before it, naming the order and what happens', () => {
+    const question = notQuotationConfirm({ documentNumber: '9900-000101' });
+    expect(question).toMatch(/^Mark 9900-000101 as a real order, not a quotation\?/);
+    expect(question).toMatch(/will not call it a quotation again/);
   });
 });

@@ -145,3 +145,16 @@ export function updateNote(update, field) {
   if (update.field === 'lineRemoved') return "Not in today's upload: Spruce took this item off the order.";
   return `Updated by today's upload (was ${wasText(update, field)}).`;
 }
+
+/**
+ * Whether the order editor offers "Not a quotation": only on an order the
+ * import flagged a quotation, and never on a past day's read-only view.
+ */
+export const canMarkNotQuotation = (order, readOnly = false) =>
+  !readOnly && (order?.flags ?? []).includes('QUOTE');
+
+/** The question asked before saying an order is not a quotation. */
+export const notQuotationConfirm = (order) =>
+  `Mark ${order?.documentNumber ?? 'this order'} as a real order, not a quotation? ` +
+  'It goes back on the board and its lists, and later uploads will not call it a quotation again. ' +
+  'If it was already delivered, use "Done outside the app" too.';

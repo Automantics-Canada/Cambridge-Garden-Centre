@@ -346,6 +346,26 @@ describe('the board across days (PostgreSQL)', { skip: !disposableConfirmed }, (
     assert.deepEqual(numbers(await DispatchService.getUndatedOrders()), ['9900-000006']);
   });
 
+  it('keeps an undated order or pickup whose stop was cancelled on the undated list; only a delivered one leaves it', async () => {
+    const driver = await seedDriver('Driver');
+    // Cancelled on the board (customer not ready), then Spruce made it a
+    // customer pickup: no pool takes a pickup, so this list is its only place.
+    const nowPickup = await seedOrder('9900-000001', '2026-08-14', { customerName: 'Pat Cancelled' });
+    // Cancelled, and waiting for Spruce to give it a new date.
+    const awaitingDate = await seedOrder('9900-000002', '2026-08-14');
+    // Delivered, or done outside the app: finished.
+    const delivered = await seedOrder('9900-000003', '2026-08-14');
+    for (const [document, status] of [[nowPickup, 'CANCELLED'], [awaitingDate, 'CANCELLED'], [delivered, 'DELIVERED']] as const) {
+      await finish(document.id, driver.id, status, new Date('2026-08-14T16:00:00Z'));
+    }
+    await prisma.orderDocument.update({ where: { id: nowPickup.id }, data: { deliveryDate: null, isPickup: true } });
+    await prisma.orderDocument.update({ where: { id: awaitingDate.id }, data: { deliveryDate: null } });
+    await prisma.orderDocument.update({ where: { id: delivered.id }, data: { deliveryDate: null } });
+
+    assert.deepEqual(numbers(await DispatchService.getUndatedOrders()), ['9900-000002', '9900-000001']);
+    assert.deepEqual(numbers(await DispatchService.getUndatedOrders('Pat Cancelled')), ['9900-000001']);
+  });
+
   it('refuses to change a finished past order, and keeps an unfinished one assignable', async () => {
     const driver = await seedDriver('Driver');
     const other = await seedDriver('Other');

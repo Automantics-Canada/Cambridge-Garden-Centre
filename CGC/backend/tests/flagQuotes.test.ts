@@ -3,8 +3,11 @@ import { describe, it } from 'node:test';
 
 import {
   Refusal,
+  UNDO,
   assertMayWrite,
+  describeCoverage,
   describeTarget,
+  enteredInCoverage,
   isQuoteCandidate,
   parseOptions,
   quoteFlags,
@@ -48,12 +51,15 @@ describe('flagQuotes', () => {
     assert.throws(() => parseOptions(['--documents=']), Refusal);
   });
 
-  it('writes to a loopback database, or to another only when the host is named exactly', () => {
-    assert.doesNotThrow(() => assertMayWrite('127.0.0.1', null));
-    assert.doesNotThrow(() => assertMayWrite('localhost', null));
-    assert.throws(() => assertMayWrite('db.example.test', null), Refusal);
-    assert.throws(() => assertMayWrite('db.example.test', 'other.example.test'), Refusal);
-    assert.doesNotThrow(() => assertMayWrite('db.example.test', 'db.example.test'));
+  it('writes to a loopback database, or to another only when the host and the documents are named', () => {
+    assert.doesNotThrow(() => assertMayWrite('127.0.0.1', null, null));
+    assert.doesNotThrow(() => assertMayWrite('localhost', null, null));
+    assert.throws(() => assertMayWrite('db.example.test', null, ['9900-000001']), Refusal);
+    assert.throws(() => assertMayWrite('db.example.test', 'other.example.test', ['9900-000001']), Refusal);
+    // The host named, but not the documents: the dry run is for review, not
+    // for applying wholesale.
+    assert.throws(() => assertMayWrite('db.example.test', 'db.example.test', null), /--documents/);
+    assert.doesNotThrow(() => assertMayWrite('db.example.test', 'db.example.test', ['9900-000001']));
   });
 
   it('refuses a missing or non-PostgreSQL DATABASE_URL, and never echoes the password', () => {
@@ -80,13 +86,35 @@ describe('flagQuotes', () => {
     assert.equal(isQuoteCandidate(document({ lines: [{ ...line, _count: { ...quiet, tickets: 1 } }] })), false);
   });
 
-  it('adds QUOTE in place of NOT_OPEN and keeps every other flag', () => {
-    assert.deepEqual(quoteFlags(['NOT_OPEN']), ['QUOTE']);
-    assert.deepEqual(quoteFlags(['DATE_MISMATCH', 'NOT_OPEN']), ['DATE_MISMATCH', 'QUOTE']);
+  it('never takes an order the office marked "Not a quotation"', () => {
+    assert.equal(isQuoteCandidate(document({ flags: ['NOT_OPEN', 'NOT_A_QUOTE'] })), false);
+  });
+
+  it('judges only a document entered inside an Order Report range it was uploaded with, as the import does', () => {
+    const coverage = [{ dispatchDate: '2026-09-02', from: '2026-09-01', to: '2026-09-02' }];
+    assert.equal(enteredInCoverage(new Date('2026-09-01T00:00:00Z'), coverage), true);
+    assert.equal(enteredInCoverage(new Date('2026-09-02T00:00:00Z'), coverage), true);
+    assert.equal(enteredInCoverage(new Date('2026-08-31T00:00:00Z'), coverage), false, 'entered before: an open order looks the same');
+    assert.equal(enteredInCoverage(new Date('2026-09-01T00:00:00Z'), []), false, 'no Order Report uploaded with it');
+    assert.equal(enteredInCoverage(null, coverage), false, 'no entry date: nothing to judge');
+  });
+
+  it('says which Order Report ranges a document was uploaded with, and how to undo', () => {
+    assert.equal(describeCoverage([]), 'none uploaded with it');
+    assert.equal(
+      describeCoverage([{ dispatchDate: '2026-09-02', from: '2026-09-01', to: '2026-09-02' }]),
+      '2026-09-01 to 2026-09-02 (upload for 2026-09-02)'
+    );
+    assert.match(UNDO, /"Not a quotation"/);
+  });
+
+  it('adds QUOTE, keeps NOT_OPEN so "Not a quotation" puts the order back as it was, and keeps every other flag', () => {
+    assert.deepEqual(quoteFlags(['NOT_OPEN']), ['NOT_OPEN', 'QUOTE']);
+    assert.deepEqual(quoteFlags(['DATE_MISMATCH', 'NOT_OPEN']), ['DATE_MISMATCH', 'NOT_OPEN', 'QUOTE']);
     assert.deepEqual(quoteFlags([]), ['QUOTE']);
-    assert.deepEqual(quoteFlags(['SPRUCE_VALUE_CHANGED', 'NOT_OPEN']), ['QUOTE', 'SPRUCE_VALUE_CHANGED'], 'in the order the import stores');
+    assert.deepEqual(quoteFlags(['SPRUCE_VALUE_CHANGED', 'NOT_OPEN']), ['NOT_OPEN', 'QUOTE', 'SPRUCE_VALUE_CHANGED'], 'in the order the import stores');
     assert.deepEqual(quoteFlags(['SOMETHING_RETIRED']), ['QUOTE', 'SOMETHING_RETIRED'], 'nothing unknown dropped');
     // The import raises no state flag on a quotation; the backfill agrees.
-    assert.deepEqual(quoteFlags(['NO_ADDRESS', 'NO_PHONE', 'NOT_OPEN', 'READ_DIFFERENTLY']), ['READ_DIFFERENTLY', 'QUOTE']);
+    assert.deepEqual(quoteFlags(['NO_ADDRESS', 'NO_PHONE', 'NOT_OPEN', 'READ_DIFFERENTLY']), ['READ_DIFFERENTLY', 'NOT_OPEN', 'QUOTE']);
   });
 });

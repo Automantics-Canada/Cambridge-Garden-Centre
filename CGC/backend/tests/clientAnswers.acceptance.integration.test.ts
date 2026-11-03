@@ -1011,6 +1011,33 @@ describe('client answers of Oct 2026: one day at the yard (PostgreSQL)', { skip:
       const quotes = (await api('GET', '/api/orders/documents?quotes=only&limit=100')).body.data as BoardRow[];
       assert.deepEqual(quotes.map(row => row.spruceOrderId).sort(), [D.quote, D.quoteTomorrow]);
     });
+
+    it('A3: the office can say one is a real order after all: it comes back to the lists and can be linked', async () => {
+      // An order entered and closed between two uploads looks like a
+      // quotation to the import. Only the office knows, so only the office says.
+      const id = await idOf(D.quoteTomorrow);
+      const route = `/api/orders/documents/${id}/not-a-quotation`;
+      assert.equal((await api('POST', route, undefined, 'DRIVER_1')).status, 403);
+      assert.ok((await prisma.orderDocument.findUniqueOrThrow({ where: { id } })).flags.includes('QUOTE'));
+
+      const marked = await api('POST', route);
+      assert.equal(marked.status, 200, JSON.stringify(marked.body));
+      assert.equal(marked.body.changed, true);
+      assert.ok(!marked.body.order.flags.includes('QUOTE'));
+      assert.ok(marked.body.order.flags.includes('NOT_A_QUOTE'));
+      const audit = await prisma.auditLog.findFirst({ where: { entityId: id, actionType: 'ORDER_EDITED' } });
+      assert.equal((audit?.details as { action?: string } | null)?.action, 'NOT_A_QUOTATION');
+
+      const quotes = (await api('GET', '/api/orders/documents?quotes=only&limit=100')).body.data as BoardRow[];
+      assert.deepEqual(quotes.map(row => row.spruceOrderId), [D.quote]);
+      const normal = (await api('GET', '/api/orders/documents?limit=100')).body.data as BoardRow[];
+      assert.ok(normal.some(row => row.spruceOrderId === D.quoteTomorrow));
+      // The link pickers offer its lines again.
+      const picker = await api('GET', `/api/orders?search=${D.quoteTomorrow}`);
+      assert.ok(picker.body.data.length > 0);
+      // The import's tests show a later upload keeps the office's word
+      // (tests/notQuotation.integration.test.ts).
+    });
   });
 
   // ---------------------------------------------------------------- A4

@@ -31,6 +31,8 @@ export const ORDER_FLAG_INFO = {
   CUSTOMER_ON_SITE: { label: 'Customer on site', tone: 'neutral' },
   NOT_OPEN: { label: 'No longer open', tone: 'neutral' },
   QUOTE: { label: 'Quotation', tone: 'neutral' },
+  // The office said the import was wrong to take it for a quotation.
+  NOT_A_QUOTE: { label: 'Not a quotation (office)', tone: 'neutral' },
   SPRUCE_VALUE_CHANGED: { label: 'Spruce changed an edit', tone: 'warn' },
 };
 

@@ -119,9 +119,15 @@ export function flagLabel(order, flag) {
   return flag === 'AWAITING_SUPPLIER' ? awaitingSupplierText(order) : flagInfo(flag).label;
 }
 
+/**
+ * Flags that record a decision rather than ask for one: the order's editor
+ * shows them, the board and lists do not.
+ */
+const RECORD_FLAGS = ['NOT_A_QUOTE'];
+
 /** Badges for an order's flags, the ones needing attention first. */
 export function flagBadges(order) {
-  const flags = (order?.flags ?? []).filter((flag) => flagApplies(order, flag));
+  const flags = (order?.flags ?? []).filter((flag) => flagApplies(order, flag) && !RECORD_FLAGS.includes(flag));
   const first = flags.filter((flag) => ASSIGN_WARNING_FLAGS.includes(flag));
   const rest = flags.filter((flag) => !ASSIGN_WARNING_FLAGS.includes(flag));
   return [

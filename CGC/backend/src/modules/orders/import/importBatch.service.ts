@@ -6,6 +6,7 @@ import { OrderPdfImportService, type ImportSummary } from '../orderPdfImport.ser
 import type { ParsedSpruceReport, ParsedSpruceRow, SpruceReportType } from '../spruce/spruceReportTypes.js';
 import { deliveryTypeOf } from './lineClass.js';
 import { reassertOverrides } from '../edits/orderEdits.service.js';
+import { NOT_A_QUOTE_FLAG, QUOTE_FLAG } from '../quotations.js';
 import { diffOrder, isOverridden, snapshotOrders, type ChangeRow, type OrderSnapshot } from './orderChanges.js';
 import {
   batchFlags,
@@ -352,12 +353,20 @@ function mentionedUnread(files: BatchFile[]): Set<string> {
  * stored extraction, the writes, the merge, the change log, the summary and a
  * replay's summary — sees the same rows. The file hashes are of the bytes, so
  * replay detection is unchanged.
+ *
+ * `alsoInScope` are documents kept whatever their entry date: stored
+ * quotations Item Tracking now shows a supplier PO on (see
+ * `quotationsWithPo`).
  */
-export function trackingRowsInScope(files: BatchFile[]): { files: BatchFile[]; scope: ItemTrackingScope | null } {
+export function trackingRowsInScope(
+  files: BatchFile[],
+  alsoInScope: ReadonlySet<string> = new Set()
+): { files: BatchFile[]; scope: ItemTrackingScope | null } {
   const tracking = files.find(file => file.reportType === 'ITEM_TRACKING');
   if (!tracking) return { files, scope: null };
 
   const named = mentionedUnread(files);
+  for (const documentNumber of alsoInScope) named.add(documentNumber);
   for (const file of files) {
     if (file.reportType === 'ITEM_TRACKING') continue;
     for (const row of file.report.rows) named.add(row.documentNumber);
@@ -402,6 +411,27 @@ export function trackingRowsInScope(files: BatchFile[]): { files: BatchFile[]; s
       dateTo: trackingRange ? iso(trackingRange.to) : null,
     },
   };
+}
+
+/**
+ * Stored quotations this upload's Item Tracking lists with a supplier PO.
+ *
+ * A PO says the document is an order, as the merge reads it, and the merge
+ * takes QUOTE off a document with one whatever its dates. But a document entered
+ * before the Order report's range is cut from Item Tracking before the merge
+ * sees it, and a quotation converted to an order keeps its old entry date:
+ * without this it would stay a quotation, off every dispatch list and refused
+ * every link, until a Delivery report named it, and a pickup never is.
+ */
+async function quotationsWithPo(client: PrismaClient, files: BatchFile[]): Promise<Set<string>> {
+  const tracking = files.find(file => file.reportType === 'ITEM_TRACKING');
+  const withPo = [...new Set((tracking?.report.rows ?? []).filter(row => row.poNumber).map(row => row.documentNumber))];
+  if (withPo.length === 0) return new Set();
+  const quotes = await client.orderDocument.findMany({
+    where: { documentNumber: { in: withPo }, flags: { has: QUOTE_FLAG } },
+    select: { documentNumber: true },
+  });
+  return new Set(quotes.map(document => document.documentNumber));
 }
 
 function toOrder(document: {
@@ -629,7 +659,7 @@ export async function runImportBatch(
   }
 
   // From here on the Item Tracking Report holds only what the day is about.
-  const { files, scope } = trackingRowsInScope(ordered);
+  const { files, scope } = trackingRowsInScope(ordered, await quotationsWithPo(client, ordered));
 
   const hashes = files.map(file => hashFile(file.buffer));
   const identical = await findIdenticalBatch(client, dispatchDate, hashes);
@@ -811,6 +841,8 @@ async function mergeBatch(
         line._count.lineItems > 0 || line._count.ticketMatches > 0
       ),
       orderDate: stored.orderDate,
+      // The office's "Not a quotation": kept through every upload.
+      confirmedOrder: stored.flags.includes(NOT_A_QUOTE_FLAG),
     };
     const decided = batchFlags(rows, context, history);
     const checkedByAi = readDifferently(files, documentNumber, rows);
