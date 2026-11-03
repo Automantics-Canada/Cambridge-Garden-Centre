@@ -25,7 +25,8 @@ import process from 'node:process';
  * What it empties (order side, always):
  *   OrderDocument, Order, OrderChange, OrderOverride, Delivery,
  *   DeliveryHistory, ImportBatch, ImportBatchFile, SpruceImportJob,
- *   SpruceImportRowError, TicketOrderMatch, MatchResult, TicketClaim.
+ *   SpruceImportRowError, TicketOrderMatch, MatchResult, TicketClaim,
+ *   DispatchLoad (the loads and haul rates recorded for those orders).
  *   A table that does not exist yet is skipped and reported.
  *
  *   MatchResult holds verdicts reached against orders, and every TicketClaim is
@@ -73,6 +74,8 @@ const ORDER_TABLES = [
   'TicketOrderMatch',
   'MatchResult',
   'TicketClaim',
+  // Loads hang off orders and their stops; they go with them.
+  'DispatchLoad',
 ];
 
 const TICKET_INVOICE_TABLES = ['Ticket', 'Invoice', 'InvoiceLineItem', '_InvoiceLineItemToTicket', 'OcrJob'];

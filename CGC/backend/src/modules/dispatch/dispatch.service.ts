@@ -269,6 +269,12 @@ export const DispatchService = {
         where: { documentId },
         data: { driverId, deliveryStatus: 'NOT_STARTED' },
       });
+      // Loads recorded while the order waited in the pool are filed under its
+      // stop now, so a trucking invoice can be traced from load to stop.
+      await tx.dispatchLoad.updateMany({
+        where: { documentId, deliveryId: null },
+        data: { deliveryId: delivery.id },
+      });
 
       return delivery;
     });

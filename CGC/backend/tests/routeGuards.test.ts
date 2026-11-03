@@ -111,6 +111,11 @@ describe('dispatch routes', () => {
     ['post', '/unassign'],
     ['post', '/reorder'],
     ['post', '/orders/:documentId/done-outside-app'],
+    ['get', '/orders/:documentId/loads'],
+    ['post', '/orders/:documentId/loads'],
+    ['patch', '/loads/:loadId'],
+    ['delete', '/loads/:loadId'],
+    ['post', '/loads/:loadId/copy-rate-to-trip'],
   ];
 
   for (const [method, path] of routes) {
@@ -122,6 +127,18 @@ describe('dispatch routes', () => {
   it('keeps DRIVER from marking an order done outside the app', () => {
     const roles = admittedRoles(effectiveChain(dispatchRouter, 'post', '/orders/:documentId/done-outside-app'));
     assert.equal(roles?.includes('DRIVER'), false);
+  });
+
+  it('keeps DRIVER away from dispatch loads and their haul rates', () => {
+    for (const [method, path] of [
+      ['get', '/orders/:documentId/loads'],
+      ['post', '/orders/:documentId/loads'],
+      ['patch', '/loads/:loadId'],
+      ['delete', '/loads/:loadId'],
+      ['post', '/loads/:loadId/copy-rate-to-trip'],
+    ] as const) {
+      assert.equal(admittedRoles(effectiveChain(dispatchRouter, method, path))?.includes('DRIVER'), false, `${method} ${path}`);
+    }
   });
 });
 
@@ -393,6 +410,8 @@ describe('GET routes that operations staff use', () => {
     [orderRouter, 'get', '/import/stream', OPERATIONS],
     [orderRouter, 'get', '/import/jobs/:jobId', OPERATIONS],
     [supplierRouter, 'get', '/', OPERATIONS],
+    // The carrier picker on the dispatch board reads it.
+    [supplierRouter, 'get', '/options', OPERATIONS],
     [productRouter, 'get', '/', OPERATIONS],
     [productRouter, 'get', '/units', OPERATIONS],
     [deliveriesRouter, 'get', '/', null],

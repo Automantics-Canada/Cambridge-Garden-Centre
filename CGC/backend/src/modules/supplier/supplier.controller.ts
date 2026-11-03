@@ -13,8 +13,13 @@ export const listSuppliers = async (_req: AuthRequest, res: Response) => {
   res.json(suppliers);
 };
 
-export const listSupplierOptions = async (_req: AuthRequest, res: Response) => {
-  const suppliers = await SupplierService.listOptions();
+/** `?type=TRUCKING_COMPANY` lists only that kind; an unknown type is a 400, not everyone. */
+export const listSupplierOptions = async (req: AuthRequest, res: Response) => {
+  const type = typeof req.query.type === 'string' && req.query.type !== '' ? req.query.type : undefined;
+  if (type !== undefined && !(Object.values(SupplierType) as string[]).includes(type)) {
+    return res.status(400).json({ error: `Unknown supplier type: ${type}` });
+  }
+  const suppliers = await SupplierService.listOptions(type as SupplierType | undefined);
   res.json(suppliers);
 };
 
