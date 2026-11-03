@@ -25,10 +25,20 @@ export const REVIEW_REASON_LABELS = {
   CREDIT_MEMO: 'Credit memo: enter by hand',
   UNSUPPORTED_ATTACHMENTS: 'No attachment the app can read',
   NO_INVOICE_ATTACHMENT: 'No invoice attached',
+  READ_FAILED: 'Could not be read after several tries: enter by hand',
 };
 
 export function reviewReasonLabel(reason) {
   return REVIEW_REASON_LABELS[reason] ?? 'Needs a look';
+}
+
+/**
+ * The error behind a READ_FAILED email, without the try count and time the
+ * poller keeps in front of it ("Tried 6 times; last try …: the error").
+ */
+export function failureText(event) {
+  if (event?.reviewReason !== 'READ_FAILED' || !event.errorMessage) return null;
+  return String(event.errorMessage).replace(/^Tried \d+ times?; last try \S+: /, '');
 }
 
 /** Owners and admins approve and ignore; everyone else may only look. */

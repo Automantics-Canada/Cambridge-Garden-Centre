@@ -74,6 +74,7 @@ export const ATTACHMENT_REASONS = {
   held: 'waiting for the sender to be approved',
   observed: 'observe mode: nothing is read',
   duplicate: 'already read',
+  readFailed: 'could not be read, after several tries',
 } as const;
 
 /**
@@ -257,7 +258,9 @@ export type ReviewReason =
   | 'SPREADSHEET'
   | 'CREDIT_MEMO'
   | 'UNSUPPORTED_ATTACHMENTS'
-  | 'NO_INVOICE_ATTACHMENT';
+  | 'NO_INVOICE_ATTACHMENT'
+  /** Reading it failed MAX_READ_ATTEMPTS times (gmail.service.ts); the error is on the event. */
+  | 'READ_FAILED';
 
 /**
  * Whether an email from a known sender still needs a person, from what

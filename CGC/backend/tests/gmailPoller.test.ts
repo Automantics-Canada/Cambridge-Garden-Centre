@@ -207,9 +207,12 @@ let failIngestFor: string | null = null;
       events.set(where.gmailMessageId, { ...current, ...data });
       return events.get(where.gmailMessageId);
     },
-    findMany: async ({ where, take }: any) =>
+    findMany: async ({ where, take, orderBy }: any) =>
       [...events.values()]
-        .filter(e => e.status === where.status && (where.requeuedAt?.not === null ? e.requeuedAt != null : true))
+        .filter(e => e.status === where.status)
+        .filter(e => (where.requeuedAt?.not === null ? e.requeuedAt != null : true))
+        .filter(e => (where.requeuedAt?.lte ? e.requeuedAt != null && e.requeuedAt <= where.requeuedAt.lte : true))
+        .sort((a, b) => (orderBy?.requeuedAt === 'asc' ? (a.requeuedAt?.getTime() ?? 0) - (b.requeuedAt?.getTime() ?? 0) : 0))
         .slice(0, take)
         .map(e => ({ gmailMessageId: e.gmailMessageId })),
   },
@@ -277,12 +280,18 @@ mock.method(TicketService, 'ingestEmailTicket', async (params: any) => {
   return { ticket: { id }, ocrJob: { id: `ticket-job-${tickets.size}` } };
 });
 
-const { GmailService, PAGE_SIZE, MAX_PAGES } = await import('../src/services/gmail.service.js');
+const { GmailService, PAGE_SIZE, MAX_PAGES, MAX_READ_ATTEMPTS, RETRY_BASE_MS, retryDelayMs } = await import('../src/services/gmail.service.js');
 const { readGmailInboxConfig, buildInboxQuery, gmailPollDisabledReason } = await import('../src/config/gmailConfig.js');
 const { readGmailStatus, deriveGmailHealth, GMAIL_STATUS_KEY } = await import('../src/services/gmailStatus.js');
 const { invalidateKnownSenders } = await import('../src/services/knownSenders.js');
 const { ATTACHMENT_REASONS } = await import('../src/services/emailAttachments.js');
 const { POLL_LEASE_KEY, POLL_LEASE_MS } = await import('../src/services/gmailLease.js');
+const { ExtractionError } = await import('../src/services/extraction/extraction.service.js');
+
+/** The poller's clock; tests move it forward to pass a retry delay. */
+let clock = Date.now();
+GmailService.now = () => new Date(clock);
+const MINUTE = 60_000;
 
 const ocrJobs: string[] = [];
 GmailService.triggerOcr = (id: string) => { ocrJobs.push(id); };
@@ -405,6 +414,7 @@ beforeEach((t) => {
   ocrJobs.length = 0;
   failIngestFor = null;
   onIngest = null;
+  clock = Date.now();
   GmailService.resetState();
 });
 
@@ -587,7 +597,9 @@ describe('processed label', () => {
     assert.ok(!labelsOf(id).includes('cgc-processed'));
     assert.equal(status().counts.failed, 1);
 
+    // Tried again once the first retry delay has passed, not every minute.
     failIngestFor = null;
+    clock += RETRY_BASE_MS;
     await GmailService.pollInvoices(config());
     assert.deepEqual([...invoices.keys()].sort(), [`${id}:1`, `${id}:2`]);
     assert.ok(labelsOf(id).includes('cgc-processed'));
@@ -733,6 +745,106 @@ describe('one poller at a time', () => {
     addMessage();
     await GmailService.pollInvoices(config());
     assert.ok(settingTimes.get(POLL_LEASE_KEY)! < new Date(Date.now() - POLL_LEASE_MS));
+  });
+});
+
+describe('an email that keeps failing', () => {
+  // Every try downloads the attachment again and pays for a sorting call.
+  // An error that recurs (a scan that times out, a file the reader always
+  // chokes on) used to be retried every minute for ever, and never reached a
+  // person.
+  const failing = new Set<string>();
+  beforeEach(() => {
+    failing.clear();
+    triageAnswer = (bytes) => ([...failing].some(id => bytes.toString().includes(id))
+      ? new ExtractionError('no value matching the expected schema', { retryable: true })
+      : ['invoice']);
+  });
+
+  it('is tried with growing gaps, then waits for a person with the reason', async () => {
+    const id = addMessage();
+    failing.add(id);
+
+    await GmailService.pollInvoices(config());
+    assert.equal(triageCalls.length, 1);
+    assert.equal(events.get(id).status, 'FAILED');
+    assert.match(events.get(id).errorMessage, /^Tried 1 time/);
+
+    // A minute later: not tried, nothing downloaded or paid for.
+    calls.length = 0;
+    clock += MINUTE;
+    await GmailService.pollInvoices(config());
+    assert.equal(triageCalls.length, 1);
+    assert.equal(inboxCalls('attachments.get').length, 0);
+    assert.equal(status().counts.deferred, 1);
+
+    for (let attempt = 2; attempt <= MAX_READ_ATTEMPTS; attempt += 1) {
+      clock += retryDelayMs(attempt - 1);
+      await GmailService.pollInvoices(config());
+      assert.equal(triageCalls.length, attempt);
+    }
+
+    const event = events.get(id);
+    assert.equal(event.status, 'NEEDS_REVIEW');
+    assert.equal(event.reviewReason, 'READ_FAILED');
+    assert.match(event.errorMessage, new RegExp(`Tried ${MAX_READ_ATTEMPTS} times.*expected schema`));
+    assert.ok(labelsOf(id).includes('cgc-review'));
+    assert.ok(!labelsOf(id).includes('cgc-processed'));
+    assert.equal(event.attachments[0].action, 'review');
+
+    // Off the query now: never tried again.
+    clock += 24 * 60 * MINUTE;
+    await GmailService.pollInvoices(config());
+    assert.equal(triageCalls.length, MAX_READ_ATTEMPTS);
+  });
+
+  it('keeps what an earlier attachment made when it gives up', async () => {
+    const id = addMessage({ attachments: [{ filename: 'a.pdf' }, { filename: 'b.pdf' }] });
+    failIngestFor = `${id}:2`;
+    for (let attempt = 1; attempt <= MAX_READ_ATTEMPTS; attempt += 1) {
+      await GmailService.pollInvoices(config());
+      clock += retryDelayMs(attempt);
+    }
+    const event = events.get(id);
+    assert.equal(event.reviewReason, 'READ_FAILED');
+    assert.deepEqual(event.createdInvoiceIds, ['inv-1']);
+    assert.deepEqual(event.attachments.map((a: any) => [a.name, a.action]), [['a.pdf', 'read'], ['b.pdf', 'review']]);
+  });
+
+  it('a success after a failure clears the count', async () => {
+    const id = addMessage();
+    failing.add(id);
+    await GmailService.pollInvoices(config());
+    failing.clear();
+    clock += retryDelayMs(1);
+    await GmailService.pollInvoices(config());
+    assert.equal(events.get(id).status, 'PROCESSED');
+    assert.equal(events.get(id).errorMessage, null);
+  });
+
+  it('approved emails that keep failing wait their turn and do not hold up later approvals', async () => {
+    const stuck: string[] = [];
+    for (let i = 0; i < PAGE_SIZE; i += 1) {
+      const id = addMessage();
+      failing.add(id);
+      stuck.push(id);
+      events.set(id, {
+        gmailMessageId: id, status: 'NEEDS_REVIEW', reviewReason: 'UNKNOWN_SENDER', createdInvoiceIds: [],
+        requeuedAt: new Date(clock - 60 * MINUTE + i), labelIds: [],
+      });
+    }
+    await GmailService.pollInvoices(config());
+    assert.equal(triageCalls.length, PAGE_SIZE);
+    assert.ok(stuck.every(id => events.get(id).requeuedAt.getTime() > clock), 'each waits for its retry time');
+
+    const later = addMessage();
+    events.set(later, {
+      gmailMessageId: later, status: 'NEEDS_REVIEW', reviewReason: 'UNKNOWN_SENDER', createdInvoiceIds: [], requeuedAt: new Date(clock),
+    });
+    clock += MINUTE;
+    await GmailService.pollInvoices(config());
+    assert.ok(invoices.has(`${later}:1`), 'the later approval is read');
+    assert.equal(triageCalls.length, PAGE_SIZE + 1, 'the failing ones were not tried again yet');
   });
 });
 
@@ -1159,7 +1271,6 @@ describe('attachment selection', () => {
 });
 
 const { PDFDocument } = await import('pdf-lib');
-const { ExtractionError } = await import('../src/services/extraction/extraction.service.js');
 
 describe('sorting pages before anything is created (A15)', () => {
   /** A PDF with one page per label, each page printing its label. */
@@ -1276,6 +1387,7 @@ describe('sorting pages before anything is created (A15)', () => {
     assert.ok(!labelsOf(id).includes('cgc-processed'));
 
     triageAnswer = () => ['invoice'];
+    clock += RETRY_BASE_MS;
     await GmailService.pollInvoices(config());
     assert.ok(invoices.has(`${id}:1`));
   });
@@ -1297,6 +1409,7 @@ describe('sorting pages before anything is created (A15)', () => {
     assert.equal(invoices.size, 0);
 
     failIngestFor = null;
+    clock += RETRY_BASE_MS;
     await GmailService.pollInvoices(config());
     assert.equal(tickets.size, 1);
     assert.equal(invoices.size, 1);

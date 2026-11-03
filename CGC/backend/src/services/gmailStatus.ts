@@ -51,13 +51,15 @@ export interface GmailPollCounts {
   requeued: number;
   /** Messages that failed and will be tried again. */
   failed: number;
+  /** Messages that failed recently and were left until their retry time. */
+  deferred: number;
 }
 
 export function emptyCounts(): GmailPollCounts {
   return {
     listed: 0, processed: 0, invoicesCreated: 0, ticketsCreated: 0, supportingFiles: 0, observed: 0, duplicates: 0,
     legacySkipped: 0, rejectedSender: 0, unresolvedSender: 0, noAttachments: 0, needsReview: 0,
-    requeued: 0, failed: 0,
+    requeued: 0, failed: 0, deferred: 0,
   };
 }
 

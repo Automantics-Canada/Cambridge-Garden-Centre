@@ -12,6 +12,7 @@ import {
   approveSupplierChoices,
   canManageQueue,
   describeAttachment,
+  failureText,
   isActionable,
   reviewReasonLabel,
   senderOf,
@@ -155,6 +156,7 @@ function QueueRow({ event, canManage, busy, open, onToggle, onIgnore, onApprove,
             {' · '}
             {reviewReasonLabel(event.reviewReason)}
           </p>
+          {failureText(event) && <p className="text-[12.5px] text-muted break-all">{failureText(event)}</p>}
           {attachments.length > 0 && (
             <ul className="mt-2 space-y-0.5">
               {attachments.map((a, i) => (

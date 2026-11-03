@@ -7,6 +7,7 @@ import {
   approveSupplierChoices,
   canManageQueue,
   describeAttachment,
+  failureText,
   isActionable,
   reviewReasonLabel,
   senderOf,
@@ -45,6 +46,17 @@ describe('unrecognised senders panel', () => {
     expect(reviewReasonLabel('SPREADSHEET')).toBe('Spreadsheet the app cannot read: enter by hand');
     expect(reviewReasonLabel('CREDIT_MEMO')).toBe('Credit memo: enter by hand');
     expect(reviewReasonLabel('SOMETHING_NEW')).toBe('Needs a look');
+  });
+
+  it('an email that failed every try is entered by hand, and says why', () => {
+    const failed = event({
+      reviewReason: 'READ_FAILED',
+      errorMessage: 'Tried 6 times; last try 2026-11-03T15:00:00.000Z: the reader timed out',
+    });
+    expect(splitQueue([failed]).manual).toEqual([failed]);
+    expect(reviewReasonLabel('READ_FAILED')).toBe('Could not be read after several tries: enter by hand');
+    expect(failureText(failed)).toBe('the reader timed out');
+    expect(failureText(event())).toBeNull();
   });
 
   it('offers the address always and the domain only when it is not shared mail', () => {

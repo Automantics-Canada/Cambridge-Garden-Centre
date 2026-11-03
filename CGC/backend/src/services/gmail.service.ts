@@ -65,6 +65,40 @@ export const OAUTH_REDIRECT_URI = 'https://developers.google.com/oauthplayground
 export const PAGE_SIZE = 25;
 export const MAX_PAGES = 4;
 
+/**
+ * Retrying an email that failed. Every try downloads its attachments again
+ * and pays for a sorting call, and some errors recur (a scan that times out,
+ * a file the reader always refuses), so an email is tried at most this many
+ * times, with a growing gap between tries: 5, 10, 20, 40 and 80 minutes,
+ * which rides out an outage of a couple of hours. Then it waits in the
+ * review queue with the error, for a person.
+ */
+export const MAX_READ_ATTEMPTS = 6;
+export const RETRY_BASE_MS = 5 * 60 * 1000;
+const RETRY_MAX_MS = 2 * 60 * 60 * 1000;
+
+/** How long to wait before the next try, after this many failed ones. */
+export function retryDelayMs(failures: number): number {
+  return Math.min(RETRY_BASE_MS * 2 ** Math.max(0, failures - 1), RETRY_MAX_MS);
+}
+
+/**
+ * The failure line kept in `EmailIngestionEvent.errorMessage`. It is the
+ * count and time of the last try as well as the error, read back by
+ * readFailure, so the count survives a restart without a column of its own.
+ */
+export function failureNote(attempts: number, at: Date, message: string): string {
+  return `Tried ${attempts} time${attempts === 1 ? '' : 's'}; last try ${at.toISOString()}: ${message}`.slice(0, 1000);
+}
+
+/** The count and time from a failureNote, or null for any other text. */
+export function readFailure(errorMessage: string | null | undefined): { attempts: number; at: Date } | null {
+  const match = /^Tried (\d+) times?; last try (\S+): /.exec(errorMessage ?? '');
+  if (!match) return null;
+  const at = new Date(match[2]!);
+  return Number.isNaN(at.getTime()) ? null : { attempts: Number(match[1]), at };
+}
+
 type Part = gmail_v1.Schema$MessagePart;
 
 /** The label ids a poll applies: `done` (processed or observed) and `review`. */
@@ -192,6 +226,10 @@ interface EventFields {
   createdInvoiceIds: string[];
   createdTicketIds?: string[];
   note: string | null;
+  /** Default null: writing the event clears an earlier failure. */
+  errorMessage?: string | null;
+  /** Default null: writing the event clears a pending re-queue. */
+  requeuedAt?: Date | null;
 }
 
 type ExistingEvent = {
@@ -199,6 +237,7 @@ type ExistingEvent = {
   createdInvoiceIds: string[];
   createdTicketIds?: string[];
   requeuedAt: Date | null;
+  errorMessage?: string | null;
 } | null;
 
 /** The facts about one fetched message that every path below needs. */
@@ -441,7 +480,10 @@ export class GmailService {
       const handled = new Set<string>();
       if (config.ingestMode === 'ingest') {
         const requeued = await prisma.emailIngestionEvent.findMany({
-          where: { status: EmailIngestionStatus.NEEDS_REVIEW, requeuedAt: { not: null } },
+          // An email whose last try failed has its requeuedAt moved to its
+          // retry time, so it neither runs early nor holds a place in this
+          // batch that a later approval needs.
+          where: { status: EmailIngestionStatus.NEEDS_REVIEW, requeuedAt: { lte: this.now() } },
           orderBy: { requeuedAt: 'asc' },
           take: PAGE_SIZE,
           select: { gmailMessageId: true },
@@ -570,13 +612,23 @@ export class GmailService {
     counts: GmailPollCounts,
     requeued: boolean
   ): Promise<Outcome> {
+    let facts: MessageFacts | null = null;
+    const outcome: ReadOutcome = { records: [], createdInvoiceIds: [], createdTicketIds: [] };
     try {
+      const existing = await prisma.emailIngestionEvent.findUnique({
+        where: { gmailMessageId: messageId },
+        select: { status: true, createdInvoiceIds: true, createdTicketIds: true, requeuedAt: true, errorMessage: true },
+      });
+      // Failed a moment ago: left until its retry time, before anything is
+      // fetched or paid for.
+      if (config.ingestMode === 'ingest' && this.waitingToRetry(existing)) return 'deferred';
+
       const res = await this.inbox.users.messages.get({ userId: 'me', id: messageId });
       const payload = res.data.payload ?? undefined;
       const headers = payload?.headers ?? [];
       const sender = resolveSender(headers, messageBody(payload), { trustedForwarders: config.trustedForwarders });
       const internal = Number(res.data.internalDate);
-      const facts: MessageFacts = {
+      facts = {
         messageId,
         payload,
         subject: headerValues(headers, 'Subject')[0] ?? 'No Subject',
@@ -587,10 +639,7 @@ export class GmailService {
         lookup: sender.mode === 'unknown'
           ? NOBODY
           : lookupSender(await knownSenders(), sender.originalSender, config.senderAllowlist),
-        existing: await prisma.emailIngestionEvent.findUnique({
-          where: { gmailMessageId: messageId },
-          select: { status: true, createdInvoiceIds: true, createdTicketIds: true, requeuedAt: true },
-        }),
+        existing,
       };
 
       if (config.ingestMode === 'observe') {
@@ -635,7 +684,7 @@ export class GmailService {
       let read: ReadOutcome;
       try {
         await this.refreshInvoiceKeys(messageId, invoiceByKey);
-        read = await this.readAttachments(facts, invoiceByKey, counts);
+        read = await this.readAttachments(facts, invoiceByKey, counts, outcome);
       } catch (error) {
         if (!(error instanceof IngestedByPreviousPoller)) throw error;
         console.log(`Email ${messageId} was ingested by the previous poller. Skipping.`);
@@ -686,8 +735,85 @@ export class GmailService {
         }).catch(() => undefined);
       }
       console.error(`Error processing message ${messageId}:`, error);
+      if (facts && config.ingestMode === 'ingest' && !(requeued && isNotFound(error))) {
+        try {
+          return await this.recordFailure(facts, labels, error, requeued, outcome);
+        } catch (recordError) {
+          console.error(`Could not record the failure of message ${messageId}:`, recordError);
+        }
+      }
       return 'failed';
     }
+  }
+
+  /** True while an email that failed is waiting for its next try. */
+  private static waitingToRetry(existing: ExistingEvent): boolean {
+    if (!existing) return false;
+    // Only an email still being retried: one a person put back (its review
+    // label removed by hand) is tried at once.
+    const retrying = existing.status === EmailIngestionStatus.FAILED
+      || (existing.status === EmailIngestionStatus.NEEDS_REVIEW && existing.requeuedAt !== null);
+    const failure = readFailure(existing.errorMessage);
+    if (!retrying || !failure) return false;
+    return this.now().getTime() < failure.at.getTime() + retryDelayMs(failure.attempts);
+  }
+
+  /**
+   * Counts a failed try on the email's event. Below MAX_READ_ATTEMPTS the
+   * email is tried again after retryDelayMs: one from the query stays in it
+   * (FAILED), an approved one keeps its place in the re-queue with
+   * `requeuedAt` moved to its retry time. At the limit it goes to the review
+   * queue (READ_FAILED, the review label) with the error, and whatever an
+   * earlier attachment made stays listed.
+   */
+  private static async recordFailure(
+    facts: MessageFacts,
+    labels: PollLabels,
+    error: unknown,
+    requeued: boolean,
+    outcome: ReadOutcome
+  ): Promise<Outcome> {
+    const now = this.now();
+    const attempts = (readFailure(facts.existing?.errorMessage)?.attempts ?? 0) + 1;
+    const message = describeError(error);
+    const errorMessage = failureNote(attempts, now, message);
+    const records = outcome.records.length > 0
+      ? outcome.records
+      : triageAttachments(facts.payload).map((candidate) => candidate.record);
+    const base = {
+      ...this.eventBase(facts),
+      createdInvoiceIds: outcome.createdInvoiceIds,
+      createdTicketIds: outcome.createdTicketIds,
+      note: null,
+      errorMessage,
+    };
+
+    if (attempts >= MAX_READ_ATTEMPTS) {
+      // A file that was going to be read and never was: a person reads it.
+      const unread = (r: AttachmentRecord) => r.action === 'read' && !r.invoiceId && !r.ticketIds?.length
+        && !r.supportingInvoiceId && !r.pages;
+      await this.recordEvent(facts, {
+        ...base,
+        status: EmailIngestionStatus.NEEDS_REVIEW,
+        reviewReason: 'READ_FAILED',
+        attachments: records.map((r) => (unread(r)
+          ? { ...r, action: 'review' as const, reason: `${ATTACHMENT_REASONS.readFailed}: ${message}`.slice(0, 300) }
+          : r)),
+      });
+      await this.markReview(facts.messageId, labels);
+      console.warn(`Email ${facts.messageId} failed ${attempts} times; it waits in the review queue.`);
+      return 'needsReview';
+    }
+
+    await this.recordEvent(facts, {
+      ...base,
+      status: requeued ? EmailIngestionStatus.NEEDS_REVIEW : EmailIngestionStatus.FAILED,
+      // An approved email keeps the reason it was queued for.
+      reviewReason: requeued ? 'UNKNOWN_SENDER' : null,
+      attachments: records,
+      requeuedAt: requeued ? new Date(now.getTime() + retryDelayMs(attempts)) : null,
+    });
+    return 'failed';
   }
 
   /**
@@ -724,7 +850,8 @@ export class GmailService {
   private static async readAttachments(
     facts: MessageFacts,
     invoiceByKey: Map<string, string>,
-    counts: GmailPollCounts
+    counts: GmailPollCounts,
+    outcome: ReadOutcome
   ): Promise<ReadOutcome> {
     const { messageId } = facts;
     const [tickets, supporting] = await Promise.all([
@@ -742,7 +869,8 @@ export class GmailService {
 
     const candidates = triageAttachments(facts.payload);
     const records: AttachmentRecord[] = candidates.map((candidate) => candidate.record);
-    const outcome: ReadOutcome = { records, createdInvoiceIds: [], createdTicketIds: [] };
+    // Filled in place, so a failure part way still knows what was made.
+    outcome.records = records;
     const sheets: Array<{ index: number; key: string; record: AttachmentRecord; buffer: Buffer }> = [];
 
     for (const [index, candidate] of candidates.entries()) {
@@ -997,8 +1125,8 @@ export class GmailService {
       attachments: fields.attachments as unknown as Prisma.InputJsonValue,
       createdInvoiceIds,
       createdTicketIds,
-      errorMessage: null,
-      requeuedAt: null,
+      errorMessage: fields.errorMessage ?? null,
+      requeuedAt: fields.requeuedAt ?? null,
     };
     const where = { gmailMessageId: facts.messageId };
     try {

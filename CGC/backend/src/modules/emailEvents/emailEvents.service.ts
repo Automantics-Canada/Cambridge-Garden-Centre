@@ -43,6 +43,8 @@ const EVENT_SELECT = {
   attachments: true,
   createdInvoiceIds: true,
   note: true,
+  /** Why a READ_FAILED email gave up; addresses already masked by the poller. */
+  errorMessage: true,
   requeuedAt: true,
   reviewedAt: true,
   reviewedBy: { select: { id: true, name: true } },
