@@ -74,10 +74,27 @@ function formatSize(bytes) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-/** "detail.xlsx · 24 KB · spreadsheet: reading arrives in a later update". */
+/**
+ * "detail.xlsx · 24 KB · spreadsheet: reading arrives in a later update".
+ *
+ * A file that was read says so: an Excel invoice can arrive beside a PDF
+ * that is already an invoice in the list, and entering both by hand would
+ * bill it twice.
+ */
 export function describeAttachment(attachment) {
   const name = attachment?.name || '(no name)';
-  return [name, formatSize(attachment?.size), attachment?.reason].filter(Boolean).join(' · ');
+  const reason = attachment?.reason || (attachment?.action === 'read' ? 'already an invoice in the list' : null);
+  return [name, formatSize(attachment?.size), reason].filter(Boolean).join(' · ');
+}
+
+/**
+ * The suppliers a sender can be approved onto. The "Unidentified supplier"
+ * holding record is left out: the server refuses it, since a sender filed
+ * under it would have every invoice read as nobody's.
+ */
+export function approveSupplierChoices(suppliers) {
+  return (Array.isArray(suppliers) ? suppliers : [])
+    .filter((s) => String(s?.name ?? '').trim().toLowerCase() !== 'unidentified supplier');
 }
 
 /** The attachments worth listing, most useful first: read, then waiting, then skipped. */

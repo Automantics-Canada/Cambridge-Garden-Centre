@@ -9,6 +9,7 @@ import {
   approveOptions,
   approvePayload,
   approvedMessage,
+  approveSupplierChoices,
   canManageQueue,
   describeAttachment,
   isActionable,
@@ -224,7 +225,7 @@ function ApproveForm({ options, suppliers, busy, onSubmit }) {
         Supplier
         <Select value={form.supplierId} onChange={(e) => set({ supplierId: e.target.value })} className="mt-1.5">
           <option value="">Choose…</option>
-          {suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+          {approveSupplierChoices(suppliers).map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
           <option value="NEW">New supplier…</option>
         </Select>
       </label>

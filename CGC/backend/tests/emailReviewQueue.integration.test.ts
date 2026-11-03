@@ -278,4 +278,27 @@ describe('email review queue (PostgreSQL)', { skip: !(confirmed && loopback) }, 
     assert.deepEqual(after.emailAddresses, []);
     assert.equal((await prisma.emailIngestionEvent.findUniqueOrThrow({ where: { id: event.id } })).requeuedAt, null);
   });
+
+  it("the office's own mailbox and domain cannot be approved as a supplier", async () => {
+    const saved = env.gmailInbox.trustedForwarders;
+    env.gmailInbox.trustedForwarders = ['ap@garden-centre.test'];
+    try {
+      // A colleague forwarding an invoice by hand arrives as an unknown sender.
+      const colleague = await queued('jane@garden-centre.test');
+      const everyone = await api('POST', `/api/email-events/${colleague.id}/approve`, { supplierId: stoneId, match: 'domain' });
+      assert.equal(everyone.status, 400);
+      assert.match(everyone.body.error, /office's own domain/);
+      const forwarder = await queued('ap@garden-centre.test');
+      const itself = await api('POST', `/api/email-events/${forwarder.id}/approve`, { supplierId: stoneId });
+      assert.equal(itself.status, 400);
+      assert.match(itself.body.error, /office's own mailbox/);
+
+      const stone = await prisma.supplier.findUniqueOrThrow({ where: { id: stoneId } });
+      assert.ok(!stone.emailDomains.includes('garden-centre.test'));
+      assert.ok(!stone.emailAddresses.includes('ap@garden-centre.test'));
+      assert.equal((await prisma.emailIngestionEvent.findUniqueOrThrow({ where: { id: colleague.id } })).requeuedAt, null);
+    } finally {
+      env.gmailInbox.trustedForwarders = saved;
+    }
+  });
 });

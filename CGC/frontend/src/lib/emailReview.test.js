@@ -4,6 +4,7 @@ import {
   approveOptions,
   approvePayload,
   approvedMessage,
+  approveSupplierChoices,
   canManageQueue,
   describeAttachment,
   isActionable,
@@ -80,12 +81,23 @@ describe('unrecognised senders panel', () => {
       { name: 'invoice.pdf', size: 2_400_000, action: 'read', reason: null },
     ]);
     expect(sorted.map(describeAttachment)).toEqual([
-      'invoice.pdf · 2.3 MB',
+      'invoice.pdf · 2.3 MB · already an invoice in the list',
       'detail.xlsx · 24 KB · spreadsheet: reading arrives in a later update',
       'image001.png · 4 KB · inline image (logo or signature)',
     ]);
     expect(sortedAttachments(null)).toEqual([]);
     expect(describeAttachment({ name: '', size: null })).toBe('(no name)');
+    expect(describeAttachment({ name: 'held.pdf', action: 'held', reason: 'waiting for the sender to be approved' }))
+      .toBe('held.pdf · waiting for the sender to be approved');
+  });
+
+  it('does not offer the unidentified-supplier placeholder for an approval', () => {
+    const choices = approveSupplierChoices([
+      { id: 's1', name: 'Example Stone' },
+      { id: 's2', name: ' Unidentified Supplier ' },
+    ]);
+    expect(choices.map((s) => s.id)).toEqual(['s1']);
+    expect(approveSupplierChoices(undefined)).toEqual([]);
   });
 
   it('says what approving did', () => {

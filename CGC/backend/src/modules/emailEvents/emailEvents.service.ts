@@ -1,4 +1,6 @@
 import { EmailIngestionStatus, SupplierType, type Prisma } from '@prisma/client';
+import { env } from '../../config/env.js';
+import type { GmailInboxConfig } from '../../config/gmailConfig.js';
 import { prisma } from '../../db/prisma.js';
 import { domainOf, invalidateKnownSenders, isFreeMailDomain } from '../../services/knownSenders.js';
 import { UNIDENTIFIED_SUPPLIER_NAME } from '../invoices/invoice.service.js';
@@ -75,6 +77,27 @@ export interface ApproveResult {
   requeued: number;
 }
 
+/**
+ * The office's own mailboxes: the trusted forwarders (the AP mailbox) and the
+ * polled inbox. Pure.
+ *
+ * A colleague who forwards an invoice by hand (jane@ the garden centre's own
+ * domain, not a trusted forwarder) lands in the queue as an unknown sender.
+ * Approving "everyone at" that domain would make every colleague a supplier,
+ * and file what they forward under that supplier, so the office's own domains
+ * are refused for a domain approval; so are the forwarding addresses
+ * themselves. Free-mail domains are refused elsewhere and are left out here.
+ */
+export function officeMailboxes(config: Pick<GmailInboxConfig, 'trustedForwarders' | 'user'>) {
+  const addresses = new Set(
+    [...config.trustedForwarders, config.user]
+      .map(a => (a ?? '').trim().toLowerCase())
+      .filter(a => a.includes('@'))
+  );
+  const domains = new Set([...addresses].map(domainOf).filter(d => d && !isFreeMailDomain(d)));
+  return { addresses, domains };
+}
+
 export const EmailEventService = {
   /** The queue (NEEDS_REVIEW, newest first) or the ignored list. */
   async list(status: EmailIngestionStatus = EmailIngestionStatus.NEEDS_REVIEW) {
@@ -129,6 +152,13 @@ export const EmailEventService = {
       const domain = domainOf(address);
       if (match === 'domain' && isFreeMailDomain(domain)) {
         throw httpError(400, `${domain} is shared by many senders. Approve the address ${address} instead.`);
+      }
+      const office = officeMailboxes(env.gmailInbox);
+      if (office.addresses.has(address)) {
+        throw httpError(400, `${address} is the office's own mailbox, not a supplier. Upload the invoice by hand, or ignore it.`);
+      }
+      if (match === 'domain' && office.domains.has(domain)) {
+        throw httpError(400, `${domain} is the office's own domain. Approve the address ${address} only, or ignore the email.`);
       }
 
       const supplier = await resolveSupplier(tx, input);

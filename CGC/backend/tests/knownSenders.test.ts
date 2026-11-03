@@ -136,3 +136,16 @@ describe('normaliseSenderEntries', () => {
     assert.deepEqual(entries.invalid, ['not a domain', 'a@b']);
   });
 });
+
+describe("the office's own mailboxes (approval guard)", () => {
+  it('lists the forwarders and the inbox, and their domains unless free-mail', async () => {
+    const { officeMailboxes } = await import('../src/modules/emailEvents/emailEvents.service.js');
+    const office = officeMailboxes({
+      trustedForwarders: ['AP@Garden-Centre.test'],
+      user: 'invoices-inbox@gmail.com',
+    });
+    assert.deepEqual([...office.addresses].sort(), ['ap@garden-centre.test', 'invoices-inbox@gmail.com']);
+    assert.deepEqual([...office.domains], ['garden-centre.test']);
+    assert.equal(officeMailboxes({ trustedForwarders: [], user: '' }).addresses.size, 0);
+  });
+});
