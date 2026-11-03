@@ -151,6 +151,11 @@ describe('checkTitle', () => {
     expect(checkTitle('rate')).toBe('Rate');
   });
 
+  it('names the checks on two copies of one ticket', () => {
+    expect(checkTitle('copiesAgree')).toBe('Two copies of a ticket');
+    expect(checkTitle('billerTicketsOnly')).toBe("Only the supplier's tickets");
+  });
+
   it('passes through anything it does not know rather than hiding it', () => {
     expect(checkTitle('somethingNew')).toBe('somethingNew');
   });

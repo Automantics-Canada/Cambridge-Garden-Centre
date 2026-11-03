@@ -7,6 +7,7 @@ import {
   type GmailInboxConfig,
 } from '../config/gmailConfig.js';
 import { InvoiceService } from '../modules/invoices/invoice.service.js';
+import { TicketService } from '../modules/tickets/ticket.service.js';
 import { prisma } from '../db/prisma.js';
 import { triggerOcrProcessing } from './ocrJobProcessor.js';
 import {
@@ -27,6 +28,17 @@ import {
   type ReviewReason,
 } from './emailAttachments.js';
 import { EmailIngestionStatus, SenderTypeResolved, type Prisma } from '@prisma/client';
+import {
+  CSV_MIME_TYPE,
+  ExtractionError,
+  triageDocument,
+  XLSX_MIME_TYPE,
+} from './extraction/extraction.service.js';
+import type { DocumentTriage } from './extraction/schemas.js';
+import { describePages, planPages, unsortedPlan, type PagePlan } from './emailTriage.js';
+import { extractPdfPages, MAX_SPLIT_PAGES, pdfPageCount } from '../lib/pdfPages.js';
+import { detectFileKind } from '../middleware/uploadValidation.js';
+import { detectSpreadsheetKind } from '../lib/spreadsheet.js';
 import {
   describeError,
   emptyCounts,
@@ -116,7 +128,46 @@ export function censusNote(sender: ResolvedSender, known: boolean, attachments: 
 }
 
 /** What happened to a message, as one of the per-message counters. */
-type Outcome = Exclude<keyof GmailPollCounts, 'listed' | 'invoicesCreated' | 'duplicates' | 'requeued'>;
+type Outcome = Exclude<
+  keyof GmailPollCounts,
+  'listed' | 'invoicesCreated' | 'ticketsCreated' | 'supportingFiles' | 'duplicates' | 'requeued'
+>;
+
+/** Reads what each page of an attachment is. Replaced by the tests. */
+type Triage = (bytes: Buffer, mimeType: string, filename: string) => Promise<DocumentTriage>;
+
+const IMAGE_MIME_BY_LABEL: Record<string, string> = {
+  PNG: 'image/png', JPEG: 'image/jpeg', GIF: 'image/gif', WebP: 'image/webp',
+};
+
+/** The content type the reader is told, from the bytes (and, for a CSV, the classification). */
+function readableMimeType(record: AttachmentRecord, bytes: Buffer): string {
+  const detected = detectFileKind(bytes);
+  if (detected?.kind === 'pdf') return 'application/pdf';
+  if (detected?.kind === 'image') return IMAGE_MIME_BY_LABEL[detected.label] ?? 'image/jpeg';
+  return detectSpreadsheetKind(bytes, record.name || undefined) === 'xlsx' ? XLSX_MIME_TYPE : CSV_MIME_TYPE;
+}
+
+/** The reason recorded for a one-page file that is not an invoice. */
+const REASON_BY_KIND = {
+  delivery_ticket: ATTACHMENT_REASONS.ticketFiled,
+  statement: ATTACHMENT_REASONS.statement,
+  credit_memo: ATTACHMENT_REASONS.creditMemo,
+  other: ATTACHMENT_REASONS.notInvoice,
+} as const;
+
+/** "invoice-77.pdf" page 3 → "invoice-77-p3.pdf". */
+function pageFileName(name: string, page: number): string {
+  const base = (name || 'ticket').replace(/\.[a-z0-9]+$/i, '');
+  return `${base}-p${page}.pdf`;
+}
+
+/** Everything one email's attachments produced, for its mailbox-log row. */
+interface ReadOutcome {
+  records: AttachmentRecord[];
+  createdInvoiceIds: string[];
+  createdTicketIds: string[];
+}
 
 /** What the mailbox log row for a message says. */
 interface EventFields {
@@ -132,10 +183,16 @@ interface EventFields {
   senderTypeResolved: SenderTypeResolved;
   attachments: AttachmentRecord[];
   createdInvoiceIds: string[];
+  createdTicketIds?: string[];
   note: string | null;
 }
 
-type ExistingEvent = { status: EmailIngestionStatus; createdInvoiceIds: string[]; requeuedAt: Date | null } | null;
+type ExistingEvent = {
+  status: EmailIngestionStatus;
+  createdInvoiceIds: string[];
+  createdTicketIds?: string[];
+  requeuedAt: Date | null;
+} | null;
 
 /** The facts about one fetched message that every path below needs. */
 interface MessageFacts {
@@ -201,6 +258,9 @@ export class GmailService {
 
   /** Replaced by the tests, so no OCR runs. */
   static triggerOcr: (jobId: string) => void = triggerOcrProcessing;
+
+  /** Replaced by the tests, so no model is called. */
+  static triage: Triage = triageDocument;
 
   private static isPolling = false;
   /** Label name → id, resolved once per process. */
@@ -468,7 +528,7 @@ export class GmailService {
           : lookupSender(await knownSenders(), sender.originalSender, config.senderAllowlist),
         existing: await prisma.emailIngestionEvent.findUnique({
           where: { gmailMessageId: messageId },
-          select: { status: true, createdInvoiceIds: true, requeuedAt: true },
+          select: { status: true, createdInvoiceIds: true, createdTicketIds: true, requeuedAt: true },
         }),
       };
 
@@ -531,75 +591,13 @@ export class GmailService {
         return 'legacySkipped';
       }
 
-      const records: AttachmentRecord[] = [];
-      const createdInvoiceIds: string[] = [];
-      for (const candidate of triageAttachments(payload)) {
-        const { part } = candidate;
-        if (!candidate.needsBytes) {
-          records.push(candidate.record);
-          continue;
-        }
-
-        let key = attachmentKey(messageId, part);
-        const known = key ? invoiceByKey.get(key) : undefined;
-        if (key && known) {
-          counts.duplicates += 1;
-          createdInvoiceIds.push(known);
-          records.push({ ...candidate.record, action: 'read', reason: ATTACHMENT_REASONS.duplicate, invoiceId: known });
-          continue;
-        }
-
-        const attachRes = await this.inbox.users.messages.attachments.get({
-          userId: 'me',
-          messageId,
-          id: part.body!.attachmentId!,
-        });
-        const buffer = Buffer.from(attachRes.data.data ?? '', 'base64url');
-        const record = classifyDownloaded(candidate.record, buffer);
-        if (record.action !== 'read') {
-          records.push(record);
-          continue;
-        }
-
-        key ??= attachmentKey(messageId, part, buffer)!;
-        const hashed = invoiceByKey.get(key);
-        if (hashed) {
-          counts.duplicates += 1;
-          createdInvoiceIds.push(hashed);
-          records.push({ ...record, reason: ATTACHMENT_REASONS.duplicate, invoiceId: hashed });
-          continue;
-        }
-
-        console.log(`Ingesting attachment: ${part.filename || '(no name)'}`);
-        try {
-          const result = await InvoiceService.ingestEmailInvoice({
-            buffer,
-            originalName: storedFileName(part.filename ?? '', buffer),
-            // The supplier, not the AP mailbox that forwarded it: supplier
-            // attribution and Invoice.emailFrom both read this.
-            fromEmail: sender.originalSender!,
-            subject: facts.subject,
-            gmailMessageId: key,
-          });
-          invoiceByKey.set(key, result.invoice.id);
-          createdInvoiceIds.push(result.invoice.id);
-          records.push({ ...record, invoiceId: result.invoice.id });
-          counts.invoicesCreated += 1;
-          if (result.ocrJob.id) this.triggerOcr(result.ocrJob.id);
-        } catch (error) {
-          // The API and the worker both poll during a rollout; whichever loses
-          // the race on the unique key has nothing left to do.
-          if (!isUniqueViolation(error)) throw error;
-          counts.duplicates += 1;
-          records.push({ ...record, reason: ATTACHMENT_REASONS.duplicate });
-        }
-      }
+      const { records, createdInvoiceIds, createdTicketIds } = await this.readAttachments(facts, invoiceByKey, counts);
 
       const review = attachmentReviewReason(records);
       if (review) {
         // Nothing here was dropped: what was read is read, and the rest is on
         // the event with its reason, waiting for a person.
-        await this.queueForReview(facts, labels, review, records, createdInvoiceIds);
+        await this.queueForReview(facts, labels, review, records, createdInvoiceIds, createdTicketIds);
         return review === 'NO_INVOICE_ATTACHMENT' ? 'noAttachments' : 'needsReview';
       }
 
@@ -609,6 +607,7 @@ export class GmailService {
         reviewReason: null,
         attachments: records,
         createdInvoiceIds,
+        createdTicketIds,
         note: null,
       });
       await this.markDone(messageId, labels, true);
@@ -630,6 +629,240 @@ export class GmailService {
       console.error(`Error processing message ${messageId}:`, error);
       return 'failed';
     }
+  }
+
+  /**
+   * Reads every attachment of an email from a known sender and says what
+   * happened to each.
+   *
+   * PDFs and images first: each is sorted page by page (invoice, delivery
+   * ticket, statement, credit memo, other) before anything is created, so a
+   * ticket attached to the invoice email becomes a ticket and a statement
+   * becomes nothing. Spreadsheets last, because what they are depends on the
+   * rest of the email: beside a PDF invoice an Excel file is that invoice's
+   * load breakdown and is kept with it; on its own it is read as the invoice.
+   *
+   * Every created row carries a key derived from the message, so a poll that
+   * fails half way and runs again finds what it already made.
+   */
+  private static async readAttachments(
+    facts: MessageFacts,
+    invoiceByKey: Map<string, string>,
+    counts: GmailPollCounts
+  ): Promise<ReadOutcome> {
+    const { messageId } = facts;
+    const [tickets, supporting] = await Promise.all([
+      prisma.ticket.findMany({
+        where: { emailSourceKey: { startsWith: `${messageId}:` } },
+        select: { id: true, emailSourceKey: true },
+      }),
+      prisma.invoiceSupportingFile.findMany({
+        where: { gmailKey: { startsWith: `${messageId}:` } },
+        select: { gmailKey: true, invoiceId: true },
+      }),
+    ]);
+    const ticketByKey = new Map(tickets.map((row) => [row.emailSourceKey!, row.id]));
+    const supportingByKey = new Map(supporting.map((row) => [row.gmailKey!, row.invoiceId]));
+
+    const candidates = triageAttachments(facts.payload);
+    const records: AttachmentRecord[] = candidates.map((candidate) => candidate.record);
+    const outcome: ReadOutcome = { records, createdInvoiceIds: [], createdTicketIds: [] };
+    const sheets: Array<{ index: number; key: string; record: AttachmentRecord; buffer: Buffer }> = [];
+
+    for (const [index, candidate] of candidates.entries()) {
+      if (!candidate.needsBytes) continue;
+      const { part } = candidate;
+
+      let key = attachmentKey(messageId, part);
+      const known = key ? invoiceByKey.get(key) : undefined;
+      if (key && known) {
+        counts.duplicates += 1;
+        outcome.createdInvoiceIds.push(known);
+        records[index] = { ...candidate.record, action: 'read', reason: ATTACHMENT_REASONS.duplicate, invoiceId: known };
+        continue;
+      }
+      const keptWith = key ? supportingByKey.get(key) : undefined;
+      if (key && keptWith) {
+        counts.duplicates += 1;
+        records[index] = { ...candidate.record, action: 'read', reason: ATTACHMENT_REASONS.supportingFile, supportingInvoiceId: keptWith };
+        continue;
+      }
+
+      const attachRes = await this.inbox.users.messages.attachments.get({
+        userId: 'me',
+        messageId,
+        id: part.body!.attachmentId!,
+      });
+      const buffer = Buffer.from(attachRes.data.data ?? '', 'base64url');
+      const record = classifyDownloaded(candidate.record, buffer);
+      records[index] = record;
+      if (record.action !== 'read') continue;
+
+      key ??= attachmentKey(messageId, part, buffer)!;
+      const hashed = invoiceByKey.get(key);
+      if (hashed) {
+        counts.duplicates += 1;
+        outcome.createdInvoiceIds.push(hashed);
+        records[index] = { ...record, reason: ATTACHMENT_REASONS.duplicate, invoiceId: hashed };
+        continue;
+      }
+
+      if (record.kind === 'spreadsheet') {
+        sheets.push({ index, key, record, buffer });
+        continue;
+      }
+      records[index] = await this.fileDocument(facts, key, record, buffer, invoiceByKey, ticketByKey, counts, outcome);
+    }
+
+    // The invoice the email's PDF became, on this poll or an earlier one.
+    for (const sheet of sheets) {
+      const invoiceId = outcome.createdInvoiceIds[0];
+      if (invoiceId) {
+        const name = storedFileName(sheet.record.name, sheet.buffer, 'spreadsheet');
+        console.log(`Keeping ${name} with invoice ${invoiceId} as a supporting file`);
+        await InvoiceService.attachSupportingFile({ invoiceId, buffer: sheet.buffer, originalName: name, gmailKey: sheet.key });
+        counts.supportingFiles += 1;
+        records[sheet.index] = {
+          ...sheet.record,
+          action: 'read',
+          reason: ATTACHMENT_REASONS.supportingFile,
+          supportingInvoiceId: invoiceId,
+        };
+        continue;
+      }
+      records[sheet.index] = await this.fileDocument(
+        facts, sheet.key, sheet.record, sheet.buffer, invoiceByKey, ticketByKey, counts, outcome
+      );
+    }
+
+    return outcome;
+  }
+
+  /**
+   * Sorts one downloaded attachment's pages and creates what they are: one
+   * invoice from the invoice pages, one emailed ticket per ticket page, and
+   * nothing for statements, credit memos and other pages, which are recorded
+   * with the reason. Tickets are filed before the invoice, so an invoice
+   * already on file for this key means its tickets are too.
+   */
+  private static async fileDocument(
+    facts: MessageFacts,
+    key: string,
+    record: AttachmentRecord,
+    buffer: Buffer,
+    invoiceByKey: Map<string, string>,
+    ticketByKey: Map<string, string>,
+    counts: GmailPollCounts,
+    outcome: ReadOutcome
+  ): Promise<AttachmentRecord> {
+    const mimeType = readableMimeType(record, buffer);
+    const pageCount = record.kind === 'pdf' ? await pdfPageCount(buffer) : null;
+    const splittable = pageCount !== null && pageCount > 1 && pageCount <= MAX_SPLIT_PAGES;
+
+    let plan: PagePlan;
+    let note: string | null = null;
+    try {
+      plan = planPages(await this.triage(buffer, mimeType, record.name || 'attachment'), splittable ? pageCount : null);
+    } catch (error) {
+      // A rate limit or an outage: the email is tried again on the next poll,
+      // before anything is created from it.
+      if (!(error instanceof ExtractionError) || error.retryable) throw error;
+      if (record.kind === 'spreadsheet') {
+        // The same bytes will not read better next minute; a person enters it.
+        return { ...record, action: 'review', reason: `${ATTACHMENT_REASONS.unreadableSheet}: ${error.message}`.slice(0, 300) };
+      }
+      // The sorting call refused this file for good. Read it as an invoice,
+      // which is what the inbox always did; the reader skips ticket pages.
+      console.warn(`Could not sort the pages of ${record.name || key}: ${error.message}`);
+      plan = unsortedPlan();
+      note = ATTACHMENT_REASONS.sortFailed;
+    }
+
+    const ticketIds: string[] = [];
+    // A spreadsheet is never filed as a ticket: tickets are photos and scans.
+    const ticketPages = record.kind === 'spreadsheet' ? [] : plan.ticketPages;
+    for (const page of ticketPages) {
+      const ticketKey = `${key}#${page}`;
+      const existing = ticketByKey.get(ticketKey);
+      if (existing) {
+        ticketIds.push(existing);
+        continue;
+      }
+      const bytes = plan.split ? await extractPdfPages(buffer, [page]) : buffer;
+      const name = plan.split ? pageFileName(record.name, page) : storedFileName(record.name, buffer);
+      try {
+        const { ticket } = await TicketService.ingestEmailTicket({
+          buffer: bytes,
+          originalName: name,
+          // The supplier, never the AP mailbox that forwarded it.
+          fromEmail: facts.sender.originalSender!,
+          // Unknown here (an allow-listed address with no supplier record): the
+          // ticket service looks the sender up itself.
+          supplierId: facts.lookup.supplier?.id,
+          emailSourceKey: ticketKey,
+        });
+        ticketByKey.set(ticketKey, ticket.id);
+        ticketIds.push(ticket.id);
+        counts.ticketsCreated += 1;
+      } catch (error) {
+        // The other poller filed it a moment ago.
+        if (!isUniqueViolation(error)) throw error;
+        counts.duplicates += 1;
+      }
+    }
+    outcome.createdTicketIds.push(...ticketIds);
+
+    let invoiceId: string | null = null;
+    if (plan.invoicePages.length > 0) {
+      const whole = !plan.split || plan.invoicePages.length === plan.pages.length;
+      const bytes = whole ? buffer : await extractPdfPages(buffer, plan.invoicePages);
+      console.log(`Ingesting attachment: ${record.name || '(no name)'}${whole ? '' : ` (pages ${plan.invoicePages.join(', ')})`}`);
+      try {
+        const result = await InvoiceService.ingestEmailInvoice({
+          buffer: bytes,
+          originalName: storedFileName(record.name, bytes, record.kind),
+          // The supplier, not the AP mailbox that forwarded it: supplier
+          // attribution and Invoice.emailFrom both read this.
+          fromEmail: facts.sender.originalSender!,
+          subject: facts.subject,
+          gmailMessageId: key,
+        });
+        invoiceId = result.invoice.id;
+        invoiceByKey.set(key, invoiceId);
+        outcome.createdInvoiceIds.push(invoiceId);
+        counts.invoicesCreated += 1;
+        if (result.ocrJob.id) this.triggerOcr(result.ocrJob.id);
+      } catch (error) {
+        // The API and the worker both poll during a rollout; whichever loses
+        // the race on the unique key has nothing left to do.
+        if (!isUniqueViolation(error)) throw error;
+        counts.duplicates += 1;
+        return { ...record, pages: plan.pages, ticketIds, reason: ATTACHMENT_REASONS.duplicate };
+      }
+    }
+
+    const created = invoiceId !== null || ticketIds.length > 0;
+    const single = plan.pages.length === 1 ? plan.pages[0]!.kind : null;
+    // A spreadsheet of loads with no invoice beside it was not filed anywhere:
+    // saying "filed with the tickets" would send a person looking for it there.
+    const reason = note
+      ?? (single === null
+        ? describePages(plan.pages)
+        : single === 'invoice'
+          ? null
+          : single === 'delivery_ticket' && record.kind === 'spreadsheet'
+            ? ATTACHMENT_REASONS.sheetOfLoads
+            : REASON_BY_KIND[single]);
+    return {
+      ...record,
+      // A credit memo waits for a person; a statement or a cover letter is
+      // only recorded.
+      action: created ? 'read' : plan.pages.some((p) => p.kind === 'credit_memo') ? 'review' : 'skipped',
+      reason,
+      pages: plan.pages,
+      ...(invoiceId ? { invoiceId } : {}),
+      ...(ticketIds.length > 0 ? { ticketIds } : {}),
+    };
   }
 
   /** The columns every event for this message shares. */
@@ -654,10 +887,12 @@ export class GmailService {
    */
   private static async recordEvent(facts: MessageFacts, fields: EventFields) {
     const createdInvoiceIds = [...new Set([...(facts.existing?.createdInvoiceIds ?? []), ...fields.createdInvoiceIds])];
+    const createdTicketIds = [...new Set([...(facts.existing?.createdTicketIds ?? []), ...(fields.createdTicketIds ?? [])])];
     const data = {
       ...fields,
       attachments: fields.attachments as unknown as Prisma.InputJsonValue,
       createdInvoiceIds,
+      createdTicketIds,
       errorMessage: null,
       requeuedAt: null,
     };
@@ -681,7 +916,8 @@ export class GmailService {
     labels: PollLabels,
     reason: ReviewReason,
     attachments: AttachmentRecord[],
-    createdInvoiceIds: string[] = []
+    createdInvoiceIds: string[] = [],
+    createdTicketIds: string[] = []
   ) {
     await this.recordEvent(facts, {
       ...this.eventBase(facts),
@@ -689,6 +925,7 @@ export class GmailService {
       reviewReason: reason,
       attachments,
       createdInvoiceIds,
+      createdTicketIds,
       note: facts.sender.mode === 'unknown' ? facts.sender.reason : null,
     });
     await this.markReview(facts.messageId, labels);

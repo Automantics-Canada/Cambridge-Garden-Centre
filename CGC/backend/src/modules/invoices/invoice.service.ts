@@ -1,5 +1,6 @@
 ﻿import { prisma } from '../../db/prisma.js';
-import { saveInvoiceImage } from '../../services/fileStorage.js';
+import { saveInvoiceImage, saveInvoiceSupportingFile } from '../../services/fileStorage.js';
+import { getContentType } from '../../services/supabaseStorage.js';
 import { extractInvoiceFromUrl } from '../../services/extraction/extraction.service.js';
 import { deriveLineItemFlag } from '../../lib/lineItemFlag.js';
 import { findSupplierForSender } from '../../services/knownSenders.js';
@@ -210,6 +211,12 @@ export const INVOICE_DETAIL_INCLUDE = {
   },
   verifiedBy: { select: VERIFIED_BY_PUBLIC_FIELDS },
   ocrJobs: { orderBy: { startedAt: 'desc' } },
+  // Files that came with the invoice but are not it, e.g. an Excel load
+  // breakdown beside the PDF (A12): offered for download on the invoice.
+  supportingFiles: {
+    select: { id: true, fileUrl: true, originalName: true, contentType: true, size: true, createdAt: true },
+    orderBy: { createdAt: 'asc' },
+  },
 } as const;
 
 
@@ -521,6 +528,35 @@ export const InvoiceService = {
     });
 
     return { invoice, ocrJob };
+  },
+
+  /**
+   * Keeps a file that came with an invoice as a supporting file of it: the
+   * Excel breakdown a supplier attaches beside the PDF invoice (A12). It is
+   * stored with its real content type and never read as a second invoice,
+   * which would bill the same loads twice. `gmailKey` makes a retried poll
+   * find the row it already wrote.
+   */
+  async attachSupportingFile(params: {
+    invoiceId: string;
+    buffer: Buffer;
+    originalName: string;
+    gmailKey: string;
+  }) {
+    const already = await prisma.invoiceSupportingFile.findUnique({ where: { gmailKey: params.gmailKey } });
+    if (already) return already;
+    const fileUrl = await saveInvoiceSupportingFile(params.buffer, params.invoiceId, params.originalName);
+    const extension = params.originalName.split('.').pop() ?? '';
+    return prisma.invoiceSupportingFile.create({
+      data: {
+        invoiceId: params.invoiceId,
+        fileUrl,
+        originalName: params.originalName.slice(0, 255),
+        contentType: getContentType(extension),
+        size: params.buffer.length,
+        gmailKey: params.gmailKey,
+      },
+    });
   },
 
   /**

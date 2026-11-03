@@ -7,9 +7,9 @@
  *   sender     nobody in the supplier records sends from this address. The
  *              office approves it onto a supplier (and the email is read) or
  *              ignores it.
- *   manual     the sender is known but the email carries a spreadsheet, or
- *              nothing the app reads. Somebody enters it by hand, then
- *              ignores it here.
+ *   manual     the sender is known but the email carries a spreadsheet the
+ *              app cannot read (an old .xls), a credit memo, or nothing the
+ *              app reads. Somebody enters it by hand, then ignores it here.
  *
  * Approving and ignoring are for owners and admins; AP staff see the list.
  */
@@ -21,7 +21,8 @@ const MANAGER_ROLES = new Set(['OWNER', 'ADMIN']);
 export const REVIEW_REASON_LABELS = {
   UNKNOWN_SENDER: 'Sender not in the supplier list',
   UNRESOLVED_SENDER: 'Forwarded, but the original sender could not be read',
-  SPREADSHEET: 'Spreadsheet attached: enter by hand for now',
+  SPREADSHEET: 'Spreadsheet the app cannot read: enter by hand',
+  CREDIT_MEMO: 'Credit memo: enter by hand',
   UNSUPPORTED_ATTACHMENTS: 'No attachment the app can read',
   NO_INVOICE_ATTACHMENT: 'No invoice attached',
 };
@@ -74,8 +75,19 @@ function formatSize(bytes) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+/** What a file that was read became, when the poller did not say. */
+function readOutcome(attachment) {
+  if (attachment?.supportingInvoiceId) return 'kept with its invoice';
+  const tickets = Array.isArray(attachment?.ticketIds) ? attachment.ticketIds.length : 0;
+  if (attachment?.invoiceId && tickets > 0) {
+    return `already an invoice in the list, and ${tickets} ticket${tickets === 1 ? '' : 's'}`;
+  }
+  if (tickets > 0) return `filed as ${tickets} ticket${tickets === 1 ? '' : 's'}`;
+  return 'already an invoice in the list';
+}
+
 /**
- * "detail.xlsx · 24 KB · spreadsheet: reading arrives in a later update".
+ * "detail.xls · 24 KB · old Excel format (.xls): ask the supplier for PDF or .xlsx".
  *
  * A file that was read says so: an Excel invoice can arrive beside a PDF
  * that is already an invoice in the list, and entering both by hand would
@@ -83,7 +95,7 @@ function formatSize(bytes) {
  */
 export function describeAttachment(attachment) {
   const name = attachment?.name || '(no name)';
-  const reason = attachment?.reason || (attachment?.action === 'read' ? 'already an invoice in the list' : null);
+  const reason = attachment?.reason || (attachment?.action === 'read' ? readOutcome(attachment) : null);
   return [name, formatSize(attachment?.size), reason].filter(Boolean).join(' · ');
 }
 

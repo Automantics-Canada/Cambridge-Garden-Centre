@@ -7,7 +7,8 @@
  *   - a PDF whose name has no extension ("Invoice 1234"), which suppliers'
  *     billing systems do send;
  *   - Excel and CSV invoices (A12: "a small few attach an Excel"), which were
- *     dropped and the email marked done;
+ *     dropped and the email marked done (.xlsx and .csv are now read; the
+ *     old .xls format waits for a person);
  *   - nothing, in the other direction: Outlook's inline signature logos
  *     (image001.png) carry a file name, so each became a paid "invoice".
  *
@@ -21,13 +22,15 @@
 import type { gmail_v1 } from 'googleapis';
 import { detectFileKind, sanitizeFilename } from '../middleware/uploadValidation.js';
 import { detectSpreadsheetKind } from '../lib/spreadsheet.js';
+import type { DocumentKind } from './extraction/schemas.js';
 
 type Part = gmail_v1.Schema$MessagePart;
 
 export type AttachmentKind = 'pdf' | 'image' | 'spreadsheet' | 'other';
 
 /**
- * read      became an invoice (or already had one)
+ * read      became an invoice, delivery tickets or a supporting file (or
+ *           already had)
  * skipped   deliberately left out, with the reason
  * review    a person has to deal with it (the email goes to the review queue)
  * held      not looked at yet: the sender is not known, or observe mode
@@ -45,15 +48,29 @@ export interface AttachmentRecord {
   reason: string | null;
   /** The invoice this attachment became, when it did. */
   invoiceId?: string | null;
+  /** What each page turned out to be, when the pages were sorted (emailTriage.ts). */
+  pages?: Array<{ page: number; kind: DocumentKind }>;
+  /** Delivery tickets filed from this attachment's ticket pages. */
+  ticketIds?: string[];
+  /** The invoice this file was kept beside, as a supporting file. */
+  supportingInvoiceId?: string | null;
 }
 
 export const ATTACHMENT_REASONS = {
   inline: 'inline image (logo or signature)',
   tinyImage: 'image too small to be an invoice',
-  spreadsheet: 'spreadsheet: reading arrives in a later update',
+  legacyXls: 'old Excel format (.xls): ask the supplier for PDF or .xlsx',
+  unreadableSheet: 'spreadsheet could not be read',
+  supportingFile: 'kept with the invoice from this email as a supporting file',
+  ticketFiled: 'delivery ticket: filed with the tickets',
+  sheetOfLoads: 'a list of loads with no invoice beside it: enter by hand',
+  statement: 'statement: recorded, not billed',
+  creditMemo: 'credit memo: enter it by hand',
+  notInvoice: 'not an invoice or a delivery ticket',
+  sortFailed: 'pages could not be sorted, so the whole file was read as an invoice',
   unsupported: 'unsupported file type',
   heic: 'iPhone photo format (HEIC) the reader does not take; send it as JPG or PDF',
-  mismatch: 'the file is not the PDF or image its name or type says',
+  mismatch: 'the file is not what its name or type says',
   held: 'waiting for the sender to be approved',
   observed: 'observe mode: nothing is read',
   duplicate: 'already read',
@@ -122,8 +139,8 @@ export interface AttachmentCandidate {
 
 /**
  * The first look, from what Gmail says about each part, before anything is
- * downloaded. PDFs, images and files of no stated type need their bytes;
- * spreadsheets and other files are decided here.
+ * downloaded. PDFs, images, spreadsheets and files of no stated type need
+ * their bytes; other files are decided here.
  */
 export function triageAttachments(payload: Part | undefined): AttachmentCandidate[] {
   return attachmentParts(payload).map(part => {
@@ -158,11 +175,9 @@ export function triageAttachments(payload: Part | undefined): AttachmentCandidat
       return { part, record: { ...base, kind: 'image', action: 'read' }, needsBytes: true };
     }
     if (SPREADSHEET_MIME.has(mime) || SPREADSHEET_EXT.has(ext)) {
-      return {
-        part,
-        record: { ...base, kind: 'spreadsheet', action: 'review', reason: ATTACHMENT_REASONS.spreadsheet },
-        needsBytes: false,
-      };
+      // The bytes decide between .xlsx, CSV and the old .xls: Windows labels a
+      // CSV application/vnd.ms-excel, and a file's name can say either.
+      return { part, record: { ...base, kind: 'spreadsheet', action: 'read' }, needsBytes: true };
     }
     if (mime === 'application/pdf' || mime === 'application/x-pdf' || ext === 'pdf') {
       return { part, record: { ...base, kind: 'pdf', action: 'read' }, needsBytes: true };
@@ -177,8 +192,9 @@ export function triageAttachments(payload: Part | undefined): AttachmentCandidat
 
 /**
  * The decision once the bytes are in. A PDF or supported image is read
- * whatever it is called; a ZIP or OLE file that is a workbook goes to review;
- * anything else is listed as not read, with the reason.
+ * whatever it is called; an .xlsx, or a CSV sent as one, is read as a
+ * spreadsheet; the old .xls format goes to review, because nothing here can
+ * read it; anything else is listed as not read, with the reason.
  */
 export function classifyDownloaded(record: AttachmentRecord, bytes: Buffer): AttachmentRecord {
   const sized = { ...record, size: bytes.length };
@@ -189,13 +205,19 @@ export function classifyDownloaded(record: AttachmentRecord, bytes: Buffer): Att
     if (bytes.length < MIN_IMAGE_BYTES) return { ...sized, kind: 'image', action: 'skipped', reason: ATTACHMENT_REASONS.tinyImage };
     return { ...sized, kind: 'image', action: 'read', reason: null };
   }
-  // Only a workbook container counts here. Plain text would pass as a CSV,
-  // and a file of no stated type is not a spreadsheet for being text.
-  const sheet = record.kind === 'other' ? detectSpreadsheetKind(bytes, record.name || undefined) : null;
-  if (sheet === 'xlsx' || sheet === 'xls') {
-    return { ...sized, kind: 'spreadsheet', action: 'review', reason: ATTACHMENT_REASONS.spreadsheet };
+  // A workbook container is a spreadsheet whatever it was sent as. Plain text
+  // is a CSV only when it was sent as one: a file of no stated type is not a
+  // spreadsheet for being text.
+  if (record.kind === 'other' || record.kind === 'spreadsheet') {
+    const sheet = detectSpreadsheetKind(bytes, record.name || undefined);
+    if (sheet === 'xls') {
+      return { ...sized, kind: 'spreadsheet', action: 'review', reason: ATTACHMENT_REASONS.legacyXls };
+    }
+    if (sheet === 'xlsx' || (sheet === 'csv' && record.kind === 'spreadsheet')) {
+      return { ...sized, kind: 'spreadsheet', action: 'read', reason: null };
+    }
   }
-  const claimed = record.kind === 'pdf' || record.kind === 'image';
+  const claimed = record.kind === 'pdf' || record.kind === 'image' || record.kind === 'spreadsheet';
   return {
     ...sized,
     kind: 'other',
@@ -210,10 +232,18 @@ const IMAGE_EXTENSION_BY_LABEL: Record<string, string> = { PNG: 'png', JPEG: 'jp
  * A safe stored name whose extension matches the bytes. Storage picks the
  * content type, and the reader the document type, from the extension, so an
  * unnamed PDF stored as "invoice" would be served and read as a JPEG.
+ *
+ * `kind` says the attachment was classified a spreadsheet: a CSV has no magic
+ * bytes, so only that tells it from any other text.
  */
-export function storedFileName(name: string, bytes: Buffer): string {
+export function storedFileName(name: string, bytes: Buffer, kind?: AttachmentKind): string {
   const detected = detectFileKind(bytes);
-  const wanted = detected?.kind === 'pdf' ? 'pdf' : IMAGE_EXTENSION_BY_LABEL[detected?.label ?? ''];
+  const sheet = kind === 'spreadsheet' ? detectSpreadsheetKind(bytes, name || undefined) : null;
+  const wanted = detected?.kind === 'pdf'
+    ? 'pdf'
+    : sheet === 'xlsx' || sheet === 'csv'
+      ? sheet
+      : IMAGE_EXTENSION_BY_LABEL[detected?.label ?? ''];
   const safe = name ? sanitizeFilename(name) : 'invoice';
   if (!wanted) return safe;
   const ext = extensionOf(safe);
@@ -225,18 +255,29 @@ export type ReviewReason =
   | 'UNKNOWN_SENDER'
   | 'UNRESOLVED_SENDER'
   | 'SPREADSHEET'
+  | 'CREDIT_MEMO'
   | 'UNSUPPORTED_ATTACHMENTS'
   | 'NO_INVOICE_ATTACHMENT';
 
 /**
  * Whether an email from a known sender still needs a person, from what
- * happened to its attachments. Any spreadsheet does, even beside a PDF that
- * was read: the spreadsheet may be the invoice and the PDF a cover page.
- * Otherwise an email is done once one attachment was read.
+ * happened to its attachments.
+ *
+ *   SPREADSHEET   a spreadsheet the app could not read (.xls, or a damaged
+ *                 file), even beside a PDF that was read: it may be the
+ *                 invoice and the PDF a cover page.
+ *   CREDIT_MEMO   money the supplier owes CGC; the app holds invoices only,
+ *                 so somebody enters it by hand.
+ *
+ * Otherwise an email is done once one attachment was read (an invoice,
+ * tickets or a supporting file), or when what it carried was a statement:
+ * that is recorded on the event and is not a bill to pay.
  */
 export function attachmentReviewReason(records: readonly AttachmentRecord[]): ReviewReason | null {
   if (records.some(r => r.kind === 'spreadsheet' && r.action === 'review')) return 'SPREADSHEET';
+  if (records.some(r => r.pages?.some(p => p.kind === 'credit_memo'))) return 'CREDIT_MEMO';
   if (records.some(r => r.action === 'read')) return null;
+  if (records.some(r => r.pages?.some(p => p.kind === 'statement'))) return null;
   if (records.some(r => r.reason === ATTACHMENT_REASONS.unsupported || r.reason === ATTACHMENT_REASONS.mismatch || r.reason === ATTACHMENT_REASONS.heic)) {
     return 'UNSUPPORTED_ATTACHMENTS';
   }

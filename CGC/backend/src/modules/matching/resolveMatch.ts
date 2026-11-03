@@ -5,6 +5,7 @@ import {
   MatchResolution,
   MatchSubjectType,
   TicketStatus,
+  type Prisma,
 } from '@prisma/client';
 
 /**
@@ -36,6 +37,25 @@ import {
  */
 
 export type ResolutionInput = 'CONFIRMED' | 'OVERRIDDEN' | 'REJECTED';
+
+/**
+ * These tickets and every other copy of their loads: the copy each points at,
+ * and the copies pointing at those. Copies are linked one level deep (every
+ * copy points straight at the one that counts), so two reads find them all.
+ */
+async function copiesOf(tx: Prisma.TransactionClient, ticketIds: readonly string[]): Promise<string[]> {
+  if (ticketIds.length === 0) return [];
+  const own = await tx.ticket.findMany({
+    where: { id: { in: [...ticketIds] } },
+    select: { id: true, duplicateOfTicketId: true },
+  });
+  const roots = [...new Set(own.map((ticket) => ticket.duplicateOfTicketId ?? ticket.id))];
+  const copies = await tx.ticket.findMany({
+    where: { OR: [{ id: { in: roots } }, { duplicateOfTicketId: { in: roots } }] },
+    select: { id: true },
+  });
+  return [...new Set([...ticketIds, ...copies.map((ticket) => ticket.id)])];
+}
 
 export type ResolveFailure =
   | { ok: false; code: 'NOT_FOUND' }
@@ -149,6 +169,7 @@ export async function resolveMatchResult(params: {
     if (!order) return { ok: false, code: 'ORDER_NOT_FOUND' };
   }
 
+  let claimedTicketIds: string[] = [];
   try {
   await prisma.$transaction(async (tx) => {
     await tx.matchResult.update({
@@ -217,7 +238,12 @@ export async function resolveMatchResult(params: {
       // (`ticketIds`), not on whatever carries the PO now — a load photographed
       // after the verdict was computed was never part of what anyone approved.
       if (targetOrderId) {
-        for (const ticketId of existing.ticketIds) {
+        // Every copy of each load is claimed with it: the driver's photo and
+        // the supplier's emailed copy of one ticket are one load (A15). A
+        // copy already claimed for another line trips the unique constraint
+        // below, which is the load being paid twice.
+        claimedTicketIds = await copiesOf(tx, existing.ticketIds);
+        for (const ticketId of claimedTicketIds) {
           await tx.ticketClaim.create({
             data: { ticketId, invoiceLineId, matchResultId, claimedById: userId },
           });
@@ -257,7 +283,7 @@ export async function resolveMatchResult(params: {
           engineStatus: existing.status,
           engineOrderId: existing.orderId,
           resolvedOrderId: targetOrderId,
-          claimedTicketIds: targetOrderId ? existing.ticketIds : [],
+          claimedTicketIds: targetOrderId ? claimedTicketIds : [],
         },
       },
     });

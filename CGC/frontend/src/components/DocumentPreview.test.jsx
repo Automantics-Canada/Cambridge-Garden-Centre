@@ -24,6 +24,17 @@ describe('document previews', () => {
     expect(screen.getByRole('img').getAttribute('src')).toBe(src);
   });
 
+  it.each([
+    'https://storage.example/invoices/abc/abc-1.xlsx',
+    '/uploads/loads.CSV?x=1',
+  ])('offers a spreadsheet at %s as a download, never as a broken image', src => {
+    render(<DocumentPreview src={src} title="Invoice" />);
+    const link = screen.getByRole('link', { name: 'Download invoice' });
+    expect(link.getAttribute('href')).toBe(src);
+    expect(link.hasAttribute('download')).toBe(true);
+    expect(screen.queryByRole('img')).toBeNull();
+  });
+
   it('shows a missing-document state without requesting the current page', () => {
     render(<DocumentPreview title="Invoice" />);
     expect(screen.getByText('Preview not available')).toBeTruthy();

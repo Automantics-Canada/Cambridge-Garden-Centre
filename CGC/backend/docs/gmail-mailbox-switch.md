@@ -285,5 +285,12 @@ Get-MailboxJunkEmailConfiguration -Identity ap@cambridgegardencentre.ca |
   redirects are also recognised by `Resent-*`, an SRS `Return-Path` or the
   original `To:`.
 - Who controls `cgcsoftware1718@gmail.com` (2-Step Verification, recovery).
-- Reading Excel/CSV invoices: until then they wait in the review queue with
-  "spreadsheet: reading arrives in a later update", for manual entry.
+- Excel invoices: `.xlsx` and `.csv` are read as text by the invoice reader;
+  an Excel beside a PDF invoice is kept with that invoice as a supporting
+  file. The old `.xls` format waits in the review queue with "old Excel
+  format (.xls): ask the supplier for PDF or .xlsx", for manual entry.
+- Each attachment is sorted page by page before anything is created: invoice
+  pages become one invoice, delivery ticket pages become emailed tickets
+  (linked to the driver's copy of the same ticket when there is one),
+  statements are recorded and not billed, credit memos wait in the review
+  queue. Sorting is one extra model call per attachment.

@@ -23,14 +23,21 @@ The CGC AP Verification System automates the ingestion, matching, and verificati
    inbox, where a filter applies the invoice label. The worker polls that label
    every minute (`src/services/gmail.service.ts`), works out the original sender
    even through a forward, and looks it up in the supplier records (email domains
-   and exact addresses; `src/services/knownSenders.ts`). A known sender's PDF or
-   image attachments become `PENDING_REVIEW` invoices and the email is labelled
-   processed. Mail from an unknown sender, or carrying only a spreadsheet or
-   another file the app cannot read, waits under "Unrecognised senders" on the
-   Invoices page, where an owner or admin approves the sender or ignores the
-   email. Setup and go-live: `CGC/backend/docs/gmail-mailbox-switch.md`.
+   and exact addresses; `src/services/knownSenders.ts`). Each of a known sender's
+   attachments is sorted page by page first (`src/services/emailTriage.ts`):
+   invoice pages become one `PENDING_REVIEW` invoice, delivery ticket pages
+   become emailed tickets, statements are recorded and not billed. PDF, image,
+   `.xlsx` and `.csv` invoices are read; an Excel beside a PDF invoice is kept
+   with it as a supporting file. Mail from an unknown sender, or carrying a credit
+   memo, an old `.xls` or another file the app cannot read, waits under
+   "Unrecognised senders" on the Invoices page, where an owner or admin approves
+   the sender or ignores the email. Setup and go-live:
+   `CGC/backend/docs/gmail-mailbox-switch.md`.
 5. **Matching.** OCR reads the invoice lines; the matching engine links invoice →
-   ticket → order and checks quantities and agreed rates, flagging each line.
+   ticket → order and checks quantities and agreed rates, flagging each line. The
+   driver's photo and the supplier's emailed copy of one ticket count as one load
+   (`src/modules/tickets/ticketCopies.ts`); a line backed only by the supplier's
+   own copies waits for AP.
 6. **AP review.** On the Invoices page AP staff review the flagged lines next to the
    PDF and verify or dispute; every decision is written to the `AuditLog`.
 

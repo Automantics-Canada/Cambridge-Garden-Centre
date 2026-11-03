@@ -17,6 +17,7 @@ const one = (over: Record<string, unknown>) => triageAttachments({ parts: [part(
 const PDF = Buffer.from('%PDF-1.7 synthetic');
 const ZIP = Buffer.concat([Buffer.from([0x50, 0x4b, 0x03, 0x04]), Buffer.alloc(64)]);
 const JPEG = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(20_000)]);
+const OLE = Buffer.concat([Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]), Buffer.alloc(64)]);
 
 describe('triageAttachments', () => {
   it('ignores the message body parts, but keeps a file sent with no name', () => {
@@ -48,8 +49,11 @@ describe('triageAttachments', () => {
     assert.equal(c.record.action, 'read');
   });
 
-  it('spreadsheets by type or name go to review; other files are listed as unsupported', () => {
-    assert.equal(one({ filename: 'Invoice', mimeType: 'application/vnd.ms-excel' }).record.kind, 'spreadsheet');
+  it('spreadsheets by type or name are downloaded to be read; other files are listed as unsupported', () => {
+    const excel = one({ filename: 'Invoice', mimeType: 'application/vnd.ms-excel' });
+    assert.equal(excel.record.kind, 'spreadsheet');
+    assert.equal(excel.record.action, 'read');
+    assert.equal(excel.needsBytes, true, 'the bytes tell .xlsx, CSV and the old .xls apart');
     assert.equal(one({ filename: 'loads.CSV', mimeType: 'application/octet-stream' }).record.kind, 'spreadsheet');
     const docx = one({ filename: 'letter.docx', mimeType: 'application/octet-stream' });
     assert.equal(docx.record.reason, ATTACHMENT_REASONS.unsupported);
@@ -67,6 +71,23 @@ describe('classifyDownloaded', () => {
     assert.equal(classifyDownloaded(vague, Buffer.from('plain text, not a csv invoice')).reason, ATTACHMENT_REASONS.unsupported);
   });
 
+  it('a spreadsheet is read when it is .xlsx or a CSV, and the old .xls waits for a person', () => {
+    const sheet: AttachmentRecord = { ...vague, name: 'invoice.xlsx', kind: 'spreadsheet' };
+    assert.deepEqual([classifyDownloaded(sheet, ZIP).action, classifyDownloaded(sheet, ZIP).reason], ['read', null]);
+    const csv = { ...sheet, name: 'invoice.csv', mimeType: 'text/csv' };
+    assert.equal(classifyDownloaded(csv, Buffer.from('a,b\n1,2\n')).action, 'read');
+    const xls = classifyDownloaded({ ...sheet, name: 'invoice.xls' }, OLE);
+    assert.deepEqual([xls.kind, xls.action, xls.reason], ['spreadsheet', 'review', ATTACHMENT_REASONS.legacyXls]);
+    // Unnamed and untyped: a workbook container is still a spreadsheet.
+    assert.equal(classifyDownloaded(vague, OLE).reason, ATTACHMENT_REASONS.legacyXls);
+    // Named .xlsx but not a workbook.
+    assert.equal(classifyDownloaded(sheet, Buffer.from('<html></html>')).reason, ATTACHMENT_REASONS.mismatch);
+  });
+
+  it('the reading-arrives-later reason is gone', () => {
+    assert.ok(!Object.values(ATTACHMENT_REASONS).some(reason => /later update/.test(reason)));
+  });
+
   it('a claimed PDF that is not one says so', () => {
     const claimed = { ...vague, name: 'invoice.pdf', kind: 'pdf' as const };
     assert.equal(classifyDownloaded(claimed, Buffer.from('<html></html>')).reason, ATTACHMENT_REASONS.mismatch);
@@ -81,6 +102,12 @@ describe('storedFileName', () => {
     assert.equal(storedFileName('scan.png', JPEG), 'scan.png.jpg');
     assert.equal(storedFileName('', PDF), 'invoice.pdf');
   });
+
+  it('keeps a spreadsheet a spreadsheet', () => {
+    assert.equal(storedFileName('Invoice 2', ZIP, 'spreadsheet'), 'Invoice_2.xlsx');
+    assert.equal(storedFileName('loads.csv', Buffer.from('a,b'), 'spreadsheet'), 'loads.csv');
+    assert.equal(storedFileName('detail.xlsx', ZIP, 'spreadsheet'), 'detail.xlsx');
+  });
 });
 
 describe('attachmentReviewReason', () => {
@@ -90,6 +117,18 @@ describe('attachmentReviewReason', () => {
     assert.equal(attachmentReviewReason([r({})]), null);
     assert.equal(attachmentReviewReason([r({}), r({ kind: 'other', action: 'skipped', reason: ATTACHMENT_REASONS.unsupported })]), null);
     assert.equal(attachmentReviewReason([r({}), r({ kind: 'spreadsheet', action: 'review' })]), 'SPREADSHEET');
+  });
+
+  it('a credit memo waits for a person; a statement alone is recorded and done', () => {
+    assert.equal(attachmentReviewReason([r({ action: 'review', pages: [{ page: 1, kind: 'credit_memo' }] })]), 'CREDIT_MEMO');
+    assert.equal(
+      attachmentReviewReason([r({ pages: [{ page: 1, kind: 'invoice' }, { page: 2, kind: 'credit_memo' }] })]),
+      'CREDIT_MEMO',
+      'even beside an invoice that was read'
+    );
+    assert.equal(attachmentReviewReason([r({ action: 'skipped', pages: [{ page: 1, kind: 'statement' }] })]), null);
+    assert.equal(attachmentReviewReason([r({ action: 'skipped', pages: [{ page: 1, kind: 'other' }] })]), 'NO_INVOICE_ATTACHMENT');
+    assert.equal(attachmentReviewReason([r({ kind: 'spreadsheet', action: 'review', reason: ATTACHMENT_REASONS.legacyXls })]), 'SPREADSHEET');
   });
 
   it('nothing read: unsupported files, or nothing at all', () => {

@@ -113,6 +113,11 @@ export function checkTitle(name) {
       return 'Tickets already paid against';
     case 'duplicateBilling':
       return 'Also billed elsewhere';
+    // The driver's photo and the supplier's emailed copy of one ticket (A15).
+    case 'copiesAgree':
+      return 'Two copies of a ticket';
+    case 'billerTicketsOnly':
+      return "Only the supplier's tickets";
     default:
       return name;
   }

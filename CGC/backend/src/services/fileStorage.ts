@@ -156,6 +156,21 @@ export async function saveCsvFile(
   }
 }
 
+/**
+ * Saves a file that came with an invoice but is not one (an Excel load
+ * breakdown beside the PDF invoice), under the invoice's storage folder, with
+ * its real content type. Returns its public URL.
+ */
+export async function saveInvoiceSupportingFile(
+  buffer: Buffer,
+  invoiceId: string,
+  originalName: string
+): Promise<string> {
+  const result = await uploadInvoiceImage(buffer, invoiceId, originalName);
+  console.log(`[FileStorage] Invoice supporting file uploaded: ${result.publicUrl}`);
+  return result.publicUrl;
+}
+
 export default {
   saveTicketImage,
   saveInvoiceImage,
