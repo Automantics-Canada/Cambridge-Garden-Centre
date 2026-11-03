@@ -7,8 +7,11 @@
  * PDF and one single-page PDF per ticket. pdf-lib copies pages as they are:
  * nothing is re-rendered, so text and images reach the reader unchanged.
  *
- * A PDF pdf-lib cannot open (damaged, or encrypted) is not split. The caller
- * treats it as one document, which is what the inbox did before.
+ * A PDF pdf-lib cannot open (damaged, or encrypted) is not split: pdf-lib
+ * cannot decrypt, so pages copied out of an encrypted file would be
+ * unreadable. An encrypted file's pages can still be counted (inspectPdf), so
+ * the caller knows a file of several tickets is several, and sends it to a
+ * person instead of filing it as one.
  */
 import { PDFDocument } from 'pdf-lib';
 
@@ -32,6 +35,20 @@ async function open(bytes: Buffer): Promise<PDFDocument | null> {
 export async function pdfPageCount(bytes: Buffer): Promise<number | null> {
   const document = await open(bytes);
   return document ? document.getPageCount() : null;
+}
+
+/**
+ * The page count, read even from an encrypted PDF (whose page tree pdf-lib
+ * can read without decrypting), and whether it is encrypted. `pageCount` is
+ * null for a file that cannot be read at all.
+ */
+export async function inspectPdf(bytes: Buffer): Promise<{ pageCount: number | null; encrypted: boolean }> {
+  try {
+    const document = await PDFDocument.load(bytes, { updateMetadata: false, ignoreEncryption: true });
+    return { pageCount: document.getPageCount(), encrypted: document.isEncrypted };
+  } catch {
+    return { pageCount: null, encrypted: false };
+  }
 }
 
 /**

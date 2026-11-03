@@ -243,6 +243,63 @@ describe('two copies of one ticket', { skip: !(confirmed && loopback) }, () => {
     assert.deepEqual(repeat?.ticketIds, []);
   });
 
+  // Matching takes `duplicateOfTicketId ?? id` as a load's root, one hop. A
+  // copy left pointing at a ticket that itself points elsewhere made two
+  // roots, so one load was counted twice.
+  const links = async (...ids: string[]) =>
+    (await prisma.ticket.findMany({ where: { id: { in: ids } }, select: { id: true, duplicateOfTicketId: true } }))
+      .reduce((map, row) => map.set(row.id, row.duplicateOfTicketId), new Map<string, string | null>());
+
+  it('a new primary takes over every copy of the old one, so no copy points at a copy', async () => {
+    // Two emailed copies of one ticket, the PO misread on the second.
+    const first = await ticket('EMAIL', { ticketNumber: 'T-88213', poNumber: '300300', receivedAt: new Date('2026-08-13T10:00:00Z') });
+    const second = await ticket('EMAIL', { ticketNumber: 'T-88213', poNumber: '200200', receivedAt: new Date('2026-08-14T10:00:00Z') });
+    await linkTicketCopies(second.id);
+    assert.equal((await links(second.id)).get(second.id), first.id);
+
+    // The driver's photo, supplier unread: linked by its PO to the first copy
+    // only, and it is the copy that counts.
+    const driver = await ticket('MANUAL', { ticketNumber: 'T-88213', poNumber: '300300', supplierId: null });
+    const outcome = await linkTicketCopies(driver.id);
+    assert.equal(outcome.primaryId, driver.id);
+    assert.deepEqual([...outcome.ticketIds].sort(), [driver.id, first.id, second.id].sort());
+
+    const now = await links(driver.id, first.id, second.id);
+    assert.equal(now.get(driver.id), null);
+    assert.equal(now.get(first.id), driver.id);
+    assert.equal(now.get(second.id), driver.id, 'not left pointing at the first copy');
+  });
+
+  it('an old primary outside the new match is brought along too', async () => {
+    const first = await ticket('EMAIL', { ticketNumber: 'T-88214', poNumber: '300300', receivedAt: new Date('2026-08-13T10:00:00Z') });
+    const second = await ticket('EMAIL', { ticketNumber: 'T-88214', poNumber: '200200', receivedAt: new Date('2026-08-14T10:00:00Z') });
+    await linkTicketCopies(second.id);
+
+    // Matches the second copy by PO, not the first, which counted until now.
+    const driver = await ticket('MANUAL', { ticketNumber: 'T-88214', poNumber: '200200', supplierId: null });
+    await linkTicketCopies(driver.id);
+
+    const now = await links(driver.id, first.id, second.id);
+    assert.equal(now.get(driver.id), null);
+    assert.equal(now.get(second.id), driver.id);
+    assert.equal(now.get(first.id), driver.id, 'one root for the load, not two');
+  });
+
+  it('a blank-supplier copy whose family belongs to another supplier is not merged across suppliers', async () => {
+    const otherCopy = await ticket('EMAIL', { ticketNumber: 'T-88215', poNumber: '400400', supplierId: OTHER_SUPPLIER_ID });
+    const blank = await ticket('MANUAL', { ticketNumber: 'T-88215', poNumber: '400400', supplierId: null });
+    await linkTicketCopies(blank.id);
+    assert.equal((await links(otherCopy.id)).get(otherCopy.id), blank.id);
+
+    // Same number and PO, but this supplier's: the blank photo would bridge
+    // two suppliers, so nothing is linked.
+    const mine = await ticket('EMAIL', { ticketNumber: 'T-88215', poNumber: '400400' });
+    assert.equal((await linkTicketCopies(mine.id)).primaryId, null);
+    const now = await links(mine.id, blank.id, otherCopy.id);
+    assert.equal(now.get(mine.id), null);
+    assert.equal(now.get(otherCopy.id), blank.id, 'the other supplier\'s pair is left as it was');
+  });
+
   it('correcting a ticket number through the ticket form unlinks it; the form cannot set the link itself', async () => {
     const driver = await ticket('MANUAL');
     const emailed = await ticket('EMAIL');

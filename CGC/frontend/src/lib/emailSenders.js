@@ -77,3 +77,13 @@ export function senderEntriesError(text) {
   }
   return null;
 }
+
+/**
+ * Whether this role may set a supplier's email senders and contact email.
+ * They decide whose invoices the inbox reads automatically, as approving a
+ * sender does, so they are for owners and admins; the server refuses them
+ * from anyone else.
+ */
+export function canSetSupplierSenders(role) {
+  return role === 'OWNER' || role === 'ADMIN';
+}

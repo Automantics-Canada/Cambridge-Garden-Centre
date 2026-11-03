@@ -4,6 +4,7 @@
  */
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
+import { crc32, deflateRawSync } from 'node:zlib';
 import ExcelJS from 'exceljs';
 
 import {
@@ -178,6 +179,40 @@ describe('.xlsx', () => {
     await rejects(readSpreadsheet(buffer, { limits: { maxUncompressedBytes: 1_000 } }), 'TOO_LARGE');
   });
 
+  // A ZIP states each entry's size itself, and a hostile one can say 100
+  // bytes and hold gigabytes. The reader used to trust the stated sizes and
+  // let exceljs inflate the entry whole, which only then noticed: a 300 KB
+  // upload or email attachment pushed the process past 600 MB. Entries are
+  // now inflated here with a hard cap on what actually comes out.
+  it('refuses an archive whose entries hold more than they declare, without inflating them whole', async () => {
+    const zeros = Buffer.alloc(60 * 1024 * 1024);
+    const lying = zipOf([
+      { name: '[Content_Types].xml', data: Buffer.from('<Types/>') },
+      { name: 'xl/workbook.xml', data: zeros, declaredSize: 100 },
+    ]);
+    assert.ok(lying.length < 2 * 1024 * 1024, 'small enough to upload');
+    assert.ok(zipDeclaredSize(lying)!.bytes < 1_000, 'it declares almost nothing');
+
+    const before = process.memoryUsage().rss;
+    await rejects(readSpreadsheet(lying, { filename: 'prices.xlsx' }), 'TOO_LARGE');
+    const grew = process.memoryUsage().rss - before;
+    assert.ok(grew < 45 * 1024 * 1024, `inflated at most the limit, grew ${Math.round(grew / 1024 / 1024)} MB`);
+  });
+
+  it('counts the real size of every entry against one limit', async () => {
+    const lying = zipOf([
+      { name: 'a.xml', data: Buffer.alloc(3_000), declaredSize: 10 },
+      { name: 'b.xml', data: Buffer.alloc(3_000), declaredSize: 10 },
+    ]);
+    await rejects(readSpreadsheet(lying, { filename: 'x.xlsx', limits: { maxUncompressedBytes: 5_000 } }), 'TOO_LARGE');
+  });
+
+  it('a workbook whose entries are honest still reads, compressed or stored', async () => {
+    const real = await workbook((wb) => wb.addWorksheet('Prices').addRow(['Item', 'Rate']));
+    const result = await readSpreadsheet(real, { filename: 'prices.xlsx' });
+    assert.deepEqual(firstSheetWithRows(result)!.rows, [['Item', 'Rate']]);
+  });
+
   it('refuses a broken ZIP as unreadable', async () => {
     const broken = Buffer.concat([Buffer.from([0x50, 0x4b, 0x03, 0x04]), Buffer.alloc(100)]);
     await rejects(readSpreadsheet(broken, { filename: 'x.xlsx' }), 'UNREADABLE');
@@ -200,3 +235,48 @@ describe('cells and text', () => {
     assert.equal(spreadsheetToText(result, 5).truncated, true);
   });
 });
+
+/**
+ * A ZIP built by hand, so an entry can state any uncompressed size. Each
+ * entry is deflated; `declaredSize` replaces its true size in both headers.
+ */
+function zipOf(entries: Array<{ name: string; data: Buffer; declaredSize?: number }>): Buffer {
+  const locals: Buffer[] = [];
+  const centrals: Buffer[] = [];
+  let offset = 0;
+  for (const entry of entries) {
+    const name = Buffer.from(entry.name, 'utf8');
+    const packed = deflateRawSync(entry.data, { level: 9 });
+    const size = entry.declaredSize ?? entry.data.length;
+    const crc = crc32(entry.data);
+    const local = Buffer.alloc(30);
+    local.writeUInt32LE(0x04034b50, 0);
+    local.writeUInt16LE(20, 4);
+    local.writeUInt16LE(8, 8);
+    local.writeUInt32LE(crc, 14);
+    local.writeUInt32LE(packed.length, 18);
+    local.writeUInt32LE(size, 22);
+    local.writeUInt16LE(name.length, 26);
+    locals.push(local, name, packed);
+    const central = Buffer.alloc(46);
+    central.writeUInt32LE(0x02014b50, 0);
+    central.writeUInt16LE(20, 4);
+    central.writeUInt16LE(20, 6);
+    central.writeUInt16LE(8, 10);
+    central.writeUInt32LE(crc, 16);
+    central.writeUInt32LE(packed.length, 20);
+    central.writeUInt32LE(size, 24);
+    central.writeUInt16LE(name.length, 28);
+    central.writeUInt32LE(offset, 42);
+    centrals.push(central, name);
+    offset += 30 + name.length + packed.length;
+  }
+  const directory = Buffer.concat(centrals);
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0);
+  end.writeUInt16LE(entries.length, 8);
+  end.writeUInt16LE(entries.length, 10);
+  end.writeUInt32LE(directory.length, 12);
+  end.writeUInt32LE(offset, 16);
+  return Buffer.concat([...locals, directory, end]);
+}

@@ -40,7 +40,7 @@ type FakePart = {
   body?: { attachmentId?: string; data?: string };
   parts?: FakePart[];
 };
-type FakeMessage = { id: string; labelIds: string[]; payload: FakePart };
+type FakeMessage = { id: string; labelIds: string[]; payload: FakePart; internalDate?: string };
 
 const mailbox = {
   profile: INBOX,
@@ -113,7 +113,12 @@ function fakeClient(client: 'inbox' | 'outbound') {
             ...(part.body?.attachmentId ? { body: { ...part.body, attachmentId: `ATT-${part.partId}-${++mailbox.fetches}` } } : {}),
             ...(part.parts ? { parts: part.parts.map(reissue) } : {}),
           });
-          return { data: { id: message.id, labelIds: [...message.labelIds], payload: reissue(message.payload) } };
+          return {
+            data: {
+              id: message.id, labelIds: [...message.labelIds], payload: reissue(message.payload),
+              ...(message.internalDate ? { internalDate: message.internalDate } : {}),
+            },
+          };
         },
         modify: async (args: any) => {
           record('messages.modify', args);
@@ -158,12 +163,17 @@ const tickets = new Map<string, { id: string; emailSourceKey: string; fromEmail:
 const supportingFiles = new Map<string, { id: string; invoiceId: string; gmailKey: string; originalName: string; buffer?: Buffer }>();
 const events = new Map<string, any>();
 const settings = new Map<string, unknown>();
+const settingTimes = new Map<string, Date>();
 /** Active suppliers as the known-senders lookup reads them. */
 const suppliers: Array<{ id: string; name: string; type: 'SUPPLIER' | 'TRUCKING_COMPANY'; emailDomains: string[]; emailAddresses: string[]; contactEmail: string | null }> = [];
 let failIngestFor: string | null = null;
 
 (globalThis as { Prisma?: unknown }).Prisma = {
   invoice: {
+    findUnique: async ({ where }: any) => {
+      const row = invoices.get(where.gmailMessageId);
+      return row ? { id: row.id } : null;
+    },
     findMany: async ({ where }: any) =>
       [...invoices.values()]
         .filter(row => row.gmailMessageId.startsWith(where.gmailMessageId.startsWith))
@@ -202,23 +212,54 @@ let failIngestFor: string | null = null;
       events.set(where.gmailMessageId, { ...current, ...data });
       return events.get(where.gmailMessageId);
     },
-    findMany: async ({ where, take }: any) =>
+    findMany: async ({ where, take, orderBy }: any) =>
       [...events.values()]
-        .filter(e => e.status === where.status && (where.requeuedAt?.not === null ? e.requeuedAt != null : true))
+        .filter(e => e.status === where.status)
+        .filter(e => (where.requeuedAt?.not === null ? e.requeuedAt != null : true))
+        .filter(e => (where.requeuedAt?.lte ? e.requeuedAt != null && e.requeuedAt <= where.requeuedAt.lte : true))
+        .sort((a, b) => (orderBy?.requeuedAt === 'asc' ? (a.requeuedAt?.getTime() ?? 0) - (b.requeuedAt?.getTime() ?? 0) : 0))
         .slice(0, take)
         .map(e => ({ gmailMessageId: e.gmailMessageId })),
   },
   systemSetting: {
     upsert: async ({ where, create, update }: any) => {
       settings.set(where.key, (settings.has(where.key) ? update : create).value);
+      settingTimes.set(where.key, (settings.has(where.key) ? update : create).updatedAt ?? new Date());
       return {};
     },
     findUnique: async ({ where }: any) => (settings.has(where.key) ? { value: settings.get(where.key) } : null),
+    create: async ({ data }: any) => {
+      if (settings.has(data.key)) throw Object.assign(new Error('unique'), { code: 'P2002' });
+      settings.set(data.key, data.value);
+      settingTimes.set(data.key, data.updatedAt ?? new Date());
+      return data;
+    },
+    // Only the shapes the poll lease uses: key, and an OR of an older
+    // updatedAt and a holder held in the JSON value.
+    updateMany: async ({ where, data }: any) => {
+      if (!settings.has(where.key)) return { count: 0 };
+      const value = settings.get(where.key) as any;
+      const at = settingTimes.get(where.key)!;
+      const test = (cond: any): boolean => {
+        if (cond.OR) return cond.OR.some(test);
+        if (cond.updatedAt?.lt) return at < cond.updatedAt.lt;
+        if (cond.value?.path) return value?.[cond.value.path[0]] === cond.value.equals;
+        return true;
+      };
+      const { key: _key, ...rest } = where;
+      if (!Object.entries(rest).every(([k, v]) => test({ [k]: v }))) return { count: 0 };
+      if ('value' in data) settings.set(where.key, data.value);
+      if ('updatedAt' in data) settingTimes.set(where.key, data.updatedAt);
+      return { count: 1 };
+    },
   },
 };
 
 const { InvoiceService } = await import('../src/modules/invoices/invoice.service.js');
+/** Runs as an invoice is about to be created: another poller acting at that moment. */
+let onIngest: ((params: any) => void) | null = null;
 mock.method(InvoiceService, 'ingestEmailInvoice', async (params: any) => {
+  onIngest?.(params);
   if (failIngestFor && params.gmailMessageId === failIngestFor) throw new Error('storage unavailable');
   if (invoices.has(params.gmailMessageId)) throw Object.assign(new Error('unique'), { code: 'P2002' });
   const id = `inv-${invoices.size + 1}`;
@@ -244,11 +285,18 @@ mock.method(TicketService, 'ingestEmailTicket', async (params: any) => {
   return { ticket: { id }, ocrJob: { id: `ticket-job-${tickets.size}` } };
 });
 
-const { GmailService, PAGE_SIZE, MAX_PAGES } = await import('../src/services/gmail.service.js');
+const { GmailService, PAGE_SIZE, MAX_PAGES, MAX_READ_ATTEMPTS, RETRY_BASE_MS, retryDelayMs } = await import('../src/services/gmail.service.js');
 const { readGmailInboxConfig, buildInboxQuery, gmailPollDisabledReason } = await import('../src/config/gmailConfig.js');
 const { readGmailStatus, deriveGmailHealth, GMAIL_STATUS_KEY } = await import('../src/services/gmailStatus.js');
 const { invalidateKnownSenders } = await import('../src/services/knownSenders.js');
 const { ATTACHMENT_REASONS } = await import('../src/services/emailAttachments.js');
+const { POLL_LEASE_KEY, POLL_LEASE_MS } = await import('../src/services/gmailLease.js');
+const { ExtractionError } = await import('../src/services/extraction/extraction.service.js');
+
+/** The poller's clock; tests move it forward to pass a retry delay. */
+let clock = Date.now();
+GmailService.now = () => new Date(clock);
+const MINUTE = 60_000;
 
 const ocrJobs: string[] = [];
 GmailService.triggerOcr = (id: string) => { ocrJobs.push(id); };
@@ -297,6 +345,8 @@ function addMessage(options: {
   }>;
   unread?: boolean;
   labelled?: boolean;
+  /** When Gmail received it; now when left out. */
+  receivedAt?: Date;
 } = {}) {
   const id = `msg-${String(nextId++).padStart(4, '0')}`;
   const attachments = options.attachments ?? [{ filename: 'invoice-90001.pdf', mimeType: 'application/pdf' }];
@@ -308,6 +358,7 @@ function addMessage(options: {
   ];
   mailbox.messages.unshift({
     id,
+    ...(options.receivedAt ? { internalDate: String(options.receivedAt.getTime()) } : {}),
     labelIds: [
       ...(options.labelled === false ? [] : [labelId('cgc-invoices')!]),
       ...(options.unread === false ? [] : ['UNREAD']),
@@ -365,10 +416,13 @@ beforeEach((t) => {
   triageCalls.length = 0;
   events.clear();
   settings.clear();
+  settingTimes.clear();
   suppliers.length = 0;
   invalidateKnownSenders();
   ocrJobs.length = 0;
   failIngestFor = null;
+  onIngest = null;
+  clock = Date.now();
   GmailService.resetState();
 });
 
@@ -443,6 +497,53 @@ describe('configuration', () => {
   });
 });
 
+describe('deploying with the variables production already has', () => {
+  // Production runs the previous poller with GMAIL_INVOICE_LABEL (and maybe
+  // GMAIL_SENDER_ALLOWLIST) and none of the new GMAIL_* settings. That poller
+  // left unread every labelled email from a sender off the env allowlist, and
+  // did nothing at all with an empty allowlist. This version knows senders
+  // from the supplier records too, so polling with the old variables would
+  // turn that old unread mail into invoices, or flood the review queue. It
+  // does nothing until the go-live date is set.
+  const OLD_ENV = {
+    GMAIL_INBOX_CLIENT_ID: 'inbox-client-id.test',
+    GMAIL_INBOX_CLIENT_SECRET: 'inbox-client-secret-test',
+    GMAIL_INBOX_REFRESH_TOKEN: 'inbox-refresh-token-test',
+    GMAIL_INVOICE_LABEL: 'cgc-invoices',
+    GMAIL_SENDER_ALLOWLIST: 'allowlisted-only.test',
+  };
+
+  it('reads, labels and creates nothing without GMAIL_POLL_AFTER, and says why', async () => {
+    suppliers.push({
+      id: 'sup-1', name: 'Stone Supplier', type: 'SUPPLIER', emailDomains: ['stone-supplier.test'], emailAddresses: [], contactEmail: null,
+    });
+    const known = addMessage();
+    const unknown = addMessage({ from: 'Somebody <someone@unknown-sender.test>' });
+
+    await GmailService.pollInvoices(readGmailInboxConfig(OLD_ENV));
+
+    assert.equal(invoices.size, 0);
+    assert.equal(events.size, 0);
+    assert.equal(calls.length, 0, 'no Gmail call at all: no label is created or applied');
+    assert.deepEqual(labelsOf(known).sort(), ['INBOX', 'UNREAD', 'cgc-invoices']);
+    assert.deepEqual(labelsOf(unknown).sort(), ['INBOX', 'UNREAD', 'cgc-invoices']);
+    assert.equal(status().enabled, false);
+    assert.match(status().disabledReason, /GMAIL_POLL_AFTER is not set/);
+  });
+
+  it('observe mode needs the date too: a census of old unread mail would label it', async () => {
+    addMessage({ from: 'Somebody <someone@unknown-sender.test>' });
+    await GmailService.pollInvoices(readGmailInboxConfig({ ...OLD_ENV, GMAIL_INGEST_MODE: 'observe' }));
+    assert.equal(events.size, 0);
+    assert.equal(calls.length, 0);
+    assert.match(status().disabledReason, /GMAIL_POLL_AFTER/);
+  });
+
+  it('with the date set, polling starts', () => {
+    assert.equal(gmailPollDisabledReason(readGmailInboxConfig({ ...OLD_ENV, GMAIL_POLL_AFTER: '2026-11-02' })), null);
+  });
+});
+
 describe('query', () => {
   it('excludes the processed and review labels and adds the cutoff, with no is:unread', () => {
     const q = buildInboxQuery(config());
@@ -487,10 +588,12 @@ describe('processed label', () => {
     assert.ok(invoices.has(`${id}:1`));
   });
 
-  it('without a cutoff an opened message is left alone, as before', async () => {
+  it('without a cutoff nothing is read, opened or not', async () => {
     addMessage({ unread: false });
+    addMessage();
     await GmailService.pollInvoices(config({ GMAIL_POLL_AFTER: undefined }));
     assert.equal(invoices.size, 0);
+    assert.equal(inboxCalls('messages.list').length, 0);
   });
 
   it('a failed attachment leaves the message unlabelled, and the retry adds only what is missing', async () => {
@@ -502,7 +605,9 @@ describe('processed label', () => {
     assert.ok(!labelsOf(id).includes('cgc-processed'));
     assert.equal(status().counts.failed, 1);
 
+    // Tried again once the first retry delay has passed, not every minute.
     failIngestFor = null;
+    clock += RETRY_BASE_MS;
     await GmailService.pollInvoices(config());
     assert.deepEqual([...invoices.keys()].sort(), [`${id}:1`, `${id}:2`]);
     assert.ok(labelsOf(id).includes('cgc-processed'));
@@ -552,12 +657,202 @@ describe('idempotency', () => {
     assert.deepEqual(events.get(id).createdInvoiceIds, ['inv-legacy']);
   });
 
+  // The previous version keeps polling in a container a rollout has not
+  // stopped yet. It keys by attachmentId, so the unique key cannot catch it:
+  // what it wrote while this poll was sorting pages is looked for again
+  // just before an invoice is created.
+  it('an invoice the old poller made while this one was sorting pages is not made again', async () => {
+    const id = addMessage();
+    triageAnswer = () => {
+      invoices.set(`${id}:ANGjdJ8-legacyAttachmentIdFromTheOldPoller`, {
+        id: 'inv-legacy', gmailMessageId: `${id}:ANGjdJ8-legacy`, fromEmail: SUPPLIER, subject: 'x', originalName: 'x.pdf',
+      });
+      return ['invoice'];
+    };
+    await GmailService.pollInvoices(config());
+
+    assert.deepEqual([...invoices.values()].map(i => i.id), ['inv-legacy'], 'no second invoice for the same email');
+    assert.equal(status().counts.legacySkipped, 1);
+    assert.equal(events.get(id).status, 'PROCESSED');
+    assert.deepEqual(events.get(id).createdInvoiceIds, ['inv-legacy']);
+    assert.ok(labelsOf(id).includes('cgc-processed'));
+  });
+
+  // Two pollers of this version (the API inline and the worker). The other
+  // one filed the PDF while this one was sorting it: the Excel beside it is
+  // still that invoice's breakdown, not a second invoice.
+  it('losing the race on the PDF still keeps the Excel with the winner\'s invoice', async () => {
+    const id = addMessage({ attachments: [
+      { filename: 'invoice-90004.pdf' },
+      { filename: 'invoice-90004-loads.xlsx', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', content: await xlsxBytes() },
+    ] });
+    triageAnswer = (_bytes, mimeType) => {
+      if (mimeType === 'application/pdf' && !invoices.has(`${id}:1`)) {
+        invoices.set(`${id}:1`, { id: 'inv-other', gmailMessageId: `${id}:1`, fromEmail: SUPPLIER, subject: 'x', originalName: 'x.pdf' });
+      }
+      return ['invoice'];
+    };
+    await GmailService.pollInvoices(config());
+
+    assert.deepEqual([...invoices.values()].map(i => i.id), ['inv-other'], 'one invoice from the email');
+    assert.equal(supportingFiles.get(`${id}:2`)?.invoiceId, 'inv-other');
+    assert.deepEqual(events.get(id).createdInvoiceIds, ['inv-other']);
+    assert.equal(events.get(id).attachments[0].invoiceId, 'inv-other');
+  });
+
+  it('losing the race on the unique key itself names the winner\'s invoice too', async () => {
+    const id = addMessage({ attachments: [
+      { filename: 'invoice-90005.pdf' },
+      { filename: 'invoice-90005-loads.xlsx', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', content: await xlsxBytes() },
+    ] });
+    onIngest = (params) => {
+      if (params.gmailMessageId === `${id}:1` && !invoices.has(`${id}:1`)) {
+        invoices.set(`${id}:1`, { id: 'inv-winner', gmailMessageId: `${id}:1`, fromEmail: SUPPLIER, subject: 'x', originalName: 'x.pdf' });
+      }
+    };
+    await GmailService.pollInvoices(config());
+
+    assert.deepEqual([...invoices.values()].map(i => i.id), ['inv-winner']);
+    assert.equal(supportingFiles.get(`${id}:2`)?.invoiceId, 'inv-winner');
+    assert.deepEqual(events.get(id).createdInvoiceIds, ['inv-winner']);
+    assert.equal(status().counts.duplicates, 1);
+  });
+
   it('falls back to a content hash when Gmail reports no part id', async () => {
     const id = addMessage();
     delete mailbox.messages[0]!.payload.parts![1]!.partId;
     await GmailService.pollInvoices(config());
     const [key] = [...invoices.keys()];
     assert.match(key!, new RegExp(`^${id}:sha256-[0-9a-f]{32}$`));
+  });
+});
+
+describe('one poller at a time', () => {
+  // The API polls in-process unless WORKER_MODE=off, and the worker always
+  // does. A lease in SystemSetting lets only one of them read the inbox.
+  it('polls nothing while another process holds the inbox', async () => {
+    addMessage();
+    settings.set(POLL_LEASE_KEY, { holder: 'worker-elsewhere' });
+    settingTimes.set(POLL_LEASE_KEY, new Date());
+    await GmailService.pollInvoices(config());
+
+    assert.equal(inboxCalls('messages.list').length, 0);
+    assert.equal(invoices.size, 0);
+    assert.equal(status(), undefined, 'the holder reports the poll, not this process');
+  });
+
+  it('takes over a lease its holder stopped renewing', async () => {
+    addMessage();
+    settings.set(POLL_LEASE_KEY, { holder: 'worker-that-died' });
+    settingTimes.set(POLL_LEASE_KEY, new Date(Date.now() - POLL_LEASE_MS - 1000));
+    await GmailService.pollInvoices(config());
+    assert.equal(invoices.size, 1);
+  });
+
+  it('gives the lease back when the poll ends', async () => {
+    addMessage();
+    await GmailService.pollInvoices(config());
+    assert.ok(settingTimes.get(POLL_LEASE_KEY)! < new Date(Date.now() - POLL_LEASE_MS));
+  });
+});
+
+describe('an email that keeps failing', () => {
+  // Every try downloads the attachment again and pays for a sorting call.
+  // An error that recurs (a scan that times out, a file the reader always
+  // chokes on) used to be retried every minute for ever, and never reached a
+  // person.
+  const failing = new Set<string>();
+  beforeEach(() => {
+    failing.clear();
+    triageAnswer = (bytes) => ([...failing].some(id => bytes.toString().includes(id))
+      ? new ExtractionError('no value matching the expected schema', { retryable: true })
+      : ['invoice']);
+  });
+
+  it('is tried with growing gaps, then waits for a person with the reason', async () => {
+    const id = addMessage();
+    failing.add(id);
+
+    await GmailService.pollInvoices(config());
+    assert.equal(triageCalls.length, 1);
+    assert.equal(events.get(id).status, 'FAILED');
+    assert.match(events.get(id).errorMessage, /^Tried 1 time/);
+
+    // A minute later: not tried, nothing downloaded or paid for.
+    calls.length = 0;
+    clock += MINUTE;
+    await GmailService.pollInvoices(config());
+    assert.equal(triageCalls.length, 1);
+    assert.equal(inboxCalls('attachments.get').length, 0);
+    assert.equal(status().counts.deferred, 1);
+
+    for (let attempt = 2; attempt <= MAX_READ_ATTEMPTS; attempt += 1) {
+      clock += retryDelayMs(attempt - 1);
+      await GmailService.pollInvoices(config());
+      assert.equal(triageCalls.length, attempt);
+    }
+
+    const event = events.get(id);
+    assert.equal(event.status, 'NEEDS_REVIEW');
+    assert.equal(event.reviewReason, 'READ_FAILED');
+    assert.match(event.errorMessage, new RegExp(`Tried ${MAX_READ_ATTEMPTS} times.*expected schema`));
+    assert.ok(labelsOf(id).includes('cgc-review'));
+    assert.ok(!labelsOf(id).includes('cgc-processed'));
+    assert.equal(event.attachments[0].action, 'review');
+
+    // Off the query now: never tried again.
+    clock += 24 * 60 * MINUTE;
+    await GmailService.pollInvoices(config());
+    assert.equal(triageCalls.length, MAX_READ_ATTEMPTS);
+  });
+
+  it('keeps what an earlier attachment made when it gives up', async () => {
+    const id = addMessage({ attachments: [{ filename: 'a.pdf' }, { filename: 'b.pdf' }] });
+    failIngestFor = `${id}:2`;
+    for (let attempt = 1; attempt <= MAX_READ_ATTEMPTS; attempt += 1) {
+      await GmailService.pollInvoices(config());
+      clock += retryDelayMs(attempt);
+    }
+    const event = events.get(id);
+    assert.equal(event.reviewReason, 'READ_FAILED');
+    assert.deepEqual(event.createdInvoiceIds, ['inv-1']);
+    assert.deepEqual(event.attachments.map((a: any) => [a.name, a.action]), [['a.pdf', 'read'], ['b.pdf', 'review']]);
+  });
+
+  it('a success after a failure clears the count', async () => {
+    const id = addMessage();
+    failing.add(id);
+    await GmailService.pollInvoices(config());
+    failing.clear();
+    clock += retryDelayMs(1);
+    await GmailService.pollInvoices(config());
+    assert.equal(events.get(id).status, 'PROCESSED');
+    assert.equal(events.get(id).errorMessage, null);
+  });
+
+  it('approved emails that keep failing wait their turn and do not hold up later approvals', async () => {
+    const stuck: string[] = [];
+    for (let i = 0; i < PAGE_SIZE; i += 1) {
+      const id = addMessage();
+      failing.add(id);
+      stuck.push(id);
+      events.set(id, {
+        gmailMessageId: id, status: 'NEEDS_REVIEW', reviewReason: 'UNKNOWN_SENDER', createdInvoiceIds: [],
+        requeuedAt: new Date(clock - 60 * MINUTE + i), labelIds: [],
+      });
+    }
+    await GmailService.pollInvoices(config());
+    assert.equal(triageCalls.length, PAGE_SIZE);
+    assert.ok(stuck.every(id => events.get(id).requeuedAt.getTime() > clock), 'each waits for its retry time');
+
+    const later = addMessage();
+    events.set(later, {
+      gmailMessageId: later, status: 'NEEDS_REVIEW', reviewReason: 'UNKNOWN_SENDER', createdInvoiceIds: [], requeuedAt: new Date(clock),
+    });
+    clock += MINUTE;
+    await GmailService.pollInvoices(config());
+    assert.ok(invoices.has(`${later}:1`), 'the later approval is read');
+    assert.equal(triageCalls.length, PAGE_SIZE + 1, 'the failing ones were not tried again yet');
   });
 });
 
@@ -785,7 +1080,7 @@ describe('known senders from the supplier records', () => {
     // API process, so this process's cached sender list is not cleared: the
     // poller must read the supplier records afresh by itself.
     supplier({ emailAddresses: ['billing@new-supplier.test'] });
-    events.set(id, { ...events.get(id), requeuedAt: new Date(), reviewedById: 'user-1' });
+    events.set(id, { ...events.get(id), requeuedAt: new Date(clock), reviewedById: 'user-1' });
     calls.length = 0;
     await GmailService.pollInvoices(records());
 
@@ -804,10 +1099,33 @@ describe('known senders from the supplier records', () => {
     assert.equal(invoices.size, 1, 'read once');
   });
 
+  // Runbook step 6: moving GMAIL_POLL_AFTER to today skips the census
+  // period, which AP entered by hand. An email queued then and approved now
+  // is fetched by id, not by the query, so the date is checked here too.
+  it('an approved email from before GMAIL_POLL_AFTER is not read; it waits for a person', async () => {
+    const id = addMessage({ from: 'billing@new-supplier.test', receivedAt: new Date('2026-10-20T15:00:00Z') });
+    // The census row observe mode wrote for it, now approved.
+    events.set(id, {
+      gmailMessageId: id, status: 'NEEDS_REVIEW', reviewReason: 'UNKNOWN_SENDER', createdInvoiceIds: [], requeuedAt: new Date(clock),
+    });
+    supplier({ emailAddresses: ['billing@new-supplier.test'] });
+    calls.length = 0;
+    await GmailService.pollInvoices(records());
+
+    assert.equal(invoices.size, 0);
+    assert.equal(inboxCalls('attachments.get').length, 0, 'nothing downloaded');
+    const event = events.get(id);
+    assert.equal(event.status, 'NEEDS_REVIEW');
+    assert.equal(event.reviewReason, 'BEFORE_CUTOFF');
+    assert.equal(event.requeuedAt, null);
+    assert.ok(labelsOf(id).includes('cgc-review'));
+    assert.ok(!labelsOf(id).includes('cgc-processed'));
+  });
+
   it('observe mode leaves approved mail for ingest mode', async () => {
     const id = addMessage({ from: 'billing@new-supplier.test' });
     await GmailService.pollInvoices(records());
-    events.set(id, { ...events.get(id), requeuedAt: new Date() });
+    events.set(id, { ...events.get(id), requeuedAt: new Date(clock) });
     await GmailService.pollInvoices(config({ GMAIL_INGEST_MODE: 'observe', GMAIL_SENDER_ALLOWLIST: '' }));
     assert.equal(invoices.size, 0);
     assert.notEqual(events.get(id).requeuedAt, null);
@@ -816,7 +1134,7 @@ describe('known senders from the supplier records', () => {
   it('approved mail deleted from Gmail meanwhile is marked failed, not retried every minute', async () => {
     const id = addMessage({ from: 'billing@new-supplier.test' });
     await GmailService.pollInvoices(records());
-    events.set(id, { ...events.get(id), requeuedAt: new Date() });
+    events.set(id, { ...events.get(id), requeuedAt: new Date(clock) });
     mailbox.messages = [];
     await GmailService.pollInvoices(records());
 
@@ -924,6 +1242,24 @@ describe('attachment selection', () => {
     assert.equal(supportingFiles.size, 1);
   });
 
+  it('a second invoice sent as an iPhone photo keeps the email on the review queue, beside the one that was read', async () => {
+    const id = addMessage({ attachments: [
+      { filename: 'invoice-90006.pdf' },
+      { filename: 'invoice-90007.heic', mimeType: 'image/heic', size: 900_000 },
+    ] });
+    await GmailService.pollInvoices(config());
+
+    assert.deepEqual([...invoices.keys()], [`${id}:1`], 'the PDF is still read');
+    const event = events.get(id);
+    assert.equal(event.status, 'NEEDS_REVIEW');
+    assert.equal(event.reviewReason, 'PARTLY_READ');
+    assert.deepEqual(event.createdInvoiceIds, ['inv-1']);
+    assert.equal(event.attachments[1].reason, ATTACHMENT_REASONS.heic);
+    assert.ok(labelsOf(id).includes('cgc-review'));
+    assert.ok(!labelsOf(id).includes('cgc-processed'));
+    assert.equal(status().counts.needsReview, 1);
+  });
+
   it('an inline signature logo is skipped and listed; the PDF is the only invoice', async () => {
     const id = addMessage({ attachments: [
       { filename: 'invoice-90004.pdf' },
@@ -984,7 +1320,6 @@ describe('attachment selection', () => {
 });
 
 const { PDFDocument } = await import('pdf-lib');
-const { ExtractionError } = await import('../src/services/extraction/extraction.service.js');
 
 describe('sorting pages before anything is created (A15)', () => {
   /** A PDF with one page per label, each page printing its label. */
@@ -1101,6 +1436,7 @@ describe('sorting pages before anything is created (A15)', () => {
     assert.ok(!labelsOf(id).includes('cgc-processed'));
 
     triageAnswer = () => ['invoice'];
+    clock += RETRY_BASE_MS;
     await GmailService.pollInvoices(config());
     assert.ok(invoices.has(`${id}:1`));
   });
@@ -1113,6 +1449,106 @@ describe('sorting pages before anything is created (A15)', () => {
     assert.equal(events.get(id).attachments[0].reason, ATTACHMENT_REASONS.sortFailed);
   });
 
+  // An owner-password PDF from a billing system, or one too long to split:
+  // the file used to be filed as one ticket, which is page 1 only, and the
+  // other tickets were lost with the email marked processed.
+  async function encryptedPdfWith(labels: string[]): Promise<Buffer> {
+    const pdf = await PDFDocument.create();
+    for (const label of labels) pdf.addPage([300, 200]).drawText(label, { x: 20, y: 100, size: 12 });
+    pdf.context.trailerInfo.Encrypt = pdf.context.register(pdf.context.obj({ Filter: 'Standard', V: 1, R: 2, P: -4 }));
+    return Buffer.from(await pdf.save({ useObjectStreams: false }));
+  }
+
+  it('several tickets in a file that cannot be split wait for a person; none is filed from page 1 alone', async () => {
+    triageAnswer = () => ['delivery_ticket', 'delivery_ticket', 'delivery_ticket'];
+    const id = addMessage({ attachments: [{ filename: 'tickets-oct.pdf', content: await encryptedPdfWith(['T 601', 'T 602', 'T 603']) }] });
+    await GmailService.pollInvoices(config());
+
+    assert.equal(tickets.size, 0);
+    assert.equal(invoices.size, 0);
+    const event = events.get(id);
+    assert.equal(event.status, 'NEEDS_REVIEW');
+    assert.equal(event.reviewReason, 'TICKETS_NOT_SPLIT');
+    assert.equal(event.attachments[0].action, 'review');
+    assert.equal(event.attachments[0].reason, ATTACHMENT_REASONS.ticketsNotSplit);
+    assert.ok(labelsOf(id).includes('cgc-review'));
+  });
+
+  it('a damaged multi-page file the sorter calls tickets waits for a person too', async () => {
+    // The default attachment is not a PDF pdf-lib can open: no page count.
+    triageAnswer = () => ['delivery_ticket', 'delivery_ticket'];
+    const id = addMessage();
+    await GmailService.pollInvoices(config());
+    assert.equal(tickets.size, 0);
+    assert.equal(events.get(id).reviewReason, 'TICKETS_NOT_SPLIT');
+  });
+
+  it('an invoice with tickets behind it that cannot be split is read whole; the tickets wait for a person', async () => {
+    triageAnswer = () => ['invoice', 'delivery_ticket', 'delivery_ticket'];
+    const id = addMessage({ attachments: [{ filename: 'invoice-90020.pdf', content: await encryptedPdfWith(['INV', 'T 701', 'T 702']) }] });
+    await GmailService.pollInvoices(config());
+
+    assert.deepEqual([...invoices.keys()], [`${id}:1`]);
+    assert.equal(tickets.size, 0);
+    const event = events.get(id);
+    assert.equal(event.reviewReason, 'PARTLY_READ');
+    assert.equal(event.attachments[0].invoiceId, 'inv-1');
+    assert.equal(event.attachments[0].reason, ATTACHMENT_REASONS.ticketsNotSplit);
+  });
+
+  // The invoice from the locked file is on record after the first try, so
+  // the retry skips that file as already read. It must not forget that its
+  // tickets still wait for a person.
+  it('a retry after another attachment failed still sends the unsplit tickets to a person', async () => {
+    triageAnswer = (_bytes, _mime, filename) => (filename === 'invoice-90030.pdf'
+      ? ['invoice', 'delivery_ticket', 'delivery_ticket']
+      : ['invoice']);
+    const id = addMessage({ attachments: [
+      { filename: 'invoice-90030.pdf', content: await encryptedPdfWith(['INV', 'T 801', 'T 802']) },
+      { filename: 'invoice-90031.pdf', content: await pdfWith(['INV 2']) },
+    ] });
+    failIngestFor = `${id}:2`;
+    await GmailService.pollInvoices(config());
+    assert.equal(events.get(id).status, 'FAILED');
+    assert.equal(invoices.size, 1);
+
+    failIngestFor = null;
+    clock += RETRY_BASE_MS;
+    await GmailService.pollInvoices(config());
+
+    assert.equal(invoices.size, 2);
+    assert.equal(tickets.size, 0);
+    const event = events.get(id);
+    assert.equal(event.status, 'NEEDS_REVIEW');
+    assert.equal(event.reviewReason, 'PARTLY_READ');
+    assert.equal(event.attachments[0].reason, ATTACHMENT_REASONS.ticketsNotSplit);
+    assert.ok(labelsOf(id).includes('cgc-review'));
+    assert.ok(!labelsOf(id).includes('cgc-processed'));
+  });
+
+  it('a retry remembers a credit memo page behind an invoice already made', async () => {
+    triageAnswer = (_bytes, _mime, filename) => (filename === 'invoice-90032.pdf' ? ['invoice', 'credit_memo'] : ['invoice']);
+    const id = addMessage({ attachments: [
+      { filename: 'invoice-90032.pdf', content: await pdfWith(['INV', 'CREDIT']) },
+      { filename: 'invoice-90033.pdf', content: await pdfWith(['INV 2']) },
+    ] });
+    failIngestFor = `${id}:2`;
+    await GmailService.pollInvoices(config());
+    failIngestFor = null;
+    clock += RETRY_BASE_MS;
+    await GmailService.pollInvoices(config());
+
+    assert.equal(invoices.size, 2);
+    assert.equal(events.get(id).reviewReason, 'CREDIT_MEMO');
+  });
+
+  it('a one-page ticket that cannot be opened is still filed as one ticket', async () => {
+    triageAnswer = () => ['delivery_ticket'];
+    addMessage();
+    await GmailService.pollInvoices(config());
+    assert.equal(tickets.size, 1);
+  });
+
   it('a retried email never files the same ticket page twice', async () => {
     triageAnswer = () => ['invoice', 'delivery_ticket'];
     const id = addMessage({ attachments: [{ filename: 'invoice-90012.pdf', content: await pdfWith(['INV', 'TICKET 504']) }] });
@@ -1122,6 +1558,7 @@ describe('sorting pages before anything is created (A15)', () => {
     assert.equal(invoices.size, 0);
 
     failIngestFor = null;
+    clock += RETRY_BASE_MS;
     await GmailService.pollInvoices(config());
     assert.equal(tickets.size, 1);
     assert.equal(invoices.size, 1);

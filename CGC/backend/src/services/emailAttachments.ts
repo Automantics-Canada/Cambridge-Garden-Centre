@@ -74,6 +74,9 @@ export const ATTACHMENT_REASONS = {
   held: 'waiting for the sender to be approved',
   observed: 'observe mode: nothing is read',
   duplicate: 'already read',
+  readFailed: 'could not be read, after several tries',
+  beforeCutoff: 'received before the inbox go-live date: not read',
+  ticketsNotSplit: 'several delivery tickets in one file the app could not split (locked or very long): file them by hand',
 } as const;
 
 /**
@@ -252,12 +255,38 @@ export function storedFileName(name: string, bytes: Buffer, kind?: AttachmentKin
 }
 
 export type ReviewReason =
+  /** Something was read, and another attachment needs a person (see below). */
+  | 'PARTLY_READ'
+  /** A file of several delivery tickets that could not be split into one per ticket. */
+  | 'TICKETS_NOT_SPLIT'
   | 'UNKNOWN_SENDER'
   | 'UNRESOLVED_SENDER'
   | 'SPREADSHEET'
   | 'CREDIT_MEMO'
   | 'UNSUPPORTED_ATTACHMENTS'
-  | 'NO_INVOICE_ATTACHMENT';
+  | 'NO_INVOICE_ATTACHMENT'
+  /** Reading it failed MAX_READ_ATTEMPTS times (gmail.service.ts); the error is on the event. */
+  | 'READ_FAILED'
+  /** Its sender was approved, but it arrived before GMAIL_POLL_AFTER: entered by hand, if at all. */
+  | 'BEFORE_CUTOFF';
+
+/**
+ * Skips that may be an invoice or a ticket nobody has: a file the reader does
+ * not take, one that is not what it says, an iPhone photo, a list of loads
+ * with no invoice. A logo, an icon, a statement or a repeat is left out on
+ * purpose and needs nobody.
+ */
+const NEEDS_A_PERSON = new Set<string>([
+  ATTACHMENT_REASONS.unsupported,
+  ATTACHMENT_REASONS.mismatch,
+  ATTACHMENT_REASONS.heic,
+  ATTACHMENT_REASONS.sheetOfLoads,
+  ATTACHMENT_REASONS.ticketsNotSplit,
+]);
+
+function needsPerson(record: AttachmentRecord): boolean {
+  return record.action === 'review' || (record.reason !== null && NEEDS_A_PERSON.has(record.reason));
+}
 
 /**
  * Whether an email from a known sender still needs a person, from what
@@ -268,6 +297,10 @@ export type ReviewReason =
  *                 invoice and the PDF a cover page.
  *   CREDIT_MEMO   money the supplier owes CGC; the app holds invoices only,
  *                 so somebody enters it by hand.
+ *   PARTLY_READ   one attachment was read, but another needs a person: a
+ *                 second invoice sent as a photo the reader cannot take, a
+ *                 Word file, a list of loads. Marking the email done would
+ *                 hide that file on a log row nobody opens.
  *
  * Otherwise an email is done once one attachment was read (an invoice,
  * tickets or a supporting file), or when what it carried was a statement:
@@ -276,11 +309,12 @@ export type ReviewReason =
 export function attachmentReviewReason(records: readonly AttachmentRecord[]): ReviewReason | null {
   if (records.some(r => r.kind === 'spreadsheet' && r.action === 'review')) return 'SPREADSHEET';
   if (records.some(r => r.pages?.some(p => p.kind === 'credit_memo'))) return 'CREDIT_MEMO';
-  if (records.some(r => r.action === 'read')) return null;
-  if (records.some(r => r.pages?.some(p => p.kind === 'statement'))) return null;
+  if (records.some(r => r.action === 'read')) return records.some(needsPerson) ? 'PARTLY_READ' : null;
+  if (records.some(r => r.reason === ATTACHMENT_REASONS.ticketsNotSplit)) return 'TICKETS_NOT_SPLIT';
   if (records.some(r => r.reason === ATTACHMENT_REASONS.unsupported || r.reason === ATTACHMENT_REASONS.mismatch || r.reason === ATTACHMENT_REASONS.heic)) {
     return 'UNSUPPORTED_ATTACHMENTS';
   }
+  if (records.some(r => r.pages?.some(p => p.kind === 'statement')) && !records.some(needsPerson)) return null;
   return 'NO_INVOICE_ATTACHMENT';
 }
 

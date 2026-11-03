@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { PDFDocument } from 'pdf-lib';
 import { describePages, planPages, unsortedPlan } from '../src/services/emailTriage.js';
-import { extractPdfPages, pdfPageCount } from '../src/lib/pdfPages.js';
+import { extractPdfPages, inspectPdf, pdfPageCount } from '../src/lib/pdfPages.js';
 
 /** Deciding what an emailed attachment's pages become. Pure, plus pdf-lib. */
 
@@ -71,6 +71,21 @@ describe('cutting PDF pages', () => {
   it('counts pages, and says null for a file it cannot open', async () => {
     assert.equal(await pdfPageCount(await pdfWith(3)), 3);
     assert.equal(await pdfPageCount(Buffer.from('%PDF-1.4 not really')), null);
+  });
+
+  // A billing system's owner-password PDF opens in any viewer but not for
+  // pdf-lib's copying. Its pages can still be counted, so a file of several
+  // tickets is known to be several, and is not split into garbled pages.
+  it('counts an encrypted PDF without splitting it', async () => {
+    const pdf = await PDFDocument.create();
+    for (let i = 0; i < 3; i += 1) pdf.addPage([200, 200]);
+    pdf.context.trailerInfo.Encrypt = pdf.context.register(pdf.context.obj({ Filter: 'Standard', V: 1, R: 2, P: -4 }));
+    const encrypted = Buffer.from(await pdf.save({ useObjectStreams: false }));
+
+    assert.deepEqual(await inspectPdf(encrypted), { pageCount: 3, encrypted: true });
+    assert.deepEqual(await inspectPdf(await pdfWith(2)), { pageCount: 2, encrypted: false });
+    assert.deepEqual(await inspectPdf(Buffer.from('%PDF-1.4 not really')), { pageCount: null, encrypted: false });
+    await assert.rejects(() => extractPdfPages(encrypted, [1]), /could not be opened/);
   });
 
   it('refuses a page that is not there', async () => {

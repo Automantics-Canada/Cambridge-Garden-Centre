@@ -45,19 +45,26 @@ export interface GmailPollCounts {
   unresolvedSender: number;
   /** Messages with no attachment the app reads, not even an unsupported one; sent to review. */
   noAttachments: number;
-  /** Messages from a known sender carrying an unreadable spreadsheet, a credit memo or only unsupported files; sent to review. */
+  /**
+   * Messages from a known sender queued for a person: an unreadable
+   * spreadsheet, a credit memo, only unsupported files, a partly read email,
+   * tickets that could not be split, mail from before the cutoff, or one
+   * that failed every try.
+   */
   needsReview: number;
   /** Messages read again because their sender was approved. */
   requeued: number;
   /** Messages that failed and will be tried again. */
   failed: number;
+  /** Messages that failed recently and were left until their retry time. */
+  deferred: number;
 }
 
 export function emptyCounts(): GmailPollCounts {
   return {
     listed: 0, processed: 0, invoicesCreated: 0, ticketsCreated: 0, supportingFiles: 0, observed: 0, duplicates: 0,
     legacySkipped: 0, rejectedSender: 0, unresolvedSender: 0, noAttachments: 0, needsReview: 0,
-    requeued: 0, failed: 0,
+    requeued: 0, failed: 0, deferred: 0,
   };
 }
 
@@ -72,7 +79,7 @@ export interface GmailPollStatus {
   observedLabel: string;
   reviewLabel: string;
   pollAfter: string | null;
-  /** True while no GMAIL_POLL_AFTER is set and the query still needs is:unread. */
+  /** True while no GMAIL_POLL_AFTER is set, which stops polling altogether. */
   unreadOnly: boolean;
   trustedForwarders: number;
   allowlistEntries: number;

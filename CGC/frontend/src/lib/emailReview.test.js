@@ -7,6 +7,7 @@ import {
   approveSupplierChoices,
   canManageQueue,
   describeAttachment,
+  failureText,
   isActionable,
   reviewReasonLabel,
   senderOf,
@@ -45,6 +46,35 @@ describe('unrecognised senders panel', () => {
     expect(reviewReasonLabel('SPREADSHEET')).toBe('Spreadsheet the app cannot read: enter by hand');
     expect(reviewReasonLabel('CREDIT_MEMO')).toBe('Credit memo: enter by hand');
     expect(reviewReasonLabel('SOMETHING_NEW')).toBe('Needs a look');
+  });
+
+  it('an email read in part is entered by hand, beside what was read', () => {
+    const partly = event({
+      reviewReason: 'PARTLY_READ',
+      attachments: [
+        { name: 'invoice-1.pdf', action: 'read', invoiceId: 'inv-1' },
+        { name: 'invoice-2.heic', action: 'skipped', reason: 'iPhone photo format (HEIC) the reader does not take; send it as JPG or PDF' },
+      ],
+    });
+    expect(splitQueue([partly]).manual).toEqual([partly]);
+    expect(reviewReasonLabel('PARTLY_READ')).toBe('Partly read: enter the rest by hand');
+    expect(reviewReasonLabel('TICKETS_NOT_SPLIT')).toBe('Several tickets in one file: file them by hand');
+    expect(splitQueue([event({ reviewReason: 'TICKETS_NOT_SPLIT' })]).manual).toHaveLength(1);
+    expect(sortedAttachments(partly.attachments).map(describeAttachment)).toEqual([
+      'invoice-1.pdf · already an invoice in the list',
+      'invoice-2.heic · iPhone photo format (HEIC) the reader does not take; send it as JPG or PDF',
+    ]);
+  });
+
+  it('an email that failed every try is entered by hand, and says why', () => {
+    const failed = event({
+      reviewReason: 'READ_FAILED',
+      errorMessage: 'Tried 6 times; last try 2026-11-03T15:00:00.000Z: the reader timed out',
+    });
+    expect(splitQueue([failed]).manual).toEqual([failed]);
+    expect(reviewReasonLabel('READ_FAILED')).toBe('Could not be read after several tries: enter by hand');
+    expect(failureText(failed)).toBe('the reader timed out');
+    expect(failureText(event())).toBeNull();
   });
 
   it('offers the address always and the domain only when it is not shared mail', () => {
@@ -116,5 +146,9 @@ describe('unrecognised senders panel', () => {
     expect(approvedMessage({ added: { value: 'billing@new-supplier.example' }, supplier: { name: 'Example Stone' }, requeued: 2 }))
       .toBe('billing@new-supplier.example added to Example Stone. 2 emails will be read on the next inbox check.');
     expect(approvedMessage({ added: { value: 'x@y.example' }, supplier: { name: 'S' }, requeued: 1 })).toMatch(/1 email will/);
+    expect(approvedMessage({ added: { value: 'x@y.example' }, supplier: { name: 'S' }, requeued: 0, beforeCutoff: 2 }))
+      .toBe('x@y.example added to S. 0 emails will be read on the next inbox check. 2 older emails were sent before the inbox went live and stay under "Enter by hand".');
+    expect(reviewReasonLabel('BEFORE_CUTOFF')).toMatch(/before the inbox went live/);
+    expect(splitQueue([event({ reviewReason: 'BEFORE_CUTOFF' })]).manual).toHaveLength(1);
   });
 });

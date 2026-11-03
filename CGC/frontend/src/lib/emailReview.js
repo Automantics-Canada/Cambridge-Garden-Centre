@@ -8,8 +8,10 @@
  *              office approves it onto a supplier (and the email is read) or
  *              ignores it.
  *   manual     the sender is known but the email carries a spreadsheet the
- *              app cannot read (an old .xls), a credit memo, or nothing the
- *              app reads. Somebody enters it by hand, then ignores it here.
+ *              app cannot read (an old .xls), a credit memo, nothing the app
+ *              reads, or a file beside the one that was read that the app
+ *              cannot take (a second invoice as an iPhone photo, say).
+ *              Somebody enters it by hand, then ignores it here.
  *
  * Approving and ignoring are for owners and admins; AP staff see the list.
  */
@@ -25,10 +27,23 @@ export const REVIEW_REASON_LABELS = {
   CREDIT_MEMO: 'Credit memo: enter by hand',
   UNSUPPORTED_ATTACHMENTS: 'No attachment the app can read',
   NO_INVOICE_ATTACHMENT: 'No invoice attached',
+  PARTLY_READ: 'Partly read: enter the rest by hand',
+  TICKETS_NOT_SPLIT: 'Several tickets in one file: file them by hand',
+  READ_FAILED: 'Could not be read after several tries: enter by hand',
+  BEFORE_CUTOFF: 'Sent before the inbox went live: enter by hand if it is not in yet',
 };
 
 export function reviewReasonLabel(reason) {
   return REVIEW_REASON_LABELS[reason] ?? 'Needs a look';
+}
+
+/**
+ * The error behind a READ_FAILED email, without the try count and time the
+ * poller keeps in front of it ("Tried 6 times; last try …: the error").
+ */
+export function failureText(event) {
+  if (event?.reviewReason !== 'READ_FAILED' || !event.errorMessage) return null;
+  return String(event.errorMessage).replace(/^Tried \d+ times?; last try \S+: /, '');
 }
 
 /** Owners and admins approve and ignore; everyone else may only look. */
@@ -139,5 +154,9 @@ export function approvedMessage(result) {
   const supplier = result?.supplier?.name ?? 'the supplier';
   const count = result?.requeued ?? 0;
   const emails = count === 1 ? '1 email' : `${count} emails`;
-  return `${who} added to ${supplier}. ${emails} will be read on the next inbox check.`;
+  const older = result?.beforeCutoff ?? 0;
+  const left = older === 0
+    ? ''
+    : ` ${older === 1 ? '1 older email was' : `${older} older emails were`} sent before the inbox went live and stay${older === 1 ? 's' : ''} under "Enter by hand".`;
+  return `${who} added to ${supplier}. ${emails} will be read on the next inbox check.${left}`;
 }

@@ -284,6 +284,22 @@ describe('supplier routes', () => {
   });
 });
 
+describe('supplier sender fields (decision G5)', () => {
+  // A supplier's email domains, addresses and contact email decide whose
+  // invoices the inbox reads automatically, as approving a sender does, and
+  // that is OWNER/ADMIN only. Editing a supplier is guarded by the route;
+  // creating one stays open to AP_USER, whose handler refuses those fields
+  // (tests/emailReviewQueue.integration.test.ts).
+  it('editing a supplier is owner/admin only', () => {
+    assert.deepEqual(admittedRoles(effectiveChain(supplierRouter, 'put', '/:id'))?.sort(), ['ADMIN', 'OWNER']);
+  });
+
+  it('creating one is office work, and the handler is the sender-field guard', () => {
+    assertGuarded(supplierRouter, 'post', '/', OPERATIONS);
+    assert.ok(effectiveChain(supplierRouter, 'post', '/').names.includes('createSupplier'));
+  });
+});
+
 describe('rate and price-list routes', () => {
   // These decide what an invoice is checked against, so they are office work
   // and a DRIVER must never reach them.
