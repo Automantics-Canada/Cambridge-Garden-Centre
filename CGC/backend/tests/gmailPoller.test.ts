@@ -1080,7 +1080,7 @@ describe('known senders from the supplier records', () => {
     // API process, so this process's cached sender list is not cleared: the
     // poller must read the supplier records afresh by itself.
     supplier({ emailAddresses: ['billing@new-supplier.test'] });
-    events.set(id, { ...events.get(id), requeuedAt: new Date(), reviewedById: 'user-1' });
+    events.set(id, { ...events.get(id), requeuedAt: new Date(clock), reviewedById: 'user-1' });
     calls.length = 0;
     await GmailService.pollInvoices(records());
 
@@ -1125,7 +1125,7 @@ describe('known senders from the supplier records', () => {
   it('observe mode leaves approved mail for ingest mode', async () => {
     const id = addMessage({ from: 'billing@new-supplier.test' });
     await GmailService.pollInvoices(records());
-    events.set(id, { ...events.get(id), requeuedAt: new Date() });
+    events.set(id, { ...events.get(id), requeuedAt: new Date(clock) });
     await GmailService.pollInvoices(config({ GMAIL_INGEST_MODE: 'observe', GMAIL_SENDER_ALLOWLIST: '' }));
     assert.equal(invoices.size, 0);
     assert.notEqual(events.get(id).requeuedAt, null);
@@ -1134,7 +1134,7 @@ describe('known senders from the supplier records', () => {
   it('approved mail deleted from Gmail meanwhile is marked failed, not retried every minute', async () => {
     const id = addMessage({ from: 'billing@new-supplier.test' });
     await GmailService.pollInvoices(records());
-    events.set(id, { ...events.get(id), requeuedAt: new Date() });
+    events.set(id, { ...events.get(id), requeuedAt: new Date(clock) });
     mailbox.messages = [];
     await GmailService.pollInvoices(records());
 
