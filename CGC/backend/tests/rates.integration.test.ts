@@ -359,6 +359,20 @@ describe('agreed rates (PostgreSQL)', { skip: !runnable }, () => {
       assert.deepEqual(fromFile.map((row) => row.actionType).sort(), ['RATE_CREATED', 'RATE_CREATED', 'RATE_EXPIRED']);
     });
 
+    it('saves the item codes of a same-price row with a newer date on the rate already running', async () => {
+      await api('POST', `/api/suppliers/${supplierId}/rates`, { productName: PRODUCT, rate: 18, unit: 'tonne', effectiveFrom: '2026-01-01' });
+      const sameprice = csv([`${PRODUCT},GRVL19,MA-100,tonne,18,2026-11-01,,`]);
+      const preview = await upload(`/api/suppliers/${supplierId}/rates/import/preview`, sameprice, 'prices.csv');
+      assert.equal(preview.body.plan.rows[0].action, 'CORRECT', JSON.stringify(preview.body.plan.rows[0]));
+      assert.equal(preview.body.plan.canCommit, true);
+
+      const saved = await upload(`/api/suppliers/${supplierId}/rates/import`, sameprice, 'prices.csv', { token: preview.body.token });
+      assert.equal(saved.status, 200, JSON.stringify(saved.body));
+      assert.deepEqual((await rates()).map((r) => [r.rate, r.from, r.to, r.spruceItemCode, r.supplierItemCode]), [
+        [18, '2026-01-01', null, 'GRVL19', 'MA-100'],
+      ]);
+    });
+
     it('saves nothing when one row is wrong', async () => {
       const mixed = csv([`${PRODUCT},,,tonne,19.50,2026-11-01,,`, 'Test Sand,,,cy,thirty,2026-11-01,,']);
       const preview = await upload(`/api/suppliers/${supplierId}/rates/import/preview`, mixed, 'prices.csv');

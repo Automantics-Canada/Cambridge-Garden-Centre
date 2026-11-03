@@ -171,6 +171,27 @@ describe('planning one rate against the stored ones', () => {
   it('reports nothing to do for the same values, or the same open price re-sent later', () => {
     assert.equal(planRateChange({ ...next, effectiveFrom: '2026-01-01', rate: 18 }, [stored()]).action, 'UNCHANGED');
     assert.equal(planRateChange({ ...next, rate: 18 }, [stored()]).action, 'UNCHANGED');
+    assert.equal(
+      planRateChange({ ...next, rate: 18, spruceItemCode: 'GRVL19' }, [stored({ spruceItemCode: 'GRVL19' })]).action,
+      'UNCHANGED'
+    );
+  });
+
+  it('saves item codes sent with the same open price and a newer date on the rate already running', () => {
+    // Without them the rate is never found by the order line's Spruce item
+    // code, and lines worded differently keep reading "No agreed rate".
+    const decision = planRateChange(
+      { ...next, rate: 18, spruceItemCode: 'GRVL19', supplierItemCode: 'SUP-19', notes: undefined },
+      [stored()]
+    );
+    assert.equal(decision.action, 'CORRECT');
+    if (decision.action === 'CORRECT') {
+      assert.equal(decision.corrects.id, 'rate-1');
+      assert.deepEqual(decision.changes, [
+        { field: 'spruceItemCode', from: null, to: 'GRVL19' },
+        { field: 'supplierItemCode', from: null, to: 'SUP-19' },
+      ]);
+    }
   });
 
   it('refuses a start before a later stored rate it would overlap', () => {
@@ -297,6 +318,16 @@ describe('the price-list file', () => {
   it('skips blank rows and reports a file with only a header', () => {
     const result = plan([row({})]);
     assert.match(result.fileErrors.join(' '), /no prices/);
+  });
+
+  it('a same-price row with a newer date and new codes corrects the running rate, keeping its start', () => {
+    const result = plan([gravel({ rate: '18', spruce_item_code: 'GRVL19' })], [stored()]);
+    const only = result.rows[0]!;
+    assert.equal(only.action, 'CORRECT');
+    assert.equal(only.corrects?.rateId, 'rate-1');
+    assert.deepEqual(only.corrects?.changes, [{ field: 'spruceItemCode', from: null, to: 'GRVL19' }]);
+    assert.match(only.message ?? '', /from 2026-01-01/);
+    assert.equal(result.canCommit, true);
   });
 
   it('has nothing to save when every row is unchanged', () => {
