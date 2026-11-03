@@ -94,9 +94,12 @@ scopes. After a password change, repeat this step.
 ## 3. Railway variables — on BOTH the API and the worker service
 
 The API runs the pollers itself unless `WORKER_MODE=off`, and the worker
-always does (`src/workers/runtime.ts`). If the two services differ, they poll
-different mailboxes or with different rules. Set the same values on both,
-then redeploy both.
+always does (`src/workers/runtime.ts`). Only one of them reads the inbox at a
+time: a poll takes a lease (`SystemSetting` key `gmail.pollLease`), renews it
+every minute, and the other process skips its turn while it is held. A lease
+whose process died is free after 3 minutes. If the two services' variables
+differ, whichever holds the lease polls with its own rules, so set the same
+values on both, then redeploy both.
 
 | Variable | Value |
 | --- | --- |

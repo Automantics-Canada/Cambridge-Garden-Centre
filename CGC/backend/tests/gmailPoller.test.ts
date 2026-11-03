@@ -158,12 +158,17 @@ const tickets = new Map<string, { id: string; emailSourceKey: string; fromEmail:
 const supportingFiles = new Map<string, { id: string; invoiceId: string; gmailKey: string; originalName: string; buffer?: Buffer }>();
 const events = new Map<string, any>();
 const settings = new Map<string, unknown>();
+const settingTimes = new Map<string, Date>();
 /** Active suppliers as the known-senders lookup reads them. */
 const suppliers: Array<{ id: string; name: string; type: 'SUPPLIER' | 'TRUCKING_COMPANY'; emailDomains: string[]; emailAddresses: string[]; contactEmail: string | null }> = [];
 let failIngestFor: string | null = null;
 
 (globalThis as { Prisma?: unknown }).Prisma = {
   invoice: {
+    findUnique: async ({ where }: any) => {
+      const row = invoices.get(where.gmailMessageId);
+      return row ? { id: row.id } : null;
+    },
     findMany: async ({ where }: any) =>
       [...invoices.values()]
         .filter(row => row.gmailMessageId.startsWith(where.gmailMessageId.startsWith))
@@ -211,14 +216,42 @@ let failIngestFor: string | null = null;
   systemSetting: {
     upsert: async ({ where, create, update }: any) => {
       settings.set(where.key, (settings.has(where.key) ? update : create).value);
+      settingTimes.set(where.key, (settings.has(where.key) ? update : create).updatedAt ?? new Date());
       return {};
     },
     findUnique: async ({ where }: any) => (settings.has(where.key) ? { value: settings.get(where.key) } : null),
+    create: async ({ data }: any) => {
+      if (settings.has(data.key)) throw Object.assign(new Error('unique'), { code: 'P2002' });
+      settings.set(data.key, data.value);
+      settingTimes.set(data.key, data.updatedAt ?? new Date());
+      return data;
+    },
+    // Only the shapes the poll lease uses: key, and an OR of an older
+    // updatedAt and a holder held in the JSON value.
+    updateMany: async ({ where, data }: any) => {
+      if (!settings.has(where.key)) return { count: 0 };
+      const value = settings.get(where.key) as any;
+      const at = settingTimes.get(where.key)!;
+      const test = (cond: any): boolean => {
+        if (cond.OR) return cond.OR.some(test);
+        if (cond.updatedAt?.lt) return at < cond.updatedAt.lt;
+        if (cond.value?.path) return value?.[cond.value.path[0]] === cond.value.equals;
+        return true;
+      };
+      const { key: _key, ...rest } = where;
+      if (!Object.entries(rest).every(([k, v]) => test({ [k]: v }))) return { count: 0 };
+      if ('value' in data) settings.set(where.key, data.value);
+      if ('updatedAt' in data) settingTimes.set(where.key, data.updatedAt);
+      return { count: 1 };
+    },
   },
 };
 
 const { InvoiceService } = await import('../src/modules/invoices/invoice.service.js');
+/** Runs as an invoice is about to be created: another poller acting at that moment. */
+let onIngest: ((params: any) => void) | null = null;
 mock.method(InvoiceService, 'ingestEmailInvoice', async (params: any) => {
+  onIngest?.(params);
   if (failIngestFor && params.gmailMessageId === failIngestFor) throw new Error('storage unavailable');
   if (invoices.has(params.gmailMessageId)) throw Object.assign(new Error('unique'), { code: 'P2002' });
   const id = `inv-${invoices.size + 1}`;
@@ -249,6 +282,7 @@ const { readGmailInboxConfig, buildInboxQuery, gmailPollDisabledReason } = await
 const { readGmailStatus, deriveGmailHealth, GMAIL_STATUS_KEY } = await import('../src/services/gmailStatus.js');
 const { invalidateKnownSenders } = await import('../src/services/knownSenders.js');
 const { ATTACHMENT_REASONS } = await import('../src/services/emailAttachments.js');
+const { POLL_LEASE_KEY, POLL_LEASE_MS } = await import('../src/services/gmailLease.js');
 
 const ocrJobs: string[] = [];
 GmailService.triggerOcr = (id: string) => { ocrJobs.push(id); };
@@ -365,10 +399,12 @@ beforeEach((t) => {
   triageCalls.length = 0;
   events.clear();
   settings.clear();
+  settingTimes.clear();
   suppliers.length = 0;
   invalidateKnownSenders();
   ocrJobs.length = 0;
   failIngestFor = null;
+  onIngest = null;
   GmailService.resetState();
 });
 
@@ -601,12 +637,102 @@ describe('idempotency', () => {
     assert.deepEqual(events.get(id).createdInvoiceIds, ['inv-legacy']);
   });
 
+  // The previous version keeps polling in a container a rollout has not
+  // stopped yet. It keys by attachmentId, so the unique key cannot catch it:
+  // what it wrote while this poll was sorting pages is looked for again
+  // just before an invoice is created.
+  it('an invoice the old poller made while this one was sorting pages is not made again', async () => {
+    const id = addMessage();
+    triageAnswer = () => {
+      invoices.set(`${id}:ANGjdJ8-legacyAttachmentIdFromTheOldPoller`, {
+        id: 'inv-legacy', gmailMessageId: `${id}:ANGjdJ8-legacy`, fromEmail: SUPPLIER, subject: 'x', originalName: 'x.pdf',
+      });
+      return ['invoice'];
+    };
+    await GmailService.pollInvoices(config());
+
+    assert.deepEqual([...invoices.values()].map(i => i.id), ['inv-legacy'], 'no second invoice for the same email');
+    assert.equal(status().counts.legacySkipped, 1);
+    assert.equal(events.get(id).status, 'PROCESSED');
+    assert.deepEqual(events.get(id).createdInvoiceIds, ['inv-legacy']);
+    assert.ok(labelsOf(id).includes('cgc-processed'));
+  });
+
+  // Two pollers of this version (the API inline and the worker). The other
+  // one filed the PDF while this one was sorting it: the Excel beside it is
+  // still that invoice's breakdown, not a second invoice.
+  it('losing the race on the PDF still keeps the Excel with the winner\'s invoice', async () => {
+    const id = addMessage({ attachments: [
+      { filename: 'invoice-90004.pdf' },
+      { filename: 'invoice-90004-loads.xlsx', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', content: await xlsxBytes() },
+    ] });
+    triageAnswer = (_bytes, mimeType) => {
+      if (mimeType === 'application/pdf' && !invoices.has(`${id}:1`)) {
+        invoices.set(`${id}:1`, { id: 'inv-other', gmailMessageId: `${id}:1`, fromEmail: SUPPLIER, subject: 'x', originalName: 'x.pdf' });
+      }
+      return ['invoice'];
+    };
+    await GmailService.pollInvoices(config());
+
+    assert.deepEqual([...invoices.values()].map(i => i.id), ['inv-other'], 'one invoice from the email');
+    assert.equal(supportingFiles.get(`${id}:2`)?.invoiceId, 'inv-other');
+    assert.deepEqual(events.get(id).createdInvoiceIds, ['inv-other']);
+    assert.equal(events.get(id).attachments[0].invoiceId, 'inv-other');
+  });
+
+  it('losing the race on the unique key itself names the winner\'s invoice too', async () => {
+    const id = addMessage({ attachments: [
+      { filename: 'invoice-90005.pdf' },
+      { filename: 'invoice-90005-loads.xlsx', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', content: await xlsxBytes() },
+    ] });
+    onIngest = (params) => {
+      if (params.gmailMessageId === `${id}:1` && !invoices.has(`${id}:1`)) {
+        invoices.set(`${id}:1`, { id: 'inv-winner', gmailMessageId: `${id}:1`, fromEmail: SUPPLIER, subject: 'x', originalName: 'x.pdf' });
+      }
+    };
+    await GmailService.pollInvoices(config());
+
+    assert.deepEqual([...invoices.values()].map(i => i.id), ['inv-winner']);
+    assert.equal(supportingFiles.get(`${id}:2`)?.invoiceId, 'inv-winner');
+    assert.deepEqual(events.get(id).createdInvoiceIds, ['inv-winner']);
+    assert.equal(status().counts.duplicates, 1);
+  });
+
   it('falls back to a content hash when Gmail reports no part id', async () => {
     const id = addMessage();
     delete mailbox.messages[0]!.payload.parts![1]!.partId;
     await GmailService.pollInvoices(config());
     const [key] = [...invoices.keys()];
     assert.match(key!, new RegExp(`^${id}:sha256-[0-9a-f]{32}$`));
+  });
+});
+
+describe('one poller at a time', () => {
+  // The API polls in-process unless WORKER_MODE=off, and the worker always
+  // does. A lease in SystemSetting lets only one of them read the inbox.
+  it('polls nothing while another process holds the inbox', async () => {
+    addMessage();
+    settings.set(POLL_LEASE_KEY, { holder: 'worker-elsewhere' });
+    settingTimes.set(POLL_LEASE_KEY, new Date());
+    await GmailService.pollInvoices(config());
+
+    assert.equal(inboxCalls('messages.list').length, 0);
+    assert.equal(invoices.size, 0);
+    assert.equal(status(), undefined, 'the holder reports the poll, not this process');
+  });
+
+  it('takes over a lease its holder stopped renewing', async () => {
+    addMessage();
+    settings.set(POLL_LEASE_KEY, { holder: 'worker-that-died' });
+    settingTimes.set(POLL_LEASE_KEY, new Date(Date.now() - POLL_LEASE_MS - 1000));
+    await GmailService.pollInvoices(config());
+    assert.equal(invoices.size, 1);
+  });
+
+  it('gives the lease back when the poll ends', async () => {
+    addMessage();
+    await GmailService.pollInvoices(config());
+    assert.ok(settingTimes.get(POLL_LEASE_KEY)! < new Date(Date.now() - POLL_LEASE_MS));
   });
 });
 

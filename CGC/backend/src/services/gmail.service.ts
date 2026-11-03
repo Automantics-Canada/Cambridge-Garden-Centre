@@ -40,6 +40,13 @@ import { extractPdfPages, MAX_SPLIT_PAGES, pdfPageCount } from '../lib/pdfPages.
 import { detectFileKind } from '../middleware/uploadValidation.js';
 import { detectSpreadsheetKind } from '../lib/spreadsheet.js';
 import {
+  acquirePollLease,
+  LEASE_HOLDER,
+  POLL_LEASE_RENEW_MS,
+  releasePollLease,
+  renewPollLease,
+} from './gmailLease.js';
+import {
   describeError,
   emptyCounts,
   maskAddress,
@@ -221,6 +228,18 @@ function isNotFound(error: unknown): boolean {
   return e?.code === 404 || e?.status === 404 || e?.response?.status === 404;
 }
 
+/**
+ * The previous poller ingested this email while this one was reading it (a
+ * rollout runs both for a moment). Thrown from deep in the attachment loop,
+ * caught where the message is handled, which then skips it as it would any
+ * email that version had already read.
+ */
+class IngestedByPreviousPoller extends Error {
+  constructor(readonly invoiceIds: string[]) {
+    super('Ingested by the previous poller meanwhile');
+  }
+}
+
 /** A Prisma unique-constraint violation. */
 function isUniqueViolation(error: unknown): boolean {
   return typeof error === 'object' && error !== null && (error as { code?: unknown }).code === 'P2002';
@@ -261,6 +280,9 @@ export class GmailService {
 
   /** Replaced by the tests, so no model is called. */
   static triage: Triage = triageDocument;
+
+  /** The clock, for the poll lease. Replaced by the tests. */
+  static now: () => Date = () => new Date();
 
   private static isPolling = false;
   /** Label name → id, resolved once per process. */
@@ -340,6 +362,39 @@ export class GmailService {
     }
 
     this.isPolling = true;
+    let leased = false;
+    let leaseLost = false;
+    let renewal: ReturnType<typeof setInterval> | null = null;
+    try {
+      // Another process (the API and the worker both poll) has the inbox this
+      // minute. It reports the poll; this one says nothing.
+      leased = await acquirePollLease(LEASE_HOLDER, this.now());
+      if (!leased) {
+        this.warnOnce('lease-held', 'Gmail polling is being done by another process; this one waits its turn.');
+        this.isPolling = false;
+        return;
+      }
+      renewal = setInterval(() => {
+        renewPollLease(LEASE_HOLDER, this.now())
+          .then((held) => { if (!held) leaseLost = true; })
+          .catch((error) => console.error('[Gmail] Could not renew the poll lease:', error));
+      }, POLL_LEASE_RENEW_MS);
+      renewal.unref?.();
+    } catch (error) {
+      // No database: nothing below could be recorded anyway.
+      console.error('❌ Error polling Gmail:', error);
+      this.isPolling = false;
+      status.lastResult = 'error';
+      status.lastError = describeError(error);
+      await writeGmailStatus(status);
+      return;
+    }
+    // Stops the poll between messages once another process has taken the
+    // lease (this one stalled past it): the two must not work side by side.
+    const stillHeld = () => {
+      if (leaseLost) throw new Error('Another process took over the inbox poll; this one stopped.');
+    };
+
     status.enabled = true;
     try {
       const mailbox = await this.mailboxAddress();
@@ -397,6 +452,7 @@ export class GmailService {
         // straight back to the queue with its re-queue used up.
         if (requeued.length > 0) invalidateKnownSenders();
         for (const { gmailMessageId } of requeued) {
+          stillHeld();
           handled.add(gmailMessageId);
           const outcome = await this.processMessage(gmailMessageId, config, pollLabels, counts, true);
           counts[outcome] += 1;
@@ -411,6 +467,7 @@ export class GmailService {
 
       for (const id of ids) {
         if (handled.has(id)) continue;
+        stillHeld();
         const outcome = await this.processMessage(id, config, pollLabels, counts, false);
         counts[outcome] += 1;
       }
@@ -424,6 +481,10 @@ export class GmailService {
       status.lastError = describeError(error);
     } finally {
       if (!status.enabled) status.lastResult = 'disabled';
+      if (renewal) clearInterval(renewal);
+      if (leased && !leaseLost) {
+        await releasePollLease(LEASE_HOLDER).catch((error) => console.error('[Gmail] Could not release the poll lease:', error));
+      }
       this.isPolling = false;
       await writeGmailStatus(status);
     }
@@ -566,32 +627,30 @@ export class GmailService {
       const via = sender.forwardedBy ? ` (${sender.mode} via ${sender.forwardedBy})` : '';
       console.log(`Processing email from ${sender.originalSender}${via}: "${facts.subject}"`);
 
-      const existing = await prisma.invoice.findMany({
-        where: { gmailMessageId: { startsWith: `${messageId}:` } },
-        select: { id: true, gmailMessageId: true },
-      });
-      const invoiceByKey = new Map(existing.map(row => [row.gmailMessageId, row.id]));
-
       // The previous poller keyed invoices by attachmentId and only marked a
       // message read once every attachment was in. A row under that key means
       // this message was handled before the upgrade: ingesting it again under
       // the new key would bill it twice.
-      const legacy = [...invoiceByKey.keys()].some(key => !isCurrentKeySuffix(key.slice(messageId.length + 1)));
-      if (legacy) {
-        console.log(`Email ${messageId} was ingested before the upgrade. Skipping.`);
+      const invoiceByKey = new Map<string, string>();
+      let read: ReadOutcome;
+      try {
+        await this.refreshInvoiceKeys(messageId, invoiceByKey);
+        read = await this.readAttachments(facts, invoiceByKey, counts);
+      } catch (error) {
+        if (!(error instanceof IngestedByPreviousPoller)) throw error;
+        console.log(`Email ${messageId} was ingested by the previous poller. Skipping.`);
         await this.recordEvent(facts, {
           ...this.eventBase(facts),
           status: EmailIngestionStatus.PROCESSED,
           reviewReason: null,
           attachments: [],
-          createdInvoiceIds: [...invoiceByKey.values()],
+          createdInvoiceIds: error.invoiceIds,
           note: 'Read by the poller before the upgrade; not read again.',
         });
         await this.markDone(messageId, labels, true);
         return 'legacySkipped';
       }
-
-      const { records, createdInvoiceIds, createdTicketIds } = await this.readAttachments(facts, invoiceByKey, counts);
+      const { records, createdInvoiceIds, createdTicketIds } = read;
 
       const review = attachmentReviewReason(records);
       if (review) {
@@ -629,6 +688,23 @@ export class GmailService {
       console.error(`Error processing message ${messageId}:`, error);
       return 'failed';
     }
+  }
+
+  /**
+   * Loads the invoices already made from this message into `invoiceByKey`.
+   * Throws IngestedByPreviousPoller when any carries the previous poller's
+   * key. Called before reading, and again just before an invoice is created,
+   * because sorting pages takes seconds and the other version may have filed
+   * the email meanwhile, under a key the unique index cannot compare.
+   */
+  private static async refreshInvoiceKeys(messageId: string, invoiceByKey: Map<string, string>) {
+    const rows = await prisma.invoice.findMany({
+      where: { gmailMessageId: { startsWith: `${messageId}:` } },
+      select: { id: true, gmailMessageId: true },
+    });
+    const legacy = rows.filter(row => !isCurrentKeySuffix(row.gmailMessageId!.slice(messageId.length + 1)));
+    if (legacy.length > 0) throw new IngestedByPreviousPoller(rows.map(row => row.id));
+    for (const row of rows) invoiceByKey.set(row.gmailMessageId!, row.id);
   }
 
   /**
@@ -715,8 +791,16 @@ export class GmailService {
     }
 
     // The invoice the email's PDF became, on this poll or an earlier one.
+    const sheetKeys = new Set(sheets.map((sheet) => sheet.key));
     for (const sheet of sheets) {
-      const invoiceId = outcome.createdInvoiceIds[0];
+      let invoiceId = outcome.createdInvoiceIds[0];
+      if (!invoiceId) {
+        // Read the sheet as the invoice only when nothing else in the email
+        // became one, looked up afresh: a poller that lost the race on the
+        // PDF knows its invoice only from the database.
+        await this.refreshInvoiceKeys(messageId, invoiceByKey);
+        invoiceId = [...invoiceByKey.entries()].find(([key]) => !sheetKeys.has(key))?.[1];
+      }
       if (invoiceId) {
         const name = storedFileName(sheet.record.name, sheet.buffer, 'spreadsheet');
         console.log(`Keeping ${name} with invoice ${invoiceId} as a supporting file`);
@@ -814,6 +898,14 @@ export class GmailService {
 
     let invoiceId: string | null = null;
     if (plan.invoicePages.length > 0) {
+      await this.refreshInvoiceKeys(facts.messageId, invoiceByKey);
+      const filed = invoiceByKey.get(key);
+      if (filed) {
+        // Another poller made it while this one was sorting the pages.
+        counts.duplicates += 1;
+        outcome.createdInvoiceIds.push(filed);
+        return { ...record, pages: plan.pages, ticketIds, invoiceId: filed, reason: ATTACHMENT_REASONS.duplicate };
+      }
       const whole = !plan.split || plan.invoicePages.length === plan.pages.length;
       const bytes = whole ? buffer : await extractPdfPages(buffer, plan.invoicePages);
       console.log(`Ingesting attachment: ${record.name || '(no name)'}${whole ? '' : ` (pages ${plan.invoicePages.join(', ')})`}`);
@@ -833,11 +925,23 @@ export class GmailService {
         counts.invoicesCreated += 1;
         if (result.ocrJob.id) this.triggerOcr(result.ocrJob.id);
       } catch (error) {
-        // The API and the worker both poll during a rollout; whichever loses
-        // the race on the unique key has nothing left to do.
+        // Another poller won the race on the unique key. Its invoice is this
+        // email's invoice: the Excel beside it is kept with it, and the
+        // email's record names it.
         if (!isUniqueViolation(error)) throw error;
         counts.duplicates += 1;
-        return { ...record, pages: plan.pages, ticketIds, reason: ATTACHMENT_REASONS.duplicate };
+        const winner = await prisma.invoice.findUnique({ where: { gmailMessageId: key }, select: { id: true } });
+        if (winner) {
+          invoiceByKey.set(key, winner.id);
+          outcome.createdInvoiceIds.push(winner.id);
+        }
+        return {
+          ...record,
+          pages: plan.pages,
+          ticketIds,
+          reason: ATTACHMENT_REASONS.duplicate,
+          ...(winner ? { invoiceId: winner.id } : {}),
+        };
       }
     }
 
