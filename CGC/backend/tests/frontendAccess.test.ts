@@ -48,6 +48,7 @@ const PAGES = [
   'pages/dashboard/InvoicesPage.jsx',
   'pages/dashboard/TicketsPage.jsx',
   'pages/dispatch/DispatchBoard.jsx',
+  'components/dispatch/HaulLoads.jsx',
   'pages/driver/DriverMobileView.jsx',
   'components/invoices/UnrecognisedSendersPanel.jsx',
 ] as const;
