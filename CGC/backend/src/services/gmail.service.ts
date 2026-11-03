@@ -239,6 +239,8 @@ type ExistingEvent = {
   createdTicketIds?: string[];
   requeuedAt: Date | null;
   errorMessage?: string | null;
+  /** What the last try recorded for each attachment (AttachmentRecord[]). */
+  attachments?: unknown;
 } | null;
 
 /** The facts about one fetched message that every path below needs. */
@@ -618,7 +620,9 @@ export class GmailService {
     try {
       const existing = await prisma.emailIngestionEvent.findUnique({
         where: { gmailMessageId: messageId },
-        select: { status: true, createdInvoiceIds: true, createdTicketIds: true, requeuedAt: true, errorMessage: true },
+        select: {
+          status: true, createdInvoiceIds: true, createdTicketIds: true, requeuedAt: true, errorMessage: true, attachments: true,
+        },
       });
       // Failed a moment ago: left until its retry time, before anything is
       // fetched or paid for.
@@ -878,6 +882,14 @@ export class GmailService {
     ]);
     const ticketByKey = new Map(tickets.map((row) => [row.emailSourceKey!, row.id]));
     const supportingByKey = new Map(supporting.map((row) => [row.gmailKey!, row.invoiceId]));
+    // What an earlier try said about a file whose invoice is already made. A
+    // retry skips that file, so without this it would forget that the file's
+    // tickets could not be split, or that a page was a credit memo, and the
+    // email would be marked done with those still waiting for a person.
+    const earlier = new Map<string, AttachmentRecord>();
+    for (const r of Array.isArray(facts.existing?.attachments) ? facts.existing.attachments as AttachmentRecord[] : []) {
+      if (r && typeof r === 'object' && r.partId && r.invoiceId) earlier.set(r.partId, r);
+    }
 
     const candidates = triageAttachments(facts.payload);
     const records: AttachmentRecord[] = candidates.map((candidate) => candidate.record);
@@ -894,7 +906,15 @@ export class GmailService {
       if (key && known) {
         counts.duplicates += 1;
         outcome.createdInvoiceIds.push(known);
-        records[index] = { ...candidate.record, action: 'read', reason: ATTACHMENT_REASONS.duplicate, invoiceId: known };
+        const before = part.partId ? earlier.get(part.partId) : undefined;
+        const same = before?.invoiceId === known ? before : undefined;
+        records[index] = {
+          ...candidate.record,
+          action: 'read',
+          reason: same?.reason === ATTACHMENT_REASONS.ticketsNotSplit ? same.reason : ATTACHMENT_REASONS.duplicate,
+          invoiceId: known,
+          ...(Array.isArray(same?.pages) ? { pages: same.pages } : {}),
+        };
         continue;
       }
       const keptWith = key ? supportingByKey.get(key) : undefined;
@@ -1050,6 +1070,8 @@ export class GmailService {
     outcome.createdTicketIds.push(...ticketIds);
 
     let invoiceId: string | null = null;
+    /** Another poller made this file's invoice first; `invoiceId` is its, when found. */
+    let raced = false;
     if (plan.invoicePages.length > 0) {
       await this.refreshInvoiceKeys(facts.messageId, invoiceByKey);
       const filed = invoiceByKey.get(key);
@@ -1057,8 +1079,11 @@ export class GmailService {
         // Another poller made it while this one was sorting the pages.
         counts.duplicates += 1;
         outcome.createdInvoiceIds.push(filed);
-        return { ...record, pages: plan.pages, ticketIds, invoiceId: filed, reason: ATTACHMENT_REASONS.duplicate };
+        invoiceId = filed;
+        raced = true;
       }
+    }
+    if (plan.invoicePages.length > 0 && !raced) {
       const whole = !plan.split || plan.invoicePages.length === plan.pages.length;
       const bytes = whole ? buffer : await extractPdfPages(buffer, plan.invoicePages);
       console.log(`Ingesting attachment: ${record.name || '(no name)'}${whole ? '' : ` (pages ${plan.invoicePages.join(', ')})`}`);
@@ -1087,25 +1112,30 @@ export class GmailService {
         if (winner) {
           invoiceByKey.set(key, winner.id);
           outcome.createdInvoiceIds.push(winner.id);
+          invoiceId = winner.id;
         }
-        return {
-          ...record,
-          pages: plan.pages,
-          ticketIds,
-          reason: ATTACHMENT_REASONS.duplicate,
-          ...(winner ? { invoiceId: winner.id } : {}),
-        };
+        raced = true;
       }
     }
 
     if (ticketsTrapped) {
       // The invoice, if any, was read whole (its reader skips ticket pages);
-      // the tickets wait for a person either way.
+      // the tickets wait for a person either way, whichever poller read it.
       return {
         ...record,
-        action: invoiceId ? 'read' : 'review',
+        action: invoiceId || raced ? 'read' : 'review',
         reason: ATTACHMENT_REASONS.ticketsNotSplit,
         pages: plan.pages,
+        ...(ticketIds.length > 0 ? { ticketIds } : {}),
+        ...(invoiceId ? { invoiceId } : {}),
+      };
+    }
+    if (raced) {
+      return {
+        ...record,
+        pages: plan.pages,
+        ticketIds,
+        reason: ATTACHMENT_REASONS.duplicate,
         ...(invoiceId ? { invoiceId } : {}),
       };
     }

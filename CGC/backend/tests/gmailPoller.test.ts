@@ -1496,6 +1496,52 @@ describe('sorting pages before anything is created (A15)', () => {
     assert.equal(event.attachments[0].reason, ATTACHMENT_REASONS.ticketsNotSplit);
   });
 
+  // The invoice from the locked file is on record after the first try, so
+  // the retry skips that file as already read. It must not forget that its
+  // tickets still wait for a person.
+  it('a retry after another attachment failed still sends the unsplit tickets to a person', async () => {
+    triageAnswer = (_bytes, _mime, filename) => (filename === 'invoice-90030.pdf'
+      ? ['invoice', 'delivery_ticket', 'delivery_ticket']
+      : ['invoice']);
+    const id = addMessage({ attachments: [
+      { filename: 'invoice-90030.pdf', content: await encryptedPdfWith(['INV', 'T 801', 'T 802']) },
+      { filename: 'invoice-90031.pdf', content: await pdfWith(['INV 2']) },
+    ] });
+    failIngestFor = `${id}:2`;
+    await GmailService.pollInvoices(config());
+    assert.equal(events.get(id).status, 'FAILED');
+    assert.equal(invoices.size, 1);
+
+    failIngestFor = null;
+    clock += RETRY_BASE_MS;
+    await GmailService.pollInvoices(config());
+
+    assert.equal(invoices.size, 2);
+    assert.equal(tickets.size, 0);
+    const event = events.get(id);
+    assert.equal(event.status, 'NEEDS_REVIEW');
+    assert.equal(event.reviewReason, 'PARTLY_READ');
+    assert.equal(event.attachments[0].reason, ATTACHMENT_REASONS.ticketsNotSplit);
+    assert.ok(labelsOf(id).includes('cgc-review'));
+    assert.ok(!labelsOf(id).includes('cgc-processed'));
+  });
+
+  it('a retry remembers a credit memo page behind an invoice already made', async () => {
+    triageAnswer = (_bytes, _mime, filename) => (filename === 'invoice-90032.pdf' ? ['invoice', 'credit_memo'] : ['invoice']);
+    const id = addMessage({ attachments: [
+      { filename: 'invoice-90032.pdf', content: await pdfWith(['INV', 'CREDIT']) },
+      { filename: 'invoice-90033.pdf', content: await pdfWith(['INV 2']) },
+    ] });
+    failIngestFor = `${id}:2`;
+    await GmailService.pollInvoices(config());
+    failIngestFor = null;
+    clock += RETRY_BASE_MS;
+    await GmailService.pollInvoices(config());
+
+    assert.equal(invoices.size, 2);
+    assert.equal(events.get(id).reviewReason, 'CREDIT_MEMO');
+  });
+
   it('a one-page ticket that cannot be opened is still filed as one ticket', async () => {
     triageAnswer = () => ['delivery_ticket'];
     addMessage();
