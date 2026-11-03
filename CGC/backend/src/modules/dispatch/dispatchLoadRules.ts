@@ -176,6 +176,36 @@ export function lockedChanges(changes: LoadChange[]): LoadField[] {
 export const changesRate = (changes: LoadChange[]) =>
   changes.some(change => change.field === 'rate' || change.field === 'rateUnit');
 
+/**
+ * What a trucking invoice line is checked against on a load (haulMatch.ts):
+ * who hauled it, at what rate and per what, how much, which trip, and the
+ * ticket that names it. A pit or a note changes no verdict.
+ */
+export const HAUL_CHECK_FIELDS: readonly LoadField[] = [
+  'carrierSupplierId', 'rate', 'rateUnit', 'quantity', 'tripRef', 'ticketNumber',
+];
+
+/**
+ * The trucking companies whose open invoice lines may read differently after
+ * a load changed: the carrier before and the carrier after, when anything a
+ * haul line is checked against changed. Empty for CGC's own trucks and for a
+ * change to the pit or the note.
+ *
+ * Without this, a trucking invoice that arrived before dispatch filled in the
+ * rate kept saying "No haul rate set" until somebody re-ran it by hand.
+ *
+ * @param before The load before the change; null for a new load.
+ * @param after The load after it; null for a removed load.
+ */
+export function carriersToRecheck(
+  before: Pick<LoadState, 'carrierSupplierId'> | null,
+  after: Pick<LoadState, 'carrierSupplierId'> | null,
+  changes: LoadChange[]
+): string[] {
+  if (!changes.some(change => HAUL_CHECK_FIELDS.includes(change.field))) return [];
+  return [...new Set([before?.carrierSupplierId, after?.carrierSupplierId].filter((id): id is string => Boolean(id)))];
+}
+
 /** One load as `billableHauls` reads it. */
 export interface HaulLoad {
   id: string;

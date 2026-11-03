@@ -4,6 +4,7 @@ import { prisma } from '../../db/prisma.js';
 import {
   LoadInputError,
   applyLoadInput,
+  carriersToRecheck,
   changesRate,
   isUuid,
   loadChanges,
@@ -361,6 +362,22 @@ export async function loadsFollowStopDriver(
   });
 }
 
+/**
+ * Re-decides the open invoice lines of these trucking companies, after the
+ * load change is saved. Best-effort, like the re-check after a haul is paid
+ * (resolveMatch.ts): the dispatcher's change stands whatever happens here,
+ * and a failure is logged, never sent back to the board.
+ */
+async function recheckCarrierLines(carrierIds: string[], context: string): Promise<void> {
+  if (carrierIds.length === 0) return;
+  try {
+    const { recomputeCarrierLinesSafely } = await import('../matching/resolveMatch.js');
+    for (const carrierId of carrierIds) await recomputeCarrierLinesSafely(carrierId, context);
+  } catch (error) {
+    console.error(`[DispatchLoads] ${context}: could not re-check the carrier's invoices:`, error);
+  }
+}
+
 const CLAIMED_MESSAGE = 'This load is already paid on a trucking invoice, so its figures are locked. Only the note can change.';
 
 export const DispatchLoadsService = {
@@ -427,7 +444,8 @@ export const DispatchLoadsService = {
   /** Changes a load. A paid load keeps everything but its note (409). */
   async update(loadId: string, body: unknown, userId: string): Promise<DispatchLoadView> {
     const input = parseLoadInput(body);
-    return prisma.$transaction(async (tx) => {
+    let recheck: string[] = [];
+    const view = await prisma.$transaction(async (tx) => {
       const load = await loadFor(tx, loadId);
       refuseQuotation(load.document);
 
@@ -457,10 +475,15 @@ export const DispatchLoadsService = {
         await tx.auditLog.create({
           data: auditData(changesRate(changes) ? 'LOAD_RATE_SET' : 'LOAD_UPDATED', load, load.document.documentNumber, userId, changes),
         });
+        recheck = carriersToRecheck(before, after, changes);
       }
       const row = await tx.dispatchLoad.findUniqueOrThrow({ where: { id: load.id }, select: LOAD_SELECT });
       return (await viewsOf(tx, [row]))[0]!;
     });
+    // An invoice waiting on this load ("No haul rate set", a ticket nobody
+    // had written down) is decided again now the load says more.
+    await recheckCarrierLines(recheck, `load ${view.id} changed`);
+    return view;
   },
 
   /**
@@ -469,7 +492,8 @@ export const DispatchLoadsService = {
    * stray one does not linger.
    */
   async remove(loadId: string, userId: string) {
-    return prisma.$transaction(async (tx) => {
+    let recheck: string[] = [];
+    const removedLoad = await prisma.$transaction(async (tx) => {
       const load = await loadFor(tx, loadId);
       if (load.claimedByLineItemId) {
         throw new DispatchLoadError(409, 'This load is already paid on a trucking invoice, so it cannot be removed.');
@@ -478,11 +502,16 @@ export const DispatchLoadsService = {
       if (removed.count === 0) {
         throw new DispatchLoadError(409, 'This load is already paid on a trucking invoice, so it cannot be removed.');
       }
+      const changes = loadChanges(stateOf(load), EMPTY_STATE);
       await tx.auditLog.create({
-        data: auditData('LOAD_DELETED', load, load.document.documentNumber, userId, loadChanges(stateOf(load), EMPTY_STATE)),
+        data: auditData('LOAD_DELETED', load, load.document.documentNumber, userId, changes),
       });
+      recheck = carriersToRecheck(stateOf(load), null, changes);
       return { id: load.id, deleted: true };
     });
+    // A line that was matched to this load no longer can be.
+    await recheckCarrierLines(recheck, `load ${removedLoad.id} removed`);
+    return removedLoad;
   },
 
   /**
@@ -492,7 +521,8 @@ export const DispatchLoadsService = {
    * counted as skipped.
    */
   async copyRateToTrip(loadId: string, userId: string) {
-    return prisma.$transaction(async (tx) => {
+    let carrierId: string | null = null;
+    const outcome = await prisma.$transaction(async (tx) => {
       const source = await loadFor(tx, loadId);
       refuseQuotation(source.document);
       if (!source.tripRef) throw new DispatchLoadError(400, 'This load is not on a trip. Give it a trip reference first.');
@@ -535,8 +565,12 @@ export const DispatchLoadsService = {
           }),
         });
       }
+      // One trip has one carrier (checkReferences), so the source's is the trip's.
+      if (updated > 0) carrierId = source.carrierSupplierId;
       return { tripRef: source.tripRef, updated, skipped };
     });
+    await recheckCarrierLines(carrierId ? [carrierId] : [], `trip ${outcome.tripRef} rate copied`);
+    return outcome;
   },
 };
 
