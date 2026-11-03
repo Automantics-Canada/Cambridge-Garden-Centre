@@ -30,7 +30,7 @@ const ORDER_TABLES = [
   'OrderDocument', 'Order', 'OrderOverride', 'Delivery', 'DeliveryHistory', 'ImportBatch',
   'ImportBatchFile', 'SpruceImportJob', 'SpruceImportRowError', 'TicketOrderMatch', 'MatchResult', 'TicketClaim',
 ];
-const TICKET_INVOICE_TABLES = ['Ticket', 'Invoice', 'InvoiceLineItem', '_InvoiceLineItemToTicket', 'OcrJob'];
+const TICKET_INVOICE_TABLES = ['Ticket', 'Invoice', 'InvoiceLineItem', 'InvoiceSupportingFile', '_InvoiceLineItemToTicket', 'OcrJob'];
 const ALWAYS_KEPT = [
   'User', 'Driver', 'Supplier', 'SupplierSpruceVendor', 'SupplierProductAlias', 'NegotiatedRate',
   'SystemSetting', 'Product', 'Unit', 'AuditLog', 'EmailIngestionEvent', 'WhatsAppMessage', '_prisma_migrations',
@@ -168,6 +168,12 @@ async function seed(): Promise<Seeded> {
     data: {
       invoiceId: invoice.id, lineNumber: 1, description: 'Stone', quantity: 1, unit: 'MT', unitRate: 10,
       lineTotal: 10, flag: 'OK', matchedOrderId: order.id, matchedTickets: { connect: [{ id: ticket.id }] },
+    },
+  });
+  await prisma.invoiceSupportingFile.create({
+    data: {
+      invoiceId: invoice.id, fileUrl: 'test://loads.xlsx', originalName: 'loads.xlsx',
+      contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', size: 10, gmailKey: 'gmail-wipe-1:2',
     },
   });
   const verdict = await prisma.matchResult.create({

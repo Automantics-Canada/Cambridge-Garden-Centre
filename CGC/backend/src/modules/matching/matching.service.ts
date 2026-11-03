@@ -1,5 +1,5 @@
 import { prisma } from '../../db/prisma.js';
-import { MatchSubjectType, TicketStatus, type Prisma } from '@prisma/client';
+import { MatchSubjectType, TicketSource, TicketStatus, type Prisma } from '@prisma/client';
 import {
   matchInvoiceLine,
   matchTicket,
@@ -51,8 +51,11 @@ import { onSamePo, poKey } from './poKey.js';
  *
  * 5: an agreed rate can be found by the order line's Spruce item code, and
  * quotations are never candidates.
+ * 6: two copies of one load (the driver's and the supplier's emailed ticket)
+ * count once, must agree, share a claim, and a line backed only by the
+ * supplier's own copies is never passed automatically.
  */
-export const ENGINE_VERSION = 5;
+export const ENGINE_VERSION = 6;
 
 /**
  * `matchMethod` recorded for a link the engine made.
@@ -530,6 +533,60 @@ async function applyLineItemColumns(
   });
 }
 
+/** What the engine needs of each ticket that might cover an invoice line. */
+const DELIVERED_TICKET_SELECT = {
+  id: true,
+  ticketNumber: true,
+  poNumber: true,
+  quantity: true,
+  unit: true,
+  // Which product the load was, and who brought it — both needed so one line
+  // on a two-product PO does not count the other's tickets.
+  material: true,
+  supplierId: true,
+  // Which copy of a load this is, and whether the supplier emailed it.
+  source: true,
+  duplicateOfTicketId: true,
+  ticketDate: true,
+  // Whether somebody has already paid a line against this load.
+  claim: {
+    select: {
+      invoiceLineId: true,
+      claimedAt: true,
+      claimedBy: { select: { name: true } },
+      invoiceLine: {
+        select: { lineNumber: true, invoice: { select: { invoiceNumber: true } } },
+      },
+    },
+  },
+} as const satisfies Prisma.TicketSelect;
+
+type DeliveredTicketRow = Prisma.TicketGetPayload<{ select: typeof DELIVERED_TICKET_SELECT }>;
+
+function toDeliveredTicket(ticket: DeliveredTicketRow): DeliveredTicket {
+  return {
+    id: ticket.id,
+    ticketNumber: ticket.ticketNumber,
+    poNumber: ticket.poNumber,
+    quantity: toNumber(ticket.quantity),
+    unit: ticket.unit,
+    material: ticket.material,
+    supplierId: ticket.supplierId,
+    duplicateOfTicketId: ticket.duplicateOfTicketId,
+    emailedBySupplier: ticket.source === TicketSource.EMAIL,
+    ticketDate: ticket.ticketDate,
+    claim: ticket.claim
+      ? {
+          invoiceLineId: ticket.claim.invoiceLineId,
+          invoiceNumber: ticket.claim.invoiceLine.invoice.invoiceNumber,
+          lineNumber: ticket.claim.invoiceLine.lineNumber,
+          claimedByName: ticket.claim.claimedBy?.name ?? null,
+          claimedAt: ticket.claim.claimedAt,
+        }
+      : null,
+  };
+}
+
 /** Decides and records whether one invoice line is safe to pay. */
 export async function matchInvoiceLineById(lineId: string): Promise<MatchDecision | null> {
   const line = await prisma.invoiceLineItem.findUnique({
@@ -567,28 +624,7 @@ export async function matchInvoiceLineById(lineId: string): Promise<MatchDecisio
               ...(supplierId ? [{ OR: [{ supplierId }, { supplierId: null }] }] : []),
             ],
           },
-          select: {
-            id: true,
-            ticketNumber: true,
-            poNumber: true,
-            quantity: true,
-            unit: true,
-            // Which product the load was, and who brought it — both needed so
-            // one line on a two-product PO does not count the other's tickets.
-            material: true,
-            supplierId: true,
-            // Whether somebody has already paid a line against this load.
-            claim: {
-              select: {
-                invoiceLineId: true,
-                claimedAt: true,
-                claimedBy: { select: { name: true } },
-                invoiceLine: {
-                  select: { lineNumber: true, invoice: { select: { invoiceNumber: true } } },
-                },
-              },
-            },
-          },
+          select: DELIVERED_TICKET_SELECT,
           take: 100,
         })
       : Promise.resolve([]),
@@ -610,24 +646,23 @@ export async function matchInvoiceLineById(lineId: string): Promise<MatchDecisio
       : Promise.resolve([]),
   ]);
 
-  const deliveredTickets: DeliveredTicket[] = tickets.map((ticket) => ({
-    id: ticket.id,
-    ticketNumber: ticket.ticketNumber,
-    poNumber: ticket.poNumber,
-    quantity: toNumber(ticket.quantity),
-    unit: ticket.unit,
-    material: ticket.material,
-    supplierId: ticket.supplierId,
-    claim: ticket.claim
-      ? {
-          invoiceLineId: ticket.claim.invoiceLineId,
-          invoiceNumber: ticket.claim.invoiceLine.invoice.invoiceNumber,
-          lineNumber: ticket.claim.invoiceLine.lineNumber,
-          claimedByName: ticket.claim.claimedBy?.name ?? null,
-          claimedAt: ticket.claim.claimedAt,
-        }
-      : null,
-  }));
+  // The other copies of these loads, wherever their PO points: the engine
+  // counts each load once and compares its copies, so it needs all of them.
+  const loaded = new Set(tickets.map((ticket) => ticket.id));
+  const roots = [...new Set(tickets.map((ticket) => ticket.duplicateOfTicketId ?? ticket.id))];
+  const twins =
+    tickets.length === 0
+      ? []
+      : await prisma.ticket.findMany({
+          where: {
+            id: { notIn: [...loaded] },
+            OR: [{ id: { in: roots } }, { duplicateOfTicketId: { in: roots } }],
+          },
+          select: DELIVERED_TICKET_SELECT,
+          take: 100,
+        });
+
+  const deliveredTickets: DeliveredTicket[] = [...tickets, ...twins].map(toDeliveredTicket);
 
   const competingLines = await loadCompetingLines(line.poNumber, supplierId, line.id);
 

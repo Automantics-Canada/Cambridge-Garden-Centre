@@ -206,6 +206,18 @@ model Ticket {
   driverId                String?            @db.Uuid
   deliveryStatus          DriverTaskStatus   @default(NOT_STARTED)
   spruceMatched           Boolean            @default(false)
+  /// Set on a second copy of a load already on file: the supplier's emailed
+  /// copy of a ticket the driver also photographed (A15), or the same ticket
+  /// sent twice. Points at the copy that counts (the driver's when there is
+  /// one), so matching counts the load once and a claim on either copy is a
+  /// claim on the load. Same supplier and same ticket number decide it
+  /// (modules/tickets/ticketCopies.ts).
+  duplicateOfTicketId     String?            @db.Uuid
+  /// For a ticket cut from an emailed attachment: `messageId:partId#page`, so
+  /// a mailbox poll that is retried never files the same page twice.
+  emailSourceKey          String?            @unique
+  duplicateOf             Ticket?            @relation("TicketCopies", fields: [duplicateOfTicketId], references: [id], onDelete: SetNull)
+  copies                  Ticket[]           @relation("TicketCopies")
   ocrJobs                 OcrJob[]           @relation("TicketOcrJobs")
   matchResult             MatchResult?
   claim                   TicketClaim?
@@ -225,6 +237,7 @@ model Ticket {
   // unverified — no EXPLAIN ANALYZE was captured.
   @@index([status, receivedAt(sort: Desc)])
   @@index([supplierId, receivedAt(sort: Desc)])
+  @@index([duplicateOfTicketId])
 }
 
 
@@ -269,6 +282,7 @@ model Invoice {
   verifiedBy     User?                @relation(fields: [verifiedById], references: [id])
   lineItems      InvoiceLineItem[]
   ocrJobs        OcrJob[]             @relation("InvoiceOcrJobs")
+  supportingFiles InvoiceSupportingFile[]
 
   @@index([status])
   @@index([supplierId])
@@ -276,6 +290,26 @@ model Invoice {
   // Same filter+sort shape as Ticket: the invoice list filters on status and
   // orders by receivedAt desc.
   @@index([status, receivedAt(sort: Desc)])
+}
+
+/// A file that came with an invoice but is not one: the Excel load breakdown a
+/// supplier attaches beside the PDF invoice (A12). Kept with its real content
+/// type so the office can download it from the invoice; never read as a second
+/// invoice, which would bill the same loads twice.
+model InvoiceSupportingFile {
+  id           String   @id @default(uuid()) @db.Uuid
+  invoiceId    String   @db.Uuid
+  fileUrl      String
+  originalName String
+  contentType  String
+  size         Int
+  /// `messageId:partId` of the email attachment it came from, so a retried
+  /// poll does not attach it twice.
+  gmailKey     String?  @unique
+  createdAt    DateTime @default(now())
+  invoice      Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@index([invoiceId])
 }
 
 
@@ -694,8 +728,8 @@ model EmailIngestionEvent {
   /// the single unique `createdInvoiceId` cannot hold.
   createdInvoiceIds  String[]             @default([])
   /// Why a NEEDS_REVIEW email waits for a person: UNKNOWN_SENDER,
-  /// UNRESOLVED_SENDER, SPREADSHEET, UNSUPPORTED_ATTACHMENTS or
-  /// NO_INVOICE_ATTACHMENT.
+  /// UNRESOLVED_SENDER, SPREADSHEET (one the app cannot read, e.g. .xls),
+  /// CREDIT_MEMO, UNSUPPORTED_ATTACHMENTS or NO_INVOICE_ATTACHMENT.
   reviewReason       String?
   /// A plain note about the email, e.g. the observe-mode census line.
   note               String?

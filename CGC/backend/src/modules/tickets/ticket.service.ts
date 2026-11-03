@@ -182,15 +182,24 @@ export const TicketService = {
 
   /**
    * Ticket arrives via email: save file, create Ticket, queue OCR.
+   *
+   * The invoice inbox files the ticket pages a supplier attaches to an invoice
+   * email (A15) through here. It passes the supplier it already resolved from
+   * the original sender (never the AP mailbox that forwarded the email), and
+   * `emailSourceKey`, which names the attachment page so a retried poll cannot
+   * file it twice.
    */
   async ingestEmailTicket(params: {
     buffer: Buffer;
     originalName: string;
     fromEmail: string;
+    supplierId?: string | null;
+    emailSourceKey?: string | null;
   }) {
     const { imageUrl, thumbnailUrl } = await saveTicketImage(params.buffer, params.originalName);
 
-    const supplierId = await findSupplierIdByEmail(params.fromEmail);
+    const supplierId =
+      params.supplierId !== undefined ? params.supplierId : await findSupplierIdByEmail(params.fromEmail);
 
     const ticket = await prisma.ticket.create({
       data: {
@@ -202,6 +211,7 @@ export const TicketService = {
         status: TicketStatus.UNLINKED,
         receivedAt: new Date(),
         supplierId: supplierId ?? null,
+        emailSourceKey: params.emailSourceKey ?? null,
       },
     });
 
@@ -340,6 +350,12 @@ export const TicketService = {
       // records a verdict and its evidence for the desk — so a failure here
       // must not undo a successful extraction.
       try {
+        // The same load may already be on file as another copy: the driver's
+        // photo of a ticket the supplier has now emailed, or the other way
+        // round (A15). Linked before matching, so the load is counted once.
+        const { linkTicketCopies } = await import('./ticketCopies.js');
+        const copies = await linkTicketCopies(ticketId);
+
         const { matchTicketById, recomputeInvoiceLinesSafely } = await import(
           '../matching/matching.service.js'
         );
@@ -348,12 +364,11 @@ export const TicketService = {
         // A load that has just been read changes what the invoice lines on its
         // PO are covered by, and nothing else would ever look at them again: an
         // invoice that arrived before its tickets stayed "no delivery ticket
-        // accounts for this line" permanently.
-        if (updatedTicket.poNumber) {
-          await recomputeInvoiceLinesSafely(
-            [updatedTicket.poNumber],
-            `ticket ${ticketId} read`
-          );
+        // accounts for this line" permanently. The POs of its other copies
+        // change too: one of them may have just stopped counting.
+        const poNumbers = [...new Set([updatedTicket.poNumber, ...copies.poNumbers].filter((po): po is string => Boolean(po)))];
+        if (poNumbers.length > 0) {
+          await recomputeInvoiceLinesSafely(poNumbers, `ticket ${ticketId} read`);
         }
       } catch (matchError) {
         console.error(`[Matching] Could not evaluate ticket ${ticketId}:`, matchError);
@@ -440,7 +455,10 @@ export const TicketService = {
   /**
    * Update a ticket
    */
-  async updateTicket(id: string, data: any) {
+  async updateTicket(id: string, input: any) {
+    // Which copy of a load counts, and which email page a ticket came from,
+    // are decided by the copy linker and the inbox, never by a form.
+    const { duplicateOfTicketId: _copyOf, emailSourceKey: _source, ...data } = input ?? {};
     // If we're updating linkedOrderId manually, set linkMethod and status
     if (data.linkedOrderId && data.linkedOrderId !== undefined) {
       // A quotation is not an order: nothing was delivered against it.
@@ -453,10 +471,27 @@ export const TicketService = {
       data.linkMethod = null;
     }
 
-    return prisma.ticket.update({
+    const updated = await prisma.ticket.update({
       where: { id },
       data,
     });
+
+    // A corrected ticket number or supplier can make this ticket a copy of
+    // another load, or stop it being one.
+    if ('ticketNumber' in data || 'supplierId' in data || 'ticketDate' in data) {
+      try {
+        const { linkTicketCopies } = await import('./ticketCopies.js');
+        const copies = await linkTicketCopies(id);
+        if (copies.changed && copies.poNumbers.length > 0) {
+          const { recomputeInvoiceLinesSafely } = await import('../matching/matching.service.js');
+          await recomputeInvoiceLinesSafely(copies.poNumbers, `ticket ${id} edited`);
+        }
+      } catch (error) {
+        console.error(`[Tickets] Could not re-check copies of ticket ${id}:`, error);
+      }
+    }
+
+    return updated;
   },
 
   async unlinkTicketFromOrder(ticketId: string, orderId: string) {
