@@ -17,16 +17,28 @@ behaviour we have not seen on CGC's own systems. Check them on the day.
    works out the original sender (`src/services/emailSender.ts`) and looks it
    up in the supplier records (`src/services/knownSenders.ts`): a supplier's
    email domains, its exact addresses and its contact email, plus
-   `GMAIL_SENDER_ALLOWLIST` if set. A known sender's PDFs and images become
-   `PENDING_REVIEW` invoices; the email gets the processed label and is marked
-   read.
+   `GMAIL_SENDER_ALLOWLIST` if set. A known sender's PDFs, images, `.xlsx`
+   and `.csv` files are sorted page by page before anything is created
+   (`src/services/emailTriage.ts`): invoice pages become one
+   `PENDING_REVIEW` invoice, each delivery ticket page an emailed ticket
+   (linked to the driver's copy of the same ticket), a statement is recorded
+   and never billed, and a credit memo goes to the review queue. An Excel
+   file beside a PDF invoice is kept with that invoice as a supporting file;
+   on its own it is read as the invoice. When everything is accounted for,
+   the email gets the processed label and is marked read.
 5. Anything else goes to the **review queue**: the email gets the review label
-   (`cgc-review`), stays unread, and appears under **Unrecognised senders** on
-   the Invoices page. That is mail from a sender no supplier record knows, a
-   forward whose original sender could not be read, an Excel/CSV attachment
-   (reading those comes in a later update), or an email with nothing the app
-   reads. An owner or admin approves the sender onto a supplier (the email is
-   then read on the next poll) or ignores the email. AP staff can see the list.
+   (`cgc-review`), stays unread, and appears on the Invoices page. Under
+   **Unrecognised senders**: mail from a sender no supplier record knows, and
+   forwards whose original sender could not be read. Under **Enter by hand**,
+   from known senders: an old `.xls` or a spreadsheet that could not be read,
+   a credit memo, nothing the app reads, a file the app cannot take beside one
+   it read ("Partly read", e.g. a second invoice sent as an iPhone photo),
+   several tickets in one file that could not be split, an email that failed
+   6 tries, and mail from before `GMAIL_POLL_AFTER` whose sender was approved
+   later. Files already read are marked on each row. An owner or admin
+   approves a sender onto a supplier (its emails since the go-live date are
+   then read on the next poll) or ignores an email once it is dealt with. AP
+   staff can see the list.
 
 A message is done when it has the processed label, not when it is read, so
 someone opening it in Gmail no longer hides it from the poller.
@@ -41,6 +53,13 @@ The supplier form and the API refuse such a domain.
 a PDF is read whatever it is called, inline signature logos are skipped, and
 every attachment is listed on the email's log row (`EmailIngestionEvent.attachments`)
 with what happened to it and why.
+
+**Failures.** An email whose reading fails (the reader times out, a file it
+always refuses, storage down) is tried again after 5, 10, 20, 40 and 80
+minutes, not every minute: each try downloads the attachments again and pays
+for a sorting call. After 6 tries it goes to the review queue ("Could not be
+read after several tries") with the error. Health counts these as `failed`
+and, while they wait for their next try, `deferred`.
 
 ## 0. Before you start
 
@@ -219,9 +238,16 @@ first time it needs them. Do not add them by hand except to deliberately skip a 
    found; look at one with *Show original*. The census only sees mail that
    reaches the label, so also ask the client which suppliers bill by portal or
    post.
-5. Map the senders to suppliers with the client: approve them from the
-   Invoices page, or enter their domains/addresses on the Supplier page.
-   `GMAIL_SENDER_ALLOWLIST` is no longer needed.
+5. Map the senders to suppliers with the client: an owner or admin approves
+   them from the Invoices page, or enters their domains/addresses on the
+   Supplier page (the AP desk cannot set those fields: they decide whose
+   invoices are read automatically). `GMAIL_SENDER_ALLOWLIST` is no longer
+   needed. The two differ for mail already queued: census emails carry the
+   observed label, not the review label, so after step 6 the query finds them
+   again whichever way the sender was mapped (subject to the cutoff). An
+   email queued **in ingest mode** carries the review label and is read again
+   only through **Approve** on the Invoices page; entering the sender on the
+   Supplier page does not re-queue it.
 6. Switch to `GMAIL_INGEST_MODE=ingest`. Observed emails are not marked
    processed, so ingest reads them unless the cutoff excludes them: keep
    `GMAIL_POLL_AFTER` at the observe start to ingest the census period, or move
@@ -247,14 +273,14 @@ back to the previous mailbox credentials.
 | Field | Meaning |
 | --- | --- |
 | `reported`, `stale` | a poller has written a status; the last poll is older than 3 minutes |
-| `enabled`, `disabledReason` | whether the last poll ran, and why not |
+| `enabled`, `disabledReason` | whether the last poll ran, and why not (e.g. no `GMAIL_POLL_AFTER`). A process that skipped its turn because the other one holds the poll lease writes nothing |
 | `mode` | `ingest` or `observe` (null when the setting is invalid) |
 | `invoiceLabel`, `invoiceLabelFound` | the label, and whether it exists in the mailbox |
-| `processedLabel`, `observedLabel`, `reviewLabel`, `pollAfter`, `unreadOnly` | tracking labels and cutoff; `unreadOnly` while no cutoff is set |
+| `processedLabel`, `observedLabel`, `reviewLabel`, `pollAfter`, `unreadOnly` | tracking labels and cutoff; `unreadOnly` is true while no cutoff is set, which means nothing is polled at all |
 | `mailbox`, `mailboxMatchesConfig` | polled account (masked), and whether it is `GMAIL_INBOX_USER` |
 | `trustedForwarders`, `allowlistEntries` | how many are configured (not the values) |
 | `lastPollAt`, `lastResult`, `lastError`, `lastSuccessAt` | last poll; errors are shortened with addresses masked |
-| `counts` | last poll: `listed`, `processed`, `invoicesCreated`, `observed`, `duplicates`, `legacySkipped`, `rejectedSender` (unknown sender, queued), `unresolvedSender` (forward with no readable sender, queued), `noAttachments` and `needsReview` (nothing readable, or a spreadsheet, queued), `requeued` (approved emails read again), `failed` |
+| `counts` | last poll: `listed`, `processed`, `invoicesCreated`, `ticketsCreated`, `supportingFiles`, `observed`, `duplicates`, `legacySkipped`, `rejectedSender` (unknown sender, queued), `unresolvedSender` (forward with no readable sender, queued), `noAttachments` (nothing the app reads, queued), `needsReview` (queued for a person: an unreadable spreadsheet, a credit memo, a partly read email, tickets that could not be split, mail from before the cutoff, or 6 failed tries), `requeued` (approved emails read again), `failed` (a try failed; tried again later), `deferred` (a failed email waiting for its next try) |
 | `truncated` | more mail matched than one poll reads (100); the rest waits a minute |
 
 No secret, token or full email address is ever written to the status.
@@ -312,12 +338,9 @@ Get-MailboxJunkEmailConfiguration -Identity ap@cambridgegardencentre.ca |
   redirects are also recognised by `Resent-*`, an SRS `Return-Path` or the
   original `To:`.
 - Who controls `cgcsoftware1718@gmail.com` (2-Step Verification, recovery).
-- Excel invoices: `.xlsx` and `.csv` are read as text by the invoice reader;
-  an Excel beside a PDF invoice is kept with that invoice as a supporting
-  file. The old `.xls` format waits in the review queue with "old Excel
-  format (.xls): ask the supplier for PDF or .xlsx", for manual entry.
-- Each attachment is sorted page by page before anything is created: invoice
-  pages become one invoice, delivery ticket pages become emailed tickets
-  (linked to the driver's copy of the same ticket when there is one),
-  statements are recorded and not billed, credit memos wait in the review
-  queue. Sorting is one extra model call per attachment.
+- Which suppliers send Excel invoices, and whether as the invoice or as a
+  load breakdown beside a PDF (A13 samples). `.xlsx` and `.csv` are read;
+  the old `.xls` format waits in the review queue with "old Excel format
+  (.xls): ask the supplier for PDF or .xlsx". A workbook is refused if it
+  really inflates past 40 MB, whatever sizes it states.
+- Sorting pages is one extra model call per attachment.
