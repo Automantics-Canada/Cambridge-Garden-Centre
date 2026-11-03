@@ -1,5 +1,6 @@
 import { resolveDocumentUrl } from '../../lib/apiBase';
-import { isPdfDocument } from '../../lib/documentType';
+import { describeFile } from '../../lib/documentType';
+import DocumentPreview from '../../components/DocumentPreview';
 import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import api from '../../api/axios';
@@ -8,6 +9,7 @@ import {
   CheckCircle,
   AlertCircle,
   FileText,
+  Download,
   History,
   Flag,
   Info
@@ -177,24 +179,32 @@ export default function InvoiceDetailPage() {
             </span>
           </div>
           <div className="flex-1 overflow-hidden bg-ink/[0.04] flex items-center justify-center p-4">
-            {invoice.fileUrl ? (
-              isPdfDocument(invoice.fileUrl) ? (
-                <iframe
-                  src={resolveDocumentUrl(invoice.fileUrl)}
-                  className="w-full h-full border-none rounded-control shadow-card"
-                  title="Invoice Document"
-                ></iframe>
-              ) : (
-                <img
-                  src={resolveDocumentUrl(invoice.fileUrl)}
-                  className="max-w-full max-h-full object-contain shadow-card rounded-control"
-                  alt="Invoice Document"
-                />
-              )
-            ) : (
-              <div className="text-muted">Preview not available</div>
-            )}
+            {/* A PDF embedded, an image shown, an Excel or CSV invoice offered as a download. */}
+            <DocumentPreview
+              src={resolveDocumentUrl(invoice.fileUrl)}
+              title="Invoice Document"
+              className="w-full h-full border-none rounded-control shadow-card object-contain"
+            />
           </div>
+          {invoice.supportingFiles?.length > 0 && (
+            // Files that came with this invoice but are not it, such as the
+            // supplier's Excel load breakdown beside the PDF.
+            <div className="border-t border-line px-4 py-2 flex flex-wrap items-center gap-2">
+              <span className="text-[12.5px] text-muted">Came with this invoice:</span>
+              {invoice.supportingFiles.map((file) => (
+                <a
+                  key={file.id}
+                  href={resolveDocumentUrl(file.fileUrl)}
+                  download={file.originalName}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-[12.5px] font-medium text-brand inline-flex items-center gap-1 hover:underline"
+                >
+                  <Download className="w-3 h-3" /> {describeFile(file.originalName, file.size)}
+                </a>
+              ))}
+            </div>
+          )}
         </Card>
 
         <div className="w-[45%] flex flex-col gap-4 min-h-0">

@@ -22,7 +22,7 @@ const queue = {
       id: 'e2', status: 'NEEDS_REVIEW', reviewReason: 'SPREADSHEET', subject: 'Statement',
       originalFrom: 'billing@stone.example', fromAddress: 'billing@stone.example', supplier: { id: 's1', name: 'Example Stone' },
       receivedAt: '2026-11-01T15:00:00Z', requeuedAt: null,
-      attachments: [{ name: 'loads.xlsx', size: 2048, action: 'review', reason: 'spreadsheet: reading arrives in a later update', partId: '1' }],
+      attachments: [{ name: 'loads.xls', size: 2048, action: 'review', reason: 'old Excel format (.xls): ask the supplier for PDF or .xlsx', partId: '1' }],
     },
   ],
   counts: { NEEDS_REVIEW: 2, IGNORED: 0 },
@@ -40,7 +40,7 @@ describe('unrecognised senders panel', () => {
     expect(api.get).toHaveBeenCalledWith('/api/email-events', { params: { status: 'NEEDS_REVIEW' } });
     expect(screen.getByText('Invoice 7001')).toBeTruthy();
     expect(screen.getByText(/inv-7001\.pdf · 50 KB/)).toBeTruthy();
-    expect(screen.getByText(/loads\.xlsx · 2 KB · spreadsheet: reading arrives in a later update/)).toBeTruthy();
+    expect(screen.getByText(/loads\.xls · 2 KB · old Excel format \(\.xls\): ask the supplier for PDF or \.xlsx/)).toBeTruthy();
     expect(screen.getByText('Enter by hand')).toBeTruthy();
     expect(screen.queryByText('Approve sender')).toBeNull();
     expect(screen.queryByText('Ignore')).toBeNull();

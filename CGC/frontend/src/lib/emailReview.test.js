@@ -42,7 +42,8 @@ describe('unrecognised senders panel', () => {
     ]);
     expect(senders.map((e) => e.id)).toEqual(['a', 'c']);
     expect(manual.map((e) => e.id)).toEqual(['b', 'd']);
-    expect(reviewReasonLabel('SPREADSHEET')).toBe('Spreadsheet attached: enter by hand for now');
+    expect(reviewReasonLabel('SPREADSHEET')).toBe('Spreadsheet the app cannot read: enter by hand');
+    expect(reviewReasonLabel('CREDIT_MEMO')).toBe('Credit memo: enter by hand');
     expect(reviewReasonLabel('SOMETHING_NEW')).toBe('Needs a look');
   });
 
@@ -77,18 +78,29 @@ describe('unrecognised senders panel', () => {
   it('lists attachments read first, with size and reason', () => {
     const sorted = sortedAttachments([
       { name: 'image001.png', size: 4200, action: 'skipped', reason: 'inline image (logo or signature)' },
-      { name: 'detail.xlsx', size: 24_576, action: 'review', reason: 'spreadsheet: reading arrives in a later update' },
+      { name: 'detail.xls', size: 24_576, action: 'review', reason: 'old Excel format (.xls): ask the supplier for PDF or .xlsx' },
       { name: 'invoice.pdf', size: 2_400_000, action: 'read', reason: null },
     ]);
     expect(sorted.map(describeAttachment)).toEqual([
       'invoice.pdf · 2.3 MB · already an invoice in the list',
-      'detail.xlsx · 24 KB · spreadsheet: reading arrives in a later update',
+      'detail.xls · 24 KB · old Excel format (.xls): ask the supplier for PDF or .xlsx',
       'image001.png · 4 KB · inline image (logo or signature)',
     ]);
     expect(sortedAttachments(null)).toEqual([]);
     expect(describeAttachment({ name: '', size: null })).toBe('(no name)');
     expect(describeAttachment({ name: 'held.pdf', action: 'held', reason: 'waiting for the sender to be approved' }))
       .toBe('held.pdf · waiting for the sender to be approved');
+  });
+
+  it('says what a read file became: tickets, an invoice and tickets, or a file kept with its invoice', () => {
+    expect(describeAttachment({ name: 'scan.pdf', action: 'read', ticketIds: ['t1', 't2'] }))
+      .toBe('scan.pdf · filed as 2 tickets');
+    expect(describeAttachment({ name: 'inv.pdf', action: 'read', invoiceId: 'i1', ticketIds: ['t1'] }))
+      .toBe('inv.pdf · already an invoice in the list, and 1 ticket');
+    expect(describeAttachment({ name: 'loads.xlsx', action: 'read', supportingInvoiceId: 'i1' }))
+      .toBe('loads.xlsx · kept with its invoice');
+    expect(describeAttachment({ name: 'inv.pdf', action: 'read', reason: 'pages 1-2 invoice; page 3 delivery ticket' }))
+      .toBe('inv.pdf · pages 1-2 invoice; page 3 delivery ticket');
   });
 
   it('does not offer the unidentified-supplier placeholder for an approval', () => {

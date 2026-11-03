@@ -30,11 +30,16 @@ describe('document type handling', () => {
     assert.equal(mimeTypeForFilename('ticket.JPEG'), 'image/jpeg');
     assert.equal(mimeTypeForFilename('scan.png'), 'image/png');
     assert.equal(mimeTypeForFilename('invoice.pdf'), 'application/pdf');
+    // Excel and CSV invoices (A12) are read as text.
+    assert.equal(mimeTypeForFilename('invoice.xlsx'), 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    assert.equal(mimeTypeForFilename('invoice.CSV'), 'text/csv');
   });
 
   test('refuses anything else, permanently', () => {
-    // Retrying a .docx three more times over an hour helps nobody.
-    for (const filename of ['notes.docx', 'sheet.xlsx', 'archive.zip', 'noextension']) {
+    // Retrying a .docx three more times over an hour helps nobody. The old
+    // .xls format is refused too: nothing here can read it, so the email
+    // waits for a person instead.
+    for (const filename of ['notes.docx', 'old-sheet.xls', 'archive.zip', 'noextension']) {
       assert.throws(
         () => mimeTypeForFilename(filename),
         (error: unknown) =>

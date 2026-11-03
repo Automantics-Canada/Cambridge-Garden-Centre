@@ -16,12 +16,25 @@ export interface UploadResult {
 }
 
 /**
- * Returns the proper content type/mime type for a given file extension
+ * Returns the proper content type/mime type for a given file extension.
+ *
+ * Spreadsheets (Excel and CSV invoices, and the Excel breakdowns that come
+ * beside a PDF invoice) are stored as what they are. They used to fall through
+ * to image/jpeg, so the browser was told a workbook was a photo.
  */
-function getContentType(fileExtension: string): string {
+export function getContentType(fileExtension: string): string {
   const ext = fileExtension.toLowerCase();
   if (ext === 'pdf') {
     return 'application/pdf';
+  }
+  if (ext === 'xlsx') {
+    return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+  }
+  if (ext === 'xls') {
+    return 'application/vnd.ms-excel';
+  }
+  if (ext === 'csv') {
+    return 'text/csv';
   }
   if (ext === 'png') {
     return 'image/png';

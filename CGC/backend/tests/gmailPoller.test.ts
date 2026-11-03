@@ -151,7 +151,11 @@ mock.method(google, 'gmail', (options: any) => {
 
 // ------------------------------------------------------------ fake Prisma
 
-const invoices = new Map<string, { id: string; gmailMessageId: string; fromEmail: string; subject: string; originalName: string }>();
+const invoices = new Map<string, { id: string; gmailMessageId: string; fromEmail: string; subject: string; originalName: string; buffer?: Buffer }>();
+/** Emailed tickets by emailSourceKey, as TicketService.ingestEmailTicket made them. */
+const tickets = new Map<string, { id: string; emailSourceKey: string; fromEmail: string; supplierId: string | null; originalName: string; buffer?: Buffer }>();
+/** Supporting files by gmailKey. */
+const supportingFiles = new Map<string, { id: string; invoiceId: string; gmailKey: string; originalName: string; buffer?: Buffer }>();
 const events = new Map<string, any>();
 const settings = new Map<string, unknown>();
 /** Active suppliers as the known-senders lookup reads them. */
@@ -167,6 +171,18 @@ let failIngestFor: string | null = null;
   },
   supplier: {
     findMany: async () => suppliers.map(s => ({ ...s })),
+  },
+  ticket: {
+    findMany: async ({ where }: any) =>
+      [...tickets.values()]
+        .filter(row => row.emailSourceKey.startsWith(where.emailSourceKey.startsWith))
+        .map(row => ({ id: row.id, emailSourceKey: row.emailSourceKey })),
+  },
+  invoiceSupportingFile: {
+    findMany: async ({ where }: any) =>
+      [...supportingFiles.values()]
+        .filter(row => row.gmailKey.startsWith(where.gmailKey.startsWith))
+        .map(row => ({ gmailKey: row.gmailKey, invoiceId: row.invoiceId })),
   },
   emailIngestionEvent: {
     findUnique: async ({ where }: any) => events.get(where.gmailMessageId) ?? null,
@@ -207,9 +223,25 @@ mock.method(InvoiceService, 'ingestEmailInvoice', async (params: any) => {
   if (invoices.has(params.gmailMessageId)) throw Object.assign(new Error('unique'), { code: 'P2002' });
   const id = `inv-${invoices.size + 1}`;
   invoices.set(params.gmailMessageId, {
-    id, gmailMessageId: params.gmailMessageId, fromEmail: params.fromEmail, subject: params.subject, originalName: params.originalName,
+    id, gmailMessageId: params.gmailMessageId, fromEmail: params.fromEmail, subject: params.subject, originalName: params.originalName, buffer: params.buffer,
   });
   return { invoice: { id }, ocrJob: { id: `job-${invoices.size}` } };
+});
+mock.method(InvoiceService, 'attachSupportingFile', async (params: any) => {
+  const row = { id: `file-${supportingFiles.size + 1}`, invoiceId: params.invoiceId, gmailKey: params.gmailKey, originalName: params.originalName, buffer: params.buffer };
+  supportingFiles.set(params.gmailKey, row);
+  return row;
+});
+
+const { TicketService } = await import('../src/modules/tickets/ticket.service.js');
+mock.method(TicketService, 'ingestEmailTicket', async (params: any) => {
+  if (tickets.has(params.emailSourceKey)) throw Object.assign(new Error('unique'), { code: 'P2002' });
+  const id = `ticket-${tickets.size + 1}`;
+  tickets.set(params.emailSourceKey, {
+    id, emailSourceKey: params.emailSourceKey, fromEmail: params.fromEmail, supplierId: params.supplierId ?? null,
+    originalName: params.originalName, buffer: params.buffer,
+  });
+  return { ticket: { id }, ocrJob: { id: `ticket-job-${tickets.size}` } };
 });
 
 const { GmailService, PAGE_SIZE, MAX_PAGES } = await import('../src/services/gmail.service.js');
@@ -220,6 +252,20 @@ const { ATTACHMENT_REASONS } = await import('../src/services/emailAttachments.js
 
 const ocrJobs: string[] = [];
 GmailService.triggerOcr = (id: string) => { ocrJobs.push(id); };
+
+/**
+ * The page sorting call, with no model: every file is one invoice page unless
+ * a test says otherwise. `triageCalls` records what was sent.
+ */
+type Kind = 'invoice' | 'delivery_ticket' | 'statement' | 'credit_memo' | 'other';
+let triageAnswer: (bytes: Buffer, mimeType: string, filename: string) => Kind[] | Error = () => ['invoice'];
+const triageCalls: Array<{ mimeType: string; filename: string }> = [];
+GmailService.triage = async (bytes: Buffer, mimeType: string, filename: string) => {
+  triageCalls.push({ mimeType, filename });
+  const answer = triageAnswer(bytes, mimeType, filename);
+  if (answer instanceof Error) throw answer;
+  return { pages: answer.map((kind, i) => ({ page: i + 1, kind })) };
+};
 
 // ------------------------------------------------------------- fixtures
 
@@ -313,6 +359,10 @@ beforeEach((t) => {
   mailbox.contents.clear();
   calls.length = 0;
   invoices.clear();
+  tickets.clear();
+  supportingFiles.clear();
+  triageAnswer = () => ['invoice'];
+  triageCalls.length = 0;
   events.clear();
   settings.clear();
   suppliers.length = 0;
@@ -625,7 +675,7 @@ describe('observe mode', () => {
     // Unknown to the supplier records, so it shows on the review queue.
     assert.equal(event.status, 'NEEDS_REVIEW');
     assert.equal(event.reviewReason, 'UNKNOWN_SENDER');
-    assert.deepEqual(event.attachments.map((a: any) => [a.name, a.action]), [['inv.pdf', 'held'], ['detail.xlsx', 'review']]);
+    assert.deepEqual(event.attachments.map((a: any) => [a.name, a.action]), [['inv.pdf', 'held'], ['detail.xlsx', 'held']]);
     assert.deepEqual(labelsOf(id).filter(l => l.startsWith('cgc-')).sort(), ['cgc-invoices', 'cgc-observed']);
     assert.ok(labelsOf(id).includes('UNREAD'));
     assert.equal(status().mode, 'observe');
@@ -785,53 +835,93 @@ describe('known senders from the supplier records', () => {
   });
 });
 
+/** A small workbook built here, so no client file is involved. */
+async function xlsxBytes(): Promise<Buffer> {
+  const ExcelJS = (await import('exceljs')).default;
+  const workbook = new ExcelJS.Workbook();
+  const sheet = workbook.addWorksheet('Invoice');
+  sheet.addRow(['Invoice', 'INV-90002']);
+  sheet.addRow(['Item', 'Qty', 'Unit', 'Price']);
+  sheet.addRow(['Screened sand', 12, 't', 31.5]);
+  return Buffer.from(await workbook.xlsx.writeBuffer());
+}
+
 describe('attachment selection', () => {
   const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
   const png = (bytes: number) => Buffer.concat([
     Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(bytes),
   ]);
 
-  it('a spreadsheet-only email is queued with the reason, never marked processed, never downloaded', async () => {
-    const id = addMessage({ attachments: [{ filename: 'invoice-90002.xlsx', mimeType: XLSX_MIME }] });
+  it('an .xlsx invoice on its own is read: sorted as text, stored as .xlsx, the email done', async () => {
+    const id = addMessage({ attachments: [{ filename: 'invoice-90002.xlsx', mimeType: XLSX_MIME, content: await xlsxBytes() }] });
+    await GmailService.pollInvoices(config());
+
+    const invoice = invoices.get(`${id}:1`);
+    assert.ok(invoice, 'the workbook became an invoice');
+    assert.equal(invoice.originalName, 'invoice-90002.xlsx');
+    assert.deepEqual(triageCalls, [{ mimeType: XLSX_MIME, filename: 'invoice-90002.xlsx' }]);
+    const event = events.get(id);
+    assert.equal(event.status, 'PROCESSED');
+    assert.equal(event.attachments[0].kind, 'spreadsheet');
+    assert.equal(event.attachments[0].action, 'read');
+    assert.equal(event.attachments[0].invoiceId, invoice.id);
+    assert.ok(labelsOf(id).includes('cgc-processed'));
+  });
+
+  it('a CSV invoice is read the same way, even when Windows calls it an Excel file', async () => {
+    const id = addMessage({ attachments: [{
+      filename: 'invoice-90006.csv', mimeType: 'application/vnd.ms-excel',
+      content: Buffer.from('Item,Qty,Unit,Price\nScreened sand,12,t,31.50\n'),
+    }] });
+    await GmailService.pollInvoices(config());
+    assert.equal(invoices.get(`${id}:1`)?.originalName, 'invoice-90006.csv');
+    assert.equal(triageCalls[0]?.mimeType, 'text/csv');
+    assert.equal(events.get(id).status, 'PROCESSED');
+  });
+
+  it('an old .xls waits for a person with the reason, and nothing is read from it', async () => {
+    const OLE = Buffer.concat([Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]), Buffer.alloc(512)]);
+    const id = addMessage({ attachments: [{ filename: 'invoice-90007.xls', mimeType: 'application/vnd.ms-excel', content: OLE }] });
     await GmailService.pollInvoices(config());
 
     assert.equal(invoices.size, 0);
-    assert.equal(inboxCalls('attachments.get').length, 0);
+    assert.equal(triageCalls.length, 0);
     const event = events.get(id);
     assert.equal(event.status, 'NEEDS_REVIEW');
     assert.equal(event.reviewReason, 'SPREADSHEET');
-    assert.equal(event.attachments[0].kind, 'spreadsheet');
-    assert.equal(event.attachments[0].reason, 'spreadsheet: reading arrives in a later update');
+    assert.equal(event.attachments[0].reason, ATTACHMENT_REASONS.legacyXls);
+    assert.match(event.attachments[0].reason, /old Excel format \(\.xls\): ask the supplier for PDF or \.xlsx/);
     assert.ok(labelsOf(id).includes('cgc-review'));
     assert.ok(!labelsOf(id).includes('cgc-processed'));
   });
 
-  it('.xls and .csv are recognised as spreadsheets too', async () => {
-    const id = addMessage({ attachments: [
-      { filename: 'old.xls', mimeType: 'application/vnd.ms-excel' },
-      { filename: 'loads.csv', mimeType: 'text/csv' },
-    ] });
-    await GmailService.pollInvoices(config());
-    assert.deepEqual(events.get(id).attachments.map((a: any) => a.kind), ['spreadsheet', 'spreadsheet']);
-  });
-
-  it('a PDF beside a spreadsheet is read, and the email still waits for the spreadsheet', async () => {
+  it('an Excel beside a PDF invoice is kept with that invoice, not read as a second one', async () => {
     const id = addMessage({ attachments: [
       { filename: 'invoice-90003.pdf' },
-      { filename: 'invoice-90003-detail.xlsx', mimeType: XLSX_MIME },
+      { filename: 'invoice-90003-detail.xlsx', mimeType: XLSX_MIME, content: await xlsxBytes() },
     ] });
     await GmailService.pollInvoices(config());
 
     assert.deepEqual([...invoices.keys()], [`${id}:1`]);
+    assert.equal(triageCalls.length, 1, 'only the PDF is sorted');
+    const file = supportingFiles.get(`${id}:2`);
+    assert.equal(file?.invoiceId, 'inv-1');
+    assert.equal(file?.originalName, 'invoice-90003-detail.xlsx');
     const event = events.get(id);
-    assert.equal(event.status, 'NEEDS_REVIEW');
-    assert.equal(event.reviewReason, 'SPREADSHEET');
+    assert.equal(event.status, 'PROCESSED');
     assert.deepEqual(event.createdInvoiceIds, ['inv-1']);
-    assert.deepEqual(event.attachments.map((a: any) => [a.name, a.action, a.invoiceId ?? null]), [
-      ['invoice-90003.pdf', 'read', 'inv-1'],
-      ['invoice-90003-detail.xlsx', 'review', null],
+    assert.deepEqual(event.attachments.map((a: any) => [a.name, a.action, a.invoiceId ?? a.supportingInvoiceId ?? null, a.reason]), [
+      ['invoice-90003.pdf', 'read', 'inv-1', null],
+      ['invoice-90003-detail.xlsx', 'read', 'inv-1', ATTACHMENT_REASONS.supportingFile],
     ]);
-    assert.ok(labelsOf(id).includes('cgc-review'));
+    assert.ok(labelsOf(id).includes('cgc-processed'));
+    assert.equal(status().counts.supportingFiles, 1);
+
+    // Read again (its label removed by hand): nothing new is made.
+    mailbox.messages[0]!.labelIds = mailbox.messages[0]!.labelIds.filter(l => l !== labelId('cgc-processed'));
+    await GmailService.pollInvoices(config());
+    assert.equal(invoices.size, 1);
+    assert.equal(supportingFiles.size, 1);
   });
 
   it('an inline signature logo is skipped and listed; the PDF is the only invoice', async () => {
@@ -890,6 +980,137 @@ describe('attachment selection', () => {
     assert.equal(events.get(id).status, 'NEEDS_REVIEW');
     assert.equal(events.get(id).reviewReason, 'NO_INVOICE_ATTACHMENT');
     assert.equal(status().counts.noAttachments, 1);
+  });
+});
+
+const { PDFDocument } = await import('pdf-lib');
+const { ExtractionError } = await import('../src/services/extraction/extraction.service.js');
+
+describe('sorting pages before anything is created (A15)', () => {
+  /** A PDF with one page per label, each page printing its label. */
+  async function pdfWith(labels: string[]): Promise<Buffer> {
+    const pdf = await PDFDocument.create();
+    for (const label of labels) pdf.addPage([300, 200]).drawText(label, { x: 20, y: 100, size: 12 });
+    return Buffer.from(await pdf.save());
+  }
+  const pagesOf = async (bytes: Buffer | undefined) => (await PDFDocument.load(bytes!)).getPageCount();
+  const supplier = () => {
+    suppliers.push({
+      id: 'sup-stone', name: 'Example Stone', type: 'SUPPLIER',
+      emailDomains: ['stone-supplier.test'], emailAddresses: [], contactEmail: null,
+    });
+  };
+
+  it('invoice pages become one invoice; each ticket page becomes an emailed ticket under the original supplier', async () => {
+    supplier();
+    triageAnswer = () => ['invoice', 'delivery_ticket', 'invoice', 'delivery_ticket'];
+    const id = addMessage({
+      from: `Accounts Payable <${FORWARDER}>`,
+      extraHeaders: { 'Authentication-Results': AUTH_PASS },
+      text: `-----Original Message-----\nFrom: Stone Supplier <${SUPPLIER}>\nSent: Monday\nSubject: Invoice 90010\n`,
+      attachments: [{ filename: 'invoice-90010.pdf', content: await pdfWith(['INV p1', 'TICKET 501', 'INV p2', 'TICKET 502']) }],
+    });
+    await GmailService.pollInvoices(config({ GMAIL_SENDER_ALLOWLIST: '' }));
+
+    const invoice = invoices.get(`${id}:1`);
+    assert.ok(invoice);
+    assert.equal(await pagesOf(invoice.buffer), 2, 'only the invoice pages');
+    assert.equal(invoice.fromEmail, SUPPLIER);
+
+    assert.deepEqual([...tickets.keys()], [`${id}:1#2`, `${id}:1#4`]);
+    for (const ticket of tickets.values()) {
+      assert.equal(await pagesOf(ticket.buffer), 1, 'one page per ticket');
+      assert.equal(ticket.fromEmail, SUPPLIER, 'the supplier, not the AP mailbox');
+      assert.equal(ticket.supplierId, 'sup-stone');
+    }
+    assert.equal(tickets.get(`${id}:1#2`)!.originalName, 'invoice-90010-p2.pdf');
+
+    const event = events.get(id);
+    assert.equal(event.status, 'PROCESSED');
+    assert.deepEqual(event.createdInvoiceIds, [invoice.id]);
+    assert.deepEqual(event.createdTicketIds, ['ticket-1', 'ticket-2']);
+    assert.deepEqual(event.attachments[0].ticketIds, ['ticket-1', 'ticket-2']);
+    assert.equal(event.attachments[0].reason, 'pages 1, 3 invoice; pages 2, 4 delivery tickets');
+    assert.equal(status().counts.ticketsCreated, 2);
+    assert.equal(status().counts.invoicesCreated, 1);
+  });
+
+  it('a separate ticket photo beside the invoice becomes a ticket, not a second invoice', async () => {
+    const photo = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(20_000)]);
+    triageAnswer = (_bytes, mimeType) => (mimeType === 'image/png' ? ['delivery_ticket'] : ['invoice']);
+    const id = addMessage({ attachments: [
+      { filename: 'invoice-90011.pdf' },
+      { filename: 'ticket-503.png', mimeType: 'image/png', content: photo },
+    ] });
+    await GmailService.pollInvoices(config());
+
+    assert.deepEqual([...invoices.keys()], [`${id}:1`]);
+    assert.deepEqual([...tickets.keys()], [`${id}:2#1`]);
+    assert.equal(events.get(id).attachments[1].reason, ATTACHMENT_REASONS.ticketFiled);
+    assert.equal(events.get(id).status, 'PROCESSED');
+  });
+
+  it('a statement is recorded on the email and never becomes an invoice', async () => {
+    triageAnswer = () => ['statement', 'statement'];
+    const id = addMessage({ attachments: [{ filename: 'statement-oct.pdf', content: await pdfWith(['Statement p1', 'Statement p2']) }] });
+    await GmailService.pollInvoices(config());
+
+    assert.equal(invoices.size, 0);
+    assert.equal(tickets.size, 0);
+    const event = events.get(id);
+    assert.equal(event.status, 'PROCESSED');
+    assert.equal(event.attachments[0].action, 'skipped');
+    assert.deepEqual(event.attachments[0].pages, [{ page: 1, kind: 'statement' }, { page: 2, kind: 'statement' }]);
+    assert.equal(event.attachments[0].reason, 'pages 1-2 statement (not billed)');
+    assert.ok(labelsOf(id).includes('cgc-processed'));
+  });
+
+  it('a credit memo is recorded and waits for a person', async () => {
+    triageAnswer = () => ['credit_memo'];
+    const id = addMessage({ attachments: [{ filename: 'credit-77.pdf' }] });
+    await GmailService.pollInvoices(config());
+
+    assert.equal(invoices.size, 0);
+    assert.equal(events.get(id).status, 'NEEDS_REVIEW');
+    assert.equal(events.get(id).reviewReason, 'CREDIT_MEMO');
+    assert.equal(events.get(id).attachments[0].reason, ATTACHMENT_REASONS.creditMemo);
+    assert.ok(labelsOf(id).includes('cgc-review'));
+  });
+
+  it('an outage while sorting creates nothing and leaves the email for the next poll', async () => {
+    triageAnswer = () => new ExtractionError('rate limited', { retryable: true });
+    const id = addMessage();
+    await GmailService.pollInvoices(config());
+    assert.equal(invoices.size, 0);
+    assert.equal(status().counts.failed, 1);
+    assert.ok(!labelsOf(id).includes('cgc-processed'));
+
+    triageAnswer = () => ['invoice'];
+    await GmailService.pollInvoices(config());
+    assert.ok(invoices.has(`${id}:1`));
+  });
+
+  it('a file the sorter refuses for good is read whole as an invoice, as before, and says so', async () => {
+    triageAnswer = () => new ExtractionError('refused', { retryable: false });
+    const id = addMessage();
+    await GmailService.pollInvoices(config());
+    assert.ok(invoices.has(`${id}:1`));
+    assert.equal(events.get(id).attachments[0].reason, ATTACHMENT_REASONS.sortFailed);
+  });
+
+  it('a retried email never files the same ticket page twice', async () => {
+    triageAnswer = () => ['invoice', 'delivery_ticket'];
+    const id = addMessage({ attachments: [{ filename: 'invoice-90012.pdf', content: await pdfWith(['INV', 'TICKET 504']) }] });
+    failIngestFor = `${id}:1`;
+    await GmailService.pollInvoices(config());
+    assert.equal(tickets.size, 1, 'the ticket was filed before the invoice failed');
+    assert.equal(invoices.size, 0);
+
+    failIngestFor = null;
+    await GmailService.pollInvoices(config());
+    assert.equal(tickets.size, 1);
+    assert.equal(invoices.size, 1);
+    assert.deepEqual(events.get(id).createdTicketIds, ['ticket-1']);
   });
 });
 

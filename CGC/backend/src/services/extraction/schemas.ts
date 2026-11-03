@@ -75,3 +75,13 @@ export const InvoiceExtractionSchema = z.object({
   uncertainFields: z.array(z.string()),
 });
 export type InvoiceExtraction = z.infer<typeof InvoiceExtractionSchema>;
+
+/** What one page of an emailed attachment is. See TRIAGE_PROMPT. */
+export const DocumentKindSchema = z.enum(['invoice', 'delivery_ticket', 'statement', 'credit_memo', 'other']);
+export type DocumentKind = z.infer<typeof DocumentKindSchema>;
+
+/** The triage answer: one kind per page, numbered from 1. Deliberately small. */
+export const DocumentTriageSchema = z.object({
+  pages: z.array(z.object({ page: z.number(), kind: DocumentKindSchema })),
+});
+export type DocumentTriage = z.infer<typeof DocumentTriageSchema>;

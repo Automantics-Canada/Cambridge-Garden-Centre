@@ -37,3 +37,31 @@ test('invoice storage preserves every PDF page and leaves image bytes unchanged'
   assert.equal(requests[1]!.contentType, 'image/png');
   assert.deepEqual(requests[1]!.bytes, image);
 });
+
+test('spreadsheets are stored as what they are, not as a JPEG', async (t) => {
+  const types: Array<string | null> = [];
+  const urls: string[] = [];
+  t.mock.method(globalThis, 'fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+    const request = new Request(input, init);
+    types.push(request.headers.get('content-type'));
+    urls.push(request.url);
+    return new Response(JSON.stringify({ Key: 'test-bucket/synthetic', Id: 'synthetic' }), {
+      status: 200, headers: { 'Content-Type': 'application/json' },
+    });
+  });
+  const { saveInvoiceImage, saveInvoiceSupportingFile } = await import('../src/services/fileStorage.js');
+  const { getContentType } = await import('../src/services/supabaseStorage.js');
+  const zip = Buffer.concat([Buffer.from('PK\x03\x04'), Buffer.alloc(32)]);
+
+  assert.match(await saveInvoiceImage(zip, 'invoice-7001.xlsx'), /\.xlsx$/);
+  assert.match(await saveInvoiceImage(Buffer.from('a,b\n1,2\n'), 'invoice-7002.csv'), /\.csv$/);
+  await saveInvoiceSupportingFile(zip, 'invoice-id-1', 'loads.xlsx');
+  assert.deepEqual(types, [
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'text/csv',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  ]);
+  assert.match(urls[2]!, /invoices\/invoice-id-1\//, "kept in the invoice's own folder");
+  assert.equal(getContentType('xls'), 'application/vnd.ms-excel');
+  assert.equal(getContentType('jpg'), 'image/jpeg');
+});

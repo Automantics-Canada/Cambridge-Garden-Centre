@@ -29,6 +29,10 @@ export interface GmailPollCounts {
   processed: number;
   /** Attachments that became invoices. */
   invoicesCreated: number;
+  /** Delivery ticket pages filed as emailed tickets (A15). */
+  ticketsCreated: number;
+  /** Spreadsheets kept beside the PDF invoice of their email. */
+  supportingFiles: number;
   /** Messages recorded in observe mode. */
   observed: number;
   /** Attachments skipped because an invoice already exists for them. */
@@ -41,7 +45,7 @@ export interface GmailPollCounts {
   unresolvedSender: number;
   /** Messages with no attachment the app reads, not even an unsupported one; sent to review. */
   noAttachments: number;
-  /** Messages from a known sender carrying a spreadsheet or only unsupported files; sent to review. */
+  /** Messages from a known sender carrying an unreadable spreadsheet, a credit memo or only unsupported files; sent to review. */
   needsReview: number;
   /** Messages read again because their sender was approved. */
   requeued: number;
@@ -51,7 +55,7 @@ export interface GmailPollCounts {
 
 export function emptyCounts(): GmailPollCounts {
   return {
-    listed: 0, processed: 0, invoicesCreated: 0, observed: 0, duplicates: 0,
+    listed: 0, processed: 0, invoicesCreated: 0, ticketsCreated: 0, supportingFiles: 0, observed: 0, duplicates: 0,
     legacySkipped: 0, rejectedSender: 0, unresolvedSender: 0, noAttachments: 0, needsReview: 0,
     requeued: 0, failed: 0,
   };
