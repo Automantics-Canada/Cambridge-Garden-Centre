@@ -25,6 +25,10 @@ const MONEY_KEYS = [
   // loads at a supplier is told where and which PO to quote, and only that,
   // through `pickupFrom` below; these never reach the phone.
   'supplierId', 'supplierName', 'awaitingSupplier', 'poNumber', 'vendorCode', 'vendorLocation',
+  // The haul rate dispatch sets on each load (client, Q14), the trucking
+  // company paid for it, and the invoice line that paid it. Office only.
+  'haulLoads', 'dispatchLoads', 'rate', 'rateUnit', 'carrierSupplierId', 'carrierSupplier', 'carrierName',
+  'claimedByLineItemId', 'tripRef',
 ];
 
 /** The one supplier detail a driver is given: where to load, and the PO to quote. */
@@ -46,7 +50,7 @@ describe('driver responses carry no prices (PostgreSQL)', { skip: !disposableCon
 
   before(async () => {
     await prisma.$executeRawUnsafe(
-      'TRUNCATE TABLE "OrderDocument", "Order", "Driver", "User", "Delivery", "Supplier", "SupplierSpruceVendor", "NegotiatedRate" RESTART IDENTITY CASCADE'
+      'TRUNCATE TABLE "OrderDocument", "Order", "Driver", "User", "Delivery", "Supplier", "SupplierSpruceVendor", "NegotiatedRate", "DispatchLoad" RESTART IDENTITY CASCADE'
     );
     await prisma.supplier.create({
       data: {
@@ -96,7 +100,32 @@ describe('driver responses carry no prices (PostgreSQL)', { skip: !disposableCon
       data: { orderId: line.id, documentId: document.id, driverId, status: 'PLACED', priority: 1 },
     });
     deliveryId = delivery.id;
+
+    // The stop's haul: a brokered carrier at an agreed rate, on a trip. None
+    // of it may reach the phone.
+    const office = await prisma.user.create({
+      data: { name: 'Office', email: 'office-privacy@example.test', passwordHash: 'x', role: 'AP_USER' },
+    });
+    const carrier = await prisma.supplier.create({
+      data: { name: 'Example Haulage Ltd', type: 'TRUCKING_COMPANY', emailDomains: [], keywords: [] },
+    });
+    await prisma.dispatchLoad.create({
+      data: {
+        documentId: document.id, deliveryId, sequence: 1, carrierSupplierId: carrier.id, driverId,
+        rate: '187.4321', rateUnit: 'HOUR', quantity: '3.5', tripRef: 'T-PRIVATE-9', ticketNumber: 'TK-0099',
+        notes: 'Haul rate agreed by phone', setById: office.id,
+      },
+    });
   });
+
+  /** Nothing of the stop's haul load, by key or by value. */
+  function assertNoHaulMoney(payload: unknown) {
+    assert.deepEqual(moneyKeysIn(payload), []);
+    const text = JSON.stringify(payload);
+    for (const leak of ['187.4321', '187.43', 'Example Haulage Ltd', 'T-PRIVATE-9', 'Haul rate agreed by phone', 'HOUR']) {
+      assert.equal(text.includes(leak), false, leak);
+    }
+  }
 
   after(async () => {
     await prisma.$disconnect();
@@ -182,9 +211,17 @@ describe('driver responses carry no prices (PostgreSQL)', { skip: !disposableCon
     }
   });
 
+  it('keeps the haul load, its rate and its carrier out of every driver path', async () => {
+    assertNoHaulMoney(await DriverService.getDriverByUserId(userId));
+    assertNoHaulMoney(await DriverService.getDriverDeliveries(driverId));
+    assertNoHaulMoney(await DeliveriesService.getDeliveries({ driverId }, 1, 50, 'priority', 'driver'));
+    assertNoHaulMoney(await DeliveriesService.getCurrentStop(driverId));
+  });
+
   it('keeps prices out of the answer to a driver\'s status update', async () => {
     const updated = await DeliveriesService.updateStatus(deliveryId, 'IN_TRANSIT', undefined, 'PLACED');
     assert.equal(updated.status, 'IN_TRANSIT');
     assert.deepEqual(moneyKeysIn(updated), []);
+    assertNoHaulMoney(updated);
   });
 });

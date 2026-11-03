@@ -127,11 +127,14 @@ export const SupplierService = {
    * The full list() includes negotiated rates and every supplier column. The
    * tickets screen was pulling all of that just to render <option> elements,
    * which measured ~2.7s in production.
+   *
+   * `type` narrows it, so the dispatch board's carrier picker lists trucking
+   * companies only.
    */
-  async listOptions() {
+  async listOptions(type?: SupplierType) {
     return prisma.supplier.findMany({
-      where: { active: true },
-      select: { id: true, name: true },
+      where: { active: true, ...(type ? { type } : {}) },
+      select: { id: true, name: true, type: true },
       orderBy: { name: 'asc' },
     });
   },

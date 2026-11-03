@@ -29,6 +29,7 @@ const backendRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '
 const ORDER_TABLES = [
   'OrderDocument', 'Order', 'OrderOverride', 'Delivery', 'DeliveryHistory', 'ImportBatch',
   'ImportBatchFile', 'SpruceImportJob', 'SpruceImportRowError', 'TicketOrderMatch', 'MatchResult', 'TicketClaim',
+  'DispatchLoad',
 ];
 const TICKET_INVOICE_TABLES = ['Ticket', 'Invoice', 'InvoiceLineItem', '_InvoiceLineItemToTicket', 'OcrJob'];
 const ALWAYS_KEPT = [
@@ -179,6 +180,17 @@ async function seed(): Promise<Seeded> {
   });
   await prisma.ticketClaim.create({
     data: { ticketId: ticket.id, invoiceLineId: line.id, matchResultId: verdict.id, claimedById: admin.id },
+  });
+  // A haul load on the order, paid by the invoice line: it goes with the
+  // order, and the kept trucking company and line are untouched.
+  const carrier = await prisma.supplier.create({
+    data: { name: 'Wipe Haulage', type: 'TRUCKING_COMPANY', emailDomains: [], keywords: [] },
+  });
+  await prisma.dispatchLoad.create({
+    data: {
+      documentId: order.documentId!, deliveryId: delivery.id, sequence: 1, carrierSupplierId: carrier.id,
+      rate: 95, rateUnit: 'LOAD', setById: admin.id, claimedByLineItemId: line.id, claimedAt: new Date(),
+    },
   });
   await prisma.emailIngestionEvent.create({
     data: {

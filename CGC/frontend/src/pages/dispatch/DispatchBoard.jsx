@@ -16,6 +16,7 @@ import { flagApplies, routeLine } from '../../lib/fulfilment';
 import { flagInfo } from '../../lib/spruceImport';
 import { canCorrectHistory, deliveryDay, formatDeliveryDay, isPastDay, returnsTo, upcomingSummary, uploadedOn } from '../../lib/dispatchDays';
 import OrderEditor from '../../components/orders/OrderEditor';
+import HaulLoads, { HaulLoadsLine } from '../../components/dispatch/HaulLoads';
 
 /** The undated list shows this many at most; a search finds the rest. */
 const UNDATED_LIMIT = 100;
@@ -156,6 +157,9 @@ export default function DispatchBoard() {
   const [editingReadOnly, setEditingReadOnly] = useState(false);
   // Today's orders most likely delivered already sit in a group of their own, closed until opened.
   const [showLikelyDelivered, setShowLikelyDelivered] = useState(false);
+  // The order whose loads and haul rates are open, with the driver it is on.
+  const [haulFor, setHaulFor] = useState(null);
+  const openLoads = (order, stopDriver = null) => setHaulFor({ order, stopDriver });
 
   const [draggingOrderId, setDraggingOrderId] = useState(null);
   const [draggingFromDriverId, setDraggingFromDriverId] = useState(null);
@@ -741,6 +745,7 @@ export default function DispatchBoard() {
       <td className="px-6 py-4 whitespace-nowrap">
         <Badge tone={carried ? 'bad' : 'warn'}>{carried ? 'Not delivered' : 'Waiting'}</Badge>
         <OrderFlags order={order} />
+        <HaulLoadsLine order={order} onOpen={openLoads} readOnly={readOnly} />
       </td>
 
       {/* Assign Column */}
@@ -1148,6 +1153,7 @@ export default function DispatchBoard() {
                                                   <td className="px-6 py-4 whitespace-nowrap w-40">
                                                     <OrderLoad order={del.order} />
                                                     <OrderFlags order={del.order} />
+                                                    <HaulLoadsLine order={del.order} stopDriver={driver} onOpen={openLoads} readOnly={readOnly} />
                                                   </td>
 
                                                   {/* Quantity Column */}
@@ -1479,6 +1485,17 @@ export default function DispatchBoard() {
             </p>
           )}
         </div>
+      )}
+
+      {haulFor && (
+        <HaulLoads
+          order={haulFor.order}
+          stopDriver={haulFor.stopDriver}
+          readOnly={readOnly}
+          onClose={() => setHaulFor(null)}
+          // The board's badges and summaries follow the saved loads.
+          onChanged={() => fetchBoard(true)}
+        />
       )}
 
       {editingOrderId && (

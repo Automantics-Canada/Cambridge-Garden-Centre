@@ -20,6 +20,7 @@ import {
   upcomingWhere,
   upcomingWithoutDriverWhere,
 } from './dispatchDays.js';
+import { loadsFollowStopDriver } from './dispatchLoads.service.js';
 
 /** Enough to find an order by number or name; more is a narrower search. */
 const UNDATED_LIMIT = 100;
@@ -227,7 +228,7 @@ export const DispatchService = {
           documentNumber: true,
           flags: true,
           lines: DISPATCH_DOCUMENT_SELECT.lines,
-          delivery: { select: { id: true, status: true } },
+          delivery: { select: { id: true, status: true, driverId: true } },
         },
       });
       if (!document) throw dispatchError(404, 'That order no longer exists.');
@@ -239,7 +240,7 @@ export const DispatchService = {
       const lineId = representativeLineId(document);
       if (!lineId) throw dispatchError(409, `${document.documentNumber} has no lines to deliver.`);
 
-      const driver = await tx.driver.findUnique({ where: { id: driverId }, select: { active: true } });
+      const driver = await tx.driver.findUnique({ where: { id: driverId }, select: { active: true, type: true } });
       if (!driver?.active) throw dispatchError(404, 'That driver is not active.');
 
       const last = await tx.delivery.findFirst({
@@ -269,6 +270,13 @@ export const DispatchService = {
         where: { documentId },
         data: { driverId, deliveryStatus: 'NOT_STARTED' },
       });
+      // Loads recorded while the order waited in the pool are filed under its
+      // stop now, so a trucking invoice can be traced from load to stop.
+      await tx.dispatchLoad.updateMany({
+        where: { documentId, deliveryId: null },
+        data: { deliveryId: delivery.id },
+      });
+      await loadsFollowStopDriver(tx, documentId, document.delivery?.driverId ?? null, { id: driverId, type: driver.type });
 
       return delivery;
     });
@@ -279,7 +287,7 @@ export const DispatchService = {
     return prisma.$transaction(async (tx) => {
       const delivery = await tx.delivery.findUnique({
         where: { documentId },
-        select: { id: true, status: true, document: { select: { documentNumber: true } } },
+        select: { id: true, status: true, driverId: true, document: { select: { documentNumber: true } } },
       });
       if (delivery && FINISHED.includes(delivery.status)) {
         throw dispatchError(
@@ -296,6 +304,7 @@ export const DispatchService = {
           where: { id: delivery.id },
           data: { driverId: null, status: 'UNASSIGNED' },
         });
+        await loadsFollowStopDriver(tx, documentId, delivery.driverId, null);
       }
       await tx.order.updateMany({
         where: { documentId },

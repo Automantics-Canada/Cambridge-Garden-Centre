@@ -4,6 +4,7 @@ import { classifyFulfilment, type Fulfilment } from './fulfilment.js';
 import { businessDayOf } from '../../lib/businessDay.js';
 import { classifyLine } from '../orders/import/lineClass.js';
 import { updatesForDay } from '../orders/import/orderChanges.js';
+import { haulLoadsByDocument, type DispatchLoadView } from './dispatchLoads.service.js';
 
 /**
  * A Spruce order as the dispatch board draws it.
@@ -136,6 +137,12 @@ export interface DispatchOrderView {
    * same reason as `updatedFields`, and it must never reach a driver.
    */
   awaitingSupplier?: AwaitingSupplier[];
+  /**
+   * The loads dispatch recorded for the order, each with its haul rate.
+   * Office screens only: absent until `withHaulLoads` fills it, and it must
+   * never reach a driver.
+   */
+  haulLoads?: DispatchLoadView[];
   /** Refundable skids the order ships on. */
   skids: number;
   /** What goes on the truck. Delivery charges, deposits and comments are not. */
@@ -703,9 +710,25 @@ function withoutDirectShips<T extends BoardLike | unknown[]>(board: T): T {
 }
 
 /**
+ * Puts each whole order's loads and haul rates on it, wherever a board
+ * response holds it. One read for the whole board, never a relation on
+ * DISPATCH_DOCUMENT_SELECT: that select also shapes a driver's stop, and what
+ * a haul costs is office business.
+ */
+export async function withHaulLoads<T extends BoardLike | unknown[]>(
+  db: Pick<Prisma.TransactionClient, 'dispatchLoad'>,
+  board: T
+): Promise<T> {
+  const orders = wholeOrdersIn(board);
+  const loads = await haulLoadsByDocument(db, orders.map(order => order.id));
+  for (const order of orders) order.haulLoads = loads.get(order.id) ?? [];
+  return board;
+}
+
+/**
  * Everything the office board shows beside the rows that drivers must not
- * be sent: what today's upload changed, and which supplier and PO an order
- * waits on.
+ * be sent: what today's upload changed, which supplier and PO an order
+ * waits on, and the loads dispatch recorded with their haul rates.
  *
  * @param today 'YYYY-MM-DD' in the yard's timezone, America/Toronto
  */
@@ -714,6 +737,10 @@ export async function withOfficeFields<T extends BoardLike | unknown[]>(
   board: T,
   today?: string
 ): Promise<T> {
-  await Promise.all([withUpdatedFields(db, board, today), withAwaitingSupplier(db, board, today)]);
+  await Promise.all([
+    withUpdatedFields(db, board, today),
+    withAwaitingSupplier(db, board, today),
+    withHaulLoads(db, board),
+  ]);
   return board;
 }
